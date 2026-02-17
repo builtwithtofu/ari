@@ -5,7 +5,10 @@ import { resolve } from "node:path";
 import { bootstrapSandbox } from "./bootstrap.js";
 import type { ExecFn } from "./exec.js";
 import { fileExists } from "./fs.js";
+import { createManualWorkspace, type ManualTuiArgs } from "./manual-session.js";
 import { runOpenCode } from "./opencode.js";
+import { evaluateGaiaPromptQuality } from "./prompt-quality.js";
+import { runHarnessDoctor } from "./preflight.js";
 import {
   buildSuiteSteps,
   getBugHarnessPermission,
@@ -13,7 +16,7 @@ import {
   type SuiteMode,
 } from "./plans.js";
 
-const DEFAULT_MODEL = "opencode/kimi-k2.5-free";
+const DEFAULT_MODEL = "opencode/glm-5-free";
 const DEFAULT_BUG_REPORT = "doc/bug-report.example.md";
 const DEFAULT_SMOKE_PROMPT =
   "Verify sandbox setup, list relevant files, and suggest one next coding unit.";
@@ -67,6 +70,12 @@ interface GaiaInitRunner {
   runGaiaInit: (args: { repoRoot: string; mode?: "supervised" | "autopilot" | "locked" }) => Promise<unknown>;
 }
 
+interface GaiaPromptProvider {
+  LEAN_AGENT_PROMPTS: {
+    gaia: string;
+  };
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error("Expected object record");
@@ -90,6 +99,22 @@ export async function commandBootstrap(context: CommandContext): Promise<void> {
   });
 }
 
+export async function commandDoctor(context: CommandContext): Promise<void> {
+  const result = await runHarnessDoctor({
+    repoRoot: context.repoRoot,
+    ...withExec(context.exec),
+  });
+
+  for (const check of result.checks) {
+    const state = check.ok ? "ok" : "fail";
+    console.log(`[${state}] ${check.name}: ${check.detail}`);
+  }
+
+  if (!result.ok) {
+    throw new Error("Harness preflight failed; fix checks above and retry");
+  }
+}
+
 export async function commandOpenCode(
   context: CommandContext,
   args: string[],
@@ -99,6 +124,28 @@ export async function commandOpenCode(
     args,
     stdio: "inherit",
     ...withTimeout(parseTimeoutMs(process.env.OPENCODE_TIMEOUT_MS)),
+    ...withExec(context.exec),
+  });
+}
+
+export async function commandManualTui(context: CommandContext, args: ManualTuiArgs): Promise<void> {
+  const workspace = await createManualWorkspace({
+    repoRoot: context.repoRoot,
+    ...(args.label ? { label: args.label } : {}),
+  });
+
+  console.log(`manual-tui workspace: ${workspace.workspacePath}`);
+  if (args.model) {
+    console.log(`manual-tui model override: ${args.model}`);
+  }
+  console.log("Launching OpenCode TUI in sandboxed mode...");
+
+  await runOpenCode({
+    repoRoot: context.repoRoot,
+    cwd: workspace.workspacePath,
+    args: args.model ? ["--model", args.model] : [],
+    stdio: "inherit",
+    ...(args.model ? { envOverrides: { OPENCODE_GAIA_AGENT_MODEL: args.model } } : {}),
     ...withExec(context.exec),
   });
 }
@@ -209,6 +256,23 @@ export async function commandGaiaInitSmoke(context: CommandContext): Promise<voi
   }
 
   console.log(`gaia_init smoke succeeded: ${initPath}`);
+}
+
+export async function commandPromptQualitySmoke(context: CommandContext): Promise<void> {
+  const promptsModulePath = new URL("../../opencode-gaia-plugin/src/agents/prompts.ts", import.meta.url).href;
+  const promptsModule = (await import(promptsModulePath)) as GaiaPromptProvider;
+
+  const result = evaluateGaiaPromptQuality(promptsModule.LEAN_AGENT_PROMPTS.gaia);
+  for (const check of result.checks) {
+    const state = check.ok ? "ok" : "fail";
+    console.log(`[${state}] ${check.name}: ${check.detail}`);
+  }
+
+  if (!result.ok) {
+    throw new Error("prompt-quality-smoke failed: GAIA prompt guardrails are incomplete");
+  }
+
+  console.log("prompt-quality-smoke succeeded: GAIA guardrails are present");
 }
 
 export async function commandLeanSubagentsSmoke(context: CommandContext): Promise<void> {
@@ -340,6 +404,9 @@ export async function commandSuite(
 
   for (const step of steps) {
     switch (step) {
+      case "doctor":
+        await commandDoctor(context);
+        break;
       case "bootstrap":
         await commandBootstrap(context);
         break;
@@ -358,6 +425,9 @@ export async function commandSuite(
       case "gaia-init-smoke":
         await commandGaiaInitSmoke(context);
         break;
+      case "prompt-quality-smoke":
+        await commandPromptQualitySmoke(context);
+        break;
       case "locked-smoke":
         await commandLockedSmoke(context);
         break;
@@ -373,5 +443,5 @@ export async function commandSuite(
 }
 
 export function suiteModesHelp(): SuiteMode[] {
-  return ["basic", "plugin", "locked", "bug", "full"];
+  return ["basic", "plugin", "quickstart", "quality", "locked", "bug", "full"];
 }

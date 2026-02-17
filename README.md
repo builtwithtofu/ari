@@ -1,69 +1,50 @@
 # Project GAIA
 
-Project GAIA is an OpenCode orchestration plugin project.
+Project GAIA is an OpenCode orchestration plugin focused on practical human-in-the-loop development.
 
-It introduces an optional `gaia` mode that coordinates specialist agents for recon,
-implementation, and project memory while keeping native `plan` and `build` workflows available.
+It adds an optional `gaia` mode that coordinates specialist agents while keeping native OpenCode
+`plan` and `build` behavior unchanged unless you opt in.
 
-The project is built to explore both ends of collaboration:
+This repository is pre-alpha. Interfaces and behavior can change quickly while the core model hardens.
 
-- Human-in-the-loop workflows where you can review and steer execution.
-- Agentic workflows where you can let the system run with fewer interruptions.
+## Why this exists
 
-## North Star
+Most agent systems break down at handoffs, not code generation. GAIA focuses on that gap:
 
-GAIA is the orchestration and communication layer between humans and specialist agents.
+- turn user intent into small, explicit work units,
+- route work to specialists with clear contracts,
+- keep decisions, rationale, and outcomes recoverable under `.gaia/`.
 
-- Translate user intent into clear outcomes.
-- Route work to specialists with explicit contracts.
-- Keep checkpoints, decisions, and rationale recoverable across sessions.
+## Quickstart (new contributors)
 
-See `doc/SPECIFICATION.md` for the full product specification.
-
-## Status
-
-Pre-alpha.
-
-This project is in early development. Interfaces, file layout, and behavior can change quickly
-and may break between updates.
-
-## Development
+From a fresh clone, run this once:
 
 ```bash
 nix develop
-bun install
-bun run check
+bun install --cwd tools/opencode-gaia-plugin
+bun install --cwd tools/opencode-gaia-harness
+bun run --cwd tools/opencode-gaia-harness cli quickstart
 ```
 
-The plugin package lives at `tools/opencode-gaia-plugin/`.
+`quickstart` runs a full onboarding confidence flow:
 
-## Sandbox testing
+- preflight checks (`doctor`) for template + CLI readiness,
+- sandbox bootstrap,
+- lean-subagent wiring smoke,
+- `gaia_init` tool smoke,
+- locked-mode mutation guard smoke.
 
-The harness is a small Bun CLI (`tools/opencode-gaia-harness/`) that runs OpenCode in an
-isolated `.sandbox/` environment. It lets developers evaluate GAIA behavior without inheriting
-host-level OpenCode config.
+If it passes, you have a local sandboxed setup ready for development and experimentation.
 
-Recommended dev flow:
+## Common workflows
 
-1. Bootstrap isolated config and plugin wiring.
-2. Run basic smoke checks.
-3. Verify lean subagent wiring (`gaia` primary, hidden specialists by default).
-4. Verify plugin tool path (`gaia_init`) and locked-mode guard.
-
-```bash
-bun run --cwd tools/opencode-gaia-harness cli bootstrap
-bun run --cwd tools/opencode-gaia-harness cli suite basic
-bun run --cwd tools/opencode-gaia-harness cli suite plugin
-bun run --cwd tools/opencode-gaia-harness cli suite locked
-```
-
-Start a served OpenCode instance from the sandbox:
+Start an isolated OpenCode web server:
 
 ```bash
 bun run --cwd tools/opencode-gaia-harness cli serve-web
 ```
 
-Run the agent-driven bug reproduction harness:
+Run bug-repro harness (reproducer-first flow):
 
 ```bash
 bun run --cwd tools/opencode-gaia-harness cli bug doc/bug-report.example.md
@@ -75,38 +56,55 @@ Run all harness stages in one command:
 bun run --cwd tools/opencode-gaia-harness cli suite full doc/bug-report.example.md
 ```
 
-For containerized use:
+Launch a temporary sandbox workspace in OpenCode TUI (best manual feel test):
 
-- Devcontainer: `.devcontainer/devcontainer.json`
-- Docker compose: `docker compose -f docker-compose.sandbox.yml up --build`
+```bash
+bun run --cwd tools/opencode-gaia-harness cli manual-tui "critical bug"
+```
 
-See `doc/Sandbox_Harness.md` for details.
+This creates `.sandbox/workspaces/<timestamp>-critical-bug/` and starts TUI in that workspace
+with the GAIA plugin loaded from sandbox config.
 
-Harness commands include built-in timeouts; tune with env vars such as
-`OPENCODE_SMOKE_TIMEOUT_MS`, `OPENCODE_SMOKE_IDLE_TIMEOUT_MS`,
-`OPENCODE_GAIA_INIT_TIMEOUT_MS`, and `OPENCODE_BUG_TIMEOUT_MS`.
+To force a specific model (useful when bringing your own provider keys):
 
-Idle timeout vars are optional and default to disabled.
+```bash
+bun run --cwd tools/opencode-gaia-harness cli manual-tui "critical bug" --model opencode/glm-5-free
+```
 
-Commands print heartbeat progress lines while running (default every 10s). Override with
-`OPENCODE_HEARTBEAT_MS` or command-specific heartbeat env vars.
+This sets both the top-level OpenCode session model and GAIA lean subagent model override
+(`OPENCODE_GAIA_AGENT_MODEL`) for that manual run.
 
-## Current focus
+Run GAIA prompt guardrail checks only:
 
-- Define and ship the MVP cut in `.gaia/plans/project-gaia-plugin-mvp-cut.md`
-- Anchor work to GAIA north star and durable orchestration docs
-- Build the portable core plugin under `tools/opencode-gaia-plugin/`
-- Keep host-specific wiring separate from core runtime logic
-- Validate both supervised and agentic execution paths in a practical way
+```bash
+bun run --cwd tools/opencode-gaia-harness cli prompt-quality-smoke
+```
 
-## Planning documents
+## How GAIA mode behaves
 
-- `doc/SPECIFICATION.md`
-- `.gaia/gaia-init.md`
-- `.gaia/plans/project-gaia-plugin-mvp-cut.md`
-- `.gaia/plans/gaia-init-spec.md`
+- GAIA is opt-in.
+- Native OpenCode flows remain the default when GAIA is not selected.
+- Lean mode defaults to `gaia` plus hidden specialists (`athena`, `hephaestus`, `demeter`).
+- Work-unit artifacts are written under `.gaia/<work-unit>/` and older work units are archived under
+  `.gaia/archive/work-units/`.
 
-## Documentation split
+## Repository map
 
-- Project-facing specification and product docs live in `doc/`.
-- GAIA operational plans, memory surfaces, and run artifacts live in `.gaia/`.
+- `tools/opencode-gaia-plugin/` - portable GAIA plugin core
+- `tools/opencode-gaia-harness/` - sandbox CLI and confidence flows
+- `doc/` - project-facing docs and specifications
+- `.gaia/` - runtime artifacts and operational plans
+
+## Development checks
+
+```bash
+bun run --cwd tools/opencode-gaia-plugin check
+bun run --cwd tools/opencode-gaia-harness check
+```
+
+## Learn more
+
+- Product direction and behavior model: `doc/SPECIFICATION.md`
+- Sandbox setup and full command reference: `doc/Sandbox_Harness.md`
+- Active MVP boundary: `.gaia/plans/project-gaia-plugin-mvp-cut.md`
+- GAIA initialization requirements: `.gaia/plans/gaia-init-spec.md`

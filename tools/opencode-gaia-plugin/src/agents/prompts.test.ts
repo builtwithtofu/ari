@@ -59,6 +59,13 @@ describe("LEAN_AGENT_PROMPTS", () => {
     expect(LEAN_AGENT_PROMPTS.gaia).toContain("done_when");
     expect(LEAN_AGENT_PROMPTS.gaia).toContain("Do not edit or write files directly");
     expect(LEAN_AGENT_PROMPTS.gaia).toContain("simple informational tasks");
+    expect(LEAN_AGENT_PROMPTS.gaia).toContain("Never call edit or write tools directly");
+    expect(LEAN_AGENT_PROMPTS.gaia).toContain("permission-denied");
+    expect(LEAN_AGENT_PROMPTS.gaia).toContain("delegate implementation to HEPHAESTUS");
+    expect(LEAN_AGENT_PROMPTS.gaia).toContain("Do not retry blocked mutation actions");
+    expect(LEAN_AGENT_PROMPTS.gaia).toContain("rejection feedback");
+    expect(LEAN_AGENT_PROMPTS.gaia).toContain("What should GAIA change");
+    expect(LEAN_AGENT_PROMPTS.gaia).toContain("Only GAIA asks follow-up rejection questions");
 
     expect(LEAN_AGENT_PROMPTS.hephaestus).toContain("TDD cycle");
     expect(LEAN_AGENT_PROMPTS.hephaestus).toContain("failing test first");
@@ -72,5 +79,17 @@ describe("LEAN_AGENT_PROMPTS", () => {
     expect(LEAN_AGENT_PROMPTS.hephaestus).toContain("real values");
     expect(LEAN_AGENT_PROMPTS.hephaestus).toContain("exact assertions");
     expect(LEAN_AGENT_PROMPTS.hephaestus).toContain("partial-response assertions");
+    expect(LEAN_AGENT_PROMPTS.hephaestus).toContain("Do not ask the Operator for rejection feedback");
+    expect(LEAN_AGENT_PROMPTS.hephaestus).toContain("needs_gaia_feedback");
+
+    expect(LEAN_AGENT_PROMPTS.athena).toContain("Do not ask the Operator for rejection feedback");
+    expect(LEAN_AGENT_PROMPTS.athena).toContain("needs_gaia_feedback");
+
+    expect(LEAN_AGENT_PROMPTS.demeter).toContain("status_report");
+    expect(LEAN_AGENT_PROMPTS.demeter).toContain("active_work_units");
+    expect(LEAN_AGENT_PROMPTS.demeter).toContain("completed_work_units");
+    expect(LEAN_AGENT_PROMPTS.demeter).toContain("blocked_work_units");
+    expect(LEAN_AGENT_PROMPTS.demeter).toContain("Do not ask the Operator for rejection feedback");
+    expect(LEAN_AGENT_PROMPTS.demeter).toContain("needs_gaia_feedback");
   });
 });

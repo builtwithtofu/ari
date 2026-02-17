@@ -19,6 +19,7 @@ const LEAN_AGENT_DESCRIPTIONS: Record<LeanAgentKey, string> = {
 };
 
 export const GAIA_SLASH_COMMAND_NAME = "gaia-init";
+export const GAIA_AGENT_MODEL_OVERRIDE_ENV = "OPENCODE_GAIA_AGENT_MODEL";
 
 const GAIA_SLASH_COMMAND_DEFAULT = {
   template:
@@ -99,6 +100,16 @@ function mergeAgentDefaults(agent: LeanAgentKey, existing: unknown): UnknownReco
   return merged;
 }
 
+function readAgentModelOverride(): string | undefined {
+  const raw = process.env[GAIA_AGENT_MODEL_OVERRIDE_ENV];
+  if (!raw) {
+    return undefined;
+  }
+
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 export function applyGaiaRuntimeConfig(configInput: unknown): void {
   if (!isRecord(configInput)) {
     return;
@@ -109,9 +120,15 @@ export function applyGaiaRuntimeConfig(configInput: unknown): void {
   const nextAgents: UnknownRecord = {
     ...existingAgents,
   };
+  const modelOverride = readAgentModelOverride();
 
   for (const agent of LEAN_AGENT_KEYS) {
-    nextAgents[agent] = mergeAgentDefaults(agent, existingAgents[agent]);
+    const merged = mergeAgentDefaults(agent, existingAgents[agent]);
+    if (modelOverride) {
+      merged.model = modelOverride;
+    }
+
+    nextAgents[agent] = merged;
   }
 
   config.agent = nextAgents;

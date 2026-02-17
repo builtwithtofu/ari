@@ -14,13 +14,13 @@ This backlog groups active work by delivery horizon.
   - persist rationale
   - re-plan with explicit delta
 - [ ] Implement interrupt/re-plan policy when user guidance arrives mid-execution.
-- [ ] Add recoverability runtime journal format (`.gaia/runtime/{session}/{work_unit}.ndjson`).
-- [ ] Add reducer that reconstructs current orchestration state from runtime journal events.
-- [ ] Define DEMETER status report contract for cross-subagent visibility.
+- [x] Add recoverability runtime journal format (`.gaia/runtime/{session}/{work_unit}.ndjson`).
+- [x] Add reducer that reconstructs current orchestration state from runtime journal events.
+- [x] Define DEMETER status report contract for cross-subagent visibility.
 - [ ] Integrate SDK v2 surfaces needed for permission/question/session/event flow.
 - [ ] Add harness scenarios for rejection, interruption, and recovery/resume.
 - [ ] Tune GAIA-to-HEPHAESTUS delegation scope so implementation tasks stay atomic and bounded.
-- [ ] Reduce GAIA permission-denied noise by tightening prompt behavior to avoid forbidden write/edit
+- [x] Reduce GAIA permission-denied noise by tightening prompt behavior to avoid forbidden write/edit
       attempts.
 - [ ] Run sandbox tests in a fresh isolated workspace for each run to keep evaluations reproducible.
 - [ ] Add lean orchestration quality harness track:
@@ -37,6 +37,36 @@ This backlog groups active work by delivery horizon.
   - GAIA mode must activate only when explicitly selected
   - native OpenCode `plan` and `build` flows stay unchanged by default
   - when GAIA is not selected, plugin behavior should be effectively out of the way
+
+## Research Follow-up Sprint (Commit-Sliced)
+
+- [x] Wave 1: local developer onboarding ergonomics
+  - add one-command happy path in harness for first pull-and-run validation
+  - add preflight checks for CLI/runtime/dependency readiness
+  - document expected output and failure recovery in setup docs
+  - commit boundary: one JJ commit for harness + docs onboarding flow
+- [x] Wave 2: instruction-adherence hardening for GAIA roles
+  - add runtime nudges that keep orchestration behavior in-lane during long sessions
+  - add explicit corrective guidance when GAIA attempts blocked edit/write paths
+  - add harness checks that validate reduced permission-denied churn
+  - commit boundary: one JJ commit for behavior guardrails + tests
+- [ ] Wave 3: plan artifact and gate progression
+  - add a structured plan template for objective, constraints, done criteria, and risks
+  - add plan-to-build gate checks for low/medium/high-risk work units
+  - add resumable checkpoint recording shape for plan continuity
+  - add deterministic GAIA command flow for plan lifecycle:
+    - `gaia-start-plan` (intake + plan bootstrap)
+    - `gaia-execute-plan` (gated execution entry)
+    - `gaia-continue-work` (crash-safe resume)
+  - make DEMETER status docs the projection of runtime journals (not primary source of truth)
+  - record one-time session policy for human-loop mode and risk posture
+  - open decision to finalize: does low-risk execution require explicit human confirmation?
+  - commit boundary: one JJ commit for plan/gate primitives + tests
+- [ ] Wave 4: orchestration evaluation and regression corpus
+  - add repeatable orchestration quality scenarios to harness
+  - track role adherence, delegation quality, and resume success signals
+  - add a lightweight baseline corpus for regression replay
+  - commit boundary: one JJ commit for evaluation track + harness wiring
 
 ## Post-MVP (Near-Term)
 

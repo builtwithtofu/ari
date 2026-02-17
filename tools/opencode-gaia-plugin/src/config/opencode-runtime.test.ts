@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   applyGaiaRuntimeConfig,
+  GAIA_AGENT_MODEL_OVERRIDE_ENV,
   GAIA_SLASH_COMMAND_NAME,
 } from "./opencode-runtime";
 
@@ -94,5 +95,34 @@ describe("applyGaiaRuntimeConfig", () => {
     expect(asRecord(permission.task)["*"]).toBe("allow");
     expect(gaiaInitCommand.template).toBe("custom template");
     expect(gaiaInitCommand.agent).toBe("build");
+  });
+
+  test("applies global model override to GAIA and subagents", () => {
+    const original = process.env[GAIA_AGENT_MODEL_OVERRIDE_ENV];
+    process.env[GAIA_AGENT_MODEL_OVERRIDE_ENV] = "openai/gpt-5.3-codex";
+
+    try {
+      const config: Record<string, unknown> = {
+        agent: {
+          gaia: {
+            model: "custom/model",
+          },
+        },
+      };
+
+      applyGaiaRuntimeConfig(config);
+
+      const agents = asRecord(config.agent);
+      expect(asRecord(agents.gaia).model).toBe("openai/gpt-5.3-codex");
+      expect(asRecord(agents.athena).model).toBe("openai/gpt-5.3-codex");
+      expect(asRecord(agents.hephaestus).model).toBe("openai/gpt-5.3-codex");
+      expect(asRecord(agents.demeter).model).toBe("openai/gpt-5.3-codex");
+    } finally {
+      if (original === undefined) {
+        delete process.env[GAIA_AGENT_MODEL_OVERRIDE_ENV];
+      } else {
+        process.env[GAIA_AGENT_MODEL_OVERRIDE_ENV] = original;
+      }
+    }
   });
 });

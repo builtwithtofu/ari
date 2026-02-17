@@ -39,7 +39,7 @@ export async function runDelegateGaiaTool(
     ...(args.artifacts ?? {}),
   };
 
-  return processWorkUnit({
+  const result = await processWorkUnit({
     repoRoot: args.repoRoot,
     ...(args.mode ? { mode: args.mode } : {}),
     workUnit: args.workUnit,
@@ -51,5 +51,15 @@ export async function runDelegateGaiaTool(
     plan: artifacts.plan,
     log: artifacts.log,
     decisions: artifacts.decisions,
+    delegatedAgent: args.agent,
   });
+
+  if (result.delegation.rejection_feedback_request) {
+    result.delegation.rejection_feedback_request = {
+      ...result.delegation.rejection_feedback_request,
+      paused_agent: args.agent,
+    };
+  }
+
+  return result;
 }

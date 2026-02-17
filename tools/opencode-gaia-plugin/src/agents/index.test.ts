@@ -18,8 +18,8 @@ describe("createLeanAgentRegistry", () => {
       "hephaestus",
     ]);
 
-    expect(registry.gaia.modelConfig.model).toBe("opencode/kimi-k2.5-free");
-    expect(registry.athena.modelConfig.model).toBe("opencode/glm-4.7-free");
+    expect(registry.gaia.modelConfig.model).toBe("opencode/glm-5-free");
+    expect(registry.athena.modelConfig.model).toBe("opencode/glm-5-free");
   });
 
   test("merges model and prompt overrides", () => {

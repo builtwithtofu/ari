@@ -22,6 +22,7 @@ describe("buildSuiteSteps", () => {
       "smoke",
       "lean-subagents-smoke",
       "gaia-init-smoke",
+      "prompt-quality-smoke",
       "locked-smoke",
       "bug",
     ]);
@@ -32,6 +33,23 @@ describe("buildSuiteSteps", () => {
       "bootstrap",
       "lean-subagents-smoke",
       "gaia-init-smoke",
+      "prompt-quality-smoke",
+    ]);
+  });
+
+  test("returns quality suite command order", () => {
+    expect(buildSuiteSteps("quality")).toEqual([
+      "prompt-quality-smoke",
+    ]);
+  });
+
+  test("returns quickstart suite command order", () => {
+    expect(buildSuiteSteps("quickstart")).toEqual([
+      "doctor",
+      "bootstrap",
+      "lean-subagents-smoke",
+      "gaia-init-smoke",
+      "locked-smoke",
     ]);
   });
 

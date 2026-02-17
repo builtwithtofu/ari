@@ -1,17 +1,21 @@
 import {
   commandBootstrap,
   commandBug,
+  commandDoctor,
   commandGaiaInitSmoke,
   commandLeanSubagentsSmoke,
   commandListFreeModels,
   commandLockedSmoke,
+  commandManualTui,
   commandOpenCode,
+  commandPromptQualitySmoke,
   commandServeApi,
   commandServeWeb,
   commandSmoke,
   commandSuite,
   suiteModesHelp,
 } from "./commands.js";
+import { parseManualTuiArgs } from "./manual-session.js";
 import { resolveRepoRoot } from "./paths.js";
 
 function printHelp(): void {
@@ -21,10 +25,14 @@ function printHelp(): void {
   console.log("");
   console.log("Commands:");
   console.log("  bootstrap");
+  console.log("  doctor");
+  console.log("  quickstart");
+  console.log("  manual-tui [label] [--model provider/model]");
   console.log("  list-free-models");
   console.log("  smoke [prompt]");
   console.log("  bug [bug-report-file]");
   console.log("  gaia-init-smoke");
+  console.log("  prompt-quality-smoke");
   console.log("  lean-subagents-smoke");
   console.log("  locked-smoke");
   console.log("  serve-web");
@@ -42,6 +50,16 @@ async function main(): Promise<void> {
     case "bootstrap":
       await commandBootstrap(context);
       return;
+    case "doctor":
+      await commandDoctor(context);
+      return;
+    case "quickstart":
+      await commandSuite(context, "quickstart", args[0]);
+      return;
+    case "manual-tui": {
+      await commandManualTui(context, parseManualTuiArgs(args));
+      return;
+    }
     case "list-free-models":
       await commandListFreeModels(context);
       return;
@@ -55,6 +73,9 @@ async function main(): Promise<void> {
       return;
     case "gaia-init-smoke":
       await commandGaiaInitSmoke(context);
+      return;
+    case "prompt-quality-smoke":
+      await commandPromptQualitySmoke(context);
       return;
     case "lean-subagents-smoke":
       await commandLeanSubagentsSmoke(context);

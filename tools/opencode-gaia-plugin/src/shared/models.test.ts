@@ -12,8 +12,8 @@ describe("resolveModel", () => {
         model: "openai/gpt-5.1-codex",
       },
       availableModels: new Set([
-        "opencode/kimi-k2.5-free",
-        "opencode/glm-4.7-free",
+        "opencode/glm-5-free",
+        "opencode/big-pickle",
         "openai/gpt-5.1-codex",
       ]),
     });
@@ -29,10 +29,10 @@ describe("resolveModel", () => {
       agentOverride: {
         model: "custom/not-present",
       },
-      availableModels: new Set(["opencode/kimi-k2.5-free"]),
+      availableModels: new Set(["opencode/glm-5-free"]),
     });
 
-    expect(resolved.model).toBe("opencode/kimi-k2.5-free");
+    expect(resolved.model).toBe("opencode/glm-5-free");
     expect(resolved.source).toBe("default");
   });
 

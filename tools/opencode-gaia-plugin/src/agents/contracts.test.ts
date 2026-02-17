@@ -69,12 +69,19 @@ describe("lean contract parsers", () => {
         learnings: ["keep prompts lean"],
         plan_updates: ["unit-2 in progress"],
         session_summary: "Done",
+        status_report: {
+          active_work_units: ["unit-2"],
+          completed_work_units: ["unit-1"],
+          blocked_work_units: [],
+          upcoming_checkpoints: ["operator review after implementation"],
+        },
       },
       errors: [],
     });
 
     expect(parsed.agent).toBe("demeter");
     expect(parsed.data.decisions[0]?.answer).toBe("bun test");
+    expect(parsed.data.status_report.active_work_units).toEqual(["unit-2"]);
   });
 
   test("rejects bad envelope shape", () => {

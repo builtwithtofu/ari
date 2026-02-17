@@ -63,6 +63,12 @@ const DemeterOutputSchema = BaseEnvelopeSchema.extend({
     learnings: z.array(z.string()),
     plan_updates: z.array(z.string()),
     session_summary: z.string(),
+    status_report: z.object({
+      active_work_units: z.array(z.string()),
+      completed_work_units: z.array(z.string()),
+      blocked_work_units: z.array(z.string()),
+      upcoming_checkpoints: z.array(z.string()),
+    }),
   }),
 });
 

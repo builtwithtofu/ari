@@ -34,8 +34,8 @@ for local tool registration.
 
 Default profile:
 
-- `model`: `opencode/kimi-k2.5-free`
-- `small_model`: `opencode/gpt-5-nano`
+- `model`: `opencode/glm-5-free`
+- `small_model`: `opencode/glm-5-free`
 - `permission`: ask for `bash`, `edit`, `write`
 - `server`: host `0.0.0.0`, port `4096`
 
@@ -47,10 +47,45 @@ Default profile:
 bun run --cwd tools/opencode-gaia-harness cli bootstrap
 ```
 
+- Run preflight checks (template + `bun` + `opencode`):
+
+```bash
+bun run --cwd tools/opencode-gaia-harness cli doctor
+```
+
+- Run onboarding quickstart (recommended first run):
+
+```bash
+bun run --cwd tools/opencode-gaia-harness cli quickstart
+```
+
+This runs:
+
+- `doctor`
+- `bootstrap`
+- `lean-subagents-smoke`
+- `gaia-init-smoke`
+- `locked-smoke`
+
 - Run OpenCode with sandbox env:
 
 ```bash
 bun run --cwd tools/opencode-gaia-harness cli opencode
+```
+
+- Launch OpenCode TUI in a fresh temporary manual-testing workspace:
+
+```bash
+bun run --cwd tools/opencode-gaia-harness cli manual-tui "critical bug"
+```
+
+This creates `.sandbox/workspaces/<timestamp>-critical-bug/` and launches TUI in that workspace
+while keeping plugin/config sandboxed under `.sandbox/opencode/`.
+
+Use `--model provider/model` to force both the top-level model and GAIA subagent model override:
+
+```bash
+bun run --cwd tools/opencode-gaia-harness cli manual-tui "critical bug" --model opencode/glm-5-free
 ```
 
 - Start web server:
@@ -132,6 +167,14 @@ bun run --cwd tools/opencode-gaia-harness cli lean-subagents-smoke
 
 This confirms GAIA is primary and lean specialists are configured as hidden subagents by default.
 
+- Run GAIA prompt-quality smoke test:
+
+```bash
+bun run --cwd tools/opencode-gaia-harness cli prompt-quality-smoke
+```
+
+This checks the GAIA prompt for required guardrails around blocked mutation behavior and delegation.
+
 - Run locked-mode mutation guard smoke test:
 
 ```bash
@@ -145,6 +188,7 @@ This validates that `mode: locked` blocks `.gaia` mutation paths.
 ```bash
 bun run --cwd tools/opencode-gaia-harness cli suite basic
 bun run --cwd tools/opencode-gaia-harness cli suite plugin
+bun run --cwd tools/opencode-gaia-harness cli suite quality
 bun run --cwd tools/opencode-gaia-harness cli suite locked
 bun run --cwd tools/opencode-gaia-harness cli suite bug doc/bug-report.example.md
 bun run --cwd tools/opencode-gaia-harness cli suite full doc/bug-report.example.md
@@ -157,7 +201,7 @@ The bug harness prompt enforces reproducer-first TDD, low-mock tests, and exact 
 Use `.devcontainer/devcontainer.json`.
 
 - Image base: Node 22
-- Installs: Bun and OpenCode CLI (`opencode-ai@1.1.53`)
+- Installs: Bun and OpenCode CLI (`opencode-ai@1.2.6`)
 - Forwards port `4096`
 - Post-create: bootstrap sandbox, install plugin deps, run checks
 
@@ -175,6 +219,8 @@ Then open the served OpenCode web UI on port `4096`.
 
 - Current harness validates environment and workflows first.
 - GAIA tool/plugin integration in OpenCode runtime should be layered on top of this sandbox.
+- GAIA runtime archives older `.gaia/<work-unit>/` directories under
+  `.gaia/archive/work-units/` as new work units are written.
 
 ## Growth roadmap
 

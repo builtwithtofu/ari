@@ -13,14 +13,15 @@
     "typecheck": "bunx tsc -p tsconfig.json --noEmit",
     "test": "bun test",
     "test:watch": "bun test --watch",
-    "check": "bun run typecheck && bun test"
+    "check": "bun run typecheck && bun test",
+    "demo:pivot": "bun run scripts/demo-pivot.ts"
   },
   "engines": {
     "node": ">=20.0.0"
   },
   "peerDependencies": {
-    "@opencode-ai/plugin": "^1.1.53",
-    "@opencode-ai/sdk": "^1.1.53"
+    "@opencode-ai/plugin": "^1.2.6",
+    "@opencode-ai/sdk": "^1.2.6"
   },
   "dependencies": {
     "jsonc-parser": "^3.3.1",

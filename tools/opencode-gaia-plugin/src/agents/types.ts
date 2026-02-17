@@ -43,12 +43,20 @@ export interface DemeterDecision {
   impact: string;
 }
 
+export interface DemeterStatusReport {
+  active_work_units: string[];
+  completed_work_units: string[];
+  blocked_work_units: string[];
+  upcoming_checkpoints: string[];
+}
+
 export interface DemeterData {
   log_entry: string;
   decisions: DemeterDecision[];
   learnings: string[];
   plan_updates: string[];
   session_summary: string;
+  status_report: DemeterStatusReport;
 }
 
 export type GaiaOutput = AgentEnvelope<GaiaData, "gaia">;

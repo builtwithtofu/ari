@@ -16,6 +16,7 @@ describe("delegateGaia", () => {
     expect(result.status).toBe("ok");
     expect(result.parse_error).toBeNull();
     expect(result.parsed_json).toEqual({ contract_version: "1.0", agent: "gaia" });
+    expect(result.rejection_feedback_request).toBeNull();
   });
 
   test("extracts JSON from fenced response", async () => {
@@ -29,6 +30,7 @@ describe("delegateGaia", () => {
 
     expect(result.status).toBe("ok");
     expect(result.parsed_json).toEqual({ contract_version: "1.0", agent: "athena" });
+    expect(result.rejection_feedback_request).toBeNull();
   });
 
   test("retries once when first parse fails and returns retry result", async () => {
@@ -49,6 +51,7 @@ describe("delegateGaia", () => {
     expect(result.parse_error).toBeNull();
     expect(result.attempt_count).toBe(2);
     expect(result.parsed_json).toEqual({ contract_version: "1.0", agent: "demeter" });
+    expect(result.rejection_feedback_request).toBeNull();
   });
 
   test("returns parse failure metadata after retry fails", async () => {
@@ -64,5 +67,42 @@ describe("delegateGaia", () => {
     expect(result.parsed_json).toBeNull();
     expect(typeof result.parse_error).toBe("string");
     expect(result.attempt_count).toBe(2);
+    expect(result.rejection_feedback_request).toBeNull();
+  });
+
+  test("adds corrective guidance when response shows permission-denied behavior", async () => {
+    const result = await delegateGaia({
+      sessionId: "s5",
+      modelUsed: "openai/gpt-5.3-codex",
+      responseText: "Permission denied: write tool is blocked for this agent",
+      parse: (input) => input,
+    });
+
+    expect(result.status).toBe("parse_failed");
+    expect(result.attempt_count).toBe(1);
+    expect(result.parse_error).toContain("Permission denied indicates policy guardrail");
+    expect(result.parse_error).toContain("Delegate implementation to HEPHAESTUS");
+    expect(result.rejection_feedback_request).toBeNull();
+  });
+
+  test("adds GAIA-owned feedback guidance when response shows rejection behavior", async () => {
+    const result = await delegateGaia({
+      sessionId: "s6",
+      modelUsed: "openai/gpt-5.3-codex",
+      responseText: "User rejected this subagent step and requested different scope",
+      parse: (input) => input,
+    });
+
+    expect(result.status).toBe("parse_failed");
+    expect(result.attempt_count).toBe(1);
+    expect(result.parse_error).toContain("Rejection signal detected");
+    expect(result.parse_error).toContain("GAIA must ask the Operator for rejection feedback");
+    expect(result.parse_error).toContain("What should GAIA change after this rejection?");
+    expect(result.rejection_feedback_request).toEqual({
+      owner_agent: "gaia",
+      paused_agent: null,
+      question: "What should GAIA change after this rejection?",
+      reason: "Delegated response indicates rejection that requires GAIA-owned feedback handling.",
+    });
   });
 });

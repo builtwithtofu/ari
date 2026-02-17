@@ -35,6 +35,16 @@ export { processWorkUnit };
 export { runDelegateGaiaTool };
 export { ensureGaiaInit, getDefaultGaiaInitTemplate } from "./tools/gaia-init.js";
 export { applyGaiaRuntimeConfig, GAIA_SLASH_COMMAND_NAME } from "./config/opencode-runtime.js";
+export {
+  forkStream,
+  openStream,
+  setActiveStream,
+  updateStreamProgress,
+} from "./runtime/streams.js";
+export {
+  aggregateSessionRuntimeState,
+  refreshSessionRuntimeState,
+} from "./runtime/session-state.js";
 export type { ProcessWorkUnitArgs, ProcessWorkUnitResult };
 export type { DelegateGaiaToolArgs, DelegateGaiaToolArtifacts };
 export type { EnsureGaiaInitArgs, EnsureGaiaInitResult };

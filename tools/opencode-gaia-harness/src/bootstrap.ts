@@ -8,8 +8,8 @@ import { buildSandboxEnv, buildSandboxPaths } from "./paths.js";
 export function getDefaultSandboxConfigJsonc(): string {
   return `{
   "$schema": "https://opencode.ai/config.json",
-  "model": "opencode/kimi-k2.5-free",
-  "small_model": "opencode/gpt-5-nano",
+  "model": "opencode/glm-5-free",
+  "small_model": "opencode/glm-5-free",
   "permission": {
     "bash": "ask",
     "edit": "ask",
@@ -29,7 +29,7 @@ export function getSandboxConfigPackageJson(): string {
   "private": true,
   "type": "module",
   "dependencies": {
-    "@opencode-ai/plugin": "1.1.53"
+    "@opencode-ai/plugin": "1.2.6"
   }
 }
 `;

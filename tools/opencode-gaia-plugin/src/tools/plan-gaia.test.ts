@@ -1,10 +1,15 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, test } from "bun:test";
 
-import { getPlanGaiaPaths, readPlanGaia, writePlanGaia } from "./plan-gaia";
+import {
+  getPlanGaiaPaths,
+  prunePlanGaiaWorkUnits,
+  readPlanGaia,
+  writePlanGaia,
+} from "./plan-gaia";
 
 const tempDirs: string[] = [];
 
@@ -53,5 +58,71 @@ describe("plan-gaia io", () => {
 
     const direct = await readFile(join(repoRoot, ".gaia", "unit-2", "plan.md"), "utf8");
     expect(direct).toBe("# Plan\n- implement");
+  });
+
+  test("prunes older work units into .gaia/archive while preserving keep targets", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "gaia-plan-"));
+    tempDirs.push(repoRoot);
+
+    for (const workUnit of ["unit-a", "unit-b", "unit-c"] as const) {
+      await writePlanGaia({
+        repoRoot,
+        workUnit,
+        plan: `# Plan\n- ${workUnit}`,
+        log: `# Log\n- ${workUnit}`,
+        decisions: `# Decisions\n- ${workUnit}`,
+      });
+    }
+
+    const at = new Date("2026-02-17T12:00:00.000Z");
+    await utimes(join(repoRoot, ".gaia", "unit-a", "plan.md"), at, new Date(at.getTime() - 3_000));
+    await utimes(join(repoRoot, ".gaia", "unit-b", "plan.md"), at, new Date(at.getTime() - 2_000));
+    await utimes(join(repoRoot, ".gaia", "unit-c", "plan.md"), at, new Date(at.getTime() - 1_000));
+
+    const result = await prunePlanGaiaWorkUnits({
+      repoRoot,
+      keepLatest: 1,
+      keepWorkUnits: ["unit-a"],
+      now: at,
+    });
+
+    expect(result.scanned).toBe(3);
+    expect(result.kept).toEqual(["unit-c", "unit-a"]);
+    expect(result.archived).toEqual(["unit-b"]);
+
+    await expect(readFile(join(repoRoot, ".gaia", "unit-b", "plan.md"), "utf8")).rejects.toThrow();
+
+    const archived = await readdir(join(repoRoot, ".gaia", "archive", "work-units"));
+    expect(archived).toEqual([
+      "unit-b--2026-02-17T12-00-00-000Z",
+    ]);
+  });
+
+  test("returns empty result when .gaia is missing", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "gaia-plan-"));
+    tempDirs.push(repoRoot);
+
+    const result = await prunePlanGaiaWorkUnits({
+      repoRoot,
+      keepLatest: 2,
+    });
+
+    expect(result).toEqual({
+      scanned: 0,
+      kept: [],
+      archived: [],
+    });
+  });
+
+  test("rejects invalid keepLatest values", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "gaia-plan-"));
+    tempDirs.push(repoRoot);
+
+    await expect(
+      prunePlanGaiaWorkUnits({
+        repoRoot,
+        keepLatest: 0,
+      }),
+    ).rejects.toThrow("keepLatest must be a positive integer");
   });
 });
