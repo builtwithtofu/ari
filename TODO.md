@@ -58,9 +58,12 @@ This backlog groups active work by delivery horizon.
     - `gaia-start-plan` (intake + plan bootstrap)
     - `gaia-execute-plan` (gated execution entry)
     - `gaia-continue-work` (crash-safe resume)
+  - keep companion CLI query-first for `.gaia/` state navigation by users and GAIA agents
   - make DEMETER status docs the projection of runtime journals (not primary source of truth)
   - record one-time session policy for human-loop mode and risk posture
   - open decision to finalize: does low-risk execution require explicit human confirmation?
+  - lock protocol north star before deeper implementation:
+    - `.gaia/plans/gaia-hitl-coding-protocol-north-star.md`
   - commit boundary: one JJ commit for plan/gate primitives + tests
 - [ ] Wave 4: orchestration evaluation and regression corpus
   - add repeatable orchestration quality scenarios to harness

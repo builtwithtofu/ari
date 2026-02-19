@@ -12,6 +12,10 @@ deterministic planning flow first. Prompt guidance alone is not enough for consi
 The next checkpoint is to move planning lifecycle control into explicit command/tool-driven state
 transitions.
 
+Companion vision anchor:
+- See `.gaia/plans/gaia-hitl-coding-protocol-north-star.md` for the dual-surface protocol goal
+  (CLI + in-OpenCode control parity).
+
 ## Current Context
 
 - Runtime journal and reducers exist (`.gaia/runtime/{session}/{work_unit}.ndjson`, state reducers).
@@ -24,9 +28,9 @@ transitions.
 
 Add a deterministic plan lifecycle with explicit entry points:
 
-1. `gaia-start-plan`
-2. `gaia-execute-plan`
-3. `gaia-continue-work`
+1. `ari flow start`
+2. `ari flow execute`
+3. `ari flow continue`
 
 These commands should drive state transitions and user checkpoints, not rely on implied behavior.
 
@@ -45,7 +49,7 @@ Execution should only begin from `planning_ready` (or explicit continue paths th
 
 ## Deterministic Session Intake
 
-`gaia-start-plan` should capture once per session:
+`ari flow start` should capture once per session:
 
 - stream/intent name (or selected existing stream)
 - collaboration mode for this session (`supervised`, `checkpoint`, `agentic`)
@@ -57,7 +61,7 @@ Execution should only begin from `planning_ready` (or explicit continue paths th
 
 Open decision intentionally deferred for next checkpoint:
 
-- Should `gaia-execute-plan` require explicit confirmation for **all** risk levels,
+- Should `ari flow execute` require explicit confirmation for **all** risk levels,
   or only medium/high?
 
 ## Source-of-Truth Rule
@@ -68,9 +72,9 @@ Open decision intentionally deferred for next checkpoint:
 
 ## Immediate Acceptance Checks
 
-- Running `gaia-start-plan` always yields one of: `needs_input`, `ready`, or `resumed`.
-- Running `gaia-execute-plan` without ready state fails with clear reason and next action.
-- Running `gaia-continue-work` after interruption reconstructs session/stream state and resumes
+- Running `ari flow start` always yields one of: `needs_input`, `ready`, or `resumed`.
+- Running `ari flow execute` without ready state fails with clear reason and next action.
+- Running `ari flow continue` after interruption reconstructs session/stream state and resumes
   deterministically.
 - Manual TUI testing in sandbox can walk through start -> execute -> continue without ambiguous
   flow.

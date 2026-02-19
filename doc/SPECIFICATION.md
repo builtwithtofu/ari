@@ -46,6 +46,37 @@ GAIA's primary responsibility is intent translation:
 - New specialist additions should prioritize clear role contracts over lore references.
 - User-defined specialist names remain allowed as long as GAIA is the orchestrator.
 
+## Pantheon Profile Policy
+
+- Default operator profile is slim and should stay predictable.
+- Current slim runtime profile is `gaia`, `athena`, `hephaestus`, `demeter`.
+- Full roster behavior is opt-in and should not degrade slim defaults.
+- Expansion beyond slim profile remains bounded by active MVP scope.
+
+## Naming Contract
+
+- Project identity: `Project GAIA`.
+- Protocol identity: `Ariadne HITL Coding Protocol`.
+- CLI identity: `ari` (with `gaia` as a compatibility alias during transition).
+- Orchestrator identity in runtime remains `gaia`.
+
+This keeps operator language, runtime behavior, and documentation aligned during pre-alpha.
+
+## CLI Protocol Surface
+
+The companion CLI is the deterministic protocol surface for both humans and agents.
+
+GAIA flow semantics are defined in CLI/state contracts first, then executed through OpenCode runtime
+adapters.
+
+Canonical command families:
+
+- `ari flow start|iterate|execute|continue`
+- `ari query all|sessions|session|lifecycle|surfaces`
+- `ari status --json` for automation-safe status projection
+
+Legacy command families (`plan`, `work`) can remain as transition aliases while `flow` hardens.
+
 ## Core Roles
 
 ## GAIA (primary orchestrator)
@@ -129,6 +160,15 @@ Recoverability requirements:
 - maintain compact runtime state records suitable for low-context resume,
 - keep decision history machine-readable and human-reviewable.
 
+## Testing Contract
+
+Testing confidence prioritizes deterministic contracts over broad UI automation:
+
+- state-machine tests for flow and lifecycle transitions,
+- adapter contract tests for OpenCode integration boundaries,
+- replay fixtures for regression,
+- 3-6 smoke E2E scenarios for TUI/web verification.
+
 ## `gaia_init` Purpose
 
 `gaia_init` bootstraps project context so GAIA can translate intent accurately from early sessions.
@@ -173,3 +213,9 @@ MVP boundary and acceptance criteria are defined in:
 - GAIA operational state, execution plans, and run artifacts live in `.gaia/`.
 
 This split keeps product documentation stable while allowing orchestration internals to evolve.
+
+Reference docs:
+
+- `doc/INFORMATION_ARCHITECTURE.md`
+- `doc/COMPATIBILITY_POLICY.md`
+- `doc/HITL_Protocol_Maturity.md`

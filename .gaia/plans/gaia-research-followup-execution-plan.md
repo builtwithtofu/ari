@@ -87,6 +87,8 @@ Deliverables:
 
 Active design note:
 - See `.gaia/plans/gaia-deterministic-plan-lifecycle-next.md` for current checkpoint context.
+- See `.gaia/plans/gaia-hitl-coding-protocol-north-star.md` for operator-facing protocol north
+  star and control-surface goals.
 
 Acceptance checks:
 - Plan outputs are consistently structured.

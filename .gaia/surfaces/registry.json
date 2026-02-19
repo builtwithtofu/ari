@@ -1,0 +1,55 @@
+{
+  "version": "1.0",
+  "surfaces": [
+    {
+      "surface_id": "gaia.plugin.runtime.lifecycle",
+      "stability_lane": "experimental",
+      "since_version": "0.1.0",
+      "public_contract": "Deterministic plan/start/execute/continue flow is evolving during pre-alpha.",
+      "deprecates": null,
+      "removes_in": null,
+      "migration_path": null,
+      "notes": "Breaking changes acceptable while protocol converges."
+    },
+    {
+      "surface_id": "gaia.cli.ari.flow.contract",
+      "stability_lane": "experimental",
+      "since_version": "0.1.0",
+      "public_contract": "Ariadne flow commands (start|iterate|execute|continue) are deterministic but still pre-beta.",
+      "deprecates": "gaia.cli.commands.plan",
+      "removes_in": null,
+      "migration_path": "Prefer `ari flow *` over legacy `plan/work` helpers.",
+      "notes": "Binary aliases gaia/ariadne remain compatibility entry points."
+    },
+    {
+      "surface_id": "gaia.cli.query.envelope.v1",
+      "stability_lane": "experimental",
+      "since_version": "0.1.0",
+      "public_contract": "`ari query all --json` returns runtime, lifecycle, flow, and surfaces context envelope.",
+      "deprecates": null,
+      "removes_in": null,
+      "migration_path": null,
+      "notes": "Treat envelope fields as additive until beta schema lock."
+    },
+    {
+      "surface_id": "gaia.sandbox.scenario.contract",
+      "stability_lane": "stable",
+      "since_version": "0.1.0",
+      "public_contract": "Seeded sandbox scenarios remain available for manual verification workflows.",
+      "deprecates": null,
+      "removes_in": null,
+      "migration_path": null,
+      "notes": "Scenario internals may evolve without removing categories."
+    },
+    {
+      "surface_id": "gaia.legacy.placeholder.example",
+      "stability_lane": "deprecated",
+      "since_version": "0.0.9",
+      "public_contract": "Legacy example surface maintained for temporary compatibility.",
+      "deprecates": "gaia.legacy.placeholder.v0",
+      "removes_in": "0.2.0",
+      "migration_path": "Move usage to gaia.plugin.runtime.lifecycle before 0.2.0.",
+      "notes": "Illustrative deprecated entry for policy behavior."
+    }
+  ]
+}

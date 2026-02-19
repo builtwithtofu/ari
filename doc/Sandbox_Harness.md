@@ -110,6 +110,35 @@ Each manual workspace is seeded with scenario projects to exercise GAIA behavior
 - `refactor-sandbox/` (behavior-preserving refactor)
 - `bug-hunt/` (reproducer-first bug triage and fix)
 
+Companion CLI shortcuts (Cobra, experimental):
+
+- Installed binary command identity is `ari` (with `gaia` alias).
+
+```bash
+ari sandbox list
+ari sandbox tui "critical bug" --model opencode/glm-5-free
+ari sandbox web "critical bug" --model opencode/glm-5-free --port 4096
+```
+
+Companion CLI query shortcuts (`.gaia/` context for users and agents):
+
+```bash
+ari query all --json
+ari query sessions --json
+ari query session --session s1 --json
+ari query lifecycle --session s1 --json
+ari query surfaces --json
+```
+
+Companion CLI deterministic flow shortcuts:
+
+```bash
+ari flow start --session s1 --stream feature-x --scope "Add hello flag"
+ari flow iterate --session s1 --note "tighten acceptance checks"
+ari flow execute --session s1
+ari flow continue --session s1
+```
+
 - Start API server:
 
 ```bash
