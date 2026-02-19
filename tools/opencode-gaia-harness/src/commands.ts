@@ -5,7 +5,11 @@ import { resolve } from "node:path";
 import { bootstrapSandbox } from "./bootstrap.js";
 import type { ExecFn } from "./exec.js";
 import { fileExists } from "./fs.js";
-import { createManualWorkspace, type ManualTuiArgs } from "./manual-session.js";
+import {
+  createManualWorkspace,
+  type ManualTuiArgs,
+  type ManualWebArgs,
+} from "./manual-session.js";
 import { runOpenCode } from "./opencode.js";
 import { evaluateGaiaPromptQuality } from "./prompt-quality.js";
 import { runHarnessDoctor } from "./preflight.js";
@@ -144,6 +148,31 @@ export async function commandManualTui(context: CommandContext, args: ManualTuiA
     repoRoot: context.repoRoot,
     cwd: workspace.workspacePath,
     args: args.model ? ["--model", args.model] : [],
+    stdio: "inherit",
+    ...(args.model ? { envOverrides: { OPENCODE_GAIA_AGENT_MODEL: args.model } } : {}),
+    ...withExec(context.exec),
+  });
+}
+
+export async function commandManualWeb(context: CommandContext, args: ManualWebArgs): Promise<void> {
+  const workspace = await createManualWorkspace({
+    repoRoot: context.repoRoot,
+    ...(args.label ? { label: args.label } : {}),
+  });
+  const port = args.port ?? getPort();
+
+  console.log(`manual-web workspace: ${workspace.workspacePath}`);
+  console.log(`manual-web port: ${port}`);
+  if (args.model) {
+    console.log(`manual-web model override: ${args.model}`);
+  }
+  console.log(`manual-web url: http://127.0.0.1:${port}`);
+  console.log("Launching OpenCode Serve in sandboxed mode...");
+
+  await runOpenCode({
+    repoRoot: context.repoRoot,
+    cwd: workspace.workspacePath,
+    args: ["serve", "--hostname", "127.0.0.1", "--port", port],
     stdio: "inherit",
     ...(args.model ? { envOverrides: { OPENCODE_GAIA_AGENT_MODEL: args.model } } : {}),
     ...withExec(context.exec),

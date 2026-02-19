@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, test } from "bun:test";
 
-import { createManualWorkspace, parseManualTuiArgs } from "./manual-session";
+import { createManualWorkspace, parseManualTuiArgs, parseManualWebArgs } from "./manual-session";
 
 const tempDirs: string[] = [];
 
@@ -36,6 +36,20 @@ describe("createManualWorkspace", () => {
     expect(readme).toContain("manual TUI testing workspace");
     expect(readme).toContain("feature-x");
     expect(readme).toContain("urgent-bug");
+    expect(readme).toContain("go-hello-planning/");
+    expect(readme).toContain("bug-hunt/");
+
+    const helloGoMain = await readFile(
+      join(created.workspacePath, "go-hello-planning", "cmd", "hello", "main.go"),
+      "utf8",
+    );
+    expect(helloGoMain).toContain("Hello, world!");
+
+    const bugReport = await readFile(
+      join(created.workspacePath, "bug-hunt", "bug-report.md"),
+      "utf8",
+    );
+    expect(bugReport).toContain("Expected total: 1350");
   });
 
   test("falls back to sandbox-work when label is empty", async () => {
@@ -74,6 +88,43 @@ describe("parseManualTuiArgs", () => {
   test("throws when --model has no value", () => {
     expect(() => parseManualTuiArgs(["critical", "--model"])).toThrow(
       "manual-tui requires a model value after --model",
+    );
+  });
+
+  test("rejects --port for manual-tui", () => {
+    expect(() => parseManualTuiArgs(["critical", "--port", "4096"])).toThrow(
+      "manual-tui does not support --port",
+    );
+  });
+});
+
+describe("parseManualWebArgs", () => {
+  test("parses label, model, and port", () => {
+    const parsed = parseManualWebArgs([
+      "critical",
+      "bug",
+      "--model",
+      "opencode/glm-5-free",
+      "--port",
+      "4199",
+    ]);
+
+    expect(parsed).toEqual({
+      label: "critical bug",
+      model: "opencode/glm-5-free",
+      port: "4199",
+    });
+  });
+
+  test("throws when --port is missing value", () => {
+    expect(() => parseManualWebArgs(["--port"])).toThrow(
+      "manual-web requires a port value after --port",
+    );
+  });
+
+  test("throws on invalid port values", () => {
+    expect(() => parseManualWebArgs(["--port", "abc"])).toThrow(
+      "manual-web received invalid port: abc",
     );
   });
 });

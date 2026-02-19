@@ -1,6 +1,8 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { seedSandboxScenarios } from "./sandbox-scenarios.js";
+
 export interface CreateManualWorkspaceArgs {
   repoRoot: string;
   label?: string;
@@ -10,6 +12,12 @@ export interface CreateManualWorkspaceArgs {
 export interface ManualTuiArgs {
   label?: string;
   model?: string;
+}
+
+export interface ManualWebArgs {
+  label?: string;
+  model?: string;
+  port?: string;
 }
 
 export interface ManualWorkspace {
@@ -50,6 +58,18 @@ function workspaceReadme(workspaceId: string): string {
     "- feature-x",
     "- urgent-bug",
     "",
+    "Sandbox scenarios seeded in this workspace:",
+    "- go-hello-planning/",
+    "- planning-challenge/",
+    "- refactor-sandbox/",
+    "- bug-hunt/",
+    "",
+    "Recommended sandbox test flow:",
+    "1. Start with go-hello-planning for planning motions.",
+    "2. Use planning-challenge to test question-first planning depth.",
+    "3. Use refactor-sandbox for no-behavior-change refactor passes.",
+    "4. Use bug-hunt for reproducer-first bug triage and fixes.",
+    "",
   ].join("\n");
 }
 
@@ -61,6 +81,7 @@ export async function createManualWorkspace(args: CreateManualWorkspaceArgs): Pr
 
   await mkdir(workspacePath, { recursive: true });
   await writeFile(join(workspacePath, "README.md"), workspaceReadme(workspaceId), "utf8");
+  await seedSandboxScenarios(workspacePath);
 
   return {
     workspaceId,
@@ -69,8 +90,31 @@ export async function createManualWorkspace(args: CreateManualWorkspaceArgs): Pr
 }
 
 export function parseManualTuiArgs(args: string[]): ManualTuiArgs {
+  return parseManualSessionArgs(args, {
+    commandName: "manual-tui",
+    allowPort: false,
+  });
+}
+
+export function parseManualWebArgs(args: string[]): ManualWebArgs {
+  return parseManualSessionArgs(args, {
+    commandName: "manual-web",
+    allowPort: true,
+  });
+}
+
+interface ParseManualSessionOptions {
+  commandName: string;
+  allowPort: boolean;
+}
+
+function parseManualSessionArgs(
+  args: string[],
+  options: ParseManualSessionOptions,
+): ManualWebArgs {
   const labelParts: string[] = [];
   let model: string | undefined;
+  let port: string | undefined;
 
   for (let index = 0; index < args.length; index += 1) {
     const token = args[index];
@@ -81,10 +125,30 @@ export function parseManualTuiArgs(args: string[]): ManualTuiArgs {
     if (token === "--model") {
       const value = args[index + 1];
       if (!value || value.startsWith("--")) {
-        throw new Error("manual-tui requires a model value after --model");
+        throw new Error(`${options.commandName} requires a model value after --model`);
       }
 
       model = value;
+      index += 1;
+      continue;
+    }
+
+    if (token === "--port") {
+      if (!options.allowPort) {
+        throw new Error(`${options.commandName} does not support --port`);
+      }
+
+      const value = args[index + 1];
+      if (!value || value.startsWith("--")) {
+        throw new Error(`${options.commandName} requires a port value after --port`);
+      }
+
+      const parsed = Number.parseInt(value, 10);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        throw new Error(`${options.commandName} received invalid port: ${value}`);
+      }
+
+      port = String(parsed);
       index += 1;
       continue;
     }
@@ -96,5 +160,6 @@ export function parseManualTuiArgs(args: string[]): ManualTuiArgs {
   return {
     ...(label.length > 0 ? { label } : {}),
     ...(model ? { model } : {}),
+    ...(port ? { port } : {}),
   };
 }

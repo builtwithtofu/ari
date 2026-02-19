@@ -6,6 +6,7 @@ import {
   commandLeanSubagentsSmoke,
   commandListFreeModels,
   commandLockedSmoke,
+  commandManualWeb,
   commandManualTui,
   commandOpenCode,
   commandPromptQualitySmoke,
@@ -15,7 +16,7 @@ import {
   commandSuite,
   suiteModesHelp,
 } from "./commands.js";
-import { parseManualTuiArgs } from "./manual-session.js";
+import { parseManualTuiArgs, parseManualWebArgs } from "./manual-session.js";
 import { resolveRepoRoot } from "./paths.js";
 
 function printHelp(): void {
@@ -28,6 +29,7 @@ function printHelp(): void {
   console.log("  doctor");
   console.log("  quickstart");
   console.log("  manual-tui [label] [--model provider/model]");
+  console.log("  manual-web [label] [--model provider/model] [--port 4096]");
   console.log("  list-free-models");
   console.log("  smoke [prompt]");
   console.log("  bug [bug-report-file]");
@@ -58,6 +60,10 @@ async function main(): Promise<void> {
       return;
     case "manual-tui": {
       await commandManualTui(context, parseManualTuiArgs(args));
+      return;
+    }
+    case "manual-web": {
+      await commandManualWeb(context, parseManualWebArgs(args));
       return;
     }
     case "list-free-models":

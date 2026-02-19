@@ -94,6 +94,22 @@ bun run --cwd tools/opencode-gaia-harness cli manual-tui "critical bug" --model 
 bun run --cwd tools/opencode-gaia-harness cli serve-web
 ```
 
+- Launch OpenCode web UI in a fresh temporary manual-testing workspace:
+
+```bash
+bun run --cwd tools/opencode-gaia-harness cli manual-web "critical bug" --model opencode/glm-5-free --port 4096
+```
+
+This mirrors `manual-tui` behavior, but serves web from a new workspace under
+`.sandbox/workspaces/<timestamp>-critical-bug/`.
+
+Each manual workspace is seeded with scenario projects to exercise GAIA behavior:
+
+- `go-hello-planning/` (simple plan-first flow)
+- `planning-challenge/` (question-first planning depth)
+- `refactor-sandbox/` (behavior-preserving refactor)
+- `bug-hunt/` (reproducer-first bug triage and fix)
+
 - Start API server:
 
 ```bash

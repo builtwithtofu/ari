@@ -44,6 +44,12 @@ Start an isolated OpenCode web server:
 bun run --cwd tools/opencode-gaia-harness cli serve-web
 ```
 
+Launch OpenCode Web in a fresh temporary sandbox workspace (recommended manual web flow):
+
+```bash
+bun run --cwd tools/opencode-gaia-harness cli manual-web "critical bug" --model opencode/glm-5-free --port 4096
+```
+
 Run bug-repro harness (reproducer-first flow):
 
 ```bash
@@ -64,6 +70,12 @@ bun run --cwd tools/opencode-gaia-harness cli manual-tui "critical bug"
 
 This creates `.sandbox/workspaces/<timestamp>-critical-bug/` and starts TUI in that workspace
 with the GAIA plugin loaded from sandbox config.
+
+Each manual workspace is seeded with scenario projects:
+- `go-hello-planning/`
+- `planning-challenge/`
+- `refactor-sandbox/`
+- `bug-hunt/`
 
 To force a specific model (useful when bringing your own provider keys):
 
