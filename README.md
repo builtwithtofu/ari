@@ -1,181 +1,50 @@
-# Project GAIA
+# Ari
 
-Project GAIA is an OpenCode orchestration plugin focused on practical human-in-the-loop development.
+> Every project is a world. Ari helps you navigate it.
 
-It adds an optional `gaia` mode that coordinates specialist agents while keeping native OpenCode
-`plan` and `build` behavior unchanged unless you opt in.
+---
 
-This repository is pre-alpha. Interfaces and behavior can change quickly while the core model hardens.
+Ideas are hard to hold. A codebase grows and the original intent fades. A new project starts and the gap between what you imagine and what you can build feels vast. A team expands and the shared understanding that once lived in one person's head becomes diffuse, fragile, implicit.
 
-## Why this exists
+Ari exists because ideas deserve better than that.
 
-Most agent systems break down at handoffs, not code generation. GAIA focuses on that gap:
+Current repository status: Ari CLI is in an ultra-reset baseline. The `ari` command is intentionally
+minimal while the v0 loop contract is defined.
 
-- turn user intent into small, explicit work units,
-- route work to specialists with clear contracts,
-- keep decisions, rationale, and outcomes recoverable under `.gaia/`.
+At its core, Ari is a runtime for navigating the world of your ideas. Not just a coding tool. Not just an agent harness. A system for making the invisible visible - the architecture behind your code, the decisions behind your architecture, the intent behind your decisions.
 
-## Quickstart (new contributors)
+Every project you touch with Ari becomes a **world**. A living, structured representation of what exists, what was decided, what is planned, and what remains unknown. The world grows as you work. It persists between sessions. It can be handed to a new collaborator, picked up after months away, or interrogated when you've forgotten why something was built the way it was.
 
-From a fresh clone, run this once:
+**Ari** is your guide through that world.
 
-```bash
-nix develop
-bun install --cwd tools/opencode-gaia-plugin
-bun install --cwd tools/opencode-gaia-harness
-bun run --cwd tools/opencode-gaia-harness cli quickstart
-```
+On a greenfield project, Ari helps you build the world from the first question - exploring the shape of the idea before a single line is written, surfacing gaps, establishing the map. On an existing codebase, Ari discovers the world that's already there - reading the terrain, learning the conventions, making sense of what accumulated over time.
 
-`quickstart` runs a full onboarding confidence flow:
+In both cases, Ari asks before she acts. She plans before she builds. She surfaces what she doesn't know rather than guessing. The result is a guide you can actually trust, and a world you can actually navigate.
 
-- preflight checks (`doctor`) for template + CLI readiness,
-- sandbox bootstrap,
-- lean-subagent wiring smoke,
-- locked-mode mutation guard smoke.
+---
 
-If it passes, you have a local sandboxed setup ready for development and experimentation.
-
-## Common workflows
-
-Start an isolated OpenCode web server:
+## How it works
 
 ```bash
-bun run --cwd tools/opencode-gaia-harness cli serve-web
+ari init          # start a new world, or discover an existing one
+ari plan          # explore the idea space before committing to a path
+ari build         # execute against a validated plan
+ari review        # understand what changed and why
+ari ask           # interrogate the world - what exists, what was decided
 ```
 
-Launch OpenCode Web in a fresh temporary sandbox workspace (recommended manual web flow):
+Under the hood, Ari is a headless runtime and protocol. Ari is the presence you interact with. The world is the persistent artifact she builds and maintains for your project.
 
-```bash
-bun run --cwd tools/opencode-gaia-harness cli manual-web "critical bug" --model opencode/glm-5-free --port 4096
-```
+The CLI is purely responsible for the agent loop, human-in-the-loop protocol, and structured output. Everything else - visualization, rendering, UI - is a client concern. Ari works headlessly in CI, in Docker, over SSH, piped between processes, driven by other agents. It doesn't care how you consume it.
 
-Run bug-repro harness (reproducer-first flow):
+---
 
-```bash
-bun run --cwd tools/opencode-gaia-harness cli bug doc/bug-report.example.md
-```
+## The north star
 
-Run all harness stages in one command:
+Most tools optimize for *output* - more code, faster, with less friction.
 
-```bash
-bun run --cwd tools/opencode-gaia-harness cli suite full doc/bug-report.example.md
-```
+Ari optimizes for *understanding*.
 
-Launch a temporary sandbox workspace in OpenCode TUI (best manual feel test):
+The bet is that the bottleneck in building things isn't writing code. It's navigating the world of ideas well enough to write the right code, in the right place, for the right reasons. Ari exists to close that gap - not by automating away the thinking, but by giving you a guide who can hold the map while you explore the terrain.
 
-```bash
-bun run --cwd tools/opencode-gaia-harness cli manual-tui "critical bug"
-```
-
-This creates `.sandbox/workspaces/<timestamp>-critical-bug/` and starts TUI in that workspace
-with the GAIA plugin loaded from sandbox config.
-
-Each manual workspace is seeded with scenario projects:
-- `go-hello-planning/`
-- `planning-challenge/`
-- `research-ops-planning/`
-- `refactor-sandbox/`
-- `bug-hunt/`
-
-To force a specific model (useful when bringing your own provider keys):
-
-```bash
-bun run --cwd tools/opencode-gaia-harness cli manual-tui "critical bug" --model opencode/glm-5-free
-```
-
-This sets both the top-level OpenCode session model and GAIA lean subagent model override
-(`OPENCODE_GAIA_AGENT_MODEL`) for that manual run.
-
-Run GAIA prompt guardrail checks only:
-
-```bash
-bun run --cwd tools/opencode-gaia-harness cli prompt-quality-smoke
-```
-
-## Ariadne companion CLI (experimental)
-
-Ariadne is the user-facing command surface: `ari`.
-
-Project naming split:
-
-- project name stays `Project GAIA`,
-- protocol/CLI command surface is `ari` (Ariadne), with `gaia` retained as a compatibility alias.
-
-Primary role right now:
-
-- query and navigate `.gaia/` state for both human operators and GAIA agents,
-- run deterministic flow transitions that can be resumed after interruption.
-
-Canonical command contracts:
-
-- `ari flow start|iterate|execute|continue`
-- `ari query all|sessions|session|lifecycle|surfaces`
-
-Query-first examples:
-
-```bash
-ari query all --json
-ari query sessions --json
-ari query session --session s1 --json
-ari query lifecycle --session s1 --json
-ari query surfaces --json
-```
-
-Deterministic flow examples:
-
-```bash
-ari status
-ari flow start --session s1 --stream feature-x --scope "Add hello flag"
-ari flow iterate --session s1 --note "tighten acceptance checks"
-ari flow execute --session s1
-ari flow continue --session s1
-```
-
-Legacy lifecycle helpers remain available during transition:
-
-```bash
-ari plan start --session s1 --stream feature-x --scope "Add hello flag"
-ari plan execute --session s1
-ari work continue --session s1
-```
-
-Sandbox navigation shortcuts:
-
-```bash
-ari sandbox list
-ari sandbox tui "critical bug" --model opencode/glm-5-free
-ari sandbox web "critical bug" --model opencode/glm-5-free --port 4096
-```
-
-## How GAIA mode behaves
-
-- GAIA is opt-in.
-- Native OpenCode flows remain the default when GAIA is not selected.
-- Slim default mode uses `gaia` plus hidden specialists (`athena`, `hephaestus`, `demeter`).
-- Full pantheon remains optional and configurable; default UX stays slim.
-- Work-unit artifacts are written under `.gaia/<work-unit>/` and older work units are archived under
-  `.gaia/archive/work-units/`.
-
-## Repository map
-
-- `tools/opencode-gaia-plugin/` - portable GAIA plugin core
-- `tools/opencode-gaia-harness/` - sandbox CLI and confidence flows
-- `doc/` - project-facing docs and specifications
-- `.gaia/` - runtime artifacts and operational plans
-
-## Development checks
-
-```bash
-bun run --cwd tools/opencode-gaia-plugin check
-bun run --cwd tools/opencode-gaia-harness check
-```
-
-## Learn more
-
-- Product direction and behavior model: `doc/SPECIFICATION.md`
-- Information architecture policy: `doc/INFORMATION_ARCHITECTURE.md`
-- Compatibility and migration policy: `doc/COMPATIBILITY_POLICY.md`
-- Planning-first maturity policy: `doc/HITL_Protocol_Maturity.md`
-- Sandbox setup and full command reference: `doc/Sandbox_Harness.md`
-- Active MVP boundary: `.gaia/plans/project-gaia-plugin-mvp-cut.md`
-- Runtime planning context requirements: `.gaia/runtime/<session>/active-plan.json`
+A world well understood is a world well built.

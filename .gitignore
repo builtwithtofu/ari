@@ -1,7 +1,13 @@
 .direnv/
 result
+.cache/
 node_modules/
-bun.lock
-bun.lockb
-dist/
 .sandbox/
+.sisyphus/
+
+# Build artifacts
+*.exe
+ari-cli
+
+# JJ working copy state (agent-managed)
+.wip/

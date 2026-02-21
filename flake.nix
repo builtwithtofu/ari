@@ -1,5 +1,5 @@
 {
-  description = "Project GAIA development shell";
+  description = "Ari development shell";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -16,13 +16,13 @@
       {
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
-            bun
-            nodejs_22
+            go
+            gopls
           ];
 
           shellHook = ''
-            echo "Project GAIA dev shell (pre-alpha)"
-            echo "Run: bun install && bun run check"
+            echo "Ari dev shell (pre-alpha)"
+            echo "Run: go test ./tools/ari-cli/..."
           '';
         };
       }
