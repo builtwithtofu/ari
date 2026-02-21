@@ -21,7 +21,6 @@ describe("buildSuiteSteps", () => {
       "list-free-models",
       "smoke",
       "lean-subagents-smoke",
-      "gaia-init-smoke",
       "prompt-quality-smoke",
       "locked-smoke",
       "bug",
@@ -32,7 +31,6 @@ describe("buildSuiteSteps", () => {
     expect(buildSuiteSteps("plugin")).toEqual([
       "bootstrap",
       "lean-subagents-smoke",
-      "gaia-init-smoke",
       "prompt-quality-smoke",
     ]);
   });
@@ -48,7 +46,6 @@ describe("buildSuiteSteps", () => {
       "doctor",
       "bootstrap",
       "lean-subagents-smoke",
-      "gaia-init-smoke",
       "locked-smoke",
     ]);
   });

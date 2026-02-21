@@ -9,7 +9,6 @@ import {
   PLUGIN_NAME,
   PROJECT_PHASE,
   runDelegateGaiaTool,
-  runGaiaInit,
   runGaiaWorkUnit,
 } from "./index";
 
@@ -81,21 +80,6 @@ describe("plugin scaffold", () => {
 
       expect(result.delegation.status).toBe("ok");
       expect(result.delegation.parsed_json?.agent).toBe("gaia");
-    } finally {
-      await rm(repoRoot, { recursive: true, force: true });
-    }
-  });
-
-  test("exposes gaia-init bootstrap from entrypoint", async () => {
-    const repoRoot = await mkdtemp(join(tmpdir(), "gaia-entry-"));
-
-    try {
-      const first = await runGaiaInit({ repoRoot });
-      const second = await runGaiaInit({ repoRoot });
-
-      expect(first.status).toBe("created");
-      expect(second.status).toBe("unchanged");
-      expect(second.path).toBe(join(repoRoot, ".gaia", "gaia-init.md"));
     } finally {
       await rm(repoRoot, { recursive: true, force: true });
     }

@@ -8,11 +8,6 @@ import {
   type DelegateGaiaToolArgs,
   type DelegateGaiaToolArtifacts,
 } from "./runtime/delegate-gaia-tool.js";
-import {
-  ensureGaiaInit,
-  type EnsureGaiaInitArgs,
-  type EnsureGaiaInitResult,
-} from "./tools/gaia-init.js";
 
 export const PLUGIN_NAME = "opencode-gaia-plugin";
 export const PROJECT_PHASE = "pre-alpha";
@@ -27,14 +22,9 @@ export async function runGaiaWorkUnit<TParsed>(
   return processWorkUnit(args);
 }
 
-export async function runGaiaInit(args: EnsureGaiaInitArgs): Promise<EnsureGaiaInitResult> {
-  return ensureGaiaInit(args);
-}
-
 export { processWorkUnit };
 export { runDelegateGaiaTool };
-export { ensureGaiaInit, getDefaultGaiaInitTemplate } from "./tools/gaia-init.js";
-export { applyGaiaRuntimeConfig, GAIA_SLASH_COMMAND_NAME } from "./config/opencode-runtime.js";
+export { applyGaiaRuntimeConfig } from "./config/opencode-runtime.js";
 export {
   forkStream,
   openStream,
@@ -47,4 +37,3 @@ export {
 } from "./runtime/session-state.js";
 export type { ProcessWorkUnitArgs, ProcessWorkUnitResult };
 export type { DelegateGaiaToolArgs, DelegateGaiaToolArtifacts };
-export type { EnsureGaiaInitArgs, EnsureGaiaInitResult };

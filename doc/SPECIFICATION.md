@@ -169,28 +169,28 @@ Testing confidence prioritizes deterministic contracts over broad UI automation:
 - replay fixtures for regression,
 - 3-6 smoke E2E scenarios for TUI/web verification.
 
-## `gaia_init` Purpose
+## Runtime Planning Context Purpose
 
-`gaia_init` bootstraps project context so GAIA can translate intent accurately from early sessions.
+Runtime planning context captures where GAIA currently is so work can resume cleanly across sessions.
 
 It should capture:
 
-- mission and product context,
+- current objective and active work unit,
 - constraints and non-goals,
 - risk tolerance and checkpoint expectations,
 - communication contracts between orchestrator and specialists,
 - quality expectations and evidence format,
-- project notes and known sharp edges.
+- decision state and next command for deterministic continuation.
 
-`gaia_init` does not replace `AGENTS.md`.
+Runtime planning context does not replace `AGENTS.md`.
 
 ## Current Phase and Plan
 
 Current build focus:
 
 1. Strong base GAIA behavior.
-2. Strong `gaia_init` memory surface.
-3. Reliable visibility and command wiring (`gaia` agent, `/gaia-init`).
+2. Strong runtime context surface under `.gaia/runtime/<session>/`.
+3. Reliable visibility and command wiring (`gaia` agent, Ari flow/query surfaces).
 4. Recoverable human-in-the-loop behavior before wider pantheon expansion.
 
 Pantheon note:
@@ -203,9 +203,7 @@ MVP boundary and acceptance criteria are defined in:
 
 - `.gaia/plans/project-gaia-plugin-mvp-cut.md`
 
-`gaia_init` section-level requirements are defined in:
-
-- `.gaia/plans/gaia-init-spec.md`
+Runtime context requirements are defined in runtime/session-state and Ari flow/query contracts.
 
 ## Documentation Ownership
 

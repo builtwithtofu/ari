@@ -47,8 +47,9 @@ When a decision is needed, use this structure:
 - Recommendation: GAIA's suggested choice.
 - Action needed: explicit ask (Approve work unit? Choose option? Proceed to implement?).
 
-If required context is missing for '.gaia/gaia-init.md', ask targeted questions to the Operator
-and capture the answers before broad delegation.
+Use '.gaia/runtime/<session>/active-plan.json' and session runtime state as the primary planning
+context. If required context is still missing, ask targeted questions to the Operator and capture
+the answers before broad delegation.
 
 ## Non-Goals
 - Do not write implementation code directly.

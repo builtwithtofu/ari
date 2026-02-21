@@ -34,6 +34,11 @@ func TestLoadLatestRuntimeSummary(t *testing.T) {
 		t.Fatalf("WriteFile new state failed: %v", err)
 	}
 
+	newActivePlan := []byte(`{"session_id":"s-new","work_unit":"unit-42","stream_id":"feature-b","risk_level":"low","status":"ok"}`)
+	if err := os.WriteFile(filepath.Join(newSessionDir, "active-plan.json"), newActivePlan, 0o644); err != nil {
+		t.Fatalf("WriteFile active plan failed: %v", err)
+	}
+
 	oldTime := time.Date(2026, time.February, 18, 11, 0, 0, 0, time.UTC)
 	newTime := time.Date(2026, time.February, 18, 12, 0, 0, 0, time.UTC)
 	if err := os.Chtimes(oldStatePath, oldTime, oldTime); err != nil {
@@ -56,5 +61,13 @@ func TestLoadLatestRuntimeSummary(t *testing.T) {
 	}
 	if summary.ActiveCount != 1 || summary.CompletedCount != 1 || summary.BlockedCount != 1 {
 		t.Fatalf("unexpected counts: active=%d completed=%d blocked=%d", summary.ActiveCount, summary.CompletedCount, summary.BlockedCount)
+	}
+
+	if summary.ActivePlan == nil {
+		t.Fatalf("expected active plan summary, got nil")
+	}
+
+	if summary.ActivePlan.WorkUnit != "unit-42" {
+		t.Fatalf("expected active work unit unit-42, got %s", summary.ActivePlan.WorkUnit)
 	}
 }

@@ -32,6 +32,15 @@ describe("processWorkUnit", () => {
       plan: "# Plan\n- next",
       log: "# Log\n- running",
       decisions: "# Decisions\n- keep scope small",
+      planArtifact: {
+        objective: "Define first work unit for GAIA planning loop",
+        constraints: ["Keep changes small"],
+        done_when: ["Runtime state is refreshed"],
+        risk_level: "low",
+        open_questions: ["Should low risk auto-approve?"],
+        verification_steps: ["bun run typecheck", "bun test"],
+        non_goals: ["Do not change native plan/build behavior"],
+      },
     });
 
     expect(result.delegation.status).toBe("ok");
@@ -39,7 +48,9 @@ describe("processWorkUnit", () => {
     expect(result.collection.success_count).toBe(1);
 
     const planFile = await readFile(join(repoRoot, ".gaia", "unit-4", "plan.md"), "utf8");
-    expect(planFile).toBe("# Plan\n- next");
+    expect(planFile).toContain("# Work Unit Plan Artifact");
+    expect(planFile).toContain("## Objective");
+    expect(planFile).toContain("Define first work unit for GAIA planning loop");
 
     const events = await readRuntimeJournalEvents({
       repoRoot,
@@ -69,6 +80,48 @@ describe("processWorkUnit", () => {
     );
     expect(statusDoc).toContain("Session Status: s1");
     expect(statusDoc).toContain("unit-4");
+
+    const activePlan = JSON.parse(
+      await readFile(join(repoRoot, ".gaia", "runtime", "s1", "active-plan.json"), "utf8"),
+    ) as {
+      session_id: string;
+      work_unit: string;
+      stream_id: string;
+      risk_level: string;
+    };
+
+    expect(activePlan.session_id).toBe("s1");
+    expect(activePlan.work_unit).toBe("unit-4");
+    expect(activePlan.stream_id).toBe("default");
+    expect(activePlan.risk_level).toBe("low");
+  });
+
+  test("derives risk gate from plan artifact when riskLevel is omitted", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "gaia-runtime-"));
+    tempDirs.push(repoRoot);
+
+    await expect(
+      processWorkUnit({
+        repoRoot,
+        workUnit: "unit-gate-derived-1",
+        sessionId: "s-gate-derived-1",
+        modelUsed: "openai/gpt-5.3-codex",
+        responseText: '{"contract_version":"1.0","agent":"gaia"}',
+        parse: (input) => input,
+        plan: "# Plan\n- derived gate",
+        log: "# Log\n- derived gate",
+        decisions: "# Decisions\n- derived gate",
+        planArtifact: {
+          objective: "Plan a medium-risk release checklist",
+          constraints: ["Keep operator checkpoint explicit"],
+          done_when: ["Execution gate blocks until approval"],
+          risk_level: "medium",
+          open_questions: ["Who approves production rollout?"],
+          verification_steps: ["bun test"],
+          non_goals: ["Do not implement deployment code"],
+        },
+      }),
+    ).rejects.toThrow("Plan gate requires operator approval for medium-risk work");
   });
 
   test("blocks medium-risk work without operator approval", async () => {

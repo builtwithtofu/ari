@@ -24,7 +24,7 @@ This MVP is aligned to one core product direction:
 
 Phase note:
 
-- This phase prioritizes a strong base GAIA and `gaia_init` memory model.
+- This phase prioritizes a strong base GAIA and deterministic runtime planning context model.
 - Subsystem expansion is intentionally deferred until this base behavior is reliable.
 
 ---
@@ -86,7 +86,7 @@ Decision hand-offs to the human should use a stable structure:
 - `Action needed`
 
 ## 6) Commands (minimum viable)
-- `/gaia-init` bootstrap command.
+- Runtime-first planning commands via `ari flow start|iterate|execute|continue`.
 - Minimal mode controls needed to exercise both collaboration styles.
 - `/locked` behavior is required for safety checks.
 
@@ -117,7 +117,7 @@ These close open questions for P1 execution:
 2. **Context-aid nudging**: low-noise nudges only when directly relevant to current task.
 3. **GAIA model selection**: default to configured GAIA model; respect explicit user model change.
 4. **Plan approval**: require approval for medium/large tasks; auto-proceed for trivial tasks.
-5. **`/gaia-init` sourcing**: bootstrap from template; learning promotions are explicit, never silent.
+5. **Runtime context sourcing**: read planning context from deterministic runtime artifacts.
 6. **Default collaboration profile**: `standard` for MVP predictability.
 7. **A/B implementation strategy**: defer to post-MVP.
 8. **Test runner**: use Bun's built-in test runner for MVP (no Vitest in P1).
@@ -151,7 +151,7 @@ Exit: end-to-end delegation and `.gaia/` write flow runs in one session.
 
 ## Wave 4 - Integration
 - Wire plugin entrypoint and host adapter.
-- Add `/gaia-init` and locked-mode enforcement needed for MVP checks.
+- Add locked-mode enforcement and runtime context visibility needed for MVP checks.
 - Ensure native `plan`/`build` behavior does not regress.
 
 Exit: GAIA works as optional mode, native modes remain intact.
@@ -172,7 +172,7 @@ Exit: all MVP acceptance gates pass.
 - GAIA appears as optional primary mode.
 - `delegate_gaia` returns `session_id`, `model_used`, `parsed_json`, `parse_error`, `status`.
 - `plan_gaia` creates and reads `.gaia/{work-unit}/plan.md`, `log.md`, `decisions.md`.
-- `/gaia-init` creates or refreshes `.gaia/gaia-init.md` safely.
+- Runtime context is persisted under `.gaia/runtime/<session>/` and queryable from Ari surfaces.
 
 ## Gate B - Safety and behavior
 - Invalid JSON triggers one retry and then safe fallback metadata.
@@ -183,7 +183,7 @@ Exit: all MVP acceptance gates pass.
 ## Gate C - Compatibility and portability
 - Native `plan` and `build` still work without GAIA orchestration side effects.
 - Core plugin runs when copied outside this dotfiles repository.
-- Optional `.gaia/gaia-init.md` remains non-fatal when absent.
+- Runtime context artifacts remain non-fatal when absent before first session start.
 
 ---
 

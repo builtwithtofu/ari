@@ -45,6 +45,11 @@ func newStatusCmd(app *App) *cobra.Command {
 			fmt.Fprintf(cmd.OutOrStdout(), "Active work units: %d\n", runtimeSummary.ActiveCount)
 			fmt.Fprintf(cmd.OutOrStdout(), "Completed work units: %d\n", runtimeSummary.CompletedCount)
 			fmt.Fprintf(cmd.OutOrStdout(), "Blocked work units: %d\n", runtimeSummary.BlockedCount)
+			if runtimeSummary.ActivePlan != nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "Current work unit: %s\n", runtimeSummary.ActivePlan.WorkUnit)
+				fmt.Fprintf(cmd.OutOrStdout(), "Current risk: %s\n", runtimeSummary.ActivePlan.RiskLevel)
+				fmt.Fprintf(cmd.OutOrStdout(), "Current status: %s\n", runtimeSummary.ActivePlan.Status)
+			}
 
 			if lifecycleErr == nil {
 				fmt.Fprintf(cmd.OutOrStdout(), "Lifecycle state: %s\n", lifecycleSummary.State)

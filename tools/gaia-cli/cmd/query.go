@@ -52,6 +52,7 @@ func newQueryAllCmd(app *App) *cobra.Command {
 
 			lifecycleState, _, lifecycleErr := querypkg.ReadLifecycleState(app.RepoRoot, resolvedSessionID)
 			flowState, _, flowErr := querypkg.ReadFlowState(app.RepoRoot, resolvedSessionID)
+			activePlanState, _, activePlanErr := querypkg.ReadActivePlanState(app.RepoRoot, resolvedSessionID)
 			surfaceRegistry, surfaceErr := querypkg.ReadSurfaceRegistry(app.RepoRoot)
 
 			payload := map[string]any{
@@ -70,6 +71,12 @@ func newQueryAllCmd(app *App) *cobra.Command {
 				payload["flow"] = flowState
 			} else {
 				payload["flow_error"] = flowErr.Error()
+			}
+
+			if activePlanErr == nil {
+				payload["active_plan"] = activePlanState
+			} else {
+				payload["active_plan_error"] = activePlanErr.Error()
 			}
 
 			if surfaceErr == nil {
@@ -154,11 +161,19 @@ func newQuerySessionCmd(app *App) *cobra.Command {
 				return err
 			}
 
+			activePlan, _, activePlanErr := querypkg.ReadActivePlanState(app.RepoRoot, resolvedSessionID)
+
 			if asJSON {
-				return printJSON(cmd, map[string]any{
+				payload := map[string]any{
 					"session_id": resolvedSessionID,
 					"state":      state,
-				})
+				}
+
+				if activePlanErr == nil {
+					payload["active_plan"] = activePlan
+				}
+
+				return printJSON(cmd, payload)
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "Session: %s\n", resolvedSessionID)

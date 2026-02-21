@@ -8,7 +8,12 @@ import {
   writePlanGaia,
 } from "../tools/plan-gaia.js";
 import { assertMutationAllowed, type GaiaMode } from "../shared/mode.js";
+import {
+  renderPlanArtifactMarkdown,
+  validatePlanArtifact,
+} from "./plan-artifact.js";
 import { evaluatePlanGate, type PlanRiskLevel } from "./plan-gates.js";
+import { writeActivePlanState } from "./active-plan-state.js";
 import { appendRuntimeJournalEvent } from "./runtime-journal.js";
 import { refreshSessionRuntimeState } from "./session-state.js";
 import type { StreamVcsContext } from "./streams.js";
@@ -26,6 +31,7 @@ export interface ProcessWorkUnitArgs<TParsed> {
   parse: (input: unknown) => TParsed;
   retry?: () => Promise<string>;
   plan: string;
+  planArtifact?: unknown;
   log: string;
   decisions: string;
   maxWorkUnits?: number;
@@ -51,7 +57,9 @@ export async function processWorkUnit<TParsed>(
 ): Promise<ProcessWorkUnitResult<TParsed>> {
   assertMutationAllowed(args.mode, "plan_gaia writes");
 
-  const riskLevel = args.riskLevel ?? "low";
+  const planArtifact = args.planArtifact ? validatePlanArtifact(args.planArtifact) : null;
+  const renderedPlan = planArtifact ? renderPlanArtifactMarkdown(planArtifact) : args.plan;
+  const riskLevel = args.riskLevel ?? planArtifact?.risk_level ?? "low";
   const operatorApproved = args.operatorApproved ?? false;
   const streamId = args.streamId ?? "default";
   const gateDecision = evaluatePlanGate({
@@ -138,10 +146,14 @@ export async function processWorkUnit<TParsed>(
   const paths = await writePlanGaia({
     repoRoot: args.repoRoot,
     workUnit: args.workUnit,
-    plan: args.plan,
+    plan: renderedPlan,
     log: args.log,
     decisions: args.decisions,
   });
+
+  const relativePlanPath = toRepoRelativePath(args.repoRoot, paths.plan_path);
+  const relativeLogPath = toRepoRelativePath(args.repoRoot, paths.log_path);
+  const relativeDecisionsPath = toRepoRelativePath(args.repoRoot, paths.decisions_path);
 
   await appendRuntimeJournalEvent({
     repoRoot: args.repoRoot,
@@ -153,9 +165,25 @@ export async function processWorkUnit<TParsed>(
       work_unit: args.workUnit,
       stream_id: streamId,
       ...(args.vcsContext ? { vcs_context: args.vcsContext } : {}),
-      plan_path: toRepoRelativePath(args.repoRoot, paths.plan_path),
-      log_path: toRepoRelativePath(args.repoRoot, paths.log_path),
-      decisions_path: toRepoRelativePath(args.repoRoot, paths.decisions_path),
+      plan_path: relativePlanPath,
+      log_path: relativeLogPath,
+      decisions_path: relativeDecisionsPath,
+    },
+  });
+
+  await writeActivePlanState({
+    repoRoot: args.repoRoot,
+    sessionId: args.sessionId,
+    workUnit: args.workUnit,
+    streamId,
+    riskLevel,
+    gate: gateDecision.gate,
+    allowed: gateDecision.allowed,
+    status: delegation.status,
+    paths: {
+      plan_path: relativePlanPath,
+      log_path: relativeLogPath,
+      decisions_path: relativeDecisionsPath,
     },
   });
 

@@ -31,7 +31,6 @@ bun run --cwd tools/opencode-gaia-harness cli quickstart
 - preflight checks (`doctor`) for template + CLI readiness,
 - sandbox bootstrap,
 - lean-subagent wiring smoke,
-- `gaia_init` tool smoke,
 - locked-mode mutation guard smoke.
 
 If it passes, you have a local sandboxed setup ready for development and experimentation.
@@ -74,6 +73,7 @@ with the GAIA plugin loaded from sandbox config.
 Each manual workspace is seeded with scenario projects:
 - `go-hello-planning/`
 - `planning-challenge/`
+- `research-ops-planning/`
 - `refactor-sandbox/`
 - `bug-hunt/`
 
@@ -178,4 +178,4 @@ bun run --cwd tools/opencode-gaia-harness check
 - Planning-first maturity policy: `doc/HITL_Protocol_Maturity.md`
 - Sandbox setup and full command reference: `doc/Sandbox_Harness.md`
 - Active MVP boundary: `.gaia/plans/project-gaia-plugin-mvp-cut.md`
-- GAIA initialization requirements: `.gaia/plans/gaia-init-spec.md`
+- Runtime planning context requirements: `.gaia/runtime/<session>/active-plan.json`

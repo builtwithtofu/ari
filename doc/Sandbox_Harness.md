@@ -64,7 +64,6 @@ This runs:
 - `doctor`
 - `bootstrap`
 - `lean-subagents-smoke`
-- `gaia-init-smoke`
 - `locked-smoke`
 
 - Run OpenCode with sandbox env:
@@ -107,6 +106,7 @@ Each manual workspace is seeded with scenario projects to exercise GAIA behavior
 
 - `go-hello-planning/` (simple plan-first flow)
 - `planning-challenge/` (question-first planning depth)
+- `research-ops-planning/` (non-coding research and operations planning)
 - `refactor-sandbox/` (behavior-preserving refactor)
 - `bug-hunt/` (reproducer-first bug triage and fix)
 
@@ -162,13 +162,11 @@ Timeout defaults are built in. Override with env vars when needed:
 
 - `OPENCODE_HEARTBEAT_MS`
 - `OPENCODE_SMOKE_HEARTBEAT_MS`
-- `OPENCODE_GAIA_INIT_HEARTBEAT_MS`
+- `OPENCODE_PLUGIN_TIMEOUT_MS`
 - `OPENCODE_BUG_HEARTBEAT_MS`
 - `OPENCODE_LIST_TIMEOUT_MS`
 - `OPENCODE_SMOKE_TIMEOUT_MS`
 - `OPENCODE_SMOKE_IDLE_TIMEOUT_MS`
-- `OPENCODE_GAIA_INIT_TIMEOUT_MS`
-- `OPENCODE_GAIA_INIT_IDLE_TIMEOUT_MS`
 - `OPENCODE_BUG_TIMEOUT_MS`
 - `OPENCODE_BUG_IDLE_TIMEOUT_MS`
 
@@ -194,15 +192,6 @@ bun run --cwd tools/opencode-gaia-harness cli bug doc/bug-report.example.md
 - allow: `bash`, `read`, `edit`, `write`
 
 Override with `OPENCODE_PERMISSION` if you want stricter behavior.
-
-- Run GAIA plugin registration smoke test:
-
-```bash
-bun run --cwd tools/opencode-gaia-harness cli gaia-init-smoke
-```
-
-This confirms local plugin loading and custom tool execution by invoking `gaia_init`
-through an agentic run and verifying `.gaia/gaia-init.md` was created.
 
 - Run lean subagent wiring smoke test:
 
@@ -280,7 +269,7 @@ Grow this harness in small stages so confidence increases with each unit:
    - validate `.gaia/<unit>` artifacts and parse metadata
 3. `L2` Plugin loading confidence
    - load GAIA plugin from `.opencode/plugins/`
-   - verify custom tool registration in a real OpenCode session (`gaia_init`, `delegate_gaia`)
+   - verify custom tool registration in a real OpenCode session (`delegate_gaia`)
 4. `L3` Agentic workflow confidence
    - run bug-repro harness end-to-end on sample bug reports
    - ensure reproducer-first TDD and exact assertions

@@ -18,15 +18,7 @@ const LEAN_AGENT_DESCRIPTIONS: Record<LeanAgentKey, string> = {
   demeter: "DEMETER captures decisions, logs, and durable project memory.",
 };
 
-export const GAIA_SLASH_COMMAND_NAME = "gaia-init";
 export const GAIA_AGENT_MODEL_OVERRIDE_ENV = "OPENCODE_GAIA_AGENT_MODEL";
-
-const GAIA_SLASH_COMMAND_DEFAULT = {
-  template:
-    "Run the gaia_init tool now with refresh=false unless the user explicitly asks to refresh.",
-  description: "Create or refresh .gaia/gaia-init.md using GAIA init defaults.",
-  agent: "gaia",
-} as const;
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -69,7 +61,6 @@ function buildAgentDefaults(agent: LeanAgentKey): UnknownRecord {
       read: "allow",
       edit: "deny",
       bash: "deny",
-      gaia_init: "allow",
       delegate_gaia: "allow",
       question: "allow",
       task: {
@@ -132,16 +123,4 @@ export function applyGaiaRuntimeConfig(configInput: unknown): void {
   }
 
   config.agent = nextAgents;
-
-  const existingCommands = toRecord(config.command);
-  const nextCommands: UnknownRecord = {
-    ...existingCommands,
-  };
-
-  nextCommands[GAIA_SLASH_COMMAND_NAME] = mergeRecord(
-    GAIA_SLASH_COMMAND_DEFAULT as unknown as UnknownRecord,
-    existingCommands[GAIA_SLASH_COMMAND_NAME],
-  );
-
-  config.command = nextCommands;
 }

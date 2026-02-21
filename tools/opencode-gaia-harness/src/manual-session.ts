@@ -61,14 +61,16 @@ function workspaceReadme(workspaceId: string): string {
     "Sandbox scenarios seeded in this workspace:",
     "- go-hello-planning/",
     "- planning-challenge/",
+    "- research-ops-planning/",
     "- refactor-sandbox/",
     "- bug-hunt/",
     "",
     "Recommended sandbox test flow:",
     "1. Start with go-hello-planning for planning motions.",
     "2. Use planning-challenge to test question-first planning depth.",
-    "3. Use refactor-sandbox for no-behavior-change refactor passes.",
-    "4. Use bug-hunt for reproducer-first bug triage and fixes.",
+    "3. Use research-ops-planning for non-coding planning workflows.",
+    "4. Use refactor-sandbox for no-behavior-change refactor passes.",
+    "5. Use bug-hunt for reproducer-first bug triage and fixes.",
     "",
   ].join("\n");
 }

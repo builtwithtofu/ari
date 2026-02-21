@@ -9,14 +9,23 @@ import (
 )
 
 type RuntimeSummary struct {
-	SessionID          string   `json:"session_id"`
-	CurrentStreamID    string   `json:"current_stream_id"`
-	ActiveWorkUnits    []string `json:"active_work_units"`
-	CompletedWorkUnits []string `json:"completed_work_units"`
-	BlockedWorkUnits   []string `json:"blocked_work_units"`
-	ActiveCount        int      `json:"active_count"`
-	CompletedCount     int      `json:"completed_count"`
-	BlockedCount       int      `json:"blocked_count"`
+	SessionID          string             `json:"session_id"`
+	CurrentStreamID    string             `json:"current_stream_id"`
+	ActiveWorkUnits    []string           `json:"active_work_units"`
+	CompletedWorkUnits []string           `json:"completed_work_units"`
+	BlockedWorkUnits   []string           `json:"blocked_work_units"`
+	ActiveCount        int                `json:"active_count"`
+	CompletedCount     int                `json:"completed_count"`
+	BlockedCount       int                `json:"blocked_count"`
+	ActivePlan         *ActivePlanSummary `json:"active_plan,omitempty"`
+}
+
+type ActivePlanSummary struct {
+	WorkUnit  string `json:"work_unit"`
+	StreamID  string `json:"stream_id"`
+	RiskLevel string `json:"risk_level"`
+	Status    string `json:"status"`
+	UpdatedAt string `json:"updated_at,omitempty"`
 }
 
 type runtimeStateFile struct {
@@ -25,6 +34,14 @@ type runtimeStateFile struct {
 	ActiveWorkUnits    []string `json:"active_work_units"`
 	CompletedWorkUnits []string `json:"completed_work_units"`
 	BlockedWorkUnits   []string `json:"blocked_work_units"`
+}
+
+type activePlanStateFile struct {
+	WorkUnit  string `json:"work_unit"`
+	StreamID  string `json:"stream_id"`
+	RiskLevel string `json:"risk_level"`
+	Status    string `json:"status"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 func LoadRuntimeSummary(repoRoot, sessionID string) (RuntimeSummary, error) {
@@ -43,6 +60,11 @@ func LoadRuntimeSummary(repoRoot, sessionID string) (RuntimeSummary, error) {
 		return RuntimeSummary{}, err
 	}
 
+	activePlan, err := loadActivePlanSummary(filepath.Join(filepath.Dir(statePath), "active-plan.json"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return RuntimeSummary{}, err
+	}
+
 	return RuntimeSummary{
 		SessionID:          state.SessionID,
 		CurrentStreamID:    state.CurrentStreamID,
@@ -52,6 +74,27 @@ func LoadRuntimeSummary(repoRoot, sessionID string) (RuntimeSummary, error) {
 		ActiveCount:        len(state.ActiveWorkUnits),
 		CompletedCount:     len(state.CompletedWorkUnits),
 		BlockedCount:       len(state.BlockedWorkUnits),
+		ActivePlan:         activePlan,
+	}, nil
+}
+
+func loadActivePlanSummary(path string) (*ActivePlanSummary, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var plan activePlanStateFile
+	if err := json.Unmarshal(raw, &plan); err != nil {
+		return nil, err
+	}
+
+	return &ActivePlanSummary{
+		WorkUnit:  plan.WorkUnit,
+		StreamID:  plan.StreamID,
+		RiskLevel: plan.RiskLevel,
+		Status:    plan.Status,
+		UpdatedAt: plan.UpdatedAt,
 	}, nil
 }
 

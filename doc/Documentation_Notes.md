@@ -18,7 +18,7 @@ This file tracks user-facing documentation we want to write after implementation
 
 - Nix + Bun setup (`nix develop`, `bun install`)
 - Plugin package layout and portability boundary
-- First-run bootstrap with `/gaia-init`
+- First-run bootstrap with `ari flow start`
 
 ## Configuration Guide
 

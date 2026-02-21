@@ -1,7 +1,7 @@
 # GAIA Init
 
 ## Mission
-- Build a dependable base GAIA orchestrator and a strong `gaia_init` foundation before subsystem
+- Build a dependable base GAIA orchestrator and a strong runtime planning context foundation before subsystem
   expansion.
 
 ## Product Context
@@ -40,4 +40,4 @@
 
 ## Notes
 - Keep this file concise and durable.
-- Add deeper requirements in `.gaia/plans/gaia-init-spec.md` and promote stable learnings here.
+- Promote stable learnings from runtime artifacts (`.gaia/runtime/<session>/`) into this file when useful.

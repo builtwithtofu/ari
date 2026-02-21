@@ -2,7 +2,6 @@ import {
   commandBootstrap,
   commandBug,
   commandDoctor,
-  commandGaiaInitSmoke,
   commandLeanSubagentsSmoke,
   commandListFreeModels,
   commandLockedSmoke,
@@ -33,7 +32,6 @@ function printHelp(): void {
   console.log("  list-free-models");
   console.log("  smoke [prompt]");
   console.log("  bug [bug-report-file]");
-  console.log("  gaia-init-smoke");
   console.log("  prompt-quality-smoke");
   console.log("  lean-subagents-smoke");
   console.log("  locked-smoke");
@@ -76,9 +74,6 @@ async function main(): Promise<void> {
     }
     case "bug":
       await commandBug(context, args[0]);
-      return;
-    case "gaia-init-smoke":
-      await commandGaiaInitSmoke(context);
       return;
     case "prompt-quality-smoke":
       await commandPromptQualitySmoke(context);

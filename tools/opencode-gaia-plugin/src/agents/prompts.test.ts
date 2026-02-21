@@ -51,7 +51,7 @@ describe("LEAN_AGENT_PROMPTS", () => {
     expect(LEAN_AGENT_PROMPTS.gaia).toContain("Action needed");
     expect(LEAN_AGENT_PROMPTS.gaia).toContain("Approve work unit");
     expect(LEAN_AGENT_PROMPTS.gaia).toContain("targeted questions");
-    expect(LEAN_AGENT_PROMPTS.gaia).toContain("gaia-init");
+    expect(LEAN_AGENT_PROMPTS.gaia).toContain("active-plan.json");
     expect(LEAN_AGENT_PROMPTS.gaia).toContain("not code-only");
     expect(LEAN_AGENT_PROMPTS.gaia).toContain("classify -> plan -> checkpoint -> delegate -> harvest");
     expect(LEAN_AGENT_PROMPTS.gaia).toContain("base GAIA mode");

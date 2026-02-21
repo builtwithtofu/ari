@@ -81,7 +81,8 @@ describe("runDelegateGaiaTool", () => {
     expect(result.collection.failure_count).toBe(1);
 
     const planFile = await readFile(join(repoRoot, ".gaia", "unit-7", "plan.md"), "utf8");
-    expect(planFile).toBe("# Plan\n");
+    expect(planFile).toContain("# Work Unit Plan Artifact");
+    expect(planFile).toContain("## Objective");
   });
 
   test("routes rejection feedback ownership to GAIA and pauses delegated agent", async () => {

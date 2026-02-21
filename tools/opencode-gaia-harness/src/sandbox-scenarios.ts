@@ -88,6 +88,57 @@ Suggested prompts:
 `,
   },
   {
+    relativePath: "research-ops-planning/README.md",
+    content: `# Scenario: Research and Ops Planning (Non-Coding)
+
+Goal: validate that GAIA can plan a cross-functional task without writing code.
+
+Context:
+- Team needs a two-week rollout plan for customer-feedback interviews and support workflow updates.
+- Existing issue triage is inconsistent and metrics are incomplete.
+
+Suggested prompts:
+- "Start with clarifying questions before proposing any plan."
+- "Create a phased plan with owners, risks, and checkpoints."
+- "Show me decision options and recommend one path."
+
+Acceptance target:
+- Plan includes objective, constraints, done criteria, risk level, and open questions.
+- Plan clearly separates execution tasks from research tasks.
+- Medium/high-risk items include explicit operator checkpoints.
+`,
+  },
+  {
+    relativePath: "research-ops-planning/context/stakeholders.md",
+    content: `# Stakeholders
+
+- Product Operations Lead (Owner)
+- Support Manager (Operator delegate)
+- Insights Analyst
+- Engineering Liaison
+`,
+  },
+  {
+    relativePath: "research-ops-planning/context/current-state.md",
+    content: `# Current State
+
+- Customer interview notes are spread across docs and chat threads.
+- Support escalations do not have a stable severity rubric.
+- Weekly status updates are hand-written and often delayed.
+- No single artifact tracks decisions, risks, and next checkpoints.
+`,
+  },
+  {
+    relativePath: "research-ops-planning/context/constraints.md",
+    content: `# Constraints
+
+- No new tooling purchases this quarter.
+- Team has 6 hours per week available for interview analysis.
+- Compliance review required for policy changes that affect escalation templates.
+- Pilot must run in one region before wider rollout.
+`,
+  },
+  {
     relativePath: "refactor-sandbox/README.md",
     content: `# Scenario: Refactoring Sandbox
 

@@ -153,6 +153,16 @@ func ReadFlowState(repoRoot, sessionID string) (map[string]any, string, error) {
 	return readJSON(path, resolved)
 }
 
+func ReadActivePlanState(repoRoot, sessionID string) (map[string]any, string, error) {
+	resolved, err := ResolveSessionID(repoRoot, sessionID)
+	if err != nil {
+		return nil, "", err
+	}
+
+	path := filepath.Join(repoRoot, ".gaia", "runtime", resolved, "active-plan.json")
+	return readJSON(path, resolved)
+}
+
 func readJSON(path, resolvedSessionID string) (map[string]any, string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {

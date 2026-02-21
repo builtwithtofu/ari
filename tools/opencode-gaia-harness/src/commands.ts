@@ -26,7 +26,7 @@ const DEFAULT_SMOKE_PROMPT =
   "Verify sandbox setup, list relevant files, and suggest one next coding unit.";
 const DEFAULT_LIST_TIMEOUT_MS = 60_000;
 const DEFAULT_SMOKE_TIMEOUT_MS = 180_000;
-const DEFAULT_GAIA_INIT_TIMEOUT_MS = 180_000;
+const DEFAULT_PLUGIN_TIMEOUT_MS = 180_000;
 const DEFAULT_BUG_TIMEOUT_MS = 600_000;
 const DEFAULT_HEARTBEAT_MS = 10_000;
 
@@ -70,8 +70,16 @@ export interface CommandContext {
   exec?: ExecFn;
 }
 
-interface GaiaInitRunner {
-  runGaiaInit: (args: { repoRoot: string; mode?: "supervised" | "autopilot" | "locked" }) => Promise<unknown>;
+interface GaiaDelegateRunner {
+  runDelegateGaiaTool: (args: {
+    repoRoot: string;
+    mode?: "supervised" | "autopilot" | "locked";
+    workUnit: string;
+    sessionId: string;
+    modelUsed: string;
+    agent: "gaia";
+    responseText: string;
+  }) => Promise<unknown>;
 }
 
 interface GaiaPromptProvider {
@@ -257,36 +265,6 @@ export async function commandBug(context: CommandContext, bugReport?: string): P
   });
 }
 
-export async function commandGaiaInitSmoke(context: CommandContext): Promise<void> {
-  await runOpenCode({
-    repoRoot: context.repoRoot,
-    args: [
-      "run",
-      "--agent",
-      "build",
-      "--model",
-      selectedModel("OPENCODE_SMOKE_MODEL"),
-      "Use the gaia_init tool now with refresh=false. Return only whether it succeeded.",
-    ],
-    stdio: "inherit",
-    timeoutMs: timeoutMsFromEnv("OPENCODE_GAIA_INIT_TIMEOUT_MS", DEFAULT_GAIA_INIT_TIMEOUT_MS),
-    ...withTimeout(parseTimeoutMs(process.env.OPENCODE_GAIA_INIT_IDLE_TIMEOUT_MS)),
-    heartbeatMs: heartbeatMsFromEnv("OPENCODE_GAIA_INIT_HEARTBEAT_MS"),
-    heartbeatLabel: "gaia-init-smoke",
-    envOverrides: {
-      OPENCODE_PERMISSION: process.env.OPENCODE_PERMISSION ?? getBugHarnessPermission(),
-    },
-    ...withExec(context.exec),
-  });
-
-  const initPath = resolve(context.repoRoot, ".gaia/gaia-init.md");
-  if (!(await fileExists(initPath))) {
-    throw new Error(`gaia_init smoke failed: ${initPath} not found`);
-  }
-
-  console.log(`gaia_init smoke succeeded: ${initPath}`);
-}
-
 export async function commandPromptQualitySmoke(context: CommandContext): Promise<void> {
   const promptsModulePath = new URL("../../opencode-gaia-plugin/src/agents/prompts.ts", import.meta.url).href;
   const promptsModule = (await import(promptsModulePath)) as GaiaPromptProvider;
@@ -309,7 +287,7 @@ export async function commandLeanSubagentsSmoke(context: CommandContext): Promis
     repoRoot: context.repoRoot,
     args: ["debug", "config"],
     stdio: "pipe",
-    timeoutMs: timeoutMsFromEnv("OPENCODE_GAIA_INIT_TIMEOUT_MS", DEFAULT_GAIA_INIT_TIMEOUT_MS),
+    timeoutMs: timeoutMsFromEnv("OPENCODE_PLUGIN_TIMEOUT_MS", DEFAULT_PLUGIN_TIMEOUT_MS),
     ...withExec(context.exec),
   });
 
@@ -368,17 +346,22 @@ export async function commandLockedSmoke(context: CommandContext): Promise<void>
     await mkdir(resolve(tmpWorktree, ".gaia"), { recursive: true });
 
     const gaiaModulePath = new URL("../../opencode-gaia-plugin/src/index.ts", import.meta.url).href;
-    const gaiaModule = (await import(gaiaModulePath)) as GaiaInitRunner;
+    const gaiaModule = (await import(gaiaModulePath)) as GaiaDelegateRunner;
 
     await expectLockedError(async () => {
-      await gaiaModule.runGaiaInit({
+      await gaiaModule.runDelegateGaiaTool({
         repoRoot: tmpWorktree,
         mode: "locked",
+        workUnit: "unit-locked-smoke",
+        sessionId: "s-locked-smoke",
+        modelUsed: "openai/gpt-5.3-codex",
+        agent: "gaia",
+        responseText: '{"contract_version":"1.0","agent":"gaia"}',
       });
     });
 
-    if (await fileExists(resolve(tmpWorktree, ".gaia/gaia-init.md"))) {
-      throw new Error("locked smoke failed: gaia-init file was created in locked mode");
+    if (await fileExists(resolve(tmpWorktree, ".gaia/unit-locked-smoke/plan.md"))) {
+      throw new Error("locked smoke failed: delegate_gaia artifacts were created in locked mode");
     }
 
     console.log("locked smoke succeeded: mutation blocked in locked mode");
@@ -392,7 +375,7 @@ async function expectLockedError(run: () => Promise<void>): Promise<void> {
     await run();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("Locked mode blocks gaia_init")) {
+    if (message.includes("Locked mode blocks plan_gaia writes")) {
       return;
     }
 
@@ -450,9 +433,6 @@ export async function commandSuite(
         break;
       case "lean-subagents-smoke":
         await commandLeanSubagentsSmoke(context);
-        break;
-      case "gaia-init-smoke":
-        await commandGaiaInitSmoke(context);
         break;
       case "prompt-quality-smoke":
         await commandPromptQualitySmoke(context);

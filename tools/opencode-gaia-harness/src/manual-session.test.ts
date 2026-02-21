@@ -37,6 +37,7 @@ describe("createManualWorkspace", () => {
     expect(readme).toContain("feature-x");
     expect(readme).toContain("urgent-bug");
     expect(readme).toContain("go-hello-planning/");
+    expect(readme).toContain("research-ops-planning/");
     expect(readme).toContain("bug-hunt/");
 
     const helloGoMain = await readFile(
@@ -50,6 +51,12 @@ describe("createManualWorkspace", () => {
       "utf8",
     );
     expect(bugReport).toContain("Expected total: 1350");
+
+    const researchScenario = await readFile(
+      join(created.workspacePath, "research-ops-planning", "README.md"),
+      "utf8",
+    );
+    expect(researchScenario).toContain("cross-functional task without writing code");
   });
 
   test("falls back to sandbox-work when label is empty", async () => {

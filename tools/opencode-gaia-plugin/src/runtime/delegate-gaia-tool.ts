@@ -1,6 +1,7 @@
 import { parseLeanAgentOutput } from "../agents/contracts.js";
 import type { LeanAgentKey } from "../agents/types.js";
 import type { GaiaMode } from "../shared/mode.js";
+import { buildPlanArtifactTemplateMarkdown } from "./plan-artifact.js";
 
 import {
   processWorkUnit,
@@ -9,6 +10,7 @@ import {
 
 export interface DelegateGaiaToolArtifacts {
   plan?: string;
+  planArtifact?: unknown;
   log?: string;
   decisions?: string;
 }
@@ -26,7 +28,7 @@ export interface DelegateGaiaToolArgs {
 }
 
 const DEFAULT_ARTIFACTS = {
-  plan: "# Plan\n",
+  plan: buildPlanArtifactTemplateMarkdown(),
   log: "# Log\n",
   decisions: "# Decisions\n",
 } as const;
@@ -49,6 +51,7 @@ export async function runDelegateGaiaTool(
     parse: (input) => parseLeanAgentOutput(args.agent, input),
     ...(args.retry ? { retry: args.retry } : {}),
     plan: artifacts.plan,
+    ...(artifacts.planArtifact ? { planArtifact: artifacts.planArtifact } : {}),
     log: artifacts.log,
     decisions: artifacts.decisions,
     delegatedAgent: args.agent,

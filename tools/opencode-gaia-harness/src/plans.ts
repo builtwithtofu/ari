@@ -5,15 +5,14 @@ export type SuiteStep =
   | "list-free-models"
   | "smoke"
   | "lean-subagents-smoke"
-  | "gaia-init-smoke"
   | "prompt-quality-smoke"
   | "locked-smoke"
   | "bug";
 
 const SUITE_STEP_MAP: Record<SuiteMode, readonly SuiteStep[]> = {
   basic: ["bootstrap", "list-free-models", "smoke"],
-  plugin: ["bootstrap", "lean-subagents-smoke", "gaia-init-smoke", "prompt-quality-smoke"],
-  quickstart: ["doctor", "bootstrap", "lean-subagents-smoke", "gaia-init-smoke", "locked-smoke"],
+  plugin: ["bootstrap", "lean-subagents-smoke", "prompt-quality-smoke"],
+  quickstart: ["doctor", "bootstrap", "lean-subagents-smoke", "locked-smoke"],
   quality: ["prompt-quality-smoke"],
   locked: ["bootstrap", "locked-smoke"],
   bug: ["bootstrap", "bug"],
@@ -22,7 +21,6 @@ const SUITE_STEP_MAP: Record<SuiteMode, readonly SuiteStep[]> = {
     "list-free-models",
     "smoke",
     "lean-subagents-smoke",
-    "gaia-init-smoke",
     "prompt-quality-smoke",
     "locked-smoke",
     "bug",

@@ -174,6 +174,44 @@ func TestReadFlowState(t *testing.T) {
 	}
 }
 
+func TestReadActivePlanState(t *testing.T) {
+	t.Parallel()
+
+	repoRoot := t.TempDir()
+	if err := writeJSON(
+		filepath.Join(repoRoot, ".gaia", "runtime", "s-active", "state.json"),
+		map[string]any{"session_id": "s-active", "current_stream_id": "feature-x"},
+	); err != nil {
+		t.Fatalf("write runtime state failed: %v", err)
+	}
+
+	if err := writeJSON(
+		filepath.Join(repoRoot, ".gaia", "runtime", "s-active", "active-plan.json"),
+		map[string]any{
+			"session_id": "s-active",
+			"work_unit":  "unit-42",
+			"stream_id":  "feature-x",
+			"risk_level": "medium",
+			"status":     "ok",
+		},
+	); err != nil {
+		t.Fatalf("write active plan failed: %v", err)
+	}
+
+	activePlan, resolved, err := ReadActivePlanState(repoRoot, "")
+	if err != nil {
+		t.Fatalf("ReadActivePlanState returned error: %v", err)
+	}
+
+	if resolved != "s-active" {
+		t.Fatalf("expected resolved session s-active, got %s", resolved)
+	}
+
+	if activePlan["work_unit"] != "unit-42" {
+		t.Fatalf("unexpected active plan work unit: %v", activePlan["work_unit"])
+	}
+}
+
 func TestReadSurfaceRegistry(t *testing.T) {
 	t.Parallel()
 
