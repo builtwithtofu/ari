@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/headless"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/provider"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/vcs"
 	"github.com/spf13/cobra"
@@ -19,6 +20,10 @@ func NewReviewCmd() *cobra.Command {
 		Long:  "Review VCS changes and generate summary",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if isHeadless(cmd) {
+				return headless.HeadlessUnsupportedError("review")
+			}
+
 			revRange := ""
 			if len(args) > 0 {
 				revRange = args[0]

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/headless"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/world"
 	"github.com/spf13/cobra"
 )
@@ -19,6 +20,10 @@ func NewAskCmd() *cobra.Command {
 		Long:  "Search Ari world decisions and knowledge using simple text matching.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if isHeadless(cmd) {
+				return headless.HeadlessUnsupportedError("ask")
+			}
+
 			query := strings.TrimSpace(args[0])
 			if query == "" {
 				return fmt.Errorf("query must not be empty")

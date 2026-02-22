@@ -73,34 +73,41 @@ func NewBuildCmd() *cobra.Command {
 				return fmt.Errorf("load plan %q: %w", planID, err)
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Executing plan: %s\n", buildPlan.PlanID)
-			fmt.Fprintf(cmd.OutOrStdout(), "Goal: %s\n", buildPlan.Goal)
-			fmt.Fprintf(cmd.OutOrStdout(), "World: %s\n\n", worldPath)
+			out := cmd.OutOrStdout()
+			if isHeadless(cmd) {
+				out = cmd.OutOrStderr()
+			}
 
-			display := newBuildProgressDisplay(cmd.OutOrStdout(), buildPlan)
-			emitter.SetOutput(display)
+			if !isHeadless(cmd) {
+				display := newBuildProgressDisplay(cmd.OutOrStdout(), buildPlan)
+				emitter.SetOutput(display)
+			}
+
+			fmt.Fprintf(out, "Executing plan: %s\n", buildPlan.PlanID)
+			fmt.Fprintf(out, "Goal: %s\n", buildPlan.Goal)
+			fmt.Fprintf(out, "World: %s\n\n", worldPath)
 
 			result, runErr := executor.Run(ctx, buildPlan)
 			if runErr != nil {
 				if result != nil {
 					fmt.Fprintf(
-						cmd.OutOrStdout(),
+						out,
 						"\nExecution failed. Steps run: %d, steps failed: %d\n",
 						result.StepsRun,
 						result.StepsFailed,
 					)
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "Status: failed\n")
+				fmt.Fprintf(out, "Status: failed\n")
 				return fmt.Errorf("execute plan %q: %w", planID, runErr)
 			}
 
 			fmt.Fprintf(
-				cmd.OutOrStdout(),
+				out,
 				"\nExecution complete. Steps run: %d, steps failed: %d\n",
 				result.StepsRun,
 				result.StepsFailed,
 			)
-			fmt.Fprintf(cmd.OutOrStdout(), "Status: success\n")
+			fmt.Fprintf(out, "Status: success\n")
 
 			return nil
 		},

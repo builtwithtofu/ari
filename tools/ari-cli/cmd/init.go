@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/headless"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/vcs"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/world"
 	"github.com/spf13/cobra"
@@ -19,6 +20,10 @@ func NewInitCmd() *cobra.Command {
 		Long:  "Initialize a new Ari world in the specified directory (default: current directory).",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if isHeadless(cmd) {
+				return headless.HeadlessUnsupportedError("init")
+			}
+
 			path := "."
 			if len(args) > 0 {
 				path = args[0]

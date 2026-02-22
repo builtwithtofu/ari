@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/agent"
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/headless"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/plan"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/provider"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/world"
@@ -22,6 +23,10 @@ func NewPlanCmd() *cobra.Command {
 		Long:  "Interactive planning with research, questions, and refinement",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if isHeadless(cmd) {
+				return headless.HeadlessUnsupportedError("plan")
+			}
+
 			goal := strings.TrimSpace(args[0])
 			if goal == "" {
 				return fmt.Errorf("goal must not be empty")

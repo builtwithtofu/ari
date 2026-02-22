@@ -1,25 +1,68 @@
 # Ari
 
-> Every project is a world. Ari helps you navigate it.
+> **Headless agentic runtime for software development.**
 
 ---
 
-Ideas are hard to hold. A codebase grows and the original intent fades. A new project starts and the gap between what you imagine and what you can build feels vast. A team expands and the shared understanding that once lived in one person's head becomes diffuse, fragile, implicit.
+## What is Ari?
 
-Ari exists because ideas deserve better than that.
+Ari is an agentic runtime, an engine that powers intelligent software development workflows.
 
-Current repository status: Ari CLI is in an ultra-reset baseline. The `ari` command is intentionally
-minimal while the v0 loop contract is defined.
-
-At its core, Ari is a runtime for navigating the world of your ideas. Not just a coding tool. Not just an agent harness. A system for making the invisible visible - the architecture behind your code, the decisions behind your architecture, the intent behind your decisions.
+**Core concepts:**
+- **Work isolation**: Multiple agents can work on the same project without collision
+- **DAG of branching work**: Not just linear tasks, fork, merge, and parallelize
+- **Protocol-based**: JSON event stream for any client to consume
+- **CLI is the first client**: Proving the engine works
 
 Every project you touch with Ari becomes a **world**. A living, structured representation of what exists, what was decided, what is planned, and what remains unknown. The world grows as you work. It persists between sessions. It can be handed to a new collaborator, picked up after months away, or interrogated when you've forgotten why something was built the way it was.
 
-**Ari** is your guide through that world.
+---
 
-On a greenfield project, Ari helps you build the world from the first question - exploring the shape of the idea before a single line is written, surfacing gaps, establishing the map. On an existing codebase, Ari discovers the world that's already there - reading the terrain, learning the conventions, making sense of what accumulated over time.
+## Current State (v0)
 
-In both cases, Ari asks before she acts. She plans before she builds. She surfaces what she doesn't know rather than guessing. The result is a guide you can actually trust, and a world you can actually navigate.
+**What's working:**
+- Event-based protocol (17 event types)
+- Agent loop (research, question, refine)
+- DAG-based plan execution
+- World persistence (SQLite)
+- CLI commands: `init`, `plan`, `build`, `review`, `ask`
+- Headless mode (`--headless` flag for machine consumption)
+
+**What's planned:**
+- Work isolation for parallel agent tasks
+- Multiple clients (TUI, IDE plugins, web)
+- Full stdin/JSON protocol mode
+- Vector-based semantic search
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                        Clients                          │
+│    ┌──────┐  ┌──────┐  ┌─────────┐  ┌───────────────┐  │
+│    │ CLI  │  │ TUI  │  │ IDE     │  │ Web/Remote    │  │
+│    └──┬───┘  └──┬───┘  └────┬────┘  └───────┬───────┘  │
+└───────┼─────────┼───────────┼───────────────┼──────────┘
+        │         │           │               │
+        ▼         ▼           ▼               ▼
+┌─────────────────────────────────────────────────────────┐
+│              JSON Event Protocol (JSONL)                │
+│         agent_start, plan_created, task_progress,       │
+│         question_asked, file_written, build_complete... │
+└───────────────────────────┬─────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────┐
+│                      Ari Runtime                        │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐  │
+│  │ Agent Loop  │  │ Plan DAG    │  │ World Store     │  │
+│  └─────────────┘  └─────────────┘  └─────────────────┘  │
+└─────────────────────────────────────────────────────────┘
+```
+
+The runtime is headless by design. The CLI is just the first client. Visualization, rendering, and UI are client concerns. Ari works in CI, in Docker, over SSH, piped between processes, or driven by other agents.
 
 ---
 
@@ -33,18 +76,29 @@ ari review        # understand what changed and why
 ari ask           # interrogate the world - what exists, what was decided
 ```
 
-Under the hood, Ari is a headless runtime and protocol. Ari is the presence you interact with. The world is the persistent artifact she builds and maintains for your project.
+Ari asks before she acts. She plans before she builds. She surfaces what she doesn't know rather than guessing. The result is a guide you can trust, and a world you can navigate.
 
-The CLI is purely responsible for the agent loop, human-in-the-loop protocol, and structured output. Everything else - visualization, rendering, UI - is a client concern. Ari works headlessly in CI, in Docker, over SSH, piped between processes, driven by other agents. It doesn't care how you consume it.
+---
+
+## Headless Mode
+
+For machine-readable output, use `--headless`:
+
+```bash
+# Stream events as JSONL
+ari build --plan <id> --headless > events.jsonl
+```
+
+**Note:** Only `build` supports headless mode currently. Other commands require interactive input.
 
 ---
 
 ## The north star
 
-Most tools optimize for *output* - more code, faster, with less friction.
+Most tools optimize for *output*, more code, faster, with less friction.
 
 Ari optimizes for *understanding*.
 
-The bet is that the bottleneck in building things isn't writing code. It's navigating the world of ideas well enough to write the right code, in the right place, for the right reasons. Ari exists to close that gap - not by automating away the thinking, but by giving you a guide who can hold the map while you explore the terrain.
+The bet is that the bottleneck in building things isn't writing code. It's navigating the world of ideas well enough to write the right code, in the right place, for the right reasons. Ari exists to close that gap, not by automating away the thinking, but by giving you a guide who can hold the map while you explore the terrain.
 
 A world well understood is a world well built.

@@ -16,6 +16,8 @@ func NewRootCmd() *cobra.Command {
 		},
 	}
 
+	rootCmd.PersistentFlags().Bool("headless", false, "Emit JSON events to stdout for machine consumption")
+
 	rootCmd.AddCommand(NewInitCmd())
 	rootCmd.AddCommand(NewAskCmd())
 	rootCmd.AddCommand(NewPlanCmd())
@@ -23,6 +25,11 @@ func NewRootCmd() *cobra.Command {
 	rootCmd.AddCommand(NewReviewCmd())
 
 	return rootCmd
+}
+
+func isHeadless(cmd *cobra.Command) bool {
+	headless, _ := cmd.Flags().GetBool("headless")
+	return headless
 }
 
 func Execute() {
