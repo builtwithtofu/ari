@@ -18,6 +18,9 @@
           packages = with pkgs; [
             go
             gopls
+            sqlc
+            sqlite
+            atlas
           ];
 
           shellHook = ''
