@@ -1,4 +1,4 @@
-module github.com/aledsdavies/ari/tools/ari-cli
+module github.com/builtwithtofu/ari/tools/ari-cli
 
 go 1.25.0
 

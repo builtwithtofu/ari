@@ -1,7 +1,7 @@
 package router
 
 import (
-	"github.com/aledsdavies/ari/tools/ari-cli/internal/config"
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/config"
 )
 
 // RouterConfig extends the base config with router-specific settings
