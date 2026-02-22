@@ -46,9 +46,7 @@ func NewInitCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("initialize world: %w", err)
 			}
-			if err := db.Close(); err != nil {
-				return fmt.Errorf("close world database: %w", err)
-			}
+			_ = db.Close()
 
 			manifest := map[string]any{
 				"name":       filepath.Base(absPath),
