@@ -18,6 +18,11 @@ func NewEmitter() *Emitter {
 	}
 }
 
+// SetOutput sets the output writer for the emitter (used in tests)
+func (e *Emitter) SetOutput(w io.Writer) {
+	e.output = w
+}
+
 func (e *Emitter) EmitEvent(event Event) error {
 	event.Timestamp = time.Now().UTC().Format(time.RFC3339Nano)
 

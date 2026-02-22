@@ -1,8 +1,9 @@
 {
-  "active_plan": "/home/adavies/Projects/project-gaia/.sisyphus/plans/ari-v0-comprehensive.md",
-  "plan_name": "ari-v0-comprehensive",
-  "started_at": "2026-02-22T15:52:10.298Z",
-  "session_ids": ["ses_37e79de22ffeGJbLa4LNKLqiO4"],
-  "current_phase": "Phase 1: Foundation",
-  "current_task": "Task 1: Config System with JSON Schema"
+  "active_plan": "/home/adavies/Projects/project-gaia/.sisyphus/plans/ari-v0-phase2.md",
+  "started_at": "2026-02-22T19:00:55.148Z",
+  "session_ids": [
+    "ses_37e79de22ffeGJbLa4LNKLqiO4"
+  ],
+  "plan_name": "ari-v0-phase2",
+  "agent": "atlas"
 }
