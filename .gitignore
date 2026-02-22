@@ -8,6 +8,7 @@ node_modules/
 # Build artifacts
 *.exe
 /ari-cli
+/tools/ari-cli/ari-cli
 
 # JJ working copy state (agent-managed)
 .wip/
