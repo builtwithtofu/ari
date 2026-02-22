@@ -20,6 +20,17 @@ type Error struct {
 	Data    any    `json:"data,omitempty"`
 }
 
+const (
+	ParseError     = -32700
+	InvalidRequest = -32600
+	MethodNotFound = -32601
+	InvalidParams  = -32602
+	InternalError  = -32603
+
+	SessionNotFound = -32001
+	PlanNotFound    = -32002
+)
+
 type BuildRequest struct {
 	PlanID string `json:"plan_id"`
 }
