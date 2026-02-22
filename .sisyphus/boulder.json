@@ -1,9 +1,10 @@
 {
-  "active_plan": "/home/adavies/Projects/project-gaia/.sisyphus/plans/ari-v0-phase2.md",
-  "started_at": "2026-02-22T19:00:55.148Z",
+  "active_plan": "/home/adavies/Projects/project-gaia/.sisyphus/plans/ari-headless-mode.md",
+  "started_at": "2026-02-22T21:36:57.405Z",
   "session_ids": [
+    "ses_37e79de22ffeGJbLa4LNKLqiO4",
     "ses_37e79de22ffeGJbLa4LNKLqiO4"
   ],
-  "plan_name": "ari-v0-phase2",
+  "plan_name": "ari-headless-mode",
   "agent": "atlas"
 }
