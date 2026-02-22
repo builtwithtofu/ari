@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/headless"
 	planpkg "github.com/builtwithtofu/ari/tools/ari-cli/internal/plan"
+	"github.com/spf13/cobra"
 )
 
 func TestBuildCmd_Headless_StdoutIsJSONLOnly(t *testing.T) {
@@ -38,25 +40,30 @@ func TestBuildCmd_Headless_StdoutIsJSONLOnly(t *testing.T) {
 	restore := chdirForTest(t, filepath.Join(projectDir, "nested", "dir"))
 	defer restore()
 
-	stdout := captureProcessStdout(t, func() {
-		root := NewRootCmd()
-		stderr := &bytes.Buffer{}
-		root.SetErr(stderr)
-		root.SetArgs([]string{"build", "--plan", "plan-headless-success", "--headless"})
+	stdout, stderrText := captureProcessOutput(t, func() {
+		command := NewBuildCmd()
+		enableHeadlessFlag(t, command)
+		command.SilenceUsage = true
+		if err := command.Flags().Set("headless", "true"); err != nil {
+			t.Fatalf("set headless flag: %v", err)
+		}
+		if !isHeadless(command) {
+			t.Fatal("expected headless mode enabled")
+		}
+		command.SetArgs([]string{"--plan", "plan-headless-success"})
 
-		err := root.Execute()
+		err := command.Execute()
 		if err != nil {
 			t.Fatalf("expected command success, got error: %v", err)
 		}
-
-		stderrText := stderr.String()
-		if !strings.Contains(stderrText, "Executing plan: plan-headless-success") {
-			t.Fatalf("expected diagnostics on stderr, got:\n%s", stderrText)
-		}
-		if !strings.Contains(stderrText, "Status: success") {
-			t.Fatalf("expected success status on stderr, got:\n%s", stderrText)
-		}
 	})
+
+	if !strings.Contains(stderrText, "Executing plan: plan-headless-success") {
+		t.Fatalf("expected diagnostics on stderr, got:\n%s", stderrText)
+	}
+	if !strings.Contains(stderrText, "Status: success") {
+		t.Fatalf("expected success status on stderr, got:\n%s", stderrText)
+	}
 
 	assertJSONLLines(t, stdout)
 	if strings.Contains(stdout, "Executing plan") || strings.Contains(stdout, "Status: success") {
@@ -90,13 +97,19 @@ func TestBuildCmd_Headless_FailureExitAndDiagnostics(t *testing.T) {
 	restore := chdirForTest(t, projectDir)
 	defer restore()
 
-	var stderr bytes.Buffer
-	stdout := captureProcessStdout(t, func() {
-		root := NewRootCmd()
-		root.SetErr(&stderr)
-		root.SetArgs([]string{"build", "--plan", "plan-headless-fail", "--headless"})
+	stdout, stderrText := captureProcessOutput(t, func() {
+		command := NewBuildCmd()
+		enableHeadlessFlag(t, command)
+		command.SilenceUsage = true
+		if err := command.Flags().Set("headless", "true"); err != nil {
+			t.Fatalf("set headless flag: %v", err)
+		}
+		if !isHeadless(command) {
+			t.Fatal("expected headless mode enabled")
+		}
+		command.SetArgs([]string{"--plan", "plan-headless-fail"})
 
-		err := root.Execute()
+		err := command.Execute()
 		if err == nil {
 			t.Fatal("expected execution failure")
 		}
@@ -107,7 +120,6 @@ func TestBuildCmd_Headless_FailureExitAndDiagnostics(t *testing.T) {
 		t.Fatalf("stdout should not contain human diagnostics, got:\n%s", stdout)
 	}
 
-	stderrText := stderr.String()
 	if !strings.Contains(stderrText, "Execution failed") {
 		t.Fatalf("expected failure diagnostics on stderr, got:\n%s", stderrText)
 	}
@@ -117,10 +129,15 @@ func TestBuildCmd_Headless_FailureExitAndDiagnostics(t *testing.T) {
 }
 
 func TestPlanCmd_HeadlessUnsupported(t *testing.T) {
-	root := NewRootCmd()
-	root.SetArgs([]string{"plan", "goal", "--headless"})
+	command := NewPlanCmd()
+	enableHeadlessFlag(t, command)
+	command.SilenceUsage = true
+	if err := command.Flags().Set("headless", "true"); err != nil {
+		t.Fatalf("set headless flag: %v", err)
+	}
+	command.SetArgs([]string{"goal"})
 
-	err := root.Execute()
+	err := command.Execute()
 	if err == nil {
 		t.Fatal("expected error for unsupported command")
 	}
@@ -189,46 +206,55 @@ func TestBuildCmd_NonHeadless_Unchanged(t *testing.T) {
 	}
 }
 
-func captureProcessStdout(t *testing.T, fn func()) string {
+func captureProcessOutput(t *testing.T, fn func()) (string, string) {
 	t.Helper()
 
 	originalStdout := os.Stdout
-	r, w, err := os.Pipe()
+	originalStderr := os.Stderr
+	stdoutR, stdoutW, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("create stdout pipe: %v", err)
 	}
+	stderrR, stderrW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create stderr pipe: %v", err)
+	}
 
-	os.Stdout = w
+	os.Stdout = stdoutW
+	os.Stderr = stderrW
 	defer func() {
 		os.Stdout = originalStdout
+		os.Stderr = originalStderr
 	}()
 
 	fn()
 
-	if err := w.Close(); err != nil {
+	if err := stdoutW.Close(); err != nil {
 		t.Fatalf("close stdout writer: %v", err)
 	}
-
-	data, err := os.ReadFile("/proc/self/fd/" + fdString(r.Fd()))
-	if err == nil {
-		_ = r.Close()
-		return string(data)
+	if err := stderrW.Close(); err != nil {
+		t.Fatalf("close stderr writer: %v", err)
 	}
 
-	buf := new(bytes.Buffer)
-	if _, err := buf.ReadFrom(r); err != nil {
-		_ = r.Close()
+	stdoutData, err := io.ReadAll(stdoutR)
+	if err != nil {
+		_ = stdoutR.Close()
 		t.Fatalf("read captured stdout: %v", err)
 	}
-	if err := r.Close(); err != nil {
+	stderrData, err := io.ReadAll(stderrR)
+	if err != nil {
+		_ = stdoutR.Close()
+		_ = stderrR.Close()
+		t.Fatalf("read captured stderr: %v", err)
+	}
+	if err := stdoutR.Close(); err != nil {
 		t.Fatalf("close stdout reader: %v", err)
 	}
+	if err := stderrR.Close(); err != nil {
+		t.Fatalf("close stderr reader: %v", err)
+	}
 
-	return buf.String()
-}
-
-func fdString(fd uintptr) string {
-	return strings.TrimSpace(strings.TrimPrefix(strings.TrimSuffix(strings.TrimSpace(strings.ReplaceAll(strings.TrimSpace(strings.Trim(strings.ReplaceAll(strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(" "))), " ", "")), "", "")), "", "")), "", ""), ""))
+	return string(stdoutData), string(stderrData)
 }
 
 func assertJSONLLines(t *testing.T, output string) {
@@ -255,4 +281,14 @@ func assertJSONLLines(t *testing.T, output string) {
 			t.Fatalf("stdout line %d missing event type: %s", i+1, line)
 		}
 	}
+}
+
+func enableHeadlessFlag(t *testing.T, command *cobra.Command) {
+	t.Helper()
+
+	if command.Flags().Lookup("headless") != nil {
+		return
+	}
+
+	command.Flags().Bool("headless", false, "Emit JSON events to stdout for machine consumption")
 }
