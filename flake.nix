@@ -18,14 +18,21 @@
           packages = with pkgs; [
             go
             gopls
+            golangci-lint
+            gofumpt
+            just
+            git
+            nixpkgs-fmt
             sqlc
             sqlite
             atlas
           ];
 
           shellHook = ''
+            export GOTOOLCHAIN=local
+
             echo "Ari dev shell (pre-alpha)"
-            echo "Run: go test ./tools/ari-cli/..."
+            echo "Run: just verify"
           '';
         };
       }

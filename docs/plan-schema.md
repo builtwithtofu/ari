@@ -204,9 +204,9 @@ Steps may include validation criteria that are checked before marking as complet
 
 ## Storage Boundary
 
-Project-local plan artifacts are stored as JSON files under `.ari/plans/`. The global state (sessions, telemetry) uses SQLite at `~/.config/ari/ari.db`.
+Project-local plan artifacts are stored as JSON files under `.ari/plans/`. Daemon runtime state is moving to `~/.ari/` in the daemon-first reset.
 
-**Default storage is global-only.** The `.ari/` directory is created only when project-local storage is explicitly enabled via:
+The legacy storage-mode toggles below are historical context and are not active in the daemon-first runtime.
 
 ```bash
 # CLI flag
@@ -215,8 +215,13 @@ ari --storage-mode project ...
 # Environment variable
 ARI_STORAGE_MODE=project
 
-# Config file (~/.config/ari/config.yaml)
-storage_mode: project
+# Daemon config file (~/.ari/config.json)
+{
+  "daemon": {
+    "socket_path": "~/.ari/daemon.sock"
+  },
+  "log_level": "info"
+}
 ```
 
 ```
@@ -233,7 +238,7 @@ Plans are never stored in SQLite. This keeps project state git-syncable and huma
 
 ## Database Migrations (Global DB)
 
-The global SQLite database (`~/.config/ari/ari.db`) uses Atlas for schema management. Atlas is the **required** migration tool for v0.
+The global SQLite database path is `~/.ari/ari.db`. Atlas is the **required** migration tool for v0.
 
 ### Migration Workflow
 
@@ -268,8 +273,8 @@ For irreversible migrations, restore from backup:
 
 ```bash
 # Backup before migration
-cp ~/.config/ari/ari.db ~/.config/ari/ari.db.backup
+cp ~/.ari/ari.db ~/.ari/ari.db.backup
 
 # Restore if needed
-cp ~/.config/ari/ari.db.backup ~/.config/ari/ari.db
+cp ~/.ari/ari.db.backup ~/.ari/ari.db
 ```

@@ -2,9 +2,9 @@ package globaldb
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -37,20 +37,24 @@ func defaultAtlasRunner() atlasRunner {
 	}
 }
 
-func Bootstrap(ctx context.Context, db *sql.DB) error {
-	return bootstrapWithAtlasRunner(ctx, db, defaultAtlasRunner())
+func Bootstrap(ctx context.Context, dbPath string) error {
+	return bootstrapWithAtlasRunner(ctx, dbPath, defaultAtlasRunner())
 }
 
-func BootstrapWithDB(ctx context.Context, db interface {
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-}) error {
-	return bootstrapWithAtlasRunner(ctx, db, defaultAtlasRunner())
-}
-
-func bootstrapWithAtlasRunner(ctx context.Context, db any, runner atlasRunner) error {
-	if db == nil {
-		return fmt.Errorf("%w: db is required", ErrBootstrapFailed)
+func bootstrapWithAtlasRunner(ctx context.Context, dbPath string, runner atlasRunner) error {
+	if dbPath == "" {
+		return fmt.Errorf("%w: db path is required", ErrBootstrapFailed)
 	}
+
+	absDBPath, err := filepath.Abs(dbPath)
+	if err != nil {
+		return fmt.Errorf("%w: resolve db path: %v", ErrBootstrapFailed, err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(absDBPath), 0o755); err != nil {
+		return fmt.Errorf("%w: create db directory: %v", ErrBootstrapFailed, err)
+	}
+
 	if runner.lookPath == nil || runner.run == nil {
 		return fmt.Errorf("%w: atlas runner is required", ErrBootstrapFailed)
 	}
@@ -62,22 +66,23 @@ func bootstrapWithAtlasRunner(ctx context.Context, db any, runner atlasRunner) e
 		return fmt.Errorf("%w: locate atlas executable: %v", ErrBootstrapFailed, err)
 	}
 
-	configPath, err := atlasConfigPath()
+	migrationsDir, err := atlasMigrationsDir()
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrBootstrapFailed, err)
 	}
 
-	if err := runner.run(ctx, "atlas", "migrate", "apply", "--env", "globaldb", "--config", configPath); err != nil {
+	if err := runner.run(ctx, "atlas", "migrate", "apply", "--url", "sqlite://"+absDBPath, "--dir", "file://"+migrationsDir); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func atlasConfigPath() (string, error) {
+func atlasMigrationsDir() (string, error) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {
 		return "", errors.New("resolve source location")
 	}
-	return filepath.Clean(filepath.Join(filepath.Dir(currentFile), "..", "..", "atlas.hcl")), nil
+
+	return filepath.Clean(filepath.Join(filepath.Dir(currentFile), "..", "..", "migrations")), nil
 }

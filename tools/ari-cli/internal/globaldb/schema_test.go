@@ -2,16 +2,15 @@ package globaldb
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"os/exec"
-	"reflect"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func TestBootstrapFailsWhenAtlasCLIIsMissing(t *testing.T) {
-	err := bootstrapWithAtlasRunner(context.Background(), &sql.DB{}, atlasRunner{
+	err := bootstrapWithAtlasRunner(context.Background(), "/tmp/ari.db", atlasRunner{
 		lookPath: func(string) (string, error) {
 			return "", exec.ErrNotFound
 		},
@@ -34,16 +33,13 @@ func TestBootstrapFailsWhenAtlasCLIIsMissing(t *testing.T) {
 	if err.Error() != want {
 		t.Fatalf("bootstrap error message = %q, want %q", err.Error(), want)
 	}
-	if !strings.Contains(err.Error(), "install atlas") {
-		t.Fatalf("bootstrap error = %v, want actionable install guidance", err)
-	}
 }
 
-func TestBootstrapUsesAtlasMigrateApplyForGlobalDB(t *testing.T) {
+func TestBootstrapUsesAtlasMigrateApplyForPath(t *testing.T) {
 	var gotCmd string
 	var gotArgs []string
 
-	err := bootstrapWithAtlasRunner(context.Background(), &sql.DB{}, atlasRunner{
+	err := bootstrapWithAtlasRunner(context.Background(), "/tmp/custom.db", atlasRunner{
 		lookPath: func(name string) (string, error) {
 			if name != "atlas" {
 				t.Fatalf("lookPath name = %q, want atlas", name)
@@ -68,69 +64,55 @@ func TestBootstrapUsesAtlasMigrateApplyForGlobalDB(t *testing.T) {
 	if !strings.Contains(joined, "migrate apply") {
 		t.Fatalf("atlas args = %q, want migrate apply", joined)
 	}
-	if !strings.Contains(joined, "--env globaldb") {
-		t.Fatalf("atlas args = %q, want --env globaldb", joined)
+	if !strings.Contains(joined, "--url sqlite:///tmp/custom.db") {
+		t.Fatalf("atlas args = %q, want --url sqlite:///tmp/custom.db", joined)
 	}
-	if !strings.Contains(joined, "--config ") {
-		t.Fatalf("atlas args = %q, want --config", joined)
+
+	migrationsDir, err := atlasMigrationsDir()
+	if err != nil {
+		t.Fatalf("atlasMigrationsDir: %v", err)
+	}
+
+	if !strings.Contains(joined, "--dir file://"+migrationsDir) {
+		t.Fatalf("atlas args = %q, want --dir file://%s", joined, migrationsDir)
 	}
 }
 
-func TestBootstrapCommandContractIsStableAcrossRepeatedRuns(t *testing.T) {
-	type call struct {
-		cmd  string
-		args []string
+func TestBootstrapRequiresPath(t *testing.T) {
+	err := bootstrapWithAtlasRunner(context.Background(), "", atlasRunner{})
+	if err == nil {
+		t.Fatal("bootstrap returned nil error for empty db path")
 	}
+	if !errors.Is(err, ErrBootstrapFailed) {
+		t.Fatalf("bootstrap error = %v, want ErrBootstrapFailed", err)
+	}
+}
 
-	var calls []call
+func TestBootstrapNormalizesRelativeDBPath(t *testing.T) {
+	var gotArgs []string
 
-	runner := atlasRunner{
+	err := bootstrapWithAtlasRunner(context.Background(), "ari-relative.db", atlasRunner{
 		lookPath: func(name string) (string, error) {
 			if name != "atlas" {
 				t.Fatalf("lookPath name = %q, want atlas", name)
 			}
 			return "/usr/bin/atlas", nil
 		},
-		run: func(_ context.Context, cmd string, args ...string) error {
-			calls = append(calls, call{cmd: cmd, args: append([]string(nil), args...)})
+		run: func(_ context.Context, _ string, args ...string) error {
+			gotArgs = append([]string(nil), args...)
 			return nil
 		},
-	}
-
-	for i := 0; i < 2; i++ {
-		if err := bootstrapWithAtlasRunner(context.Background(), &sql.DB{}, runner); err != nil {
-			t.Fatalf("bootstrap run %d returned error: %v", i+1, err)
-		}
-	}
-
-	if len(calls) != 2 {
-		t.Fatalf("bootstrap call count = %d, want 2", len(calls))
-	}
-
-	wantConfigPath, err := atlasConfigPath()
+	})
 	if err != nil {
-		t.Fatalf("atlasConfigPath() error = %v", err)
-	}
-	wantArgs := []string{"migrate", "apply", "--env", "globaldb", "--config", wantConfigPath}
-
-	if calls[0].cmd != "atlas" || calls[1].cmd != "atlas" {
-		t.Fatalf("commands = [%q, %q], want [\"atlas\", \"atlas\"]", calls[0].cmd, calls[1].cmd)
+		t.Fatalf("bootstrap returned error: %v", err)
 	}
 
-	if !reflect.DeepEqual(calls[0].args, calls[1].args) {
-		t.Fatalf("atlas args differ across repeated runs: first=%q second=%q", strings.Join(calls[0].args, " "), strings.Join(calls[1].args, " "))
+	absPath, err := filepath.Abs("ari-relative.db")
+	if err != nil {
+		t.Fatalf("resolve abs path: %v", err)
 	}
-	if !reflect.DeepEqual(calls[0].args, wantArgs) {
-		t.Fatalf("atlas args = %q, want %q", strings.Join(calls[0].args, " "), strings.Join(wantArgs, " "))
-	}
-}
 
-func TestBootstrapRequiresDB(t *testing.T) {
-	err := bootstrapWithAtlasRunner(context.Background(), nil, atlasRunner{})
-	if err == nil {
-		t.Fatal("bootstrap returned nil error for nil db")
-	}
-	if !errors.Is(err, ErrBootstrapFailed) {
-		t.Fatalf("bootstrap error = %v, want ErrBootstrapFailed", err)
+	if !strings.Contains(strings.Join(gotArgs, " "), "--url sqlite://"+absPath) {
+		t.Fatalf("atlas args = %q, want --url sqlite://%s", strings.Join(gotArgs, " "), absPath)
 	}
 }

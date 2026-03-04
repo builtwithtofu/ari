@@ -4,6 +4,7 @@ result
 node_modules/
 .sandbox/
 .sisyphus/
+.ari/
 
 # Build artifacts
 *.exe

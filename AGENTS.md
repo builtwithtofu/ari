@@ -47,13 +47,45 @@ This repository is pre-alpha. Keep changes small, typed, and easy to verify.
 - Do not reference deleted or replaced code in comments.
 - Prefer comments that explain current intent, not history.
 
-## Testing Approach
+## Critical Constraints (MUST)
 
-- Follow TDD: write/adjust a failing test first, then implement, then refactor.
-- For bug reports (stack traces, logs, or repro steps), add a reproducer test first before fixing the bug.
-- Use `go test` for this project unless a clear need appears.
-- Prefer low-mock, low-orchestration tests with real values.
-- Prefer exact assertions over partial-response checks.
+### Test-Driven Development
+
+- RED first: write failing test before implementation.
+- GREEN second: write minimum code to pass.
+- REFACTOR third: clean up while keeping tests green.
+- NEVER modify tests to make them pass; fix the code.
+- NEVER use `assert.Contains`; assert on complete expected values.
+- Prefer real database tests over mocked tests.
+- Test behavior, not implementation details.
+- For bug reports (stack traces, logs, or repro steps), add a reproducer test before fixing.
+
+### Tiger Style
+
+- At least 2 assertions per function (input validation, return validation).
+- Validate all arguments at function entry.
+- Validate all returns before returning.
+- Fail-fast: panic on nil, error on invalid state.
+- No silent failures: all errors handled or propagated.
+- No hidden behavior: explicit over implicit.
+
+### Daemon Foundations (Go)
+
+- Build daemon lifecycle around `context.Context` and `signal.NotifyContext`.
+- Use synchronous startup: initialize dependencies, bind socket, then serve.
+- Use explicit shutdown sequencing: cancel context, close listener, wait for goroutines, clean socket/pid artifacts.
+- Tie every goroutine lifetime to context cancellation or channel close.
+- Use Unix socket `PlainObjectCodec` framing consistently for local RPC.
+- Remove stale Unix socket files before bind and unlink socket file on close.
+- Report daemon status with at least version, pid, uptime, and socket path.
+
+### Invariant Policy
+
+- Use `panic` only for programmer errors and impossible internal states.
+- Use `error` returns for recoverable runtime failures (I/O, RPC, config, user/system state).
+- Keep invariant helpers minimal and internal (`Must`, `Must1`, `Invariant`).
+- Do not hide control flow with broad recover wrappers in normal runtime paths.
+- Test signal handling through injectable seams or subprocess tests; do not send SIGTERM to the test runner process.
 
 ## Scope Discipline
 
@@ -64,4 +96,4 @@ This repository is pre-alpha. Keep changes small, typed, and easy to verify.
 ## Validation
 
 - Before finishing a change, run at least:
-  - `go test ./...` (from `tools/ari-cli`)
+  - `nix develop -c just verify`

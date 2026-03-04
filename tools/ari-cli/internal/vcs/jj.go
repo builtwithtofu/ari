@@ -166,35 +166,25 @@ func parseJJChangedFiles(output string) []string {
 	return files
 }
 
-// jjRoot finds the JJ repository root from the given directory.
-func jjRoot(dir string) (string, error) {
-	cmd := exec.Command("jj", "root")
-	cmd.Dir = dir
-	out, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Clean(strings.TrimSpace(string(out))), nil
-}
-
-
 // SetupAriIgnore configures JJ to ignore the .ari/ directory.
 func (j *jjBackend) SetupAriIgnore(ariDir string) error {
 	// JJ respects .gitignore, so use that
 	gitignorePath := filepath.Join(j.root, ".gitignore")
-	
+
 	if content, err := os.ReadFile(gitignorePath); err == nil {
 		if strings.Contains(string(content), ".ari/") {
 			return nil
 		}
 	}
-	
-	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+
+	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	
+	defer func() {
+		_ = f.Close()
+	}()
+
 	_, err = f.WriteString("\n# Ari world directory\n.ari/\n")
 	return err
 }

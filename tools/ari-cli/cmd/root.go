@@ -10,27 +10,15 @@ import (
 func NewRootCmd() *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:   "ari",
-		Short: "Ari CLI baseline",
+		Short: "Ari daemon CLI",
 		Run: func(cmd *cobra.Command, _ []string) {
-			fmt.Fprintln(cmd.OutOrStdout(), "ari reset baseline: command surface is not implemented yet")
+			_ = cmd.Help()
 		},
 	}
 
-	rootCmd.PersistentFlags().Bool("headless", false, "Emit JSON events to stdout for machine consumption")
-
-	rootCmd.AddCommand(NewInitCmd())
-	rootCmd.AddCommand(NewAskCmd())
-	rootCmd.AddCommand(NewPlanCmd())
-	rootCmd.AddCommand(NewBuildCmd())
-	rootCmd.AddCommand(NewReviewCmd())
-	rootCmd.AddCommand(NewServeCmd())
+	rootCmd.AddCommand(NewDaemonCmd())
 
 	return rootCmd
-}
-
-func isHeadless(cmd *cobra.Command) bool {
-	headless, _ := cmd.Flags().GetBool("headless")
-	return headless
 }
 
 func Execute() {
