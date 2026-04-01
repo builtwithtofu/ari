@@ -2,12 +2,14 @@ package daemon
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,8 +17,11 @@ import (
 )
 
 func TestDaemonStatusAndStopOverRPC(t *testing.T) {
+	stubBootstrap(t)
+
 	socketPath := testSocketPath(t)
-	d := New(socketPath, "test-version")
+	dbPath := filepath.Join(t.TempDir(), "ari.db")
+	d := New(socketPath, dbPath, "defaults", "defaults", "test-version")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -40,6 +45,18 @@ func TestDaemonStatusAndStopOverRPC(t *testing.T) {
 	if status.SocketPath != socketPath {
 		t.Fatalf("unexpected socket path: %q", status.SocketPath)
 	}
+	if status.DatabasePath != dbPath {
+		t.Fatalf("unexpected database path: %q", status.DatabasePath)
+	}
+	if status.DatabaseState != "healthy" {
+		t.Fatalf("unexpected database state: %q", status.DatabaseState)
+	}
+	if status.ConfigPath != "defaults" {
+		t.Fatalf("unexpected config path: %q", status.ConfigPath)
+	}
+	if status.ConfigSource != "defaults" {
+		t.Fatalf("unexpected config source: %q", status.ConfigSource)
+	}
 
 	var stop StopResponse
 	callDaemonMethod(t, socketPath, "daemon.stop", StopRequest{}, &stop)
@@ -54,8 +71,11 @@ func TestDaemonStatusAndStopOverRPC(t *testing.T) {
 }
 
 func TestDaemonConcurrentStartDoesNotLeakSocketBindError(t *testing.T) {
+	stubBootstrap(t)
+
 	socketPath := testSocketPath(t)
-	d := New(socketPath, "test-version")
+	dbPath := filepath.Join(t.TempDir(), "ari.db")
+	d := New(socketPath, dbPath, "defaults", "defaults", "test-version")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -91,11 +111,64 @@ func TestDaemonConcurrentStartDoesNotLeakSocketBindError(t *testing.T) {
 }
 
 func TestDaemonDefaultVersionIsDev(t *testing.T) {
-	d := New("/tmp/ari-daemon.sock", "")
+	d := New("/tmp/ari-daemon.sock", "/tmp/ari.db", "defaults", "defaults", "")
 
 	status := d.status()
 	if status.Version != "dev" {
 		t.Fatalf("unexpected default version: %q", status.Version)
+	}
+}
+
+func TestDaemonStartAlreadyRunningSkipsBootstrapSideEffects(t *testing.T) {
+	socketPath := testSocketPath(t)
+	dbPath := filepath.Join(t.TempDir(), "ari.db")
+	d := New(socketPath, dbPath, "defaults", "defaults", "test-version")
+
+	original := bootstrapDatabase
+	var bootstrapCalls int32
+	bootstrapDatabase = func(_ context.Context, dbPath string) error {
+		atomic.AddInt32(&bootstrapCalls, 1)
+		if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+			return err
+		}
+		dbConn, err := sql.Open("sqlite", dbPath)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			_ = dbConn.Close()
+		}()
+		_, err = dbConn.Exec(`CREATE TABLE IF NOT EXISTS daemon_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`)
+		return err
+	}
+	t.Cleanup(func() {
+		bootstrapDatabase = original
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- d.Start(ctx)
+	}()
+
+	callDaemonMethod(t, socketPath, "daemon.status", StatusRequest{}, &StatusResponse{})
+
+	err := d.Start(context.Background())
+	if err == nil {
+		t.Fatal("second Start returned nil error")
+	}
+	if !strings.Contains(err.Error(), "daemon is already running") {
+		t.Fatalf("second Start error = %v, want already running", err)
+	}
+	if got := atomic.LoadInt32(&bootstrapCalls); got != 1 {
+		t.Fatalf("bootstrap call count = %d, want 1", got)
+	}
+
+	d.Stop()
+	if err := <-errCh; err != nil {
+		t.Fatalf("first Start returned error: %v", err)
 	}
 }
 
@@ -149,4 +222,33 @@ func testSocketPath(t *testing.T) string {
 	})
 
 	return filepath.Join(dir, "s.sock")
+}
+
+func stubBootstrap(t *testing.T) {
+	t.Helper()
+
+	original := bootstrapDatabase
+	bootstrapDatabase = func(_ context.Context, dbPath string) error {
+		if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+			return err
+		}
+
+		dbConn, err := sql.Open("sqlite", dbPath)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			_ = dbConn.Close()
+		}()
+
+		if _, err := dbConn.Exec(`CREATE TABLE IF NOT EXISTS daemon_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
+			return err
+		}
+
+		return nil
+	}
+
+	t.Cleanup(func() {
+		bootstrapDatabase = original
+	})
 }

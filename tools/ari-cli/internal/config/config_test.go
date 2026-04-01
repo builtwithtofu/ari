@@ -15,9 +15,16 @@ func TestDefaultsReturnsAbsolutePaths(t *testing.T) {
 	if cfg.Daemon.SocketPath == "" {
 		t.Fatalf("expected socket path")
 	}
+	if cfg.Daemon.DBPath == "" {
+		t.Fatalf("expected database path")
+	}
 
 	if !filepath.IsAbs(cfg.Daemon.SocketPath) {
 		t.Fatalf("expected absolute socket path, got %q", cfg.Daemon.SocketPath)
+	}
+
+	if !filepath.IsAbs(cfg.Daemon.DBPath) {
+		t.Fatalf("expected absolute db path, got %q", cfg.Daemon.DBPath)
 	}
 
 	if cfg.LogLevel != "info" {
@@ -37,6 +44,9 @@ func TestLoadUsesDefaultsWhenMissingConfig(t *testing.T) {
 	if cfg.Daemon.SocketPath != filepath.Join(tmpHome, ".ari", "daemon.sock") {
 		t.Fatalf("unexpected socket path: %q", cfg.Daemon.SocketPath)
 	}
+	if cfg.Daemon.DBPath != filepath.Join(tmpHome, ".ari", "ari.db") {
+		t.Fatalf("unexpected db path: %q", cfg.Daemon.DBPath)
+	}
 }
 
 func TestLoadExpandsTildePaths(t *testing.T) {
@@ -50,7 +60,8 @@ func TestLoadExpandsTildePaths(t *testing.T) {
 
 	configBody := `{
 		"daemon": {
-			"socket_path": "~/.ari/custom.sock"
+			"socket_path": "~/.ari/custom.sock",
+			"db_path": "~/.ari/custom.db"
 		},
 		"log_level": "WARN"
 	}`
@@ -67,6 +78,9 @@ func TestLoadExpandsTildePaths(t *testing.T) {
 	if cfg.Daemon.SocketPath != filepath.Join(tmpHome, ".ari", "custom.sock") {
 		t.Fatalf("unexpected socket path: %q", cfg.Daemon.SocketPath)
 	}
+	if cfg.Daemon.DBPath != filepath.Join(tmpHome, ".ari", "custom.db") {
+		t.Fatalf("unexpected db path: %q", cfg.Daemon.DBPath)
+	}
 
 	if cfg.LogLevel != "warn" {
 		t.Fatalf("unexpected log level: %q", cfg.LogLevel)
@@ -77,6 +91,7 @@ func TestLoadReadsNestedEnvOverride(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 	t.Setenv("ARI_DAEMON_SOCKET_PATH", "~/env.sock")
+	t.Setenv("ARI_DAEMON_DB_PATH", "~/env.db")
 
 	cfg, err := Load()
 	if err != nil {
@@ -85,6 +100,9 @@ func TestLoadReadsNestedEnvOverride(t *testing.T) {
 
 	if cfg.Daemon.SocketPath != filepath.Join(tmpHome, "env.sock") {
 		t.Fatalf("unexpected env socket path: %q", cfg.Daemon.SocketPath)
+	}
+	if cfg.Daemon.DBPath != filepath.Join(tmpHome, "env.db") {
+		t.Fatalf("unexpected env db path: %q", cfg.Daemon.DBPath)
 	}
 }
 

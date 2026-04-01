@@ -87,6 +87,13 @@ This repository is pre-alpha. Keep changes small, typed, and easy to verify.
 - Do not hide control flow with broad recover wrappers in normal runtime paths.
 - Test signal handling through injectable seams or subprocess tests; do not send SIGTERM to the test runner process.
 
+### Migration Safety
+
+- Preserve existing user databases during normal bootstrap and upgrades.
+- Never rewrite or edit already-applied migration files; add new forward migrations instead.
+- Keep migrations forward-only by default and use Atlas revision history as source of truth.
+- Use explicit backup + restore or a corrective forward migration for recovery; do not use destructive reset behavior in upgrade paths.
+
 ## Scope Discipline
 
 - Keep active implementation focused on `tools/ari-cli/`.

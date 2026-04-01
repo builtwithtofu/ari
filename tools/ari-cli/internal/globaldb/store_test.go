@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"strings"
 	"testing"
 )
 
@@ -13,22 +12,29 @@ type execCall struct {
 	args  []any
 }
 
+type queryCall struct {
+	query string
+	args  []any
+}
+
 type recordingDB struct {
-	execCalls    []execCall
-	queryRows    Rows
-	queryErr     error
-	rowsAffected int64
+	execCalls  []execCall
+	queryCalls []queryCall
+	queryRows  Rows
+	queryErr   error
+	execErr    error
 }
 
 func (r *recordingDB) ExecContext(_ context.Context, query string, args ...any) (sql.Result, error) {
 	r.execCalls = append(r.execCalls, execCall{query: query, args: args})
-	if r.rowsAffected == 0 {
-		return testResult(0), nil
+	if r.execErr != nil {
+		return nil, r.execErr
 	}
-	return testResult(r.rowsAffected), nil
+	return testResult(1), nil
 }
 
-func (r *recordingDB) QueryContext(_ context.Context, _ string, _ ...any) (Rows, error) {
+func (r *recordingDB) QueryContext(_ context.Context, query string, args ...any) (Rows, error) {
+	r.queryCalls = append(r.queryCalls, queryCall{query: query, args: args})
 	if r.queryErr != nil {
 		return nil, r.queryErr
 	}
@@ -49,10 +55,9 @@ func (t testResult) RowsAffected() (int64, error) {
 }
 
 type testRows struct {
-	items  [][]any
-	idx    int
-	scanOK bool
-	err    error
+	items [][]any
+	idx   int
+	err   error
 }
 
 func (t *testRows) Next() bool {
@@ -85,7 +90,6 @@ func (t *testRows) Scan(dest ...any) error {
 		}
 		*s = v
 	}
-	t.scanOK = true
 	return nil
 }
 
@@ -97,157 +101,85 @@ func (t *testRows) Close() error {
 	return nil
 }
 
-func TestUpsertProjectRejectsRawAbsolutePathByDefault(t *testing.T) {
-	s, err := NewStore(&recordingDB{})
-	if err != nil {
-		t.Fatalf("new store returned error: %v", err)
-	}
-
-	err = s.UpsertProject(context.Background(), Project{
-		ProjectID:       "proj-1",
-		ProjectIdentity: "/tmp/repo",
-		CreatedAt:       "2026-02-22T10:00:00Z",
-		UpdatedAt:       "2026-02-22T10:00:00Z",
-	})
-	if err == nil {
-		t.Fatal("upsert project with raw absolute path returned nil error")
-	}
-	if !strings.Contains(err.Error(), "non-raw") {
-		t.Fatalf("upsert project error = %v, want non-raw identity error", err)
-	}
-}
-
-func TestUpsertProjectRequiresIdentityKindToBeKnownValue(t *testing.T) {
-	s, err := NewStore(&recordingDB{})
-	if err != nil {
-		t.Fatalf("new store returned error: %v", err)
-	}
-
-	err = s.UpsertProject(context.Background(), Project{
-		ProjectID:       "proj-1",
-		ProjectIdentity: "project-ref-123",
-		IdentityKind:    "other",
-		CreatedAt:       "2026-02-22T10:00:00Z",
-		UpdatedAt:       "2026-02-22T10:00:00Z",
-	})
-	if err == nil {
-		t.Fatal("upsert project with invalid identity kind returned nil error")
-	}
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("upsert project error = %v, want ErrInvalidInput", err)
-	}
-}
-
-func TestUpsertProjectDefaultsToOpaqueIdentityKind(t *testing.T) {
+func TestSetMetaRoundTripUsesUpsertQuery(t *testing.T) {
 	db := &recordingDB{}
-	s, err := NewStore(db)
+	store, err := NewStore(db)
 	if err != nil {
-		t.Fatalf("new store returned error: %v", err)
+		t.Fatalf("NewStore returned error: %v", err)
 	}
 
-	err = s.UpsertProject(context.Background(), Project{
-		ProjectID:       "proj-1",
-		ProjectIdentity: "project-ref-123",
-		CreatedAt:       "2026-02-22T10:00:00Z",
-		UpdatedAt:       "2026-02-22T10:00:00Z",
-	})
-	if err != nil {
-		t.Fatalf("upsert project returned error: %v", err)
+	if err := store.SetMeta(context.Background(), "version", "0.3.0-dev"); err != nil {
+		t.Fatalf("SetMeta returned error: %v", err)
 	}
 
 	if len(db.execCalls) != 1 {
 		t.Fatalf("exec call count = %d, want 1", len(db.execCalls))
 	}
-	if len(db.execCalls[0].args) != 5 {
-		t.Fatalf("upsert args count = %d, want 5", len(db.execCalls[0].args))
+	if db.execCalls[0].query != upsertMetaQuery {
+		t.Fatalf("exec query = %q, want upsertMetaQuery", db.execCalls[0].query)
 	}
-
-	kindArg, ok := db.execCalls[0].args[2].(string)
-	if !ok {
-		t.Fatalf("identity kind arg type = %T, want string", db.execCalls[0].args[2])
-	}
-	if kindArg != ProjectIdentityKindOpaque {
-		t.Fatalf("identity kind arg = %q, want %q", kindArg, ProjectIdentityKindOpaque)
+	if len(db.execCalls[0].args) != 2 {
+		t.Fatalf("exec args count = %d, want 2", len(db.execCalls[0].args))
 	}
 }
 
-func TestUpsertProjectAllowsRawPathOnlyWhenExplicit(t *testing.T) {
-	s, err := NewStore(&recordingDB{})
+func TestGetMetaReturnsStoredValue(t *testing.T) {
+	db := &recordingDB{queryRows: &testRows{items: [][]any{{"0.3.0-dev"}}}}
+	store, err := NewStore(db)
 	if err != nil {
-		t.Fatalf("new store returned error: %v", err)
+		t.Fatalf("NewStore returned error: %v", err)
 	}
 
-	err = s.UpsertProject(context.Background(), Project{
-		ProjectID:       "proj-1",
-		ProjectIdentity: "/tmp/repo",
-		IdentityKind:    ProjectIdentityKindRawPath,
-		CreatedAt:       "2026-02-22T10:00:00Z",
-		UpdatedAt:       "2026-02-22T10:00:00Z",
-	})
+	value, err := store.GetMeta(context.Background(), "version")
 	if err != nil {
-		t.Fatalf("upsert project with explicit raw path returned error: %v", err)
+		t.Fatalf("GetMeta returned error: %v", err)
+	}
+	if value != "0.3.0-dev" {
+		t.Fatalf("GetMeta value = %q, want 0.3.0-dev", value)
+	}
+
+	if len(db.queryCalls) != 1 {
+		t.Fatalf("query call count = %d, want 1", len(db.queryCalls))
+	}
+	if db.queryCalls[0].query != metaByKeyQuery {
+		t.Fatalf("query = %q, want metaByKeyQuery", db.queryCalls[0].query)
 	}
 }
 
-func TestGetProjectByIDReturnsNotFoundSentinel(t *testing.T) {
-	s, err := NewStore(&recordingDB{})
+func TestGetMetaReturnsNotFoundSentinel(t *testing.T) {
+	store, err := NewStore(&recordingDB{})
 	if err != nil {
-		t.Fatalf("new store returned error: %v", err)
+		t.Fatalf("NewStore returned error: %v", err)
 	}
 
-	_, err = s.GetProjectByID(context.Background(), "missing")
+	_, err = store.GetMeta(context.Background(), "missing")
 	if err == nil {
-		t.Fatal("get project by id returned nil error for missing record")
+		t.Fatal("GetMeta returned nil error for missing key")
 	}
 	if !errors.Is(err, ErrNotFound) {
-		t.Fatalf("get project by id error = %v, want ErrNotFound", err)
+		t.Fatalf("GetMeta error = %v, want ErrNotFound", err)
 	}
 }
 
-func TestGetSessionByIDReturnsNotFoundSentinel(t *testing.T) {
-	s, err := NewStore(&recordingDB{})
+func TestMetaMethodsRequireKey(t *testing.T) {
+	store, err := NewStore(&recordingDB{})
 	if err != nil {
-		t.Fatalf("new store returned error: %v", err)
+		t.Fatalf("NewStore returned error: %v", err)
 	}
 
-	_, err = s.GetSessionByID(context.Background(), "missing")
+	_, err = store.GetMeta(context.Background(), "")
 	if err == nil {
-		t.Fatal("get session by id returned nil error for missing record")
+		t.Fatal("GetMeta returned nil error for empty key")
 	}
-	if !errors.Is(err, ErrNotFound) {
-		t.Fatalf("get session by id error = %v, want ErrNotFound", err)
-	}
-}
-
-func TestDeleteSessionByIDReturnsNotFoundSentinel(t *testing.T) {
-	s, err := NewStore(&recordingDB{rowsAffected: 0})
-	if err != nil {
-		t.Fatalf("new store returned error: %v", err)
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("GetMeta error = %v, want ErrInvalidInput", err)
 	}
 
-	err = s.DeleteSessionByID(context.Background(), "missing")
+	err = store.SetMeta(context.Background(), "", "value")
 	if err == nil {
-		t.Fatal("delete session by id returned nil error for missing record")
+		t.Fatal("SetMeta returned nil error for empty key")
 	}
-	if !errors.Is(err, ErrNotFound) {
-		t.Fatalf("delete session by id error = %v, want ErrNotFound", err)
-	}
-}
-
-func TestProjectSchemaAndQueriesUseIdentityContract(t *testing.T) {
-	if strings.Contains(upsertProjectQuery, "root_path") || strings.Contains(projectByIdentityQuery, "root_path") || strings.Contains(listProjectsQuery, "root_path") {
-		t.Fatal("project queries still reference root_path")
-	}
-	if !strings.Contains(projectByIdentityQuery, "ORDER BY created_at ASC, project_id ASC") {
-		t.Fatal("project by identity query missing deterministic order")
-	}
-	if !strings.Contains(listProjectsQuery, "ORDER BY created_at ASC, project_id ASC") {
-		t.Fatal("list projects query missing deterministic order")
-	}
-}
-
-func TestSessionListQueryHasDeterministicOrder(t *testing.T) {
-	if !strings.Contains(listSessionsByProjectQuery, "ORDER BY created_at ASC, session_id ASC") {
-		t.Fatal("list sessions by project query missing deterministic order")
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("SetMeta error = %v, want ErrInvalidInput", err)
 	}
 }

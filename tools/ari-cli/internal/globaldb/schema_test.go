@@ -3,6 +3,7 @@ package globaldb
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -114,5 +115,101 @@ func TestBootstrapNormalizesRelativeDBPath(t *testing.T) {
 
 	if !strings.Contains(strings.Join(gotArgs, " "), "--url sqlite://"+absPath) {
 		t.Fatalf("atlas args = %q, want --url sqlite://%s", strings.Join(gotArgs, " "), absPath)
+	}
+}
+
+func TestBootstrapAppliesDaemonMetaMigration(t *testing.T) {
+	migrationsDir, err := atlasMigrationsDir()
+	if err != nil {
+		t.Fatalf("atlasMigrationsDir: %v", err)
+	}
+
+	baselinePath := filepath.Join(migrationsDir, "202602220901_init_globaldb.sql")
+	baselineContent, err := os.ReadFile(baselinePath)
+	if err != nil {
+		t.Fatalf("read baseline migration file: %v", err)
+	}
+	baselineSQL := string(baselineContent)
+	if !strings.Contains(baselineSQL, "CREATE TABLE IF NOT EXISTS projects") {
+		t.Fatalf("baseline migration SQL = %q, want projects table", baselineSQL)
+	}
+
+	daemonMetaPath := filepath.Join(migrationsDir, "202604012220_daemon_meta.sql")
+	content, err := os.ReadFile(daemonMetaPath)
+	if err != nil {
+		t.Fatalf("read daemon_meta migration file: %v", err)
+	}
+
+	migrationSQL := string(content)
+	if !strings.Contains(migrationSQL, "CREATE TABLE IF NOT EXISTS daemon_meta") {
+		t.Fatalf("migration SQL = %q, want daemon_meta table", migrationSQL)
+	}
+}
+
+func TestBootstrapPreservesExistingDatabaseFiles(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	legacyPath := filepath.Join(home, ".config", "ari", "ari.db")
+	currentPath := filepath.Join(home, ".ari", "ari.db")
+
+	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o755); err != nil {
+		t.Fatalf("create legacy db directory: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(currentPath), 0o755); err != nil {
+		t.Fatalf("create current db directory: %v", err)
+	}
+	if err := os.WriteFile(legacyPath, []byte("legacy"), 0o600); err != nil {
+		t.Fatalf("write legacy db file: %v", err)
+	}
+	if err := os.WriteFile(currentPath, []byte("current"), 0o600); err != nil {
+		t.Fatalf("write current db file: %v", err)
+	}
+
+	legacyBefore, err := os.ReadFile(legacyPath)
+	if err != nil {
+		t.Fatalf("read legacy db file before bootstrap: %v", err)
+	}
+	currentBefore, err := os.ReadFile(currentPath)
+	if err != nil {
+		t.Fatalf("read current db file before bootstrap: %v", err)
+	}
+
+	err = bootstrapWithAtlasRunner(context.Background(), currentPath, atlasRunner{
+		lookPath: func(name string) (string, error) {
+			if name != "atlas" {
+				t.Fatalf("lookPath name = %q, want atlas", name)
+			}
+			return "/usr/bin/atlas", nil
+		},
+		run: func(_ context.Context, _ string, _ ...string) error {
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("bootstrap returned error: %v", err)
+	}
+
+	if _, err := os.Stat(legacyPath); err != nil {
+		t.Fatalf("legacy path stat error = %v, want file retained", err)
+	}
+	if _, err := os.Stat(currentPath); err != nil {
+		t.Fatalf("current path stat error = %v, want file retained", err)
+	}
+
+	legacyAfter, err := os.ReadFile(legacyPath)
+	if err != nil {
+		t.Fatalf("read legacy db file after bootstrap: %v", err)
+	}
+	currentAfter, err := os.ReadFile(currentPath)
+	if err != nil {
+		t.Fatalf("read current db file after bootstrap: %v", err)
+	}
+
+	if string(legacyAfter) != string(legacyBefore) {
+		t.Fatalf("legacy db contents changed: before=%q after=%q", string(legacyBefore), string(legacyAfter))
+	}
+	if string(currentAfter) != string(currentBefore) {
+		t.Fatalf("current db contents changed: before=%q after=%q", string(currentBefore), string(currentAfter))
 	}
 }

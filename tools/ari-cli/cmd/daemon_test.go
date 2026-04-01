@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -87,7 +88,8 @@ func TestConfiguredSocketPathReadsConfig(t *testing.T) {
 
 	configBody := `{
 		"daemon": {
-			"socket_path": "~/.ari/custom.sock"
+			"socket_path": "~/.ari/custom.sock",
+			"db_path": "~/.ari/custom.db"
 		},
 		"log_level": "info"
 	}`
@@ -105,11 +107,61 @@ func TestConfiguredSocketPathReadsConfig(t *testing.T) {
 	if cfg.Daemon.SocketPath != want {
 		t.Fatalf("configured socket path = %q, want %q", cfg.Daemon.SocketPath, want)
 	}
+
+	wantDB := filepath.Join(home, ".ari", "custom.db")
+	if cfg.Daemon.DBPath != wantDB {
+		t.Fatalf("configured db path = %q, want %q", cfg.Daemon.DBPath, wantDB)
+	}
+}
+
+func TestConfiguredDaemonConfigWithSourceUsesEnvironmentLabel(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ARI_DAEMON_SOCKET_PATH", "~/env.sock")
+	t.Setenv("ARI_DAEMON_DB_PATH", "~/env.db")
+
+	cfg, _, source, err := configuredDaemonConfigWithSource()
+	if err != nil {
+		t.Fatalf("configuredDaemonConfigWithSource: %v", err)
+	}
+
+	if source != "environment" {
+		t.Fatalf("config source = %q, want environment", source)
+	}
+
+	if cfg.Daemon.SocketPath != filepath.Join(home, "env.sock") {
+		t.Fatalf("configured socket path = %q, want env override", cfg.Daemon.SocketPath)
+	}
+	if cfg.Daemon.DBPath != filepath.Join(home, "env.db") {
+		t.Fatalf("configured db path = %q, want env override", cfg.Daemon.DBPath)
+	}
 }
 
 func TestDaemonStatusAndStopHappyPath(t *testing.T) {
+	requireAtlas(t)
+
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+
+	ariDir := filepath.Join(home, ".ari")
+	if err := os.MkdirAll(ariDir, 0o755); err != nil {
+		t.Fatalf("create .ari dir: %v", err)
+	}
+
+	configPath := filepath.Join(ariDir, "config.json")
+	configBody := `{
+		"daemon": {
+			"socket_path": "~/.ari/custom.sock",
+			"db_path": "~/.ari/custom.db"
+		},
+		"log_level": "info"
+	}`
+	if err := os.WriteFile(configPath, []byte(configBody), 0o644); err != nil {
+		t.Fatalf("write config file: %v", err)
+	}
+
+	dbPath := filepath.Join(home, ".ari", "custom.db")
+	socketPath := filepath.Join(home, ".ari", "custom.sock")
 
 	startOut := make(chan string, 1)
 	errCh := make(chan error, 1)
@@ -150,8 +202,28 @@ func TestDaemonStatusAndStopHappyPath(t *testing.T) {
 		!strings.Contains(statusOut, "Version:") ||
 		!strings.Contains(statusOut, "PID:") ||
 		!strings.Contains(statusOut, "Uptime:") ||
-		!strings.Contains(statusOut, "Socket:") {
+		!strings.Contains(statusOut, "Socket:") ||
+		!strings.Contains(statusOut, "Database:") ||
+		!strings.Contains(statusOut, "Config:") ||
+		!strings.Contains(statusOut, "Config Source:") {
 		t.Fatalf("unexpected status output: %q", statusOut)
+	}
+
+	if !strings.Contains(statusOut, "Socket: "+socketPath) {
+		t.Fatalf("status output = %q, want configured socket path", statusOut)
+	}
+	if !strings.Contains(statusOut, "Database: "+dbPath+" (healthy)") {
+		t.Fatalf("status output = %q, want healthy configured database path", statusOut)
+	}
+	if !strings.Contains(statusOut, "Config: "+configPath) {
+		t.Fatalf("status output = %q, want config path", statusOut)
+	}
+	if !strings.Contains(statusOut, "Config Source: file") {
+		t.Fatalf("status output = %q, want file config source", statusOut)
+	}
+
+	if _, err := os.Stat(dbPath); err != nil {
+		t.Fatalf("stat bootstrapped database path: %v", err)
 	}
 
 	stopOut, err := executeRootCommand("daemon", "stop")
@@ -173,6 +245,14 @@ func TestDaemonStatusAndStopHappyPath(t *testing.T) {
 
 	if out := <-startOut; !strings.Contains(out, "Ari daemon starting") {
 		t.Fatalf("unexpected start output: %q", out)
+	}
+}
+
+func requireAtlas(t *testing.T) {
+	t.Helper()
+
+	if _, err := exec.LookPath("atlas"); err != nil {
+		t.Skip("atlas CLI is required for daemon bootstrap tests")
 	}
 }
 

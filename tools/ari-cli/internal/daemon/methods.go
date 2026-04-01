@@ -14,6 +14,10 @@ type StatusResponse struct {
 	PID           int    `json:"pid"`
 	UptimeSeconds int64  `json:"uptime_seconds"`
 	SocketPath    string `json:"socket_path"`
+	DatabasePath  string `json:"database_path"`
+	DatabaseState string `json:"database_state"`
+	ConfigPath    string `json:"config_path"`
+	ConfigSource  string `json:"config_source"`
 }
 
 type StopRequest struct{}
