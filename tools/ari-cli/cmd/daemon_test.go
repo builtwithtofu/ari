@@ -120,7 +120,7 @@ func TestConfiguredDaemonConfigWithSourceUsesEnvironmentLabel(t *testing.T) {
 	t.Setenv("ARI_DAEMON_SOCKET_PATH", "~/env.sock")
 	t.Setenv("ARI_DAEMON_DB_PATH", "~/env.db")
 
-	cfg, _, source, err := configuredDaemonConfigWithSource()
+	cfg, configPath, source, err := configuredDaemonConfigWithSource()
 	if err != nil {
 		t.Fatalf("configuredDaemonConfigWithSource: %v", err)
 	}
@@ -128,12 +128,31 @@ func TestConfiguredDaemonConfigWithSourceUsesEnvironmentLabel(t *testing.T) {
 	if source != "environment" {
 		t.Fatalf("config source = %q, want environment", source)
 	}
+	if configPath != "" {
+		t.Fatalf("config path = %q, want empty when environment-only", configPath)
+	}
 
 	if cfg.Daemon.SocketPath != filepath.Join(home, "env.sock") {
 		t.Fatalf("configured socket path = %q, want env override", cfg.Daemon.SocketPath)
 	}
 	if cfg.Daemon.DBPath != filepath.Join(home, "env.db") {
 		t.Fatalf("configured db path = %q, want env override", cfg.Daemon.DBPath)
+	}
+}
+
+func TestConfiguredDaemonConfigWithSourceKeepsValidationInConfigPackage(t *testing.T) {
+	sourceFile := filepath.Join("daemon.go")
+	content, err := os.ReadFile(sourceFile)
+	if err != nil {
+		t.Fatalf("read daemon command source: %v", err)
+	}
+
+	text := string(content)
+	if strings.Contains(text, "daemon socket path is required") {
+		t.Fatal("configuredDaemonConfigWithSource duplicates daemon socket path validation")
+	}
+	if strings.Contains(text, "daemon db path is required") {
+		t.Fatal("configuredDaemonConfigWithSource duplicates daemon db path validation")
 	}
 }
 

@@ -52,7 +52,6 @@ func NewDefault(version string) (*Daemon, error) {
 func New(socketPath, dbPath, configPath, configSource, version string) *Daemon {
 	assert.Invariant(strings.TrimSpace(socketPath) != "", "daemon socket path is required")
 	assert.Invariant(strings.TrimSpace(dbPath) != "", "daemon db path is required")
-	assert.Invariant(strings.TrimSpace(configPath) != "", "daemon config path is required")
 	assert.Invariant(strings.TrimSpace(configSource) != "", "daemon config source is required")
 
 	if version == "" {

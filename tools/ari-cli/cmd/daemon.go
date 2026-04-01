@@ -130,7 +130,11 @@ func newDaemonStatusCmd() *cobra.Command {
 			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Database: %s (%s)\n", response.DatabasePath, response.DatabaseState); err != nil {
 				return err
 			}
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Config: %s\n", response.ConfigPath); err != nil {
+			configPath := response.ConfigPath
+			if configPath == "" {
+				configPath = "(none)"
+			}
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Config: %s\n", configPath); err != nil {
 				return err
 			}
 			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Config Source: %s\n", response.ConfigSource); err != nil {
@@ -172,13 +176,6 @@ func configuredDaemonConfigWithSource() (*config.Config, string, string, error) 
 		return nil, "", "", fmt.Errorf("config is required")
 	}
 
-	if cfg.Daemon.SocketPath == "" {
-		return nil, "", "", fmt.Errorf("daemon socket path is required")
-	}
-	if cfg.Daemon.DBPath == "" {
-		return nil, "", "", fmt.Errorf("daemon db path is required")
-	}
-
 	configPath, err := daemonConfigPath()
 	if err != nil {
 		return nil, "", "", err
@@ -188,7 +185,7 @@ func configuredDaemonConfigWithSource() (*config.Config, string, string, error) 
 		if _, err := os.Stat(configPath); err == nil {
 			return cfg, configPath, "environment", nil
 		}
-		return cfg, "defaults", "environment", nil
+		return cfg, "", "environment", nil
 	}
 
 	if _, err := os.Stat(configPath); err != nil {
