@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 
 	"github.com/sourcegraph/jsonrpc2"
@@ -51,12 +52,26 @@ func (s *Server) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.
 		return
 	}
 
+	result, err := method.Call(ctx, envelope.Params)
+	if err != nil {
+		if req.Notif {
+			return
+		}
+
+		if errors.Is(err, ErrInvalidMethodParams) {
+			s.sendError(ctx, conn, req.ID, InvalidParams, "Invalid params", err.Error())
+			return
+		}
+
+		s.sendError(ctx, conn, req.ID, InternalError, "Internal error", fmt.Sprintf("%v", err))
+		return
+	}
+
 	if req.Notif {
 		return
 	}
 
-	_ = method
-	s.sendResult(ctx, conn, req.ID, map[string]string{"status": "ok"})
+	s.sendResult(ctx, conn, req.ID, result)
 }
 
 func (s *Server) sendError(ctx context.Context, conn *jsonrpc2.Conn, id jsonrpc2.ID, code int, message string, data any) {

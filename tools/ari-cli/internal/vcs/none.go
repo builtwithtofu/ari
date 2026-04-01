@@ -40,7 +40,6 @@ func (n *noneBackend) CreateBranch(name string) error {
 	return ErrNotSupported
 }
 
-
 // SetupAriIgnore returns ErrNotSupported for no VCS.
 func (n *noneBackend) SetupAriIgnore(ariDir string) error {
 	return ErrNotSupported

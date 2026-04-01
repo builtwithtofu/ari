@@ -233,7 +233,9 @@ func queryProjects(ctx context.Context, db DB, query string, args ...any) ([]Pro
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	out := make([]Project, 0)
 	for rows.Next() {
@@ -255,7 +257,9 @@ func querySessions(ctx context.Context, db DB, query string, args ...any) ([]Ses
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	out := make([]Session, 0)
 	for rows.Next() {

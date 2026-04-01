@@ -16,7 +16,7 @@ func TestDetect(t *testing.T) {
 		{
 			name: "detects jj when jj directory exists",
 			setup: func(t *testing.T, dir string) {
-				if err := os.MkdirAll(filepath.Join(dir, ".jj"), 0755); err != nil {
+				if err := os.MkdirAll(filepath.Join(dir, ".jj"), 0o755); err != nil {
 					t.Fatal(err)
 				}
 			},
@@ -25,7 +25,7 @@ func TestDetect(t *testing.T) {
 		{
 			name: "detects git when git directory exists",
 			setup: func(t *testing.T, dir string) {
-				if err := os.MkdirAll(filepath.Join(dir, ".git"), 0755); err != nil {
+				if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
 					t.Fatal(err)
 				}
 			},
@@ -39,10 +39,10 @@ func TestDetect(t *testing.T) {
 		{
 			name: "prefers jj over git when both present",
 			setup: func(t *testing.T, dir string) {
-				if err := os.MkdirAll(filepath.Join(dir, ".jj"), 0755); err != nil {
+				if err := os.MkdirAll(filepath.Join(dir, ".jj"), 0o755); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.MkdirAll(filepath.Join(dir, ".git"), 0755); err != nil {
+				if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
 					t.Fatal(err)
 				}
 			},
@@ -71,12 +71,12 @@ func TestDetect_ParentDirectory(t *testing.T) {
 	// Test that detection walks up the directory tree.
 	tmpDir := t.TempDir()
 	childDir := filepath.Join(tmpDir, "a", "b", "c")
-	if err := os.MkdirAll(childDir, 0755); err != nil {
+	if err := os.MkdirAll(childDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
 	// Create .git in the root.
-	if err := os.MkdirAll(filepath.Join(tmpDir, ".git"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(tmpDir, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -198,7 +198,7 @@ func TestHasDirectory(t *testing.T) {
 
 	// Test with existing directory.
 	subDir := filepath.Join(tmpDir, "exists")
-	if err := os.MkdirAll(subDir, 0755); err != nil {
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if !hasDirectory(tmpDir, "exists") {
@@ -207,7 +207,7 @@ func TestHasDirectory(t *testing.T) {
 
 	// Test with file (not directory).
 	filePath := filepath.Join(tmpDir, "file.txt")
-	if err := os.WriteFile(filePath, []byte("test"), 0644); err != nil {
+	if err := os.WriteFile(filePath, []byte("test"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if hasDirectory(tmpDir, "file.txt") {

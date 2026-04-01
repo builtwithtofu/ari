@@ -108,30 +108,28 @@ Agents query feedback via `ari op show <op-id> --feedback` to understand rejecti
 
 ## Storage Boundary
 
-Session state is split between global and project-local storage. The **default** is global-only; project-local `.ari/` requires explicit opt-in.
+Session storage in this document reflects legacy planning-engine behavior and is not active in the daemon-first runtime.
 
 ### Storage Mode Policy
 
-- **Default**: Global storage at `~/.config/ari`
-- **Project-local**: `.ari/` directory is **opt-in only** via explicit configuration
-- **Precedence**: CLI flag > environment variable > config file > default
+- **Daemon config path**: `~/.ari/config.json`
+- **Daemon socket path**: `daemon.socket_path` (default `~/.ari/daemon.sock`)
+- **Project/session storage model**: deferred to S2 and later slices
 
-Ari never creates `.ari/` implicitly. To enable project-local storage, set:
+Ari reads daemon runtime config from `~/.ari/config.json`.
 
-```bash
-# Via CLI flag
-ari --storage-mode project ...
-
-# Via environment
-ARI_STORAGE_MODE=project ari ...
-
-# Via config (in ~/.config/ari/config.yaml)
-storage_mode: project
+```json
+{
+  "daemon": {
+    "socket_path": "~/.ari/daemon.sock"
+  },
+  "log_level": "info"
+}
 ```
 
 ### Global State (SQLite)
 
-Path: `~/.config/ari/ari.db`
+Path: `~/.ari/ari.db` (planned runtime path; full session schema lands in S2)
 
 The global registry tracks sessions across all projects for cross-project visibility and telemetry.
 

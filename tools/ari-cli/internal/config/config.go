@@ -1,65 +1,45 @@
 package config
 
 import (
-	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/spf13/viper"
-	"github.com/xeipuuv/gojsonschema"
 )
 
 type Config struct {
-	Router    RouterConfig              `json:"router" mapstructure:"router"`
-	Models    ModelConfig               `json:"models" mapstructure:"models"`
-	Providers map[string]ProviderConfig `json:"providers,omitempty" mapstructure:"providers"`
+	Daemon   DaemonConfig `json:"daemon" mapstructure:"daemon"`
+	LogLevel string       `json:"log_level" mapstructure:"log_level"`
 }
 
-type RouterConfig struct {
-	Strategy    string  `json:"strategy" mapstructure:"strategy"`
-	DailyBudget float64 `json:"daily_budget" mapstructure:"daily_budget"`
-}
-
-type ModelConfig struct {
-	Default string `json:"default" mapstructure:"default"`
-	Edits   string `json:"edits" mapstructure:"edits"`
-	Review  string `json:"review" mapstructure:"review"`
-}
-
-type ProviderConfig struct {
-	BaseURL   string `json:"base_url,omitempty" mapstructure:"base_url"`
-	APIKeyEnv string `json:"api_key_env,omitempty" mapstructure:"api_key_env"`
+type DaemonConfig struct {
+	SocketPath string `json:"socket_path" mapstructure:"socket_path"`
 }
 
 func Defaults() *Config {
+	home := userHomeDir()
 	return &Config{
-		Router: RouterConfig{
-			Strategy:    "balanced",
-			DailyBudget: 10.00,
+		Daemon: DaemonConfig{
+			SocketPath: filepath.Join(home, ".ari", "daemon.sock"),
 		},
-		Models: ModelConfig{
-			Default: "openai/gpt-4o",
-			Edits:   "openai/gpt-4o-mini",
-			Review:  "anthropic/claude-opus-4-5",
-		},
+		LogLevel: "info",
 	}
 }
 
 func Load() (*Config, error) {
 	v := viper.New()
-
 	defaults := Defaults()
-	v.SetDefault("router.strategy", defaults.Router.Strategy)
-	v.SetDefault("router.daily_budget", defaults.Router.DailyBudget)
-	v.SetDefault("models.default", defaults.Models.Default)
-	v.SetDefault("models.edits", defaults.Models.Edits)
-	v.SetDefault("models.review", defaults.Models.Review)
+
+	v.SetDefault("daemon.socket_path", defaults.Daemon.SocketPath)
+	v.SetDefault("log_level", defaults.LogLevel)
 
 	v.SetConfigName("config")
 	v.SetConfigType("json")
-	v.AddConfigPath("$HOME/.ari")
-	v.AddConfigPath(".")
-
+	v.AddConfigPath(filepath.Join(userHomeDir(), ".ari"))
 	v.SetEnvPrefix("ARI")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 
 	if err := v.ReadInConfig(); err != nil {
@@ -73,32 +53,78 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
 
-	if err := Validate(&cfg); err != nil {
-		return nil, fmt.Errorf("validate config: %w", err)
+	normalized, err := normalizeConfig(&cfg)
+	if err != nil {
+		return nil, err
 	}
 
-	return &cfg, nil
+	if err := Validate(normalized); err != nil {
+		return nil, err
+	}
+
+	return normalized, nil
 }
 
 func Validate(cfg *Config) error {
-	schema, err := Schema()
+	if cfg == nil {
+		return fmt.Errorf("validate config: config is required")
+	}
+
+	if cfg.Daemon.SocketPath == "" {
+		return fmt.Errorf("validate config: daemon.socket_path is required")
+	}
+
+	level := strings.ToLower(strings.TrimSpace(cfg.LogLevel))
+	switch level {
+	case "debug", "info", "warn", "error":
+		return nil
+	default:
+		return fmt.Errorf("validate config: log_level must be one of debug, info, warn, error")
+	}
+}
+
+func normalizeConfig(cfg *Config) (*Config, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("normalize config: config is required")
+	}
+
+	socketPath, err := normalizePath(cfg.Daemon.SocketPath)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("normalize config: socket path: %w", err)
 	}
 
-	data, _ := json.Marshal(cfg)
-	result, err := schema.Validate(gojsonschema.NewBytesLoader(data))
+	logLevel := strings.ToLower(strings.TrimSpace(cfg.LogLevel))
+
+	return &Config{
+		Daemon: DaemonConfig{
+			SocketPath: socketPath,
+		},
+		LogLevel: logLevel,
+	}, nil
+}
+
+func normalizePath(path string) (string, error) {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return "", fmt.Errorf("path is required")
+	}
+
+	if strings.HasPrefix(trimmed, "~/") {
+		trimmed = filepath.Join(userHomeDir(), trimmed[2:])
+	}
+
+	abs, err := filepath.Abs(trimmed)
 	if err != nil {
-		return err
+		return "", fmt.Errorf("resolve absolute path: %w", err)
 	}
 
-	if !result.Valid() {
-		var errs []string
-		for _, err := range result.Errors() {
-			errs = append(errs, err.String())
-		}
-		return fmt.Errorf("config validation failed: %v", errs)
-	}
+	return abs, nil
+}
 
-	return nil
+func userHomeDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "."
+	}
+	return home
 }

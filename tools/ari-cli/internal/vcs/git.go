@@ -156,36 +156,26 @@ func parseGitCommits(output string) []Commit {
 	return commits
 }
 
-// gitRoot finds the Git repository root from the given directory.
-func gitRoot(dir string) (string, error) {
-	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
-	cmd.Dir = dir
-	out, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Clean(strings.TrimSpace(string(out))), nil
-}
-
-
 // SetupAriIgnore configures Git to ignore the .ari/ directory.
 func (g *gitBackend) SetupAriIgnore(ariDir string) error {
 	gitignorePath := filepath.Join(g.root, ".gitignore")
-	
+
 	// Check if .ari/ is already ignored
 	if content, err := os.ReadFile(gitignorePath); err == nil {
 		if strings.Contains(string(content), ".ari/") {
 			return nil // Already ignored
 		}
 	}
-	
+
 	// Append to .gitignore
-	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	
+	defer func() {
+		_ = f.Close()
+	}()
+
 	_, err = f.WriteString("\n# Ari world directory\n.ari/\n")
 	return err
 }
