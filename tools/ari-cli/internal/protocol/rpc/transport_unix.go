@@ -35,18 +35,9 @@ func (t *UnixSocketTransport) Run(ctx context.Context) error {
 		return fmt.Errorf("create socket directory: %w", err)
 	}
 
-	if err := ensureSocketPathAvailable(t.path); err != nil {
-		return err
-	}
-
-	if err := os.Remove(t.path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("remove stale socket: %w", err)
-	}
-
-	listenConfig := net.ListenConfig{}
-	listener, err := listenConfig.Listen(ctx, "unix", t.path)
+	listener, err := listenUnixSocket(ctx, t.path)
 	if err != nil {
-		return fmt.Errorf("listen on unix socket: %w", err)
+		return err
 	}
 
 	unixListener, ok := listener.(*net.UnixListener)
@@ -59,7 +50,6 @@ func (t *UnixSocketTransport) Run(ctx context.Context) error {
 
 	defer func() {
 		_ = unixListener.Close()
-		_ = os.Remove(t.path)
 	}()
 
 	go func() {
@@ -136,4 +126,31 @@ func ensureSocketPathAvailable(path string) error {
 	}
 
 	return fmt.Errorf("dial daemon socket %q: %w", path, err)
+}
+
+func listenUnixSocket(ctx context.Context, path string) (net.Listener, error) {
+	listenConfig := net.ListenConfig{}
+	listener, err := listenConfig.Listen(ctx, "unix", path)
+	if err == nil {
+		return listener, nil
+	}
+
+	if !errors.Is(err, syscall.EADDRINUSE) {
+		return nil, fmt.Errorf("listen on unix socket: %w", err)
+	}
+
+	if staleErr := ensureSocketPathAvailable(path); staleErr != nil {
+		return nil, staleErr
+	}
+
+	if removeErr := os.Remove(path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+		return nil, fmt.Errorf("remove stale socket: %w", removeErr)
+	}
+
+	listener, err = listenConfig.Listen(ctx, "unix", path)
+	if err != nil {
+		return nil, fmt.Errorf("listen on unix socket: %w", err)
+	}
+
+	return listener, nil
 }

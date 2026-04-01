@@ -197,6 +197,57 @@ func TestUnixSocketTransportStopsWithOpenConnection(t *testing.T) {
 	_ = conn.Close()
 }
 
+func TestListenUnixSocketKeepsLiveSocketPath(t *testing.T) {
+	socketPath := testSocketPath(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	listenConfig := net.ListenConfig{}
+	liveListener, err := listenConfig.Listen(ctx, "unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen live socket: %v", err)
+	}
+	defer func() {
+		_ = liveListener.Close()
+	}()
+
+	_, err = listenUnixSocket(context.Background(), socketPath)
+	if err == nil {
+		t.Fatal("expected listenUnixSocket to fail for active live socket")
+	}
+
+	if _, dialErr := net.Dial("unix", socketPath); dialErr != nil {
+		t.Fatalf("live socket should remain reachable: %v", dialErr)
+	}
+}
+
+func TestListenUnixSocketRecoversStaleSocketPath(t *testing.T) {
+	socketPath := testSocketPath(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	listenConfig := net.ListenConfig{}
+	listener, err := listenConfig.Listen(ctx, "unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen initial socket: %v", err)
+	}
+
+	_ = listener.Close()
+	cancel()
+
+	recovered, err := listenUnixSocket(context.Background(), socketPath)
+	if err != nil {
+		t.Fatalf("listenUnixSocket should recover stale socket path: %v", err)
+	}
+	defer func() {
+		_ = recovered.Close()
+	}()
+
+	if _, dialErr := net.Dial("unix", socketPath); dialErr != nil {
+		t.Fatalf("recovered socket should be reachable: %v", dialErr)
+	}
+}
+
 func testSocketPath(t *testing.T) string {
 	t.Helper()
 
