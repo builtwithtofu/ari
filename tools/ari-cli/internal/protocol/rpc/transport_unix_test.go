@@ -23,7 +23,7 @@ func TestUnixSocketTransportServesRequests(t *testing.T) {
 		t.Fatalf("register method: %v", err)
 	}
 
-	socketPath := filepath.Join(t.TempDir(), "daemon.sock")
+	socketPath := testSocketPath(t)
 	transport := NewUnixSocketTransport(socketPath, NewServer(registry))
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -87,7 +87,7 @@ func TestUnixSocketTransportRejectsLiveSocket(t *testing.T) {
 		t.Fatalf("register method: %v", err)
 	}
 
-	socketPath := filepath.Join(t.TempDir(), "daemon.sock")
+	socketPath := testSocketPath(t)
 
 	ctx1, cancel1 := context.WithCancel(context.Background())
 	defer cancel1()
@@ -134,7 +134,7 @@ func TestUnixSocketTransportRejectsNonSocketPath(t *testing.T) {
 		t.Fatalf("register method: %v", err)
 	}
 
-	socketPath := filepath.Join(t.TempDir(), "daemon.sock")
+	socketPath := testSocketPath(t)
 	if writeErr := os.WriteFile(socketPath, []byte("not-a-socket"), 0o644); writeErr != nil {
 		t.Fatalf("write fake socket file: %v", writeErr)
 	}
@@ -144,4 +144,19 @@ func TestUnixSocketTransportRejectsNonSocketPath(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected transport to fail when path is not a socket")
 	}
+}
+
+func testSocketPath(t *testing.T) string {
+	t.Helper()
+
+	dir, err := os.MkdirTemp("/tmp", "ari-rpc-")
+	if err != nil {
+		t.Fatalf("create temp socket dir: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_ = os.RemoveAll(dir)
+	})
+
+	return filepath.Join(dir, "s.sock")
 }
