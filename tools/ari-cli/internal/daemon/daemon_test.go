@@ -2,8 +2,11 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"net"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -46,6 +49,52 @@ func TestDaemonStatusAndStopOverRPC(t *testing.T) {
 
 	if err := <-errCh; err != nil {
 		t.Fatalf("daemon start returned error: %v", err)
+	}
+}
+
+func TestDaemonConcurrentStartDoesNotLeakSocketBindError(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "daemon.sock")
+	d := New(socketPath, "test-version")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const workers = 8
+	errCh := make(chan error, workers)
+	startBarrier := make(chan struct{})
+	var wg sync.WaitGroup
+
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-startBarrier
+			errCh <- d.Start(ctx)
+		}()
+	}
+
+	close(startBarrier)
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		if err == nil || errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "daemon is already running") {
+			continue
+		}
+		if strings.Contains(err.Error(), "listen on unix socket") {
+			t.Fatalf("unexpected socket bind race error: %v", err)
+		}
+	}
+}
+
+func TestDaemonDefaultVersionIsDev(t *testing.T) {
+	d := New("/tmp/ari-daemon.sock", "")
+
+	status := d.status()
+	if status.Version != "dev" {
+		t.Fatalf("unexpected default version: %q", status.Version)
 	}
 }
 

@@ -30,6 +30,10 @@ func (c *Client) Call(ctx context.Context, method string, params any, result any
 		return fmt.Errorf("socket path is required")
 	}
 
+	if result == nil {
+		return fmt.Errorf("result is required")
+	}
+
 	dialer := net.Dialer{}
 	conn, err := dialer.DialContext(ctx, "unix", c.socketPath)
 	if err != nil {

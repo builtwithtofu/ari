@@ -65,3 +65,15 @@ func TestClientCall(t *testing.T) {
 		t.Fatalf("transport run: %v", err)
 	}
 }
+
+func TestClientCallRejectsNilResult(t *testing.T) {
+	c := New("/tmp/ari-missing.sock")
+	err := c.Call(context.Background(), "test.ping", pingRequest{Message: "pong"}, nil)
+	if err == nil {
+		t.Fatal("expected error for nil result")
+	}
+
+	if err.Error() != "result is required" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

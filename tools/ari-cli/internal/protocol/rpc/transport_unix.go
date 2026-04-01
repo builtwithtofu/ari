@@ -85,8 +85,12 @@ func (t *UnixSocketTransport) Run(ctx context.Context) error {
 			defer wg.Done()
 			//nolint:staticcheck // Ari standardizes on PlainObjectCodec framing for local RPC.
 			stream := jsonrpc2.NewBufferedStream(c, jsonrpc2.PlainObjectCodec{})
-			rpcConn := jsonrpc2.NewConn(context.Background(), stream, t.server)
-			<-rpcConn.DisconnectNotify()
+			rpcConn := jsonrpc2.NewConn(ctx, stream, t.server)
+			select {
+			case <-rpcConn.DisconnectNotify():
+			case <-ctx.Done():
+				_ = rpcConn.Close()
+			}
 			_ = c.Close()
 		}(conn)
 	}

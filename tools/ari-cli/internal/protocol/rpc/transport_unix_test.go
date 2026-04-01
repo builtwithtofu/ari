@@ -146,6 +146,57 @@ func TestUnixSocketTransportRejectsNonSocketPath(t *testing.T) {
 	}
 }
 
+func TestUnixSocketTransportStopsWithOpenConnection(t *testing.T) {
+	registry := NewMethodRegistry()
+	err := RegisterMethod(registry, Method[echoRequest, echoResponse]{
+		Name: "test.echo",
+		Handler: func(ctx context.Context, req echoRequest) (echoResponse, error) {
+			return echoResponse{Echoed: req.Message}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("register method: %v", err)
+	}
+
+	socketPath := testSocketPath(t)
+	transport := NewUnixSocketTransport(socketPath, NewServer(registry))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- transport.Run(ctx)
+	}()
+
+	var conn net.Conn
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for unix socket")
+		}
+
+		conn, err = net.Dial("unix", socketPath)
+		if err == nil {
+			break
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Keep connection open, cancel transport, and verify Run exits promptly.
+	cancel()
+
+	select {
+	case runErr := <-errCh:
+		if runErr != nil {
+			t.Fatalf("transport run: %v", runErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("transport did not stop while connection was still open")
+	}
+
+	_ = conn.Close()
+}
+
 func testSocketPath(t *testing.T) string {
 	t.Helper()
 

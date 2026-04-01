@@ -21,6 +21,7 @@ type Daemon struct {
 	version    string
 	pid        int
 	cancel     context.CancelFunc
+	stopCh     chan struct{}
 	transport  *rpc.UnixSocketTransport
 }
 
@@ -37,7 +38,7 @@ func New(socketPath, version string) *Daemon {
 	assert.Invariant(strings.TrimSpace(socketPath) != "", "daemon socket path is required")
 
 	if version == "" {
-		version = "0.3.0-dev"
+		version = "dev"
 	}
 
 	return &Daemon{
@@ -56,13 +57,6 @@ func (d *Daemon) Start(ctx context.Context) error {
 		return fmt.Errorf("daemon context is required")
 	}
 
-	d.mu.Lock()
-	if d.running {
-		d.mu.Unlock()
-		return fmt.Errorf("daemon is already running")
-	}
-	d.mu.Unlock()
-
 	registry := rpc.NewMethodRegistry()
 	if err := d.registerMethods(registry); err != nil {
 		return err
@@ -72,19 +66,36 @@ func (d *Daemon) Start(ctx context.Context) error {
 	transport := rpc.NewUnixSocketTransport(d.socketPath, server)
 
 	runCtx, cancel := context.WithCancel(ctx)
+	stopCh := make(chan struct{}, 1)
 
 	d.mu.Lock()
+	if d.running {
+		d.mu.Unlock()
+		cancel()
+		return fmt.Errorf("daemon is already running")
+	}
 	d.running = true
 	d.startedAt = time.Now().UTC()
 	d.cancel = cancel
+	d.stopCh = stopCh
 	d.transport = transport
 	d.mu.Unlock()
+
+	go func() {
+		select {
+		case <-runCtx.Done():
+			return
+		case <-stopCh:
+			cancel()
+		}
+	}()
 
 	defer func() {
 		cancel()
 		d.mu.Lock()
 		d.running = false
 		d.cancel = nil
+		d.stopCh = nil
 		d.transport = nil
 		d.mu.Unlock()
 	}()
@@ -94,11 +105,14 @@ func (d *Daemon) Start(ctx context.Context) error {
 
 func (d *Daemon) Stop() {
 	d.mu.RLock()
-	cancel := d.cancel
+	stopCh := d.stopCh
 	d.mu.RUnlock()
 
-	if cancel != nil {
-		cancel()
+	if stopCh != nil {
+		select {
+		case stopCh <- struct{}{}:
+		default:
+		}
 	}
 }
 
