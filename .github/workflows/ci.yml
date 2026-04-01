@@ -12,8 +12,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  verify:
-    name: Verify
+  format-check:
+    name: Format Check
     runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - name: Checkout
@@ -35,5 +35,149 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@v2
 
-      - name: Run verify gate
-        run: nix develop --command just verify
+      - name: Check Nix formatting
+        run: nix run nixpkgs#nixpkgs-fmt -- --check .
+
+      - name: Check Go formatting
+        run: nix develop --command just fmt-check
+
+      - name: Basic flake check
+        run: nix flake check --no-build --keep-going
+
+  lint:
+    name: Lint
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v30
+        with:
+          extra_nix_config: |
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+            experimental-features = nix-command flakes
+
+      - name: Cache Nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Run linter
+        run: nix develop --command just lint
+
+  build:
+    name: Build
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v30
+        with:
+          extra_nix_config: |
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+            experimental-features = nix-command flakes
+
+      - name: Cache Nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Build
+        run: nix develop --command just build
+
+  nix-development:
+    name: Nix Development
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v30
+        with:
+          extra_nix_config: |
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+            experimental-features = nix-command flakes
+
+      - name: Cache Nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+
+      - name: Verify dev shell tools
+        run: |
+          nix develop --command go version
+          nix develop --command just --version
+          nix develop --command golangci-lint --version
+
+  test:
+    name: Test
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    needs: [lint]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v30
+        with:
+          extra_nix_config: |
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+            experimental-features = nix-command flakes
+
+      - name: Cache Nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Run tests
+        run: nix develop --command just test
+
+  summary:
+    name: CI Summary
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    needs: [format-check, lint, build, nix-development, test]
+    if: always()
+    steps:
+      - name: Check job statuses
+        run: |
+          set -euo pipefail
+          jobs=(
+            "${{ needs.format-check.result }}:Format Check"
+            "${{ needs.lint.result }}:Lint"
+            "${{ needs.build.result }}:Build"
+            "${{ needs.nix-development.result }}:Nix Development"
+            "${{ needs.test.result }}:Test"
+          )
+
+          failed=0
+          for job in "${jobs[@]}"; do
+            status="${job%%:*}"
+            name="${job##*:}"
+            if [ "$status" != "success" ] && [ "$status" != "skipped" ]; then
+              echo "FAIL: $name ($status)"
+              failed=1
+            else
+              echo "OK: $name ($status)"
+            fi
+          done
+
+          if [ "$failed" -ne 0 ]; then
+            exit 1
+          fi
