@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -14,7 +15,7 @@ import (
 )
 
 func TestDaemonStatusAndStopOverRPC(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "daemon.sock")
+	socketPath := testSocketPath(t)
 	d := New(socketPath, "test-version")
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -53,7 +54,7 @@ func TestDaemonStatusAndStopOverRPC(t *testing.T) {
 }
 
 func TestDaemonConcurrentStartDoesNotLeakSocketBindError(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "daemon.sock")
+	socketPath := testSocketPath(t)
 	d := New(socketPath, "test-version")
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -133,4 +134,19 @@ func callDaemonMethod(t *testing.T, socketPath, method string, params any, resul
 	if err := rpcConn.Call(ctx, method, params, result); err != nil {
 		t.Fatalf("call %s: %v", method, err)
 	}
+}
+
+func testSocketPath(t *testing.T) string {
+	t.Helper()
+
+	dir, err := os.MkdirTemp("/tmp", "ari-daemon-")
+	if err != nil {
+		t.Fatalf("create temp socket dir: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_ = os.RemoveAll(dir)
+	})
+
+	return filepath.Join(dir, "s.sock")
 }
