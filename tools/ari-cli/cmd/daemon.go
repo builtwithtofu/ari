@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -34,12 +35,12 @@ func newDaemonStartCmd() *cobra.Command {
 		Use:   "start",
 		Short: "Start Ari daemon",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfg, err := configuredDaemonConfig()
+			cfg, configPath, configSource, err := configuredDaemonConfigWithSource()
 			if err != nil {
 				return err
 			}
 
-			runningDaemon := daemon.New(cfg.Daemon.SocketPath, "")
+			runningDaemon := daemon.New(cfg.Daemon.SocketPath, cfg.Daemon.DBPath, configPath, configSource, "")
 
 			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Ari daemon starting (PID %d, socket %s)\n", os.Getpid(), cfg.Daemon.SocketPath); err != nil {
 				return err
@@ -126,6 +127,19 @@ func newDaemonStatusCmd() *cobra.Command {
 			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Socket: %s\n", response.SocketPath); err != nil {
 				return err
 			}
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Database: %s (%s)\n", response.DatabasePath, response.DatabaseState); err != nil {
+				return err
+			}
+			configPath := response.ConfigPath
+			if configPath == "" {
+				configPath = "(none)"
+			}
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Config: %s\n", configPath); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Config Source: %s\n", response.ConfigSource); err != nil {
+				return err
+			}
 
 			return nil
 		},
@@ -148,18 +162,47 @@ func isDaemonUnavailable(err error) bool {
 }
 
 func configuredDaemonConfig() (*config.Config, error) {
+	cfg, _, _, err := configuredDaemonConfigWithSource()
+	return cfg, err
+}
+
+func configuredDaemonConfigWithSource() (*config.Config, string, string, error) {
 	cfg, err := config.Load()
 	if err != nil {
-		return nil, err
+		return nil, "", "", err
 	}
 
 	if cfg == nil {
-		return nil, fmt.Errorf("config is required")
+		return nil, "", "", fmt.Errorf("config is required")
 	}
 
-	if cfg.Daemon.SocketPath == "" {
-		return nil, fmt.Errorf("daemon socket path is required")
+	configPath, err := daemonConfigPath()
+	if err != nil {
+		return nil, "", "", err
 	}
 
-	return cfg, nil
+	if os.Getenv("ARI_DAEMON_SOCKET_PATH") != "" || os.Getenv("ARI_DAEMON_DB_PATH") != "" {
+		if _, err := os.Stat(configPath); err == nil {
+			return cfg, configPath, "environment", nil
+		}
+		return cfg, "", "environment", nil
+	}
+
+	if _, err := os.Stat(configPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return cfg, "defaults", "defaults", nil
+		}
+		return nil, "", "", fmt.Errorf("stat config path: %w", err)
+	}
+
+	return cfg, configPath, "file", nil
+}
+
+func daemonConfigPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home directory: %w", err)
+	}
+
+	return filepath.Join(home, ".ari", "config.json"), nil
 }
