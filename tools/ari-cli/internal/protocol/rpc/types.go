@@ -1,5 +1,7 @@
 package rpc
 
+import "fmt"
+
 type RequestEnvelope[T any] struct {
 	JSONRPC string `json:"jsonrpc"`
 	ID      any    `json:"id,omitempty"`
@@ -18,6 +20,26 @@ type Error struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 	Data    any    `json:"data,omitempty"`
+}
+
+type HandlerError struct {
+	Code    int
+	Message string
+	Data    any
+}
+
+func NewHandlerError(code int, message string, data any) *HandlerError {
+	return &HandlerError{Code: code, Message: message, Data: data}
+}
+
+func (e *HandlerError) Error() string {
+	if e == nil {
+		return "rpc handler error"
+	}
+	if e.Message == "" {
+		return fmt.Sprintf("rpc handler error code %d", e.Code)
+	}
+	return e.Message
 }
 
 const (

@@ -140,7 +140,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 	}
 
 	registry := rpc.NewMethodRegistry()
-	if err := d.registerMethods(registry); err != nil {
+	if err := d.registerMethods(registry, store); err != nil {
 		_ = dbConn.Close()
 		return err
 	}

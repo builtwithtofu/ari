@@ -63,6 +63,12 @@ func (s *Server) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.
 			return
 		}
 
+		var handlerErr *HandlerError
+		if errors.As(err, &handlerErr) {
+			s.sendError(ctx, conn, req.ID, handlerErr.Code, handlerErr.Message, handlerErr.Data)
+			return
+		}
+
 		s.sendError(ctx, conn, req.ID, InternalError, "Internal error", fmt.Sprintf("%v", err))
 		return
 	}

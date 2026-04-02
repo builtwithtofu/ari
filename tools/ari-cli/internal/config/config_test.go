@@ -36,6 +36,9 @@ func TestDefaultsReturnsAbsolutePaths(t *testing.T) {
 	if cfg.LogLevel != "info" {
 		t.Fatalf("expected info log level, got %q", cfg.LogLevel)
 	}
+	if cfg.VCSPreference != "auto" {
+		t.Fatalf("expected auto vcs preference, got %q", cfg.VCSPreference)
+	}
 }
 
 func TestLoadUsesDefaultsWhenMissingConfig(t *testing.T) {
@@ -56,6 +59,9 @@ func TestLoadUsesDefaultsWhenMissingConfig(t *testing.T) {
 	if cfg.Daemon.PIDPath != filepath.Join(tmpHome, ".ari", "daemon.pid") {
 		t.Fatalf("unexpected pid path: %q", cfg.Daemon.PIDPath)
 	}
+	if cfg.VCSPreference != "auto" {
+		t.Fatalf("unexpected vcs preference: %q", cfg.VCSPreference)
+	}
 }
 
 func TestLoadExpandsTildePaths(t *testing.T) {
@@ -73,7 +79,8 @@ func TestLoadExpandsTildePaths(t *testing.T) {
 			"db_path": "~/.ari/custom.db",
 			"pid_path": "~/.ari/custom.pid"
 		},
-		"log_level": "WARN"
+		"log_level": "WARN",
+		"vcs_preference": "GIT"
 	}`
 
 	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(configBody), 0o644); err != nil {
@@ -98,6 +105,9 @@ func TestLoadExpandsTildePaths(t *testing.T) {
 	if cfg.LogLevel != "warn" {
 		t.Fatalf("unexpected log level: %q", cfg.LogLevel)
 	}
+	if cfg.VCSPreference != "git" {
+		t.Fatalf("unexpected vcs preference: %q", cfg.VCSPreference)
+	}
 }
 
 func TestLoadReadsNestedEnvOverride(t *testing.T) {
@@ -106,6 +116,7 @@ func TestLoadReadsNestedEnvOverride(t *testing.T) {
 	t.Setenv("ARI_DAEMON_SOCKET_PATH", "~/env.sock")
 	t.Setenv("ARI_DAEMON_DB_PATH", "~/env.db")
 	t.Setenv("ARI_DAEMON_PID_PATH", "~/env.pid")
+	t.Setenv("ARI_VCS_PREFERENCE", "jj")
 
 	cfg, err := Load()
 	if err != nil {
@@ -121,6 +132,9 @@ func TestLoadReadsNestedEnvOverride(t *testing.T) {
 	if cfg.Daemon.PIDPath != filepath.Join(tmpHome, "env.pid") {
 		t.Fatalf("unexpected env pid path: %q", cfg.Daemon.PIDPath)
 	}
+	if cfg.VCSPreference != "jj" {
+		t.Fatalf("unexpected env vcs preference: %q", cfg.VCSPreference)
+	}
 }
 
 func TestValidateRejectsInvalidLogLevel(t *testing.T) {
@@ -130,9 +144,25 @@ func TestValidateRejectsInvalidLogLevel(t *testing.T) {
 			DBPath:     "/tmp/ari.db",
 			PIDPath:    "/tmp/daemon.pid",
 		},
-		LogLevel: "verbose",
+		LogLevel:      "verbose",
+		VCSPreference: "auto",
 	})
 	if err == nil {
 		t.Fatalf("expected validation error for log level")
+	}
+}
+
+func TestValidateRejectsInvalidVCSPreference(t *testing.T) {
+	err := Validate(&Config{
+		Daemon: DaemonConfig{
+			SocketPath: "/tmp/daemon.sock",
+			DBPath:     "/tmp/ari.db",
+			PIDPath:    "/tmp/daemon.pid",
+		},
+		LogLevel:      "info",
+		VCSPreference: "mercurial",
+	})
+	if err == nil {
+		t.Fatalf("expected validation error for vcs preference")
 	}
 }

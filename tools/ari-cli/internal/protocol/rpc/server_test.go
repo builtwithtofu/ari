@@ -133,6 +133,53 @@ func TestServerReturnsInvalidParams(t *testing.T) {
 	}
 }
 
+func TestServerPreservesCustomHandlerErrorCode(t *testing.T) {
+	registry := NewMethodRegistry()
+	err := RegisterMethod(registry, Method[echoRequest, echoResponse]{
+		Name: "test.custom_error",
+		Handler: func(ctx context.Context, req echoRequest) (echoResponse, error) {
+			_ = ctx
+			_ = req
+			return echoResponse{}, NewHandlerError(SessionNotFound, "session not found", "sess-missing")
+		},
+	})
+	if err != nil {
+		t.Fatalf("register method: %v", err)
+	}
+
+	server := NewServer(registry)
+	ctx := context.Background()
+
+	serverConn, clientConn := net.Pipe()
+	t.Cleanup(func() {
+		_ = serverConn.Close()
+		_ = clientConn.Close()
+	})
+
+	serverRPC, clientRPC := newRPCPair(ctx, t, serverConn, clientConn, server)
+	t.Cleanup(func() {
+		_ = serverRPC.Close()
+		_ = clientRPC.Close()
+	})
+
+	err = clientRPC.Call(ctx, "test.custom_error", echoRequest{Message: "x"}, &echoResponse{})
+	if err == nil {
+		t.Fatal("expected session not found error")
+	}
+
+	rpcErr, ok := err.(*jsonrpc2.Error)
+	if !ok {
+		t.Fatalf("expected jsonrpc2 error, got %T", err)
+	}
+
+	if rpcErr.Code != int64(SessionNotFound) {
+		t.Fatalf("unexpected error code: %d", rpcErr.Code)
+	}
+	if rpcErr.Message != "session not found" {
+		t.Fatalf("unexpected error message: %q", rpcErr.Message)
+	}
+}
+
 func newRPCPair(ctx context.Context, t *testing.T, serverConn net.Conn, clientConn net.Conn, server *Server) (*jsonrpc2.Conn, *jsonrpc2.Conn) {
 	t.Helper()
 

@@ -32,6 +32,15 @@ func TestDetect(t *testing.T) {
 			wantName: "git",
 		},
 		{
+			name: "detects git when git marker is file",
+			setup: func(t *testing.T, dir string) {
+				if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: /tmp/worktree/.git/worktrees/test"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantName: "git",
+		},
+		{
 			name:     "falls back to none when no vcs detected",
 			setup:    func(t *testing.T, dir string) {},
 			wantName: "none",
@@ -88,6 +97,10 @@ func TestDetect_ParentDirectory(t *testing.T) {
 	if got := backend.Name(); got != "git" {
 		t.Errorf("Name() = %q, want %q", got, "git")
 	}
+
+	if got := backend.Root(); got != tmpDir {
+		t.Errorf("Root() = %q, want %q", got, tmpDir)
+	}
 }
 
 func TestNoneBackend(t *testing.T) {
@@ -99,6 +112,10 @@ func TestNoneBackend(t *testing.T) {
 
 	if got := backend.IsAvailable(); got != false {
 		t.Errorf("IsAvailable() = %v, want %v", got, false)
+	}
+
+	if got := backend.Root(); got != "/tmp" {
+		t.Errorf("Root() = %q, want %q", got, "/tmp")
 	}
 
 	if _, err := backend.CurrentBranch(); !errors.Is(err, ErrNotSupported) {

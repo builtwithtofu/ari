@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
 )
 
@@ -26,9 +27,12 @@ type StopResponse struct {
 	Status string `json:"status"`
 }
 
-func (d *Daemon) registerMethods(registry *rpc.MethodRegistry) error {
+func (d *Daemon) registerMethods(registry *rpc.MethodRegistry, store *globaldb.Store) error {
 	if registry == nil {
 		return fmt.Errorf("method registry is required")
+	}
+	if store == nil {
+		return fmt.Errorf("globaldb store is required")
 	}
 
 	if err := rpc.RegisterMethod(registry, rpc.Method[StatusRequest, StatusResponse]{
@@ -54,6 +58,10 @@ func (d *Daemon) registerMethods(registry *rpc.MethodRegistry) error {
 		},
 	}); err != nil {
 		return fmt.Errorf("register daemon.stop: %w", err)
+	}
+
+	if err := d.registerSessionMethods(registry, store); err != nil {
+		return err
 	}
 
 	return nil
