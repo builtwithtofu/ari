@@ -25,6 +25,8 @@ type Daemon struct {
 	dbPath       string
 	configPath   string
 	configSource string
+	pidPath      string
+	signalCh     <-chan os.Signal
 	version      string
 	pid          int
 	store        *globaldb.Store
@@ -45,13 +47,22 @@ func NewDefault(version string) (*Daemon, error) {
 	if err != nil {
 		return nil, err
 	}
+	pidPath, err := DefaultPIDFilePath()
+	if err != nil {
+		return nil, err
+	}
 
-	return New(socketPath, dbPath, "defaults", "defaults", version), nil
+	return New(socketPath, dbPath, pidPath, "defaults", "defaults", version), nil
 }
 
-func New(socketPath, dbPath, configPath, configSource, version string) *Daemon {
+func New(socketPath, dbPath, pidPath, configPath, configSource, version string) *Daemon {
+	return NewWithSignalChannel(socketPath, dbPath, pidPath, configPath, configSource, version, nil)
+}
+
+func NewWithSignalChannel(socketPath, dbPath, pidPath, configPath, configSource, version string, signalCh <-chan os.Signal) *Daemon {
 	assert.Invariant(strings.TrimSpace(socketPath) != "", "daemon socket path is required")
 	assert.Invariant(strings.TrimSpace(dbPath) != "", "daemon db path is required")
+	assert.Invariant(strings.TrimSpace(pidPath) != "", "daemon pid path is required")
 	assert.Invariant(strings.TrimSpace(configSource) != "", "daemon config source is required")
 
 	if version == "" {
@@ -61,8 +72,10 @@ func New(socketPath, dbPath, configPath, configSource, version string) *Daemon {
 	return &Daemon{
 		socketPath:   socketPath,
 		dbPath:       dbPath,
+		pidPath:      pidPath,
 		configPath:   configPath,
 		configSource: configSource,
+		signalCh:     signalCh,
 		version:      version,
 		pid:          os.Getpid(),
 	}
@@ -90,6 +103,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 		if startupSucceeded {
 			return
 		}
+		_ = RemovePIDFileIfOwned(d.pidPath, d.pid)
 		d.mu.Lock()
 		d.running = false
 		d.startedAt = time.Time{}
@@ -103,6 +117,10 @@ func (d *Daemon) Start(ctx context.Context) error {
 
 	if err := bootstrapDatabase(ctx, d.dbPath); err != nil {
 		return err
+	}
+
+	if err := WritePIDFile(d.pidPath, d.pid); err != nil {
+		return fmt.Errorf("write daemon pid file: %w", err)
 	}
 
 	dbConn, err := sql.Open("sqlite", d.dbPath)
@@ -148,17 +166,21 @@ func (d *Daemon) Start(ctx context.Context) error {
 			return
 		case <-stopCh:
 			cancel()
+		case <-d.signalCh:
+			cancel()
 		}
 	}()
 
 	defer func() {
 		startupSucceeded = true
 		cancel()
+		_ = RemovePIDFileIfOwned(d.pidPath, d.pid)
 		if dbConn != nil {
 			_ = dbConn.Close()
 		}
 		d.mu.Lock()
 		d.running = false
+		d.startedAt = time.Time{}
 		d.store = nil
 		d.db = nil
 		d.cancel = nil

@@ -17,6 +17,7 @@ type Config struct {
 type DaemonConfig struct {
 	SocketPath string `json:"socket_path" mapstructure:"socket_path"`
 	DBPath     string `json:"db_path" mapstructure:"db_path"`
+	PIDPath    string `json:"pid_path" mapstructure:"pid_path"`
 }
 
 func Defaults() *Config {
@@ -25,6 +26,7 @@ func Defaults() *Config {
 		Daemon: DaemonConfig{
 			SocketPath: filepath.Join(home, ".ari", "daemon.sock"),
 			DBPath:     filepath.Join(home, ".ari", "ari.db"),
+			PIDPath:    filepath.Join(home, ".ari", "daemon.pid"),
 		},
 		LogLevel: "info",
 	}
@@ -36,6 +38,7 @@ func Load() (*Config, error) {
 
 	v.SetDefault("daemon.socket_path", defaults.Daemon.SocketPath)
 	v.SetDefault("daemon.db_path", defaults.Daemon.DBPath)
+	v.SetDefault("daemon.pid_path", defaults.Daemon.PIDPath)
 	v.SetDefault("log_level", defaults.LogLevel)
 
 	v.SetConfigName("config")
@@ -81,6 +84,10 @@ func Validate(cfg *Config) error {
 		return fmt.Errorf("validate config: daemon.db_path is required")
 	}
 
+	if cfg.Daemon.PIDPath == "" {
+		return fmt.Errorf("validate config: daemon.pid_path is required")
+	}
+
 	level := strings.ToLower(strings.TrimSpace(cfg.LogLevel))
 	switch level {
 	case "debug", "info", "warn", "error":
@@ -105,12 +112,18 @@ func normalizeConfig(cfg *Config) (*Config, error) {
 		return nil, fmt.Errorf("normalize config: db path: %w", err)
 	}
 
+	pidPath, err := normalizePath(cfg.Daemon.PIDPath)
+	if err != nil {
+		return nil, fmt.Errorf("normalize config: pid path: %w", err)
+	}
+
 	logLevel := strings.ToLower(strings.TrimSpace(cfg.LogLevel))
 
 	return &Config{
 		Daemon: DaemonConfig{
 			SocketPath: socketPath,
 			DBPath:     dbPath,
+			PIDPath:    pidPath,
 		},
 		LogLevel: logLevel,
 	}, nil
