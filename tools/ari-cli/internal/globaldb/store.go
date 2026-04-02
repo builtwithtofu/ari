@@ -75,7 +75,9 @@ WHERE session_id = ?`
 ) VALUES (?, ?, ?, ?, ?)`
 
 	deleteSessionFolderQuery = `DELETE FROM session_folders
-WHERE session_id = ? AND folder_path = ?`
+WHERE session_id = ?
+  AND folder_path = ?
+  AND (SELECT COUNT(*) FROM session_folders WHERE session_id = ?) > 1`
 
 	promotePrimaryFolderQuery = `UPDATE session_folders
 SET is_primary = CASE
@@ -351,6 +353,12 @@ func (s *Store) AddFolder(ctx context.Context, sessionID, folderPath, vcsType st
 		return fmt.Errorf("add session folder %q: %w", folderPath, err)
 	}
 
+	if isPrimary {
+		if _, err := s.db.ExecContext(ctx, promotePrimaryFolderQuery, folderPath, sessionID); err != nil {
+			return fmt.Errorf("promote session primary folder %q: %w", folderPath, err)
+		}
+	}
+
 	return nil
 }
 
@@ -370,44 +378,7 @@ func (s *Store) RemoveFolder(ctx context.Context, sessionID, folderPath string) 
 		return fmt.Errorf("%w: session id %q", ErrSessionClosed, sessionID)
 	}
 
-	folders, err := s.ListFolders(ctx, sessionID)
-	if err != nil {
-		return err
-	}
-
-	folderExists := false
-	targetWasPrimary := false
-	for _, folder := range folders {
-		if folder.FolderPath == folderPath {
-			folderExists = true
-			targetWasPrimary = folder.IsPrimary
-			break
-		}
-	}
-	if !folderExists {
-		return fmt.Errorf("%w: folder %q for session %q", ErrNotFound, folderPath, sessionID)
-	}
-
-	if len(folders) <= 1 {
-		return fmt.Errorf("%w: session id %q", ErrLastFolder, sessionID)
-	}
-
-	if targetWasPrimary {
-		replacement := ""
-		for _, folder := range folders {
-			if folder.FolderPath != folderPath {
-				replacement = folder.FolderPath
-				break
-			}
-		}
-		if replacement != "" {
-			if _, err := s.db.ExecContext(ctx, promotePrimaryFolderQuery, replacement, sessionID); err != nil {
-				return fmt.Errorf("promote session primary folder %q: %w", replacement, err)
-			}
-		}
-	}
-
-	result, err := s.db.ExecContext(ctx, deleteSessionFolderQuery, sessionID, folderPath)
+	result, err := s.db.ExecContext(ctx, deleteSessionFolderQuery, sessionID, folderPath, sessionID)
 	if err != nil {
 		return fmt.Errorf("remove session folder %q: %w", folderPath, err)
 	}
@@ -417,7 +388,39 @@ func (s *Store) RemoveFolder(ctx context.Context, sessionID, folderPath string) 
 		return fmt.Errorf("remove session folder %q rows affected: %w", folderPath, err)
 	}
 	if rowsAffected == 0 {
+		folders, listErr := s.ListFolders(ctx, sessionID)
+		if listErr != nil {
+			return listErr
+		}
+
+		for _, folder := range folders {
+			if folder.FolderPath == folderPath {
+				return fmt.Errorf("%w: session id %q", ErrLastFolder, sessionID)
+			}
+		}
+
 		return fmt.Errorf("%w: folder %q for session %q", ErrNotFound, folderPath, sessionID)
+	}
+
+	folders, err := s.ListFolders(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	if len(folders) == 0 {
+		return fmt.Errorf("%w: session id %q", ErrLastFolder, sessionID)
+	}
+
+	hasPrimary := false
+	for _, folder := range folders {
+		if folder.IsPrimary {
+			hasPrimary = true
+			break
+		}
+	}
+	if !hasPrimary {
+		if _, err := s.db.ExecContext(ctx, promotePrimaryFolderQuery, folders[0].FolderPath, sessionID); err != nil {
+			return fmt.Errorf("promote session primary folder %q: %w", folders[0].FolderPath, err)
+		}
 	}
 
 	return nil
@@ -527,6 +530,9 @@ func isValidSessionStatus(status string) bool {
 
 func canTransitionSessionStatus(from, to string) bool {
 	if from == to {
+		if from == statusClosed {
+			return false
+		}
 		return true
 	}
 

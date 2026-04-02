@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -267,6 +268,102 @@ func TestRemovePrimaryFolderPromotesAnotherFolder(t *testing.T) {
 	}
 	if !folders[0].IsPrimary {
 		t.Fatal("remaining folder is not primary after removing original primary")
+	}
+}
+
+func TestAddFolderPrimaryDemotesExistingPrimary(t *testing.T) {
+	store := newSessionTestStore(t)
+	ctx := context.Background()
+
+	err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto")
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	err = store.AddFolder(ctx, "sess-1", "/tmp/repo-a", "git", true)
+	if err != nil {
+		t.Fatalf("AddFolder repo-a returned error: %v", err)
+	}
+	err = store.AddFolder(ctx, "sess-1", "/tmp/repo-b", "jj", true)
+	if err != nil {
+		t.Fatalf("AddFolder repo-b returned error: %v", err)
+	}
+
+	folders, err := store.ListFolders(ctx, "sess-1")
+	if err != nil {
+		t.Fatalf("ListFolders returned error: %v", err)
+	}
+
+	primaryCount := 0
+	for _, folder := range folders {
+		if folder.IsPrimary {
+			primaryCount++
+		}
+	}
+	if primaryCount != 1 {
+		t.Fatalf("primary folder count = %d, want 1", primaryCount)
+	}
+}
+
+func TestUpdateSessionStatusRejectsClosedToClosed(t *testing.T) {
+	store := newSessionTestStore(t)
+	ctx := context.Background()
+
+	err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto")
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	err = store.UpdateSessionStatus(ctx, "sess-1", "closed")
+	if err != nil {
+		t.Fatalf("UpdateSessionStatus close returned error: %v", err)
+	}
+
+	err = store.UpdateSessionStatus(ctx, "sess-1", "closed")
+	if err == nil {
+		t.Fatal("UpdateSessionStatus returned nil error for closed->closed")
+	}
+	if !errors.Is(err, ErrSessionClosed) {
+		t.Fatalf("UpdateSessionStatus error = %v, want ErrSessionClosed", err)
+	}
+}
+
+func TestConcurrentRemoveFolderKeepsOneFolder(t *testing.T) {
+	store := newSessionTestStore(t)
+	ctx := context.Background()
+
+	err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto")
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if err := store.AddFolder(ctx, "sess-1", "/tmp/repo-a", "git", true); err != nil {
+		t.Fatalf("AddFolder repo-a returned error: %v", err)
+	}
+	if err := store.AddFolder(ctx, "sess-1", "/tmp/repo-b", "jj", false); err != nil {
+		t.Fatalf("AddFolder repo-b returned error: %v", err)
+	}
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+
+	remove := func(path string) {
+		defer wg.Done()
+		<-start
+		_ = store.RemoveFolder(context.Background(), "sess-1", path)
+	}
+
+	wg.Add(2)
+	go remove("/tmp/repo-a")
+	go remove("/tmp/repo-b")
+	close(start)
+	wg.Wait()
+
+	folders, err := store.ListFolders(ctx, "sess-1")
+	if err != nil {
+		t.Fatalf("ListFolders returned error: %v", err)
+	}
+	if len(folders) != 1 {
+		t.Fatalf("folder count = %d, want 1 after concurrent remove attempts", len(folders))
 	}
 }
 
