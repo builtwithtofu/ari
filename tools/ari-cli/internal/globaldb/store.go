@@ -530,10 +530,7 @@ func isValidSessionStatus(status string) bool {
 
 func canTransitionSessionStatus(from, to string) bool {
 	if from == to {
-		if from == statusClosed {
-			return false
-		}
-		return true
+		return from != statusClosed
 	}
 
 	switch from {
