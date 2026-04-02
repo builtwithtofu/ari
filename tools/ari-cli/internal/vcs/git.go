@@ -18,6 +18,11 @@ func (g *gitBackend) Name() string {
 	return "git"
 }
 
+// Root returns the repository root path.
+func (g *gitBackend) Root() string {
+	return g.root
+}
+
 // IsAvailable returns true if Git is installed and the root directory is a Git repository.
 func (g *gitBackend) IsAvailable() bool {
 	// Check if git command exists.

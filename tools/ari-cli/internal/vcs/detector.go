@@ -27,6 +27,8 @@ type Commit struct {
 type VCSBackend interface {
 	// Name returns the identifier for this VCS ("git", "jj", "none").
 	Name() string
+	// Root returns the repository root path used by this backend.
+	Root() string
 	// IsAvailable returns true if this VCS is available in the current directory.
 	IsAvailable() bool
 
@@ -65,13 +67,20 @@ func Detect(dir string) (VCSBackend, error) {
 		}
 
 		// Check for Git.
-		if hasDirectory(current, ".git") {
+		if hasPath(current, ".git") {
 			return &gitBackend{root: current}, nil
 		}
 	}
 
 	// No VCS detected - return the none backend.
 	return &noneBackend{root: absDir}, nil
+}
+
+// hasPath checks if the given path exists within root.
+func hasPath(root, subpath string) bool {
+	path := filepath.Join(root, subpath)
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // hasDirectory checks if the given subdirectory exists within root.

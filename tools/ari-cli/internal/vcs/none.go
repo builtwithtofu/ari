@@ -10,6 +10,11 @@ func (n *noneBackend) Name() string {
 	return "none"
 }
 
+// Root returns the directory root used for detection.
+func (n *noneBackend) Root() string {
+	return n.root
+}
+
 // IsAvailable always returns false.
 func (n *noneBackend) IsAvailable() bool {
 	return false

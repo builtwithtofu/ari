@@ -10,8 +10,9 @@ import (
 )
 
 type Config struct {
-	Daemon   DaemonConfig `json:"daemon" mapstructure:"daemon"`
-	LogLevel string       `json:"log_level" mapstructure:"log_level"`
+	Daemon        DaemonConfig `json:"daemon" mapstructure:"daemon"`
+	LogLevel      string       `json:"log_level" mapstructure:"log_level"`
+	VCSPreference string       `json:"vcs_preference" mapstructure:"vcs_preference"`
 }
 
 type DaemonConfig struct {
@@ -28,7 +29,8 @@ func Defaults() *Config {
 			DBPath:     filepath.Join(home, ".ari", "ari.db"),
 			PIDPath:    filepath.Join(home, ".ari", "daemon.pid"),
 		},
-		LogLevel: "info",
+		LogLevel:      "info",
+		VCSPreference: "auto",
 	}
 }
 
@@ -40,6 +42,7 @@ func Load() (*Config, error) {
 	v.SetDefault("daemon.db_path", defaults.Daemon.DBPath)
 	v.SetDefault("daemon.pid_path", defaults.Daemon.PIDPath)
 	v.SetDefault("log_level", defaults.LogLevel)
+	v.SetDefault("vcs_preference", defaults.VCSPreference)
 
 	v.SetConfigName("config")
 	v.SetConfigType("json")
@@ -89,11 +92,18 @@ func Validate(cfg *Config) error {
 	}
 
 	level := strings.ToLower(strings.TrimSpace(cfg.LogLevel))
+	vcsPreference := strings.ToLower(strings.TrimSpace(cfg.VCSPreference))
 	switch level {
 	case "debug", "info", "warn", "error":
-		return nil
 	default:
 		return fmt.Errorf("validate config: log_level must be one of debug, info, warn, error")
+	}
+
+	switch vcsPreference {
+	case "auto", "jj", "git":
+		return nil
+	default:
+		return fmt.Errorf("validate config: vcs_preference must be one of auto, jj, git")
 	}
 }
 
@@ -118,6 +128,7 @@ func normalizeConfig(cfg *Config) (*Config, error) {
 	}
 
 	logLevel := strings.ToLower(strings.TrimSpace(cfg.LogLevel))
+	vcsPreference := strings.ToLower(strings.TrimSpace(cfg.VCSPreference))
 
 	return &Config{
 		Daemon: DaemonConfig{
@@ -125,7 +136,8 @@ func normalizeConfig(cfg *Config) (*Config, error) {
 			DBPath:     dbPath,
 			PIDPath:    pidPath,
 		},
-		LogLevel: logLevel,
+		LogLevel:      logLevel,
+		VCSPreference: vcsPreference,
 	}, nil
 }
 

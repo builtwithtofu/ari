@@ -17,6 +17,7 @@ func NewRootCmd() *cobra.Command {
 	}
 
 	rootCmd.AddCommand(NewDaemonCmd())
+	rootCmd.AddCommand(NewSessionCmd())
 
 	return rootCmd
 }

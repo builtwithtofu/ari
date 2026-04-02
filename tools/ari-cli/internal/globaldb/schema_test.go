@@ -130,8 +130,11 @@ func TestBootstrapAppliesDaemonMetaMigration(t *testing.T) {
 		t.Fatalf("read baseline migration file: %v", err)
 	}
 	baselineSQL := string(baselineContent)
-	if !strings.Contains(baselineSQL, "CREATE TABLE IF NOT EXISTS projects") {
-		t.Fatalf("baseline migration SQL = %q, want projects table", baselineSQL)
+	if !strings.Contains(baselineSQL, "CREATE TABLE IF NOT EXISTS sessions") {
+		t.Fatalf("baseline migration SQL = %q, want sessions table", baselineSQL)
+	}
+	if !strings.Contains(baselineSQL, "CREATE TABLE IF NOT EXISTS session_folders") {
+		t.Fatalf("baseline migration SQL = %q, want session_folders table", baselineSQL)
 	}
 
 	daemonMetaPath := filepath.Join(migrationsDir, "202604012220_daemon_meta.sql")

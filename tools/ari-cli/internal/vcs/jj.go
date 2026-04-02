@@ -18,6 +18,11 @@ func (j *jjBackend) Name() string {
 	return "jj"
 }
 
+// Root returns the repository root path.
+func (j *jjBackend) Root() string {
+	return j.root
+}
+
 // IsAvailable returns true if JJ is installed and the root directory is a JJ repository.
 func (j *jjBackend) IsAvailable() bool {
 	// Check if jj command exists.

@@ -1,0 +1,314 @@
+package globaldb
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"testing"
+	"time"
+
+	_ "modernc.org/sqlite"
+)
+
+func TestSessionCreateAndLookup(t *testing.T) {
+	store := newSessionTestStore(t)
+	ctx := context.Background()
+
+	err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto")
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	gotByID, err := store.GetSession(ctx, "sess-1")
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if gotByID.ID != "sess-1" {
+		t.Fatalf("GetSession ID = %q, want %q", gotByID.ID, "sess-1")
+	}
+	if gotByID.Name != "alpha" {
+		t.Fatalf("GetSession Name = %q, want %q", gotByID.Name, "alpha")
+	}
+	if gotByID.Status != "active" {
+		t.Fatalf("GetSession Status = %q, want %q", gotByID.Status, "active")
+	}
+	if gotByID.VCSPreference != "auto" {
+		t.Fatalf("GetSession VCSPreference = %q, want %q", gotByID.VCSPreference, "auto")
+	}
+
+	gotByName, err := store.GetSessionByName(ctx, "alpha")
+	if err != nil {
+		t.Fatalf("GetSessionByName returned error: %v", err)
+	}
+	if gotByName.ID != "sess-1" {
+		t.Fatalf("GetSessionByName ID = %q, want %q", gotByName.ID, "sess-1")
+	}
+
+	err = store.CreateSession(ctx, "sess-2", "alpha", "/tmp/origin2", "manual", "auto")
+	if err == nil {
+		t.Fatal("CreateSession returned nil error for duplicate name")
+	}
+}
+
+func TestSessionCreateStoresExplicitVCSPreference(t *testing.T) {
+	store := newSessionTestStore(t)
+	ctx := context.Background()
+
+	err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "git")
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	got, err := store.GetSession(ctx, "sess-1")
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if got.VCSPreference != "git" {
+		t.Fatalf("GetSession VCSPreference = %q, want %q", got.VCSPreference, "git")
+	}
+}
+
+func TestSessionCreateRejectsInvalidVCSPreference(t *testing.T) {
+	store := newSessionTestStore(t)
+	ctx := context.Background()
+
+	err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "gti")
+	if err == nil {
+		t.Fatal("CreateSession returned nil error for invalid vcs preference")
+	}
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("CreateSession error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestSessionStatusTransitions(t *testing.T) {
+	store := newSessionTestStore(t)
+	ctx := context.Background()
+
+	err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto")
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		toStatus   string
+		wantErr    bool
+		wantClosed bool
+	}{
+		{name: "active to suspended", toStatus: "suspended"},
+		{name: "suspended to active", toStatus: "active"},
+		{name: "active to closed", toStatus: "closed", wantClosed: true},
+		{name: "closed to active rejected", toStatus: "active", wantErr: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := store.UpdateSessionStatus(ctx, "sess-1", tc.toStatus)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("UpdateSessionStatus returned nil error, want error")
+				}
+				if !errors.Is(err, ErrSessionClosed) {
+					t.Fatalf("UpdateSessionStatus error = %v, want ErrSessionClosed", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("UpdateSessionStatus returned error: %v", err)
+			}
+
+			got, err := store.GetSession(ctx, "sess-1")
+			if err != nil {
+				t.Fatalf("GetSession returned error: %v", err)
+			}
+			if got.Status != tc.toStatus {
+				t.Fatalf("GetSession Status = %q, want %q", got.Status, tc.toStatus)
+			}
+		})
+	}
+}
+
+func TestSessionFolderOperationsAndGuards(t *testing.T) {
+	store := newSessionTestStore(t)
+	ctx := context.Background()
+
+	err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto")
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	err = store.AddFolder(ctx, "sess-1", "/tmp/repo-a", "git", true)
+	if err != nil {
+		t.Fatalf("AddFolder returned error: %v", err)
+	}
+	err = store.AddFolder(ctx, "sess-1", "/tmp/repo-b", "jj", false)
+	if err != nil {
+		t.Fatalf("AddFolder returned error: %v", err)
+	}
+
+	folders, err := store.ListFolders(ctx, "sess-1")
+	if err != nil {
+		t.Fatalf("ListFolders returned error: %v", err)
+	}
+	if len(folders) != 2 {
+		t.Fatalf("ListFolders len = %d, want 2", len(folders))
+	}
+
+	err = store.RemoveFolder(ctx, "sess-1", "/tmp/repo-b")
+	if err != nil {
+		t.Fatalf("RemoveFolder returned error: %v", err)
+	}
+
+	folders, err = store.ListFolders(ctx, "sess-1")
+	if err != nil {
+		t.Fatalf("ListFolders after remove returned error: %v", err)
+	}
+	if len(folders) != 1 {
+		t.Fatalf("ListFolders after remove len = %d, want 1", len(folders))
+	}
+	if !folders[0].IsPrimary {
+		t.Fatal("remaining folder is not marked primary")
+	}
+
+	err = store.RemoveFolder(ctx, "sess-1", "/tmp/missing")
+	if err == nil {
+		t.Fatal("RemoveFolder returned nil error for missing folder")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("RemoveFolder missing folder error = %v, want ErrNotFound", err)
+	}
+
+	err = store.RemoveFolder(ctx, "sess-1", "/tmp/repo-a")
+	if err == nil {
+		t.Fatal("RemoveFolder returned nil error for last folder")
+	}
+	if !errors.Is(err, ErrLastFolder) {
+		t.Fatalf("RemoveFolder error = %v, want ErrLastFolder", err)
+	}
+
+	err = store.UpdateSessionStatus(ctx, "sess-1", "closed")
+	if err != nil {
+		t.Fatalf("UpdateSessionStatus returned error: %v", err)
+	}
+
+	err = store.AddFolder(ctx, "sess-1", "/tmp/repo-c", "git", false)
+	if err == nil {
+		t.Fatal("AddFolder returned nil error for closed session")
+	}
+	if !errors.Is(err, ErrSessionClosed) {
+		t.Fatalf("AddFolder error = %v, want ErrSessionClosed", err)
+	}
+}
+
+func TestListSessionsNewestFirst(t *testing.T) {
+	store := newSessionTestStore(t)
+	ctx := context.Background()
+
+	err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin-a", "manual", "auto")
+	if err != nil {
+		t.Fatalf("CreateSession alpha returned error: %v", err)
+	}
+
+	time.Sleep(10 * time.Millisecond)
+
+	err = store.CreateSession(ctx, "sess-2", "beta", "/tmp/origin-b", "manual", "auto")
+	if err != nil {
+		t.Fatalf("CreateSession beta returned error: %v", err)
+	}
+
+	sessions, err := store.ListSessions(ctx)
+	if err != nil {
+		t.Fatalf("ListSessions returned error: %v", err)
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("ListSessions len = %d, want 2", len(sessions))
+	}
+	if sessions[0].Name != "beta" {
+		t.Fatalf("ListSessions[0] = %q, want %q", sessions[0].Name, "beta")
+	}
+	if sessions[1].Name != "alpha" {
+		t.Fatalf("ListSessions[1] = %q, want %q", sessions[1].Name, "alpha")
+	}
+}
+
+func TestRemovePrimaryFolderPromotesAnotherFolder(t *testing.T) {
+	store := newSessionTestStore(t)
+	ctx := context.Background()
+
+	err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto")
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	err = store.AddFolder(ctx, "sess-1", "/tmp/repo-a", "git", true)
+	if err != nil {
+		t.Fatalf("AddFolder repo-a returned error: %v", err)
+	}
+	err = store.AddFolder(ctx, "sess-1", "/tmp/repo-b", "jj", false)
+	if err != nil {
+		t.Fatalf("AddFolder repo-b returned error: %v", err)
+	}
+
+	err = store.RemoveFolder(ctx, "sess-1", "/tmp/repo-a")
+	if err != nil {
+		t.Fatalf("RemoveFolder primary returned error: %v", err)
+	}
+
+	folders, err := store.ListFolders(ctx, "sess-1")
+	if err != nil {
+		t.Fatalf("ListFolders returned error: %v", err)
+	}
+	if len(folders) != 1 {
+		t.Fatalf("ListFolders len = %d, want 1", len(folders))
+	}
+	if folders[0].FolderPath != "/tmp/repo-b" {
+		t.Fatalf("remaining folder path = %q, want %q", folders[0].FolderPath, "/tmp/repo-b")
+	}
+	if !folders[0].IsPrimary {
+		t.Fatal("remaining folder is not primary after removing original primary")
+	}
+}
+
+func newSessionTestStore(t *testing.T) *Store {
+	t.Helper()
+
+	db, err := sql.Open("sqlite", "file::memory:?cache=shared")
+	if err != nil {
+		t.Fatalf("open sqlite db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = db.Close()
+	})
+
+	if _, err := db.Exec(`
+CREATE TABLE sessions (
+	session_id TEXT PRIMARY KEY,
+	name TEXT NOT NULL UNIQUE,
+	status TEXT NOT NULL DEFAULT 'active',
+	vcs_preference TEXT NOT NULL DEFAULT 'auto',
+	origin_root TEXT NOT NULL,
+	cleanup_policy TEXT NOT NULL DEFAULT 'manual',
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+CREATE TABLE session_folders (
+	session_id TEXT NOT NULL,
+	folder_path TEXT NOT NULL,
+	vcs_type TEXT NOT NULL DEFAULT 'unknown',
+	is_primary INTEGER NOT NULL DEFAULT 0,
+	added_at TEXT NOT NULL,
+	PRIMARY KEY (session_id, folder_path),
+	FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+);
+`); err != nil {
+		t.Fatalf("create schema: %v", err)
+	}
+
+	store, err := NewSQLStore(db)
+	if err != nil {
+		t.Fatalf("NewSQLStore returned error: %v", err)
+	}
+
+	return store
+}
