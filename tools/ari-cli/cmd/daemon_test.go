@@ -327,10 +327,10 @@ func TestCheckRunningDaemonUsesSocketIdentity(t *testing.T) {
 	}
 }
 
-func TestCheckRunningDaemonRemovesStalePIDWhenSocketUnavailable(t *testing.T) {
+func TestCheckRunningDaemonKeepsLivePIDWhenSocketUnavailableLegacyCase(t *testing.T) {
 	pidPath := filepath.Join(t.TempDir(), "daemon.pid")
-	if err := os.WriteFile(pidPath, []byte("stale\n"), 0o600); err != nil {
-		t.Fatalf("write stale pid marker: %v", err)
+	if err := os.WriteFile(pidPath, []byte("555\n"), 0o600); err != nil {
+		t.Fatalf("write pid marker: %v", err)
 	}
 
 	originalCheck := daemonPIDCheck
@@ -348,14 +348,107 @@ func TestCheckRunningDaemonRemovesStalePIDWhenSocketUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("checkRunningDaemon returned error: %v", err)
 	}
-	if running {
-		t.Fatal("running = true, want false for stale pid")
+	if !running {
+		t.Fatal("running = false, want true for live pid")
 	}
-	if pid != 0 {
-		t.Fatalf("pid = %d, want 0 after stale cleanup", pid)
+	if pid != 555 {
+		t.Fatalf("pid = %d, want 555 from live pid", pid)
+	}
+	if _, err := os.Stat(pidPath); err != nil {
+		t.Fatalf("pid file stat error = %v, want retained", err)
+	}
+}
+
+func TestCheckRunningDaemonKeepsLivePIDWhenSocketUnavailable(t *testing.T) {
+	pidPath := filepath.Join(t.TempDir(), "daemon.pid")
+	if err := os.WriteFile(pidPath, []byte("555\n"), 0o600); err != nil {
+		t.Fatalf("write pid file: %v", err)
+	}
+
+	originalCheck := daemonPIDCheck
+	originalStatus := daemonStatusRPC
+	daemonPIDCheck = func(string) (int, bool, error) { return 555, true, nil }
+	daemonStatusRPC = func(context.Context, string) (daemon.StatusResponse, error) {
+		return daemon.StatusResponse{}, os.ErrNotExist
+	}
+	t.Cleanup(func() {
+		daemonPIDCheck = originalCheck
+		daemonStatusRPC = originalStatus
+	})
+
+	pid, running, err := checkRunningDaemon(context.Background(), "/tmp/ari.sock", pidPath)
+	if err != nil {
+		t.Fatalf("checkRunningDaemon returned error: %v", err)
+	}
+	if !running {
+		t.Fatal("running = false, want true when live pid exists")
+	}
+	if pid != 555 {
+		t.Fatalf("pid = %d, want 555", pid)
+	}
+	if _, err := os.Stat(pidPath); err != nil {
+		t.Fatalf("pid file stat error = %v, want retained", err)
+	}
+}
+
+func TestCheckRunningDaemonTreatsSocketDaemonAsRunningOnPIDMismatch(t *testing.T) {
+	pidPath := filepath.Join(t.TempDir(), "daemon.pid")
+	if err := os.WriteFile(pidPath, []byte("111\n"), 0o600); err != nil {
+		t.Fatalf("write pid file: %v", err)
+	}
+
+	originalCheck := daemonPIDCheck
+	originalStatus := daemonStatusRPC
+	daemonPIDCheck = func(string) (int, bool, error) { return 111, true, nil }
+	daemonStatusRPC = func(context.Context, string) (daemon.StatusResponse, error) {
+		return daemon.StatusResponse{PID: 222}, nil
+	}
+	t.Cleanup(func() {
+		daemonPIDCheck = originalCheck
+		daemonStatusRPC = originalStatus
+	})
+
+	pid, running, err := checkRunningDaemon(context.Background(), "/tmp/ari.sock", pidPath)
+	if err != nil {
+		t.Fatalf("checkRunningDaemon returned error: %v", err)
+	}
+	if !running {
+		t.Fatal("running = false, want true when daemon status succeeds")
+	}
+	if pid != 222 {
+		t.Fatalf("pid = %d, want status pid 222", pid)
 	}
 	if _, err := os.Stat(pidPath); !os.IsNotExist(err) {
-		t.Fatalf("pid file stat error = %v, want removed", err)
+		t.Fatalf("pid file stat error = %v, want removed stale pid file", err)
+	}
+}
+
+func TestDaemonStopReturnsFallbackErrorWhenRPCUnavailableButFallbackFails(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ARI_DAEMON_PID_PATH", "~/env.pid")
+	t.Setenv("ARI_DAEMON_SOCKET_PATH", "~/env.sock")
+
+	originalStopRPC := daemonStopRPC
+	originalPIDCheck := daemonPIDCheck
+
+	daemonStopRPC = func(context.Context, string) error {
+		return os.ErrNotExist
+	}
+	daemonPIDCheck = func(string) (int, bool, error) {
+		return 0, false, os.ErrPermission
+	}
+	t.Cleanup(func() {
+		daemonStopRPC = originalStopRPC
+		daemonPIDCheck = originalPIDCheck
+	})
+
+	_, err := executeRootCommand("daemon", "stop")
+	if err == nil {
+		t.Fatal("execute daemon stop returned nil error")
+	}
+	if !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("error = %v, want permission error from fallback", err)
 	}
 }
 

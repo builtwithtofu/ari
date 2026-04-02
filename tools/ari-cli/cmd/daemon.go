@@ -104,17 +104,15 @@ func checkRunningDaemon(ctx context.Context, socketPath, pidPath string) (int, b
 		if status.PID == existingPID {
 			return existingPID, true, nil
 		}
+		// PID file is stale but the socket proves a daemon is serving.
 		if removeErr := daemon.RemovePIDFile(pidPath); removeErr != nil {
 			return 0, false, removeErr
 		}
-		return 0, false, nil
+		return status.PID, true, nil
 	}
 
 	if isDaemonUnavailable(err) {
-		if removeErr := daemon.RemovePIDFile(pidPath); removeErr != nil {
-			return 0, false, removeErr
-		}
-		return 0, false, nil
+		return existingPID, true, nil
 	}
 
 	if isTimeoutError(err) {
@@ -163,7 +161,7 @@ func newDaemonStopCmd() *cobra.Command {
 
 				stoppedBySignal, fallbackErr := fallbackStopByPID()
 				if fallbackErr != nil {
-					if isDaemonUnavailable(err) {
+					if isDaemonUnavailable(fallbackErr) {
 						if _, outErr := fmt.Fprintln(cmd.OutOrStdout(), notRunningMessage()); outErr != nil {
 							return outErr
 						}

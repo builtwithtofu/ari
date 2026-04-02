@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -131,5 +132,20 @@ func TestRemovePIDFileIfOwned(t *testing.T) {
 	}
 	if _, err := os.Stat(pidPath); !os.IsNotExist(err) {
 		t.Fatalf("pid file stat after owned remove = %v, want not exists", err)
+	}
+}
+
+func TestWritePIDFilePreservesErrExistSentinel(t *testing.T) {
+	pidPath := filepath.Join(t.TempDir(), "daemon.pid")
+	if err := os.WriteFile(pidPath, []byte("123\n"), 0o600); err != nil {
+		t.Fatalf("write existing pid file: %v", err)
+	}
+
+	err := WritePIDFile(pidPath, 456)
+	if err == nil {
+		t.Fatal("WritePIDFile returned nil error for existing file")
+	}
+	if !errors.Is(err, os.ErrExist) {
+		t.Fatalf("WritePIDFile error = %v, want errors.Is(..., os.ErrExist)", err)
 	}
 }

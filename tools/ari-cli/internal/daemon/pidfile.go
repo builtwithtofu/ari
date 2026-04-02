@@ -36,7 +36,7 @@ func WritePIDFile(pidPath string, pid int) error {
 	file, err := os.OpenFile(pidPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {
-			return fmt.Errorf("pid file already exists")
+			return fmt.Errorf("pid file already exists: %w", os.ErrExist)
 		}
 		return fmt.Errorf("write pid file: %w", err)
 	}
