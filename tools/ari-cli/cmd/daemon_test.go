@@ -8,8 +8,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
+
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
 )
 
 func TestRootRegistersDaemonCommand(t *testing.T) {
@@ -59,8 +62,55 @@ func TestDaemonStatusWhenUnavailable(t *testing.T) {
 		t.Fatalf("execute daemon status: %v", err)
 	}
 
-	if strings.TrimSpace(out) != "Daemon is not running" {
+	want := "Daemon is not running.\nHint: Start it with `ari daemon start`."
+	if strings.TrimSpace(out) != want {
 		t.Fatalf("unexpected output: %q", out)
+	}
+}
+
+func TestDaemonStatusPermissionDeniedMessage(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalStatusRPC := daemonStatusRPC
+	daemonStatusRPC = func(context.Context, string) (daemon.StatusResponse, error) {
+		return daemon.StatusResponse{}, os.ErrPermission
+	}
+	t.Cleanup(func() {
+		daemonStatusRPC = originalStatusRPC
+	})
+
+	_, err := executeRootCommand("daemon", "status")
+	if err == nil {
+		t.Fatal("execute daemon status returned nil error")
+	}
+
+	want := "Permission denied: " + filepath.Join(home, ".ari", "daemon.sock") + ".\nHint: Check socket file permissions and ownership."
+	if err.Error() != want {
+		t.Fatalf("status error = %q, want %q", err.Error(), want)
+	}
+}
+
+func TestDaemonStatusTimeoutMessage(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalStatusRPC := daemonStatusRPC
+	daemonStatusRPC = func(context.Context, string) (daemon.StatusResponse, error) {
+		return daemon.StatusResponse{}, context.DeadlineExceeded
+	}
+	t.Cleanup(func() {
+		daemonStatusRPC = originalStatusRPC
+	})
+
+	_, err := executeRootCommand("daemon", "status")
+	if err == nil {
+		t.Fatal("execute daemon status returned nil error")
+	}
+
+	want := "Daemon did not respond (timeout).\nHint: Try `ari daemon stop` or check the process."
+	if err.Error() != want {
+		t.Fatalf("status error = %q, want %q", err.Error(), want)
 	}
 }
 
@@ -72,8 +122,333 @@ func TestDaemonStopWhenUnavailable(t *testing.T) {
 		t.Fatalf("execute daemon stop: %v", err)
 	}
 
-	if strings.TrimSpace(out) != "Daemon is not running" {
+	want := "Daemon is not running.\nHint: Start it with `ari daemon start`."
+	if strings.TrimSpace(out) != want {
 		t.Fatalf("unexpected output: %q", out)
+	}
+}
+
+func TestDaemonStopFallsBackToPIDSignalWhenRPCFails(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ARI_DAEMON_PID_PATH", "~/env.pid")
+	t.Setenv("ARI_DAEMON_SOCKET_PATH", "~/env.sock")
+
+	originalStopRPC := daemonStopRPC
+	originalPIDCheck := daemonPIDCheck
+	originalStatusRPC := daemonStatusRPC
+	originalSignal := daemonSignalProcess
+
+	daemonStopRPC = func(context.Context, string) error {
+		return errors.New("rpc timeout")
+	}
+	daemonPIDCheck = func(path string) (int, bool, error) {
+		if path != filepath.Join(home, "env.pid") {
+			t.Fatalf("pid path = %q, want %q", path, filepath.Join(home, "env.pid"))
+		}
+		return 321, true, nil
+	}
+	daemonStatusRPC = func(context.Context, string) (daemon.StatusResponse, error) {
+		return daemon.StatusResponse{}, context.DeadlineExceeded
+	}
+	signalCalled := false
+	daemonSignalProcess = func(pid int, sig syscall.Signal) error {
+		signalCalled = true
+		if pid != 321 {
+			t.Fatalf("signal pid = %d, want 321", pid)
+		}
+		if sig != syscall.SIGTERM {
+			t.Fatalf("signal = %v, want SIGTERM", sig)
+		}
+		return nil
+	}
+
+	t.Cleanup(func() {
+		daemonStopRPC = originalStopRPC
+		daemonPIDCheck = originalPIDCheck
+		daemonStatusRPC = originalStatusRPC
+		daemonSignalProcess = originalSignal
+	})
+
+	out, err := executeRootCommand("daemon", "stop")
+	if err != nil {
+		t.Fatalf("execute daemon stop: %v", err)
+	}
+
+	if !signalCalled {
+		t.Fatal("expected fallback signal to be sent")
+	}
+	if strings.TrimSpace(out) != "Daemon stopping" {
+		t.Fatalf("unexpected output: %q", out)
+	}
+}
+
+func TestDaemonStopTimeoutMessageWhenFallbackUnavailable(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalStopRPC := daemonStopRPC
+	originalPIDCheck := daemonPIDCheck
+	originalStatusRPC := daemonStatusRPC
+	t.Setenv("ARI_DAEMON_PID_PATH", "~/env.pid")
+	t.Setenv("ARI_DAEMON_SOCKET_PATH", "~/env.sock")
+
+	daemonStopRPC = func(context.Context, string) error {
+		return context.DeadlineExceeded
+	}
+	daemonPIDCheck = func(string) (int, bool, error) {
+		return 0, false, nil
+	}
+	daemonStatusRPC = func(context.Context, string) (daemon.StatusResponse, error) {
+		return daemon.StatusResponse{}, os.ErrNotExist
+	}
+	t.Cleanup(func() {
+		daemonStopRPC = originalStopRPC
+		daemonPIDCheck = originalPIDCheck
+		daemonStatusRPC = originalStatusRPC
+	})
+
+	_, err := executeRootCommand("daemon", "stop")
+	if err == nil {
+		t.Fatal("execute daemon stop returned nil error")
+	}
+
+	want := "Daemon did not respond (timeout).\nHint: Try `ari daemon stop` or check the process."
+	if err.Error() != want {
+		t.Fatalf("stop error = %q, want %q", err.Error(), want)
+	}
+}
+
+func TestFallbackStopByPIDDoesNotSignalWhenSocketUnavailable(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ARI_DAEMON_PID_PATH", "~/env.pid")
+	t.Setenv("ARI_DAEMON_SOCKET_PATH", "~/env.sock")
+
+	originalPIDCheck := daemonPIDCheck
+	originalStatusRPC := daemonStatusRPC
+	originalSignal := daemonSignalProcess
+
+	daemonPIDCheck = func(path string) (int, bool, error) {
+		if path != filepath.Join(home, "env.pid") {
+			t.Fatalf("pid path = %q, want %q", path, filepath.Join(home, "env.pid"))
+		}
+		return 777, true, nil
+	}
+	daemonStatusRPC = func(context.Context, string) (daemon.StatusResponse, error) {
+		return daemon.StatusResponse{}, os.ErrNotExist
+	}
+	signalCalled := false
+	daemonSignalProcess = func(int, syscall.Signal) error {
+		signalCalled = true
+		return nil
+	}
+	t.Cleanup(func() {
+		daemonPIDCheck = originalPIDCheck
+		daemonStatusRPC = originalStatusRPC
+		daemonSignalProcess = originalSignal
+	})
+
+	stopped, err := fallbackStopByPID()
+	if err != nil {
+		t.Fatalf("fallbackStopByPID returned error: %v", err)
+	}
+	if stopped {
+		t.Fatal("stopped = true, want false when socket unavailable")
+	}
+	if signalCalled {
+		t.Fatal("signalCalled = true, want false for unavailable socket")
+	}
+}
+
+func TestDaemonStartWhenAlreadyRunningFromPIDFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	pidPath := filepath.Join(home, ".ari", "daemon.pid")
+	if err := os.MkdirAll(filepath.Dir(pidPath), 0o755); err != nil {
+		t.Fatalf("create pid directory: %v", err)
+	}
+	if err := os.WriteFile(pidPath, []byte("1\n"), 0o600); err != nil {
+		t.Fatalf("write pid file: %v", err)
+	}
+	t.Setenv("ARI_DAEMON_PID_PATH", "~/custom.pid")
+
+	original := daemonPIDCheck
+	originalStatus := daemonStatusRPC
+	daemonPIDCheck = func(path string) (int, bool, error) {
+		if path != filepath.Join(home, "custom.pid") {
+			t.Fatalf("pid path = %q, want %q", path, filepath.Join(home, "custom.pid"))
+		}
+		return 1, true, nil
+	}
+	daemonStatusRPC = func(context.Context, string) (daemon.StatusResponse, error) {
+		return daemon.StatusResponse{PID: 1}, nil
+	}
+	t.Cleanup(func() {
+		daemonPIDCheck = original
+		daemonStatusRPC = originalStatus
+	})
+
+	out, err := executeRootCommand("daemon", "start")
+	if err != nil {
+		t.Fatalf("execute daemon start: %v", err)
+	}
+
+	want := "Daemon is already running (PID 1).\nHint: Run `ari daemon status` or `ari daemon stop`."
+	if strings.TrimSpace(out) != want {
+		t.Fatalf("unexpected output: %q", out)
+	}
+}
+
+func TestCheckRunningDaemonUsesSocketIdentity(t *testing.T) {
+	originalCheck := daemonPIDCheck
+	originalStatus := daemonStatusRPC
+	daemonPIDCheck = func(path string) (int, bool, error) {
+		return 999, true, nil
+	}
+	daemonStatusRPC = func(context.Context, string) (daemon.StatusResponse, error) {
+		return daemon.StatusResponse{PID: 999}, nil
+	}
+	t.Cleanup(func() {
+		daemonPIDCheck = originalCheck
+		daemonStatusRPC = originalStatus
+	})
+
+	pid, running, err := checkRunningDaemon(context.Background(), "/tmp/ari.sock", "/tmp/ari.pid")
+	if err != nil {
+		t.Fatalf("checkRunningDaemon returned error: %v", err)
+	}
+	if !running {
+		t.Fatal("running = false, want true from pid check")
+	}
+	if pid != 999 {
+		t.Fatalf("pid = %d, want 999 from pid check", pid)
+	}
+}
+
+func TestCheckRunningDaemonKeepsLivePIDWhenSocketUnavailableLegacyCase(t *testing.T) {
+	pidPath := filepath.Join(t.TempDir(), "daemon.pid")
+	if err := os.WriteFile(pidPath, []byte("555\n"), 0o600); err != nil {
+		t.Fatalf("write pid marker: %v", err)
+	}
+
+	originalCheck := daemonPIDCheck
+	originalStatus := daemonStatusRPC
+	daemonPIDCheck = func(string) (int, bool, error) { return 555, true, nil }
+	daemonStatusRPC = func(context.Context, string) (daemon.StatusResponse, error) {
+		return daemon.StatusResponse{}, os.ErrNotExist
+	}
+	t.Cleanup(func() {
+		daemonPIDCheck = originalCheck
+		daemonStatusRPC = originalStatus
+	})
+
+	pid, running, err := checkRunningDaemon(context.Background(), "/tmp/ari.sock", pidPath)
+	if err != nil {
+		t.Fatalf("checkRunningDaemon returned error: %v", err)
+	}
+	if !running {
+		t.Fatal("running = false, want true for live pid")
+	}
+	if pid != 555 {
+		t.Fatalf("pid = %d, want 555 from live pid", pid)
+	}
+	if _, err := os.Stat(pidPath); err != nil {
+		t.Fatalf("pid file stat error = %v, want retained", err)
+	}
+}
+
+func TestCheckRunningDaemonKeepsLivePIDWhenSocketUnavailable(t *testing.T) {
+	pidPath := filepath.Join(t.TempDir(), "daemon.pid")
+	if err := os.WriteFile(pidPath, []byte("555\n"), 0o600); err != nil {
+		t.Fatalf("write pid file: %v", err)
+	}
+
+	originalCheck := daemonPIDCheck
+	originalStatus := daemonStatusRPC
+	daemonPIDCheck = func(string) (int, bool, error) { return 555, true, nil }
+	daemonStatusRPC = func(context.Context, string) (daemon.StatusResponse, error) {
+		return daemon.StatusResponse{}, os.ErrNotExist
+	}
+	t.Cleanup(func() {
+		daemonPIDCheck = originalCheck
+		daemonStatusRPC = originalStatus
+	})
+
+	pid, running, err := checkRunningDaemon(context.Background(), "/tmp/ari.sock", pidPath)
+	if err != nil {
+		t.Fatalf("checkRunningDaemon returned error: %v", err)
+	}
+	if !running {
+		t.Fatal("running = false, want true when live pid exists")
+	}
+	if pid != 555 {
+		t.Fatalf("pid = %d, want 555", pid)
+	}
+	if _, err := os.Stat(pidPath); err != nil {
+		t.Fatalf("pid file stat error = %v, want retained", err)
+	}
+}
+
+func TestCheckRunningDaemonTreatsSocketDaemonAsRunningOnPIDMismatch(t *testing.T) {
+	pidPath := filepath.Join(t.TempDir(), "daemon.pid")
+	if err := os.WriteFile(pidPath, []byte("111\n"), 0o600); err != nil {
+		t.Fatalf("write pid file: %v", err)
+	}
+
+	originalCheck := daemonPIDCheck
+	originalStatus := daemonStatusRPC
+	daemonPIDCheck = func(string) (int, bool, error) { return 111, true, nil }
+	daemonStatusRPC = func(context.Context, string) (daemon.StatusResponse, error) {
+		return daemon.StatusResponse{PID: 222}, nil
+	}
+	t.Cleanup(func() {
+		daemonPIDCheck = originalCheck
+		daemonStatusRPC = originalStatus
+	})
+
+	pid, running, err := checkRunningDaemon(context.Background(), "/tmp/ari.sock", pidPath)
+	if err != nil {
+		t.Fatalf("checkRunningDaemon returned error: %v", err)
+	}
+	if !running {
+		t.Fatal("running = false, want true when daemon status succeeds")
+	}
+	if pid != 222 {
+		t.Fatalf("pid = %d, want status pid 222", pid)
+	}
+	if _, err := os.Stat(pidPath); !os.IsNotExist(err) {
+		t.Fatalf("pid file stat error = %v, want removed stale pid file", err)
+	}
+}
+
+func TestDaemonStopReturnsFallbackErrorWhenRPCUnavailableButFallbackFails(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ARI_DAEMON_PID_PATH", "~/env.pid")
+	t.Setenv("ARI_DAEMON_SOCKET_PATH", "~/env.sock")
+
+	originalStopRPC := daemonStopRPC
+	originalPIDCheck := daemonPIDCheck
+
+	daemonStopRPC = func(context.Context, string) error {
+		return os.ErrNotExist
+	}
+	daemonPIDCheck = func(string) (int, bool, error) {
+		return 0, false, os.ErrPermission
+	}
+	t.Cleanup(func() {
+		daemonStopRPC = originalStopRPC
+		daemonPIDCheck = originalPIDCheck
+	})
+
+	_, err := executeRootCommand("daemon", "stop")
+	if err == nil {
+		t.Fatal("execute daemon stop returned nil error")
+	}
+	if !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("error = %v, want permission error from fallback", err)
 	}
 }
 
@@ -140,19 +515,28 @@ func TestConfiguredDaemonConfigWithSourceUsesEnvironmentLabel(t *testing.T) {
 	}
 }
 
-func TestConfiguredDaemonConfigWithSourceKeepsValidationInConfigPackage(t *testing.T) {
-	sourceFile := filepath.Join("daemon.go")
-	content, err := os.ReadFile(sourceFile)
-	if err != nil {
-		t.Fatalf("read daemon command source: %v", err)
+func TestConfiguredDaemonConfigWithSourceReturnsConfigValidationErrors(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ARI_DAEMON_SOCKET_PATH", "")
+	t.Setenv("ARI_DAEMON_DB_PATH", "~/db.sqlite")
+	t.Setenv("ARI_DAEMON_PID_PATH", "~/daemon.pid")
+
+	configDir := filepath.Join(home, ".ari")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	body := `{"daemon":{"socket_path":"","db_path":"~/.ari/db.sqlite","pid_path":"~/.ari/daemon.pid"},"log_level":"info"}`
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
 	}
 
-	text := string(content)
-	if strings.Contains(text, "daemon socket path is required") {
-		t.Fatal("configuredDaemonConfigWithSource duplicates daemon socket path validation")
+	_, _, _, err := configuredDaemonConfigWithSource()
+	if err == nil {
+		t.Fatal("configuredDaemonConfigWithSource returned nil error")
 	}
-	if strings.Contains(text, "daemon db path is required") {
-		t.Fatal("configuredDaemonConfigWithSource duplicates daemon db path validation")
+	if !strings.Contains(err.Error(), "normalize config: socket path: path is required") {
+		t.Fatalf("error = %q, want config normalization/validation message", err.Error())
 	}
 }
 

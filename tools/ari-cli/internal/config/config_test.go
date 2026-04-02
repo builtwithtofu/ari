@@ -18,6 +18,9 @@ func TestDefaultsReturnsAbsolutePaths(t *testing.T) {
 	if cfg.Daemon.DBPath == "" {
 		t.Fatalf("expected database path")
 	}
+	if cfg.Daemon.PIDPath == "" {
+		t.Fatalf("expected pid path")
+	}
 
 	if !filepath.IsAbs(cfg.Daemon.SocketPath) {
 		t.Fatalf("expected absolute socket path, got %q", cfg.Daemon.SocketPath)
@@ -25,6 +28,9 @@ func TestDefaultsReturnsAbsolutePaths(t *testing.T) {
 
 	if !filepath.IsAbs(cfg.Daemon.DBPath) {
 		t.Fatalf("expected absolute db path, got %q", cfg.Daemon.DBPath)
+	}
+	if !filepath.IsAbs(cfg.Daemon.PIDPath) {
+		t.Fatalf("expected absolute pid path, got %q", cfg.Daemon.PIDPath)
 	}
 
 	if cfg.LogLevel != "info" {
@@ -47,6 +53,9 @@ func TestLoadUsesDefaultsWhenMissingConfig(t *testing.T) {
 	if cfg.Daemon.DBPath != filepath.Join(tmpHome, ".ari", "ari.db") {
 		t.Fatalf("unexpected db path: %q", cfg.Daemon.DBPath)
 	}
+	if cfg.Daemon.PIDPath != filepath.Join(tmpHome, ".ari", "daemon.pid") {
+		t.Fatalf("unexpected pid path: %q", cfg.Daemon.PIDPath)
+	}
 }
 
 func TestLoadExpandsTildePaths(t *testing.T) {
@@ -61,7 +70,8 @@ func TestLoadExpandsTildePaths(t *testing.T) {
 	configBody := `{
 		"daemon": {
 			"socket_path": "~/.ari/custom.sock",
-			"db_path": "~/.ari/custom.db"
+			"db_path": "~/.ari/custom.db",
+			"pid_path": "~/.ari/custom.pid"
 		},
 		"log_level": "WARN"
 	}`
@@ -81,6 +91,9 @@ func TestLoadExpandsTildePaths(t *testing.T) {
 	if cfg.Daemon.DBPath != filepath.Join(tmpHome, ".ari", "custom.db") {
 		t.Fatalf("unexpected db path: %q", cfg.Daemon.DBPath)
 	}
+	if cfg.Daemon.PIDPath != filepath.Join(tmpHome, ".ari", "custom.pid") {
+		t.Fatalf("unexpected pid path: %q", cfg.Daemon.PIDPath)
+	}
 
 	if cfg.LogLevel != "warn" {
 		t.Fatalf("unexpected log level: %q", cfg.LogLevel)
@@ -92,6 +105,7 @@ func TestLoadReadsNestedEnvOverride(t *testing.T) {
 	t.Setenv("HOME", tmpHome)
 	t.Setenv("ARI_DAEMON_SOCKET_PATH", "~/env.sock")
 	t.Setenv("ARI_DAEMON_DB_PATH", "~/env.db")
+	t.Setenv("ARI_DAEMON_PID_PATH", "~/env.pid")
 
 	cfg, err := Load()
 	if err != nil {
@@ -104,12 +118,17 @@ func TestLoadReadsNestedEnvOverride(t *testing.T) {
 	if cfg.Daemon.DBPath != filepath.Join(tmpHome, "env.db") {
 		t.Fatalf("unexpected env db path: %q", cfg.Daemon.DBPath)
 	}
+	if cfg.Daemon.PIDPath != filepath.Join(tmpHome, "env.pid") {
+		t.Fatalf("unexpected env pid path: %q", cfg.Daemon.PIDPath)
+	}
 }
 
 func TestValidateRejectsInvalidLogLevel(t *testing.T) {
 	err := Validate(&Config{
 		Daemon: DaemonConfig{
 			SocketPath: "/tmp/daemon.sock",
+			DBPath:     "/tmp/ari.db",
+			PIDPath:    "/tmp/daemon.pid",
 		},
 		LogLevel: "verbose",
 	})

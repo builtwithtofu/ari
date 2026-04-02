@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -21,7 +22,8 @@ func TestDaemonStatusAndStopOverRPC(t *testing.T) {
 
 	socketPath := testSocketPath(t)
 	dbPath := filepath.Join(t.TempDir(), "ari.db")
-	d := New(socketPath, dbPath, "defaults", "defaults", "test-version")
+	pidPath := filepath.Join(t.TempDir(), "daemon.pid")
+	d := New(socketPath, dbPath, pidPath, "defaults", "defaults", "test-version")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -68,6 +70,13 @@ func TestDaemonStatusAndStopOverRPC(t *testing.T) {
 	if err := <-errCh; err != nil {
 		t.Fatalf("daemon start returned error: %v", err)
 	}
+
+	if _, err := os.Stat(socketPath); !os.IsNotExist(err) {
+		t.Fatalf("socket path stat error = %v, want removed after stop", err)
+	}
+	if _, err := os.Stat(pidPath); !os.IsNotExist(err) {
+		t.Fatalf("pid path stat error = %v, want removed after stop", err)
+	}
 }
 
 func TestDaemonConcurrentStartDoesNotLeakSocketBindError(t *testing.T) {
@@ -75,7 +84,8 @@ func TestDaemonConcurrentStartDoesNotLeakSocketBindError(t *testing.T) {
 
 	socketPath := testSocketPath(t)
 	dbPath := filepath.Join(t.TempDir(), "ari.db")
-	d := New(socketPath, dbPath, "defaults", "defaults", "test-version")
+	pidPath := filepath.Join(t.TempDir(), "daemon.pid")
+	d := New(socketPath, dbPath, pidPath, "defaults", "defaults", "test-version")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -111,7 +121,7 @@ func TestDaemonConcurrentStartDoesNotLeakSocketBindError(t *testing.T) {
 }
 
 func TestDaemonDefaultVersionIsDev(t *testing.T) {
-	d := New("/tmp/ari-daemon.sock", "/tmp/ari.db", "defaults", "defaults", "")
+	d := New("/tmp/ari-daemon.sock", "/tmp/ari.db", "/tmp/ari-daemon.pid", "defaults", "defaults", "")
 
 	status := d.status()
 	if status.Version != "dev" {
@@ -122,7 +132,8 @@ func TestDaemonDefaultVersionIsDev(t *testing.T) {
 func TestDaemonStartAlreadyRunningSkipsBootstrapSideEffects(t *testing.T) {
 	socketPath := testSocketPath(t)
 	dbPath := filepath.Join(t.TempDir(), "ari.db")
-	d := New(socketPath, dbPath, "defaults", "defaults", "test-version")
+	pidPath := filepath.Join(t.TempDir(), "daemon.pid")
+	d := New(socketPath, dbPath, pidPath, "defaults", "defaults", "test-version")
 
 	original := bootstrapDatabase
 	var bootstrapCalls int32
@@ -169,6 +180,110 @@ func TestDaemonStartAlreadyRunningSkipsBootstrapSideEffects(t *testing.T) {
 	d.Stop()
 	if err := <-errCh; err != nil {
 		t.Fatalf("first Start returned error: %v", err)
+	}
+}
+
+func TestDaemonStopResetsStartTime(t *testing.T) {
+	stubBootstrap(t)
+
+	socketPath := testSocketPath(t)
+	dbPath := filepath.Join(t.TempDir(), "ari.db")
+	pidPath := filepath.Join(t.TempDir(), "daemon.pid")
+	d := New(socketPath, dbPath, pidPath, "defaults", "defaults", "test-version")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- d.Start(ctx)
+	}()
+
+	callDaemonMethod(t, socketPath, "daemon.status", StatusRequest{}, &StatusResponse{})
+	d.Stop()
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("daemon start returned error: %v", err)
+	}
+
+	d.mu.RLock()
+	startedAt := d.startedAt
+	d.mu.RUnlock()
+
+	if !startedAt.IsZero() {
+		t.Fatalf("daemon startedAt = %v, want zero after stop", startedAt)
+	}
+}
+
+func TestDaemonStartWritesAndRemovesPIDFile(t *testing.T) {
+	stubBootstrap(t)
+
+	socketPath := testSocketPath(t)
+	dbPath := filepath.Join(t.TempDir(), "ari.db")
+	pidPath := filepath.Join(t.TempDir(), "daemon.pid")
+	d := New(socketPath, dbPath, pidPath, "defaults", "defaults", "test-version")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- d.Start(ctx)
+	}()
+
+	callDaemonMethod(t, socketPath, "daemon.status", StatusRequest{}, &StatusResponse{})
+
+	pid, err := ReadPIDFile(pidPath)
+	if err != nil {
+		t.Fatalf("ReadPIDFile returned error: %v", err)
+	}
+	if pid <= 0 {
+		t.Fatalf("pid in file = %d, want positive", pid)
+	}
+
+	d.Stop()
+	if err := <-errCh; err != nil {
+		t.Fatalf("daemon start returned error: %v", err)
+	}
+
+	if _, err := os.Stat(pidPath); !os.IsNotExist(err) {
+		t.Fatalf("pid path stat error = %v, want removed on shutdown", err)
+	}
+}
+
+func TestDaemonSignalChannelTriggersShutdownAndRemovesPIDFile(t *testing.T) {
+	stubBootstrap(t)
+
+	socketPath := testSocketPath(t)
+	dbPath := filepath.Join(t.TempDir(), "ari.db")
+	pidPath := filepath.Join(t.TempDir(), "daemon.pid")
+	sigCh := make(chan os.Signal, 1)
+	d := NewWithSignalChannel(socketPath, dbPath, pidPath, "defaults", "defaults", "test-version", sigCh)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- d.Start(context.Background())
+	}()
+
+	callDaemonMethod(t, socketPath, "daemon.status", StatusRequest{}, &StatusResponse{})
+
+	if _, err := os.Stat(pidPath); err != nil {
+		t.Fatalf("pid path stat before signal = %v", err)
+	}
+
+	sigCh <- syscall.SIGTERM
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("daemon start returned error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for daemon shutdown from signal")
+	}
+
+	if _, err := os.Stat(pidPath); !os.IsNotExist(err) {
+		t.Fatalf("pid path stat after signal = %v, want removed", err)
 	}
 }
 
