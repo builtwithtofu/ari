@@ -203,6 +203,40 @@ func TestSessionRemoveFolderMissingReturnsInvalidParams(t *testing.T) {
 	}
 }
 
+func TestSessionRemoveFolderMissingSessionReturnsSessionNotFound(t *testing.T) {
+	store := newSessionMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	err := d.registerSessionMethods(registry, store)
+	if err != nil {
+		t.Fatalf("registerSessionMethods returned error: %v", err)
+	}
+
+	spec, ok := registry.Get("session.remove_folder")
+	if !ok {
+		t.Fatal("session.remove_folder method not registered")
+	}
+
+	raw, err := json.Marshal(SessionRemoveFolderRequest{SessionID: "missing", FolderPath: "/tmp/repo"})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+
+	_, err = spec.Call(context.Background(), raw)
+	if err == nil {
+		t.Fatal("session.remove_folder returned nil error for missing session")
+	}
+
+	var rpcErr *rpc.HandlerError
+	if !errors.As(err, &rpcErr) {
+		t.Fatalf("session.remove_folder error type = %T, want *rpc.HandlerError", err)
+	}
+	if rpcErr.Code != rpc.SessionNotFound {
+		t.Fatalf("session.remove_folder error code = %d, want %d", rpcErr.Code, rpc.SessionNotFound)
+	}
+}
+
 func TestNormalizeAndValidateVCSRootUsesPreferenceWhenBothMarkersExist(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repoRoot, ".jj"), 0o755); err != nil {

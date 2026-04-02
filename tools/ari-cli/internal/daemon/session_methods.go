@@ -369,6 +369,10 @@ func (d *Daemon) registerSessionMethods(registry *rpc.MethodRegistry, store *glo
 				return SessionRemoveFolderResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "session_id is required", nil)
 			}
 
+			if _, err := store.GetSession(ctx, sessionID); err != nil {
+				return SessionRemoveFolderResponse{}, mapSessionStoreError(err, sessionID)
+			}
+
 			folderPath, err := normalizePath(req.FolderPath)
 			if err != nil {
 				return SessionRemoveFolderResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), nil)
