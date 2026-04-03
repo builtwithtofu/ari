@@ -74,6 +74,8 @@ type CommandStopResponse struct {
 	Status string `json:"status"`
 }
 
+const maxRetainedCommandLogs = 128
+
 var stopCommandProcess = func(proc *process.Process) error {
 	return proc.Stop()
 }
@@ -329,11 +331,14 @@ func (d *Daemon) waitForCommandExit(commandID, sessionID string, store *globaldb
 		update.ExitCode = &result.ExitCode
 	}
 
-	for attempt := 0; attempt < 5; attempt++ {
-		if err := updateCommandStatus(store, context.Background(), update); err == nil {
-			break
+	if err := persistCommandStatusWithRetry(context.Background(), store, update, 5*time.Second); err != nil {
+		fallback := globaldb.UpdateCommandStatusParams{
+			SessionID:  sessionID,
+			CommandID:  commandID,
+			Status:     "lost",
+			FinishedAt: &finishedAt,
 		}
-		time.Sleep(20 * time.Millisecond)
+		_ = persistCommandStatusWithRetry(context.Background(), store, fallback, 5*time.Second)
 	}
 }
 
@@ -358,7 +363,15 @@ func (d *Daemon) deleteCommandProcess(commandID string) {
 
 func (d *Daemon) setCommandOutput(commandID, output string) {
 	d.commandMu.Lock()
+	if _, exists := d.commandLogs[commandID]; !exists {
+		d.commandLogOrder = append(d.commandLogOrder, commandID)
+	}
 	d.commandLogs[commandID] = output
+	for len(d.commandLogOrder) > maxRetainedCommandLogs {
+		evictID := d.commandLogOrder[0]
+		d.commandLogOrder = d.commandLogOrder[1:]
+		delete(d.commandLogs, evictID)
+	}
 	d.commandMu.Unlock()
 }
 
@@ -437,4 +450,27 @@ func newCommandID() (string, error) {
 	encoded := hex.EncodeToString(buf)
 
 	return fmt.Sprintf("%s-%s-%s-%s-%s", encoded[0:8], encoded[8:12], encoded[12:16], encoded[16:20], encoded[20:32]), nil
+}
+
+func persistCommandStatusWithRetry(ctx context.Context, store *globaldb.Store, update globaldb.UpdateCommandStatusParams, maxDuration time.Duration) error {
+	deadline := time.Now().Add(maxDuration)
+	var lastErr error
+
+	for {
+		if err := updateCommandStatus(store, context.Background(), update); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+
+		if time.Now().After(deadline) {
+			return lastErr
+		}
+
+		select {
+		case <-ctx.Done():
+			return lastErr
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
 }

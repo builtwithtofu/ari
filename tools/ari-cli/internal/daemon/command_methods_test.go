@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -252,7 +253,7 @@ func TestCommandWaiterRetriesPersistingExitStatus(t *testing.T) {
 	attempts := 0
 	updateCommandStatus = func(store *globaldb.Store, ctx context.Context, params globaldb.UpdateCommandStatusParams) error {
 		attempts++
-		if attempts == 1 {
+		if attempts <= 8 {
 			return errors.New("transient write failure")
 		}
 		return originalUpdate(store, ctx, params)
@@ -269,13 +270,29 @@ func TestCommandWaiterRetriesPersistingExitStatus(t *testing.T) {
 
 	waitForCommandStatus(t, registry, "sess-1", runResp.CommandID, "exited")
 
-	if attempts < 2 {
-		t.Fatalf("updateCommandStatus attempts = %d, want >= 2", attempts)
+	if attempts < 9 {
+		t.Fatalf("updateCommandStatus attempts = %d, want >= 9", attempts)
 	}
 
 	getResp := callMethod[CommandGetResponse](t, registry, "command.get", CommandGetRequest{SessionID: "sess-1", CommandID: runResp.CommandID})
 	if getResp.ExitCode == nil || *getResp.ExitCode != 9 {
 		t.Fatalf("command.get exit_code = %v, want 9", getResp.ExitCode)
+	}
+}
+
+func TestCommandOutputRetentionEvictsOldestSnapshots(t *testing.T) {
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	for i := 0; i < maxRetainedCommandLogs+1; i++ {
+		commandID := fmt.Sprintf("cmd-%03d", i)
+		d.setCommandOutput(commandID, commandID+"-output")
+	}
+
+	if _, ok := d.getCommandOutput("cmd-000"); ok {
+		t.Fatal("expected oldest command output to be evicted")
+	}
+	if output, ok := d.getCommandOutput(fmt.Sprintf("cmd-%03d", maxRetainedCommandLogs)); !ok || output == "" {
+		t.Fatal("expected newest command output to be retained")
 	}
 }
 
@@ -308,7 +325,8 @@ func seedSessionWithPrimaryFolder(t *testing.T, store *globaldb.Store, sessionID
 func newCommandMethodTestStore(t *testing.T) *globaldb.Store {
 	t.Helper()
 
-	db, err := sql.Open("sqlite", "file::memory:?cache=shared")
+	dbName := fmt.Sprintf("file:command-method-%d?mode=memory&cache=shared", time.Now().UnixNano())
+	db, err := sql.Open("sqlite", dbName)
 	if err != nil {
 		t.Fatalf("open sqlite db: %v", err)
 	}
