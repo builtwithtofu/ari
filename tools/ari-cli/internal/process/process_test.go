@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -523,11 +524,59 @@ func TestProcessStopDoesNotSignalAfterWaitCompletes(t *testing.T) {
 	}
 }
 
+func TestProcessWaitBlocksUntilOutputDrainCompletes(t *testing.T) {
+	ptyStub := &blockingDrainPTYStub{
+		firstRead: []byte("final-output"),
+		release:   make(chan struct{}),
+	}
+	p := &Process{
+		cmd:          &exec.Cmd{},
+		ptyFile:      ptyStub,
+		outputBuffer: NewRingBuffer(64),
+		outputSubs:   make(map[chan []byte]struct{}),
+		done:         make(chan struct{}),
+		outputDone:   make(chan struct{}),
+		waitCh:       make(chan struct{}),
+		waitCmd: func() error {
+			return nil
+		},
+		state: StateRunning,
+	}
+
+	go p.pumpOutput()
+	p.startWaiter()
+
+	waited := make(chan struct{})
+	go func() {
+		_, _ = p.Wait()
+		close(waited)
+	}()
+
+	select {
+	case <-waited:
+		t.Fatal("Wait returned before output drain completed")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(ptyStub.release)
+
+	select {
+	case <-waited:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Wait did not return after output drain completed")
+	}
+
+	if !strings.Contains(string(p.OutputSnapshot()), "final-output") {
+		t.Fatalf("OutputSnapshot() = %q, want contains %q", string(p.OutputSnapshot()), "final-output")
+	}
+}
+
 func TestPumpOutputDrainsTailAfterDoneIsClosed(t *testing.T) {
 	p := &Process{
 		outputBuffer: NewRingBuffer(64),
 		outputSubs:   make(map[chan []byte]struct{}),
 		done:         make(chan struct{}),
+		outputDone:   make(chan struct{}),
 		ptyFile: &pumpOutputPTYStub{
 			reads: [][]byte{[]byte("tail-bytes")},
 		},
@@ -656,6 +705,34 @@ func waitForProcessExit(t *testing.T, pid int) error {
 type pumpOutputPTYStub struct {
 	reads [][]byte
 	index int
+}
+
+type blockingDrainPTYStub struct {
+	firstRead []byte
+	readOnce  bool
+	release   chan struct{}
+}
+
+func (s *blockingDrainPTYStub) Read(p []byte) (int, error) {
+	if !s.readOnce {
+		s.readOnce = true
+		n := copy(p, s.firstRead)
+		return n, nil
+	}
+	<-s.release
+	return 0, io.EOF
+}
+
+func (s *blockingDrainPTYStub) Write(_ []byte) (int, error) {
+	return 0, errors.New("not implemented")
+}
+
+func (s *blockingDrainPTYStub) Close() error {
+	return nil
+}
+
+func (s *blockingDrainPTYStub) Fd() uintptr {
+	return 0
 }
 
 func (s *pumpOutputPTYStub) Read(p []byte) (int, error) {

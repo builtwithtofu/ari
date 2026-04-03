@@ -47,6 +47,7 @@ type Process struct {
 
 	outputBuffer *RingBuffer
 	outputSubs   map[chan []byte]struct{}
+	outputDone   chan struct{}
 
 	state   State
 	exitSet bool
@@ -58,6 +59,7 @@ type Process struct {
 	waitCh   chan struct{}
 	waitOnce sync.Once
 	waitErr  error
+	waitCmd  func() error
 }
 
 const defaultStopTimeout = 10 * time.Second
@@ -81,6 +83,7 @@ func New(command string, args []string, opts Options) (*Process, error) {
 		opts:         opts,
 		state:        StateStarting,
 		done:         make(chan struct{}),
+		outputDone:   make(chan struct{}),
 		waitCh:       make(chan struct{}),
 		outputBuffer: NewRingBuffer(1 << 20),
 		outputSubs:   make(map[chan []byte]struct{}),
@@ -113,6 +116,7 @@ func (p *Process) Start() error {
 
 	p.cmd = cmd
 	p.ptyFile = ptyFile
+	p.waitCmd = cmd.Wait
 	p.state = StateRunning
 	p.mu.Unlock()
 
@@ -163,7 +167,7 @@ func (p *Process) Stop() error {
 
 func (p *Process) Wait() (Result, error) {
 	p.mu.RLock()
-	started := p.cmd != nil
+	started := p.cmd != nil || p.waitCmd != nil
 	p.mu.RUnlock()
 	if !started {
 		return Result{}, errors.New("wait before start")
@@ -266,13 +270,15 @@ func (p *Process) Resize(rows, cols uint16) error {
 
 func (p *Process) waitInternal() error {
 	p.mu.RLock()
-	cmd := p.cmd
+	waitCmd := p.waitCmd
+	outputDone := p.outputDone
+	ptyFile := p.ptyFile
 	p.mu.RUnlock()
-	if cmd == nil {
+	if waitCmd == nil {
 		return errors.New("wait before start")
 	}
 
-	err := cmd.Wait()
+	err := waitCmd()
 	result := Result{}
 
 	if err == nil {
@@ -298,19 +304,22 @@ func (p *Process) waitInternal() error {
 		}
 	}
 
+	p.closeOnce.Do(func() {
+		close(p.done)
+	})
+
+	if ptyFile != nil {
+		_ = ptyFile.Close()
+	}
+	if outputDone != nil {
+		<-outputDone
+	}
+
 	p.mu.Lock()
 	p.exit = result
 	p.exitSet = true
 	p.state = StateExited
 	p.mu.Unlock()
-
-	p.closeOnce.Do(func() {
-		close(p.done)
-	})
-
-	if p.ptyFile != nil {
-		_ = p.ptyFile.Close()
-	}
 
 	return nil
 }
@@ -325,6 +334,8 @@ func (p *Process) startWaiter() {
 }
 
 func (p *Process) pumpOutput() {
+	defer close(p.outputDone)
+
 	buf := make([]byte, 4096)
 	for {
 		n, err := p.ptyFile.Read(buf)
