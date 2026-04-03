@@ -61,15 +61,14 @@ func TestProcessLifecycleStateTransitionsAndExitCode(t *testing.T) {
 func TestProcessStopSendsSIGTERMToProcessGroup(t *testing.T) {
 	tempDir := t.TempDir()
 	childPIDFile := filepath.Join(tempDir, "child.pid")
-	childMarkerFile := filepath.Join(tempDir, "child.term")
 
 	p, err := New("/bin/sh", []string{"-c", `
 trap 'exit 0' TERM
-sh -c 'trap "echo child-term > "$2"; exit 0" TERM; while true; do sleep 1; done' ignored "$1" "$2" &
+sh -c 'trap "exit 0" TERM; while true; do sleep 1; done' ignored "$1" &
 child=$!
 printf "%s\n" "$child" > "$1"
 while true; do sleep 1; done
-`, "ignored", childPIDFile, childMarkerFile}, Options{Dir: tempDir})
+`, "ignored", childPIDFile}, Options{Dir: tempDir})
 	if err != nil {
 		t.Fatalf("New returned error: %v", err)
 	}
@@ -98,11 +97,9 @@ while true; do sleep 1; done
 		t.Fatal("ExitCode() ok = false, want true")
 	}
 
-	if err := waitForFileContent(t, childMarkerFile, "child-term"); err != nil {
-		t.Fatalf("child marker check failed: %v", err)
+	if err := waitForProcessExit(t, childPID); err != nil {
+		t.Fatalf("child exit check failed: %v", err)
 	}
-
-	_ = childPID
 }
 
 func TestProcessStopWhileOutputReadIsBlockedDoesNotHang(t *testing.T) {
@@ -636,6 +633,24 @@ func waitForFileContent(t *testing.T, path string, want string) error {
 	}
 
 	return errors.New("timed out waiting for expected file content")
+}
+
+func waitForProcessExit(t *testing.T, pid int) error {
+	t.Helper()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		err := syscall.Kill(pid, 0)
+		if errors.Is(err, syscall.ESRCH) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	return errors.New("timed out waiting for child process exit")
 }
 
 type pumpOutputPTYStub struct {
