@@ -155,6 +155,17 @@ CREATE TABLE IF NOT EXISTS session_folders (
 	PRIMARY KEY (session_id, folder_path),
 	FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS commands (
+	command_id TEXT PRIMARY KEY,
+	session_id TEXT NOT NULL,
+	command TEXT NOT NULL,
+	args TEXT NOT NULL DEFAULT '[]',
+	status TEXT NOT NULL DEFAULT 'running',
+	exit_code INTEGER,
+	started_at TEXT NOT NULL,
+	finished_at TEXT,
+	FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+);
 `); err != nil {
 			return err
 		}

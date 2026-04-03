@@ -51,4 +51,5 @@ const (
 
 	SessionNotFound = -32001
 	PlanNotFound    = -32002
+	CommandNotFound = -32003
 )
