@@ -11,46 +11,61 @@ import (
 )
 
 func TestRootRegistersCommandCommand(t *testing.T) {
-	root := NewRootCmd()
-	commandCmd, _, err := root.Find([]string{"command"})
-	if err != nil {
-		t.Fatalf("find command command: %v", err)
+	tests := []struct {
+		name string
+		path []string
+		want string
+	}{
+		{name: "command root registered", path: []string{"command"}, want: "command"},
+		{name: "daemon root still registered", path: []string{"daemon"}, want: "daemon"},
+		{name: "session root still registered", path: []string{"session"}, want: "session"},
 	}
 
-	if commandCmd == nil {
-		t.Fatal("expected command command to be registered")
-	}
-	if commandCmd.Name() != "command" {
-		t.Fatalf("command name = %q, want %q", commandCmd.Name(), "command")
+	root := NewRootCmd()
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd, _, err := root.Find(tc.path)
+			if err != nil {
+				t.Fatalf("find %v: %v", tc.path, err)
+			}
+			if cmd == nil {
+				t.Fatalf("expected command %v to be registered", tc.path)
+			}
+			if cmd.Name() != tc.want {
+				t.Fatalf("command name = %q, want %q", cmd.Name(), tc.want)
+			}
+		})
 	}
 }
 
 func TestCommandSubcommandsExist(t *testing.T) {
 	command := NewCommandCmd()
 
-	run, _, err := command.Find([]string{"run"})
-	if err != nil {
-		t.Fatalf("find command run: %v", err)
-	}
-	list, _, err := command.Find([]string{"list"})
-	if err != nil {
-		t.Fatalf("find command list: %v", err)
-	}
-	show, _, err := command.Find([]string{"show"})
-	if err != nil {
-		t.Fatalf("find command show: %v", err)
-	}
-	output, _, err := command.Find([]string{"output"})
-	if err != nil {
-		t.Fatalf("find command output: %v", err)
-	}
-	stop, _, err := command.Find([]string{"stop"})
-	if err != nil {
-		t.Fatalf("find command stop: %v", err)
+	tests := []struct {
+		name string
+		path []string
+		want string
+	}{
+		{name: "run", path: []string{"run"}, want: "run"},
+		{name: "list", path: []string{"list"}, want: "list"},
+		{name: "show", path: []string{"show"}, want: "show"},
+		{name: "output", path: []string{"output"}, want: "output"},
+		{name: "stop", path: []string{"stop"}, want: "stop"},
 	}
 
-	if run == nil || list == nil || show == nil || output == nil || stop == nil {
-		t.Fatal("expected command subcommands to be registered")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd, _, err := command.Find(tc.path)
+			if err != nil {
+				t.Fatalf("find command %s: %v", tc.want, err)
+			}
+			if cmd == nil {
+				t.Fatalf("expected subcommand %q to be registered", tc.want)
+			}
+			if cmd.Name() != tc.want {
+				t.Fatalf("subcommand name = %q, want %q", cmd.Name(), tc.want)
+			}
+		})
 	}
 }
 

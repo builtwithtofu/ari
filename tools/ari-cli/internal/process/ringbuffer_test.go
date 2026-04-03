@@ -7,55 +7,99 @@ import (
 )
 
 func TestRingBufferWriteAndSnapshot(t *testing.T) {
-	rb := NewRingBuffer(32)
-
-	n, err := rb.Write([]byte("hello world"))
-	if err != nil {
-		t.Fatalf("Write returned error: %v", err)
+	tests := []struct {
+		name     string
+		capacity int
+		writes   [][]byte
+		want     []byte
+	}{
+		{name: "single write", capacity: 32, writes: [][]byte{[]byte("hello world")}, want: []byte("hello world")},
+		{name: "multiple writes append", capacity: 32, writes: [][]byte{[]byte("hello "), []byte("world")}, want: []byte("hello world")},
 	}
-	if n != len("hello world") {
-		t.Fatalf("Write n = %d, want %d", n, len("hello world"))
-	}
 
-	got := rb.Snapshot()
-	if !bytes.Equal(got, []byte("hello world")) {
-		t.Fatalf("Snapshot() = %q, want %q", string(got), "hello world")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rb := NewRingBuffer(tc.capacity)
+
+			written := 0
+			for _, chunk := range tc.writes {
+				n, err := rb.Write(chunk)
+				if err != nil {
+					t.Fatalf("Write returned error: %v", err)
+				}
+				written += n
+			}
+
+			if written != len(tc.want) {
+				t.Fatalf("total bytes written = %d, want %d", written, len(tc.want))
+			}
+
+			got := rb.Snapshot()
+			if !bytes.Equal(got, tc.want) {
+				t.Fatalf("Snapshot() = %q, want %q", string(got), string(tc.want))
+			}
+		})
 	}
 }
 
 func TestRingBufferLines(t *testing.T) {
-	rb := NewRingBuffer(64)
-
-	_, err := rb.Write([]byte("alpha\nbeta\ngamma"))
-	if err != nil {
-		t.Fatalf("Write returned error: %v", err)
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{name: "multiple lines", input: "alpha\nbeta\ngamma", want: []string{"alpha", "beta", "gamma"}},
+		{name: "trailing newline trimmed", input: "alpha\nbeta\n", want: []string{"alpha", "beta"}},
+		{name: "empty buffer returns no lines", input: "", want: []string{}},
 	}
 
-	got := rb.Lines()
-	want := []string{"alpha", "beta", "gamma"}
-	if len(got) != len(want) {
-		t.Fatalf("Lines len = %d, want %d", len(got), len(want))
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("Lines[%d] = %q, want %q", i, got[i], want[i])
-		}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rb := NewRingBuffer(64)
+
+			if _, err := rb.Write([]byte(tc.input)); err != nil {
+				t.Fatalf("Write returned error: %v", err)
+			}
+
+			got := rb.Lines()
+			if len(got) != len(tc.want) {
+				t.Fatalf("Lines len = %d, want %d", len(got), len(tc.want))
+			}
+			for i := range tc.want {
+				if got[i] != tc.want[i] {
+					t.Fatalf("Lines[%d] = %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
 	}
 }
 
 func TestRingBufferWraparoundKeepsNewestBytes(t *testing.T) {
-	rb := NewRingBuffer(8)
-
-	if _, err := rb.Write([]byte("12345")); err != nil {
-		t.Fatalf("first Write returned error: %v", err)
+	tests := []struct {
+		name     string
+		capacity int
+		writes   [][]byte
+		want     []byte
+	}{
+		{name: "overflow by one chunk", capacity: 8, writes: [][]byte{[]byte("12345"), []byte("6789")}, want: []byte("23456789")},
+		{name: "single oversized write keeps tail", capacity: 5, writes: [][]byte{[]byte("abcdefghi")}, want: []byte("efghi")},
 	}
-	if _, err := rb.Write([]byte("6789")); err != nil {
-		t.Fatalf("second Write returned error: %v", err)
-	}
 
-	got := rb.Snapshot()
-	if !bytes.Equal(got, []byte("23456789")) {
-		t.Fatalf("Snapshot() = %q, want %q", string(got), "23456789")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rb := NewRingBuffer(tc.capacity)
+
+			for i, chunk := range tc.writes {
+				if _, err := rb.Write(chunk); err != nil {
+					t.Fatalf("Write #%d returned error: %v", i+1, err)
+				}
+			}
+
+			got := rb.Snapshot()
+			if !bytes.Equal(got, tc.want) {
+				t.Fatalf("Snapshot() = %q, want %q", string(got), string(tc.want))
+			}
+		})
 	}
 }
 

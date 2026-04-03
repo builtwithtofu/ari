@@ -78,79 +78,68 @@ func TestCommandRunUsesSessionPrimaryFolderAsCWD(t *testing.T) {
 	}
 }
 
-func TestCommandRunWithoutPrimaryFolderReturnsInvalidParams(t *testing.T) {
-	store := newCommandMethodTestStore(t)
-	registry := rpc.NewMethodRegistry()
-	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-
-	if err := d.registerCommandMethods(registry, store); err != nil {
-		t.Fatalf("registerCommandMethods returned error: %v", err)
+func TestCommandRunInvalidSessionStateAndFolderGuards(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, store *globaldb.Store)
+	}{
+		{
+			name: "missing primary folder",
+			setup: func(t *testing.T, store *globaldb.Store) {
+				t.Helper()
+				if err := store.CreateSession(context.Background(), "sess-1", "alpha", t.TempDir(), "manual", "auto"); err != nil {
+					t.Fatalf("CreateSession returned error: %v", err)
+				}
+			},
+		},
+		{
+			name: "closed session",
+			setup: func(t *testing.T, store *globaldb.Store) {
+				t.Helper()
+				workspace := t.TempDir()
+				seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
+				if err := store.UpdateSessionStatus(context.Background(), "sess-1", "closed"); err != nil {
+					t.Fatalf("UpdateSessionStatus returned error: %v", err)
+				}
+			},
+		},
 	}
 
-	if err := store.CreateSession(context.Background(), "sess-1", "alpha", t.TempDir(), "manual", "auto"); err != nil {
-		t.Fatalf("CreateSession returned error: %v", err)
-	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newCommandMethodTestStore(t)
+			registry := rpc.NewMethodRegistry()
+			d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 
-	spec, ok := registry.Get("command.run")
-	if !ok {
-		t.Fatal("command.run method not registered")
-	}
+			if err := d.registerCommandMethods(registry, store); err != nil {
+				t.Fatalf("registerCommandMethods returned error: %v", err)
+			}
 
-	raw, err := json.Marshal(CommandRunRequest{SessionID: "sess-1", Command: "/bin/sh", Args: []string{"-c", "echo hi"}})
-	if err != nil {
-		t.Fatalf("marshal params: %v", err)
-	}
+			tc.setup(t, store)
 
-	_, err = spec.Call(context.Background(), raw)
-	if err == nil {
-		t.Fatal("command.run returned nil error for missing primary folder")
-	}
+			spec, ok := registry.Get("command.run")
+			if !ok {
+				t.Fatal("command.run method not registered")
+			}
 
-	var rpcErr *rpc.HandlerError
-	if !errors.As(err, &rpcErr) {
-		t.Fatalf("command.run error type = %T, want *rpc.HandlerError", err)
-	}
-	if rpcErr.Code != rpc.InvalidParams {
-		t.Fatalf("command.run error code = %d, want %d", rpcErr.Code, rpc.InvalidParams)
-	}
-}
+			raw, err := json.Marshal(CommandRunRequest{SessionID: "sess-1", Command: "/bin/sh", Args: []string{"-c", "echo hi"}})
+			if err != nil {
+				t.Fatalf("marshal params: %v", err)
+			}
 
-func TestCommandRunClosedSessionReturnsInvalidParams(t *testing.T) {
-	store := newCommandMethodTestStore(t)
-	registry := rpc.NewMethodRegistry()
-	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+			_, err = spec.Call(context.Background(), raw)
+			if err == nil {
+				t.Fatal("command.run returned nil error for invalid session state")
+			}
 
-	if err := d.registerCommandMethods(registry, store); err != nil {
-		t.Fatalf("registerCommandMethods returned error: %v", err)
-	}
-
-	workspace := t.TempDir()
-	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
-	if err := store.UpdateSessionStatus(context.Background(), "sess-1", "closed"); err != nil {
-		t.Fatalf("UpdateSessionStatus returned error: %v", err)
-	}
-
-	spec, ok := registry.Get("command.run")
-	if !ok {
-		t.Fatal("command.run method not registered")
-	}
-
-	raw, err := json.Marshal(CommandRunRequest{SessionID: "sess-1", Command: "/bin/sh", Args: []string{"-c", "echo hi"}})
-	if err != nil {
-		t.Fatalf("marshal params: %v", err)
-	}
-
-	_, err = spec.Call(context.Background(), raw)
-	if err == nil {
-		t.Fatal("command.run returned nil error for closed session")
-	}
-
-	var rpcErr *rpc.HandlerError
-	if !errors.As(err, &rpcErr) {
-		t.Fatalf("command.run error type = %T, want *rpc.HandlerError", err)
-	}
-	if rpcErr.Code != rpc.InvalidParams {
-		t.Fatalf("command.run error code = %d, want %d", rpcErr.Code, rpc.InvalidParams)
+			var rpcErr *rpc.HandlerError
+			if !errors.As(err, &rpcErr) {
+				t.Fatalf("command.run error type = %T, want *rpc.HandlerError", err)
+			}
+			if rpcErr.Code != rpc.InvalidParams {
+				t.Fatalf("command.run error code = %d, want %d", rpcErr.Code, rpc.InvalidParams)
+			}
+		})
 	}
 }
 
