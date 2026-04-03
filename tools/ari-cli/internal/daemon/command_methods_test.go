@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/process"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
 	_ "modernc.org/sqlite"
 )
@@ -195,6 +196,86 @@ func TestCommandStopReturnsStoredStatusForExitedCommand(t *testing.T) {
 	stopResp := callMethod[CommandStopResponse](t, registry, "command.stop", CommandStopRequest{SessionID: "sess-1", CommandID: runResp.CommandID})
 	if stopResp.Status != "exited" {
 		t.Fatalf("command.stop status = %q, want %q", stopResp.Status, "exited")
+	}
+}
+
+func TestCommandStopReturnsWithoutWaitingForStopPath(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerCommandMethods(registry, store); err != nil {
+		t.Fatalf("registerCommandMethods returned error: %v", err)
+	}
+
+	workspace := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
+
+	runResp := callMethod[CommandRunResponse](t, registry, "command.run", CommandRunRequest{
+		SessionID: "sess-1",
+		Command:   "/bin/sh",
+		Args:      []string{"-c", "while true; do sleep 1; done"},
+	})
+
+	originalStop := stopCommandProcess
+	stopCommandProcess = func(*process.Process) error {
+		time.Sleep(300 * time.Millisecond)
+		return nil
+	}
+	t.Cleanup(func() {
+		stopCommandProcess = originalStop
+	})
+
+	start := time.Now()
+	stopResp := callMethod[CommandStopResponse](t, registry, "command.stop", CommandStopRequest{SessionID: "sess-1", CommandID: runResp.CommandID})
+	if stopResp.Status != "stopping" {
+		t.Fatalf("command.stop status = %q, want %q", stopResp.Status, "stopping")
+	}
+	if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
+		t.Fatalf("command.stop elapsed = %s, want <= 200ms", elapsed)
+	}
+}
+
+func TestCommandWaiterRetriesPersistingExitStatus(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerCommandMethods(registry, store); err != nil {
+		t.Fatalf("registerCommandMethods returned error: %v", err)
+	}
+
+	workspace := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
+
+	originalUpdate := updateCommandStatus
+	attempts := 0
+	updateCommandStatus = func(store *globaldb.Store, ctx context.Context, params globaldb.UpdateCommandStatusParams) error {
+		attempts++
+		if attempts == 1 {
+			return errors.New("transient write failure")
+		}
+		return originalUpdate(store, ctx, params)
+	}
+	t.Cleanup(func() {
+		updateCommandStatus = originalUpdate
+	})
+
+	runResp := callMethod[CommandRunResponse](t, registry, "command.run", CommandRunRequest{
+		SessionID: "sess-1",
+		Command:   "/bin/sh",
+		Args:      []string{"-c", "exit 9"},
+	})
+
+	waitForCommandStatus(t, registry, "sess-1", runResp.CommandID, "exited")
+
+	if attempts < 2 {
+		t.Fatalf("updateCommandStatus attempts = %d, want >= 2", attempts)
+	}
+
+	getResp := callMethod[CommandGetResponse](t, registry, "command.get", CommandGetRequest{SessionID: "sess-1", CommandID: runResp.CommandID})
+	if getResp.ExitCode == nil || *getResp.ExitCode != 9 {
+		t.Fatalf("command.get exit_code = %v, want 9", getResp.ExitCode)
 	}
 }
 

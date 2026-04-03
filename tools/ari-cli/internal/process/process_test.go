@@ -2,6 +2,7 @@ package process
 
 import (
 	"errors"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -493,6 +494,57 @@ func TestProcessSelfExitUpdatesStateWithoutExplicitWait(t *testing.T) {
 	}
 }
 
+func TestProcessStopDoesNotSignalAfterWaitCompletes(t *testing.T) {
+	originalKill := processGroupKill
+	killCalls := 0
+	processGroupKill = func(_ int, _ syscall.Signal) error {
+		killCalls++
+		return nil
+	}
+	t.Cleanup(func() {
+		processGroupKill = originalKill
+	})
+
+	p, err := New("/bin/sh", []string{"-c", "exit 0"}, Options{Dir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+
+	if err := p.Start(); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	if _, err := p.Wait(); err != nil {
+		t.Fatalf("Wait returned error: %v", err)
+	}
+
+	if err := p.Stop(); err != nil {
+		t.Fatalf("Stop returned error: %v", err)
+	}
+
+	if killCalls != 0 {
+		t.Fatalf("processGroupKill call count = %d, want %d", killCalls, 0)
+	}
+}
+
+func TestPumpOutputDrainsTailAfterDoneIsClosed(t *testing.T) {
+	p := &Process{
+		outputBuffer: NewRingBuffer(64),
+		outputSubs:   make(map[chan []byte]struct{}),
+		done:         make(chan struct{}),
+		ptyFile: &pumpOutputPTYStub{
+			reads: [][]byte{[]byte("tail-bytes")},
+		},
+	}
+
+	close(p.done)
+	p.pumpOutput()
+
+	snapshot := p.OutputSnapshot()
+	if !strings.Contains(string(snapshot), "tail-bytes") {
+		t.Fatalf("OutputSnapshot() = %q, want contains %q", string(snapshot), "tail-bytes")
+	}
+}
+
 func TestHelperProcessIgnoreTERM(t *testing.T) {
 	if os.Getenv("ARI_PROCESS_HELPER") != "1" {
 		t.Skip("helper process test")
@@ -584,4 +636,32 @@ func waitForFileContent(t *testing.T, path string, want string) error {
 	}
 
 	return errors.New("timed out waiting for expected file content")
+}
+
+type pumpOutputPTYStub struct {
+	reads [][]byte
+	index int
+}
+
+func (s *pumpOutputPTYStub) Read(p []byte) (int, error) {
+	if s.index >= len(s.reads) {
+		return 0, io.EOF
+	}
+
+	chunk := s.reads[s.index]
+	s.index++
+	n := copy(p, chunk)
+	return n, nil
+}
+
+func (s *pumpOutputPTYStub) Write(_ []byte) (int, error) {
+	return 0, errors.New("not implemented")
+}
+
+func (s *pumpOutputPTYStub) Close() error {
+	return nil
+}
+
+func (s *pumpOutputPTYStub) Fd() uintptr {
+	return 0
 }

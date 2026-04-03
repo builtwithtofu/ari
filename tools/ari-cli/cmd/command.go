@@ -279,6 +279,8 @@ func mapCommandRPCError(err error) error {
 	var rpcErr *jsonrpc2.Error
 	if errors.As(err, &rpcErr) {
 		switch rpcErr.Code {
+		case int64(rpc.SessionNotFound):
+			return userFacingError{message: "Session not found"}
 		case int64(rpc.CommandNotFound):
 			return userFacingError{message: "Command not found"}
 		case int64(rpc.InvalidParams):

@@ -195,3 +195,29 @@ func TestCommandShowNotFoundMapsError(t *testing.T) {
 		t.Fatalf("command show error = %q, want %q", err.Error(), "Command not found")
 	}
 }
+
+func TestCommandShowSessionNotFoundMapsError(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalResolve := commandResolveSessionIdentifier
+	originalShow := commandGetRPC
+	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+		return "sess-missing", nil
+	}
+	commandGetRPC = func(context.Context, string, string, string) (daemon.CommandGetResponse, error) {
+		return daemon.CommandGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "session not found"}
+	}
+	t.Cleanup(func() {
+		commandResolveSessionIdentifier = originalResolve
+		commandGetRPC = originalShow
+	})
+
+	_, err := executeRootCommand("command", "show", "missing", "cmd-1")
+	if err == nil {
+		t.Fatal("command show returned nil error for missing session")
+	}
+	if err.Error() != "Session not found" {
+		t.Fatalf("command show error = %q, want %q", err.Error(), "Session not found")
+	}
+}

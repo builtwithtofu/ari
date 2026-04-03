@@ -62,6 +62,8 @@ type Process struct {
 
 const defaultStopTimeout = 10 * time.Second
 
+var processGroupKill = syscall.Kill
+
 func New(command string, args []string, opts Options) (*Process, error) {
 	if command == "" {
 		return nil, errors.New("process command is required")
@@ -129,9 +131,15 @@ func (p *Process) Stop() error {
 		return nil
 	}
 
+	select {
+	case <-p.waitCh:
+		return nil
+	default:
+	}
+
 	pid := cmd.Process.Pid
 	if pid > 0 {
-		if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+		if err := processGroupKill(-pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
 			return fmt.Errorf("send sigterm to process group %d: %w", pid, err)
 		}
 	}
@@ -140,7 +148,7 @@ func (p *Process) Stop() error {
 	case <-p.waitCh:
 		return nil
 	case <-time.After(p.opts.StopTimeout):
-		if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+		if err := processGroupKill(-pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
 			return fmt.Errorf("send sigkill to process group %d: %w", pid, err)
 		}
 
@@ -319,12 +327,6 @@ func (p *Process) startWaiter() {
 func (p *Process) pumpOutput() {
 	buf := make([]byte, 4096)
 	for {
-		select {
-		case <-p.done:
-			return
-		default:
-		}
-
 		n, err := p.ptyFile.Read(buf)
 		if err == nil {
 			chunk := append([]byte(nil), buf[:n]...)

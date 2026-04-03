@@ -74,6 +74,14 @@ type CommandStopResponse struct {
 	Status string `json:"status"`
 }
 
+var stopCommandProcess = func(proc *process.Process) error {
+	return proc.Stop()
+}
+
+var updateCommandStatus = func(store *globaldb.Store, ctx context.Context, params globaldb.UpdateCommandStatusParams) error {
+	return store.UpdateCommandStatus(ctx, params)
+}
+
 func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *globaldb.Store) error {
 	if registry == nil {
 		return fmt.Errorf("method registry is required")
@@ -285,9 +293,9 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 				return CommandStopResponse{Status: "lost"}, nil
 			}
 
-			if err := proc.Stop(); err != nil {
-				return CommandStopResponse{}, err
-			}
+			go func() {
+				_ = stopCommandProcess(proc)
+			}()
 
 			return CommandStopResponse{Status: "stopping"}, nil
 		},
@@ -321,7 +329,12 @@ func (d *Daemon) waitForCommandExit(commandID, sessionID string, store *globaldb
 		update.ExitCode = &result.ExitCode
 	}
 
-	_ = store.UpdateCommandStatus(context.Background(), update)
+	for attempt := 0; attempt < 5; attempt++ {
+		if err := updateCommandStatus(store, context.Background(), update); err == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 func (d *Daemon) setCommandProcess(commandID string, proc *process.Process) {
