@@ -13,27 +13,33 @@ import (
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/assert"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/process"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
 	_ "modernc.org/sqlite"
 )
 
 type Daemon struct {
-	mu           sync.RWMutex
-	running      bool
-	startedAt    time.Time
-	socketPath   string
-	dbPath       string
-	configPath   string
-	configSource string
-	pidPath      string
-	signalCh     <-chan os.Signal
-	version      string
-	pid          int
-	store        *globaldb.Store
-	db           *sql.DB
-	cancel       context.CancelFunc
-	stopCh       chan struct{}
-	transport    *rpc.UnixSocketTransport
+	mu              sync.RWMutex
+	running         bool
+	startedAt       time.Time
+	socketPath      string
+	dbPath          string
+	configPath      string
+	configSource    string
+	pidPath         string
+	signalCh        <-chan os.Signal
+	version         string
+	pid             int
+	store           *globaldb.Store
+	db              *sql.DB
+	cancel          context.CancelFunc
+	stopCh          chan struct{}
+	transport       *rpc.UnixSocketTransport
+	commandMu       sync.RWMutex
+	commands        map[string]*process.Process
+	commandLogs     map[string]string
+	commandLogOrder []string
+	commandWG       sync.WaitGroup
 }
 
 var bootstrapDatabase = globaldb.Bootstrap
@@ -70,14 +76,17 @@ func NewWithSignalChannel(socketPath, dbPath, pidPath, configPath, configSource,
 	}
 
 	return &Daemon{
-		socketPath:   socketPath,
-		dbPath:       dbPath,
-		pidPath:      pidPath,
-		configPath:   configPath,
-		configSource: configSource,
-		signalCh:     signalCh,
-		version:      version,
-		pid:          os.Getpid(),
+		socketPath:      socketPath,
+		dbPath:          dbPath,
+		pidPath:         pidPath,
+		configPath:      configPath,
+		configSource:    configSource,
+		signalCh:        signalCh,
+		version:         version,
+		pid:             os.Getpid(),
+		commands:        make(map[string]*process.Process),
+		commandLogs:     make(map[string]string),
+		commandLogOrder: make([]string, 0),
 	}
 }
 
@@ -138,6 +147,10 @@ func (d *Daemon) Start(ctx context.Context) error {
 		_ = dbConn.Close()
 		return fmt.Errorf("validate daemon database: %w", err)
 	}
+	if err := store.MarkRunningCommandsLost(ctx); err != nil {
+		_ = dbConn.Close()
+		return fmt.Errorf("reconcile running commands: %w", err)
+	}
 
 	registry := rpc.NewMethodRegistry()
 	if err := d.registerMethods(registry, store); err != nil {
@@ -174,6 +187,8 @@ func (d *Daemon) Start(ctx context.Context) error {
 	defer func() {
 		startupSucceeded = true
 		cancel()
+		d.stopAllCommands()
+		d.commandWG.Wait()
 		_ = RemovePIDFileIfOwned(d.pidPath, d.pid)
 		if dbConn != nil {
 			_ = dbConn.Close()

@@ -95,6 +95,52 @@ WHERE session_id = ?`
 FROM session_folders
 WHERE session_id = ?
 ORDER BY added_at ASC, folder_path ASC`
+
+	insertCommandQuery = `INSERT INTO commands (
+	command_id,
+	session_id,
+	command,
+	args,
+	status,
+	exit_code,
+	started_at,
+	finished_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+
+	commandByIDQuery = `SELECT
+	command_id,
+	session_id,
+	command,
+	args,
+	status,
+	exit_code,
+	started_at,
+	finished_at
+FROM commands
+WHERE session_id = ? AND command_id = ?`
+
+	listCommandsBySessionQuery = `SELECT
+	command_id,
+	session_id,
+	command,
+	args,
+	status,
+	exit_code,
+	started_at,
+	finished_at
+FROM commands
+WHERE session_id = ?
+ORDER BY started_at DESC, command_id ASC`
+
+	updateCommandStatusQuery = `UPDATE commands
+SET status = ?,
+	exit_code = ?,
+	finished_at = ?
+WHERE session_id = ? AND command_id = ?`
+
+	markRunningCommandsLostQuery = `UPDATE commands
+SET status = 'lost'
+WHERE status = 'running'`
 )
 
 const (
@@ -108,6 +154,10 @@ const (
 	vcsTypeGit     = "git"
 	vcsTypeJJ      = "jj"
 	vcsTypeUnknown = "unknown"
+
+	commandStatusRunning = "running"
+	commandStatusExited  = "exited"
+	commandStatusLost    = "lost"
 )
 
 type Session struct {
@@ -127,6 +177,36 @@ type SessionFolder struct {
 	VCSType    string
 	IsPrimary  bool
 	AddedAt    string
+}
+
+type Command struct {
+	CommandID  string
+	SessionID  string
+	Command    string
+	Args       string
+	Status     string
+	ExitCode   *int
+	StartedAt  string
+	FinishedAt *string
+}
+
+type CreateCommandParams struct {
+	CommandID  string
+	SessionID  string
+	Command    string
+	Args       string
+	Status     string
+	StartedAt  string
+	ExitCode   *int
+	FinishedAt *string
+}
+
+type UpdateCommandStatusParams struct {
+	SessionID  string
+	CommandID  string
+	Status     string
+	ExitCode   *int
+	FinishedAt *string
 }
 
 type Rows interface {
@@ -462,6 +542,112 @@ func (s *Store) ListFolders(ctx context.Context, sessionID string) ([]SessionFol
 	return out, nil
 }
 
+func (s *Store) CreateCommand(ctx context.Context, params CreateCommandParams) error {
+	if params.CommandID = strings.TrimSpace(params.CommandID); params.CommandID == "" {
+		return fmt.Errorf("%w: command id is required", ErrInvalidInput)
+	}
+	if params.SessionID = strings.TrimSpace(params.SessionID); params.SessionID == "" {
+		return fmt.Errorf("%w: session id is required", ErrInvalidInput)
+	}
+	if params.Command = strings.TrimSpace(params.Command); params.Command == "" {
+		return fmt.Errorf("%w: command is required", ErrInvalidInput)
+	}
+	if params.Args = strings.TrimSpace(params.Args); params.Args == "" {
+		params.Args = "[]"
+	}
+	if params.Status = strings.TrimSpace(params.Status); params.Status == "" {
+		params.Status = commandStatusRunning
+	}
+	if !isValidCommandStatus(params.Status) {
+		return fmt.Errorf("%w: invalid command status %q", ErrInvalidInput, params.Status)
+	}
+	if params.StartedAt = strings.TrimSpace(params.StartedAt); params.StartedAt == "" {
+		params.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+
+	if _, err := s.db.ExecContext(
+		ctx,
+		insertCommandQuery,
+		params.CommandID,
+		params.SessionID,
+		params.Command,
+		params.Args,
+		params.Status,
+		params.ExitCode,
+		params.StartedAt,
+		params.FinishedAt,
+	); err != nil {
+		return fmt.Errorf("create command %q: %w", params.CommandID, err)
+	}
+
+	return nil
+}
+
+func (s *Store) GetCommand(ctx context.Context, sessionID, commandID string) (*Command, error) {
+	if sessionID = strings.TrimSpace(sessionID); sessionID == "" {
+		return nil, fmt.Errorf("%w: session id is required", ErrInvalidInput)
+	}
+	if commandID = strings.TrimSpace(commandID); commandID == "" {
+		return nil, fmt.Errorf("%w: command id is required", ErrInvalidInput)
+	}
+
+	commands, err := queryCommands(ctx, s.db, commandByIDQuery, sessionID, commandID)
+	if err != nil {
+		return nil, err
+	}
+	if len(commands) == 0 {
+		return nil, fmt.Errorf("%w: command id %q for session %q", ErrNotFound, commandID, sessionID)
+	}
+
+	return &commands[0], nil
+}
+
+func (s *Store) ListCommands(ctx context.Context, sessionID string) ([]Command, error) {
+	if sessionID = strings.TrimSpace(sessionID); sessionID == "" {
+		return nil, fmt.Errorf("%w: session id is required", ErrInvalidInput)
+	}
+
+	return queryCommands(ctx, s.db, listCommandsBySessionQuery, sessionID)
+}
+
+func (s *Store) UpdateCommandStatus(ctx context.Context, params UpdateCommandStatusParams) error {
+	if params.SessionID = strings.TrimSpace(params.SessionID); params.SessionID == "" {
+		return fmt.Errorf("%w: session id is required", ErrInvalidInput)
+	}
+	if params.CommandID = strings.TrimSpace(params.CommandID); params.CommandID == "" {
+		return fmt.Errorf("%w: command id is required", ErrInvalidInput)
+	}
+	if params.Status = strings.TrimSpace(params.Status); params.Status == "" {
+		return fmt.Errorf("%w: status is required", ErrInvalidInput)
+	}
+	if !isValidCommandStatus(params.Status) {
+		return fmt.Errorf("%w: invalid command status %q", ErrInvalidInput, params.Status)
+	}
+
+	result, err := s.db.ExecContext(ctx, updateCommandStatusQuery, params.Status, params.ExitCode, params.FinishedAt, params.SessionID, params.CommandID)
+	if err != nil {
+		return fmt.Errorf("update command status %q: %w", params.CommandID, err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("update command status %q rows affected: %w", params.CommandID, err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("%w: command id %q for session %q", ErrNotFound, params.CommandID, params.SessionID)
+	}
+
+	return nil
+}
+
+func (s *Store) MarkRunningCommandsLost(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, markRunningCommandsLostQuery); err != nil {
+		return fmt.Errorf("mark running commands lost: %w", err)
+	}
+
+	return nil
+}
+
 func queryMetaValues(ctx context.Context, db DB, query string, args ...any) ([]string, error) {
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -507,6 +693,39 @@ func querySessions(ctx context.Context, db DB, query string, args ...any) ([]Ses
 			&item.CleanupPolicy,
 			&item.CreatedAt,
 			&item.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return out, nil
+}
+
+func queryCommands(ctx context.Context, db DB, query string, args ...any) ([]Command, error) {
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	out := make([]Command, 0)
+	for rows.Next() {
+		var item Command
+		if err := rows.Scan(
+			&item.CommandID,
+			&item.SessionID,
+			&item.Command,
+			&item.Args,
+			&item.Status,
+			&item.ExitCode,
+			&item.StartedAt,
+			&item.FinishedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -574,6 +793,15 @@ func validateVCSPreference(vcsPreference string) error {
 func isValidVCSType(vcsType string) bool {
 	switch vcsType {
 	case vcsTypeGit, vcsTypeJJ, vcsTypeUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+func isValidCommandStatus(status string) bool {
+	switch status {
+	case commandStatusRunning, commandStatusExited, commandStatusLost:
 		return true
 	default:
 		return false
