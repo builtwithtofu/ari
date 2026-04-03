@@ -248,8 +248,14 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 				return CommandOutputResponse{}, mapSessionStoreError(err, sessionID)
 			}
 
-			if _, err := store.GetCommand(ctx, sessionID, commandID); err != nil {
+			commandRecord, err := store.GetCommand(ctx, sessionID, commandID)
+			if err != nil {
 				return CommandOutputResponse{}, mapCommandStoreError(err, sessionID)
+			}
+			if commandRecord.Status != "running" {
+				if output, exists := d.getCommandOutput(commandID); exists {
+					return CommandOutputResponse{Output: output}, nil
+				}
 			}
 
 			proc, ok := d.getCommandProcess(commandID)

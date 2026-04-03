@@ -54,6 +54,38 @@ func TestCommandRunOutputAndWaiterPersistence(t *testing.T) {
 	}
 }
 
+func TestCommandOutputPrefersRetainedSnapshotForExitedCommand(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerCommandMethods(registry, store); err != nil {
+		t.Fatalf("registerCommandMethods returned error: %v", err)
+	}
+
+	workspace := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
+
+	if err := store.CreateCommand(context.Background(), globaldb.CreateCommandParams{
+		CommandID: "cmd-1",
+		SessionID: "sess-1",
+		Command:   "echo hi",
+		Args:      `[]`,
+		Status:    "exited",
+		StartedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("CreateCommand returned error: %v", err)
+	}
+
+	d.setCommandOutput("cmd-1", "retained-output")
+	d.setCommandProcess("cmd-1", &process.Process{})
+
+	resp := callMethod[CommandOutputResponse](t, registry, "command.output", CommandOutputRequest{SessionID: "sess-1", CommandID: "cmd-1"})
+	if resp.Output != "retained-output" {
+		t.Fatalf("command.output = %q, want %q", resp.Output, "retained-output")
+	}
+}
+
 func TestCommandRunUsesSessionPrimaryFolderAsCWD(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
