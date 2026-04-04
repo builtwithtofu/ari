@@ -141,6 +141,68 @@ WHERE session_id = ? AND command_id = ?`
 	markRunningCommandsLostQuery = `UPDATE commands
 SET status = 'lost'
 WHERE status = 'running'`
+
+	insertAgentQuery = `INSERT INTO agents (
+	agent_id,
+	session_id,
+	name,
+	command,
+	args,
+	status,
+	exit_code,
+	started_at,
+	stopped_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+	agentByIDQuery = `SELECT
+	agent_id,
+	session_id,
+	name,
+	command,
+	args,
+	status,
+	exit_code,
+	started_at,
+	stopped_at
+FROM agents
+WHERE session_id = ? AND agent_id = ?`
+
+	agentByNameQuery = `SELECT
+	agent_id,
+	session_id,
+	name,
+	command,
+	args,
+	status,
+	exit_code,
+	started_at,
+	stopped_at
+FROM agents
+WHERE session_id = ? AND name = ?`
+
+	listAgentsBySessionQuery = `SELECT
+	agent_id,
+	session_id,
+	name,
+	command,
+	args,
+	status,
+	exit_code,
+	started_at,
+	stopped_at
+FROM agents
+WHERE session_id = ?
+ORDER BY started_at DESC, agent_id ASC`
+
+	updateAgentStatusQuery = `UPDATE agents
+SET status = ?,
+	exit_code = ?,
+	stopped_at = ?
+WHERE session_id = ? AND agent_id = ?`
+
+	markRunningAgentsLostQuery = `UPDATE agents
+SET status = 'lost'
+WHERE status = 'running'`
 )
 
 const (
@@ -158,6 +220,11 @@ const (
 	commandStatusRunning = "running"
 	commandStatusExited  = "exited"
 	commandStatusLost    = "lost"
+
+	agentStatusRunning = "running"
+	agentStatusStopped = "stopped"
+	agentStatusExited  = "exited"
+	agentStatusLost    = "lost"
 )
 
 type Session struct {
@@ -207,6 +274,38 @@ type UpdateCommandStatusParams struct {
 	Status     string
 	ExitCode   *int
 	FinishedAt *string
+}
+
+type Agent struct {
+	AgentID   string
+	SessionID string
+	Name      *string
+	Command   string
+	Args      string
+	Status    string
+	ExitCode  *int
+	StartedAt string
+	StoppedAt *string
+}
+
+type CreateAgentParams struct {
+	AgentID   string
+	SessionID string
+	Name      *string
+	Command   string
+	Args      string
+	Status    string
+	ExitCode  *int
+	StartedAt string
+	StoppedAt *string
+}
+
+type UpdateAgentStatusParams struct {
+	SessionID string
+	AgentID   string
+	Status    string
+	ExitCode  *int
+	StoppedAt *string
 }
 
 type Rows interface {
@@ -648,6 +747,140 @@ func (s *Store) MarkRunningCommandsLost(ctx context.Context) error {
 	return nil
 }
 
+func (s *Store) CreateAgent(ctx context.Context, params CreateAgentParams) error {
+	if params.AgentID = strings.TrimSpace(params.AgentID); params.AgentID == "" {
+		return fmt.Errorf("%w: agent id is required", ErrInvalidInput)
+	}
+	if params.SessionID = strings.TrimSpace(params.SessionID); params.SessionID == "" {
+		return fmt.Errorf("%w: session id is required", ErrInvalidInput)
+	}
+	if params.Name != nil {
+		trimmedName := strings.TrimSpace(*params.Name)
+		if trimmedName == "" {
+			params.Name = nil
+		} else {
+			params.Name = &trimmedName
+		}
+	}
+	if params.Command = strings.TrimSpace(params.Command); params.Command == "" {
+		return fmt.Errorf("%w: command is required", ErrInvalidInput)
+	}
+	if params.Args = strings.TrimSpace(params.Args); params.Args == "" {
+		params.Args = "[]"
+	}
+	if params.Status = strings.TrimSpace(params.Status); params.Status == "" {
+		params.Status = agentStatusRunning
+	}
+	if !isValidAgentStatus(params.Status) {
+		return fmt.Errorf("%w: invalid agent status %q", ErrInvalidInput, params.Status)
+	}
+	if params.StartedAt = strings.TrimSpace(params.StartedAt); params.StartedAt == "" {
+		params.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+
+	if _, err := s.db.ExecContext(
+		ctx,
+		insertAgentQuery,
+		params.AgentID,
+		params.SessionID,
+		params.Name,
+		params.Command,
+		params.Args,
+		params.Status,
+		params.ExitCode,
+		params.StartedAt,
+		params.StoppedAt,
+	); err != nil {
+		return fmt.Errorf("create agent %q: %w", params.AgentID, err)
+	}
+
+	return nil
+}
+
+func (s *Store) GetAgent(ctx context.Context, sessionID, agentID string) (*Agent, error) {
+	if sessionID = strings.TrimSpace(sessionID); sessionID == "" {
+		return nil, fmt.Errorf("%w: session id is required", ErrInvalidInput)
+	}
+	if agentID = strings.TrimSpace(agentID); agentID == "" {
+		return nil, fmt.Errorf("%w: agent id is required", ErrInvalidInput)
+	}
+
+	agents, err := queryAgents(ctx, s.db, agentByIDQuery, sessionID, agentID)
+	if err != nil {
+		return nil, err
+	}
+	if len(agents) == 0 {
+		return nil, fmt.Errorf("%w: agent id %q for session %q", ErrNotFound, agentID, sessionID)
+	}
+
+	return &agents[0], nil
+}
+
+func (s *Store) GetAgentByName(ctx context.Context, sessionID, name string) (*Agent, error) {
+	if sessionID = strings.TrimSpace(sessionID); sessionID == "" {
+		return nil, fmt.Errorf("%w: session id is required", ErrInvalidInput)
+	}
+	if name = strings.TrimSpace(name); name == "" {
+		return nil, fmt.Errorf("%w: agent name is required", ErrInvalidInput)
+	}
+
+	agents, err := queryAgents(ctx, s.db, agentByNameQuery, sessionID, name)
+	if err != nil {
+		return nil, err
+	}
+	if len(agents) == 0 {
+		return nil, fmt.Errorf("%w: agent name %q for session %q", ErrNotFound, name, sessionID)
+	}
+
+	return &agents[0], nil
+}
+
+func (s *Store) ListAgents(ctx context.Context, sessionID string) ([]Agent, error) {
+	if sessionID = strings.TrimSpace(sessionID); sessionID == "" {
+		return nil, fmt.Errorf("%w: session id is required", ErrInvalidInput)
+	}
+
+	return queryAgents(ctx, s.db, listAgentsBySessionQuery, sessionID)
+}
+
+func (s *Store) UpdateAgentStatus(ctx context.Context, params UpdateAgentStatusParams) error {
+	if params.SessionID = strings.TrimSpace(params.SessionID); params.SessionID == "" {
+		return fmt.Errorf("%w: session id is required", ErrInvalidInput)
+	}
+	if params.AgentID = strings.TrimSpace(params.AgentID); params.AgentID == "" {
+		return fmt.Errorf("%w: agent id is required", ErrInvalidInput)
+	}
+	if params.Status = strings.TrimSpace(params.Status); params.Status == "" {
+		return fmt.Errorf("%w: status is required", ErrInvalidInput)
+	}
+	if !isValidAgentStatus(params.Status) {
+		return fmt.Errorf("%w: invalid agent status %q", ErrInvalidInput, params.Status)
+	}
+
+	result, err := s.db.ExecContext(ctx, updateAgentStatusQuery, params.Status, params.ExitCode, params.StoppedAt, params.SessionID, params.AgentID)
+	if err != nil {
+		return fmt.Errorf("update agent status %q: %w", params.AgentID, err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("update agent status %q rows affected: %w", params.AgentID, err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("%w: agent id %q for session %q", ErrNotFound, params.AgentID, params.SessionID)
+	}
+
+	return nil
+}
+
+func (s *Store) MarkRunningAgentsLost(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, markRunningAgentsLostQuery); err != nil {
+		return fmt.Errorf("mark running agents lost: %w", err)
+	}
+
+	return nil
+}
+
 func queryMetaValues(ctx context.Context, db DB, query string, args ...any) ([]string, error) {
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -738,6 +971,40 @@ func queryCommands(ctx context.Context, db DB, query string, args ...any) ([]Com
 	return out, nil
 }
 
+func queryAgents(ctx context.Context, db DB, query string, args ...any) ([]Agent, error) {
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	out := make([]Agent, 0)
+	for rows.Next() {
+		var item Agent
+		if err := rows.Scan(
+			&item.AgentID,
+			&item.SessionID,
+			&item.Name,
+			&item.Command,
+			&item.Args,
+			&item.Status,
+			&item.ExitCode,
+			&item.StartedAt,
+			&item.StoppedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return out, nil
+}
+
 func isValidSessionStatus(status string) bool {
 	switch status {
 	case statusActive, statusSuspended, statusClosed:
@@ -802,6 +1069,15 @@ func isValidVCSType(vcsType string) bool {
 func isValidCommandStatus(status string) bool {
 	switch status {
 	case commandStatusRunning, commandStatusExited, commandStatusLost:
+		return true
+	default:
+		return false
+	}
+}
+
+func isValidAgentStatus(status string) bool {
+	switch status {
+	case agentStatusRunning, agentStatusStopped, agentStatusExited, agentStatusLost:
 		return true
 	default:
 		return false

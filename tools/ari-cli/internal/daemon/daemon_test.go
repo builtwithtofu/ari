@@ -137,33 +137,10 @@ func TestDaemonStartAlreadyRunningSkipsBootstrapSideEffects(t *testing.T) {
 
 	original := bootstrapDatabase
 	var bootstrapCalls int32
-	bootstrapDatabase = func(_ context.Context, dbPath string) error {
+	bootstrapDatabase = func(ctx context.Context, dbPath string) error {
+		_ = ctx
 		atomic.AddInt32(&bootstrapCalls, 1)
-		if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
-			return err
-		}
-		dbConn, err := sql.Open("sqlite", dbPath)
-		if err != nil {
-			return err
-		}
-		defer func() {
-			_ = dbConn.Close()
-		}()
-		_, err = dbConn.Exec(`CREATE TABLE IF NOT EXISTS daemon_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`)
-		if err != nil {
-			return err
-		}
-		_, err = dbConn.Exec(`CREATE TABLE IF NOT EXISTS commands (
-			command_id TEXT PRIMARY KEY,
-			session_id TEXT NOT NULL,
-			command TEXT NOT NULL,
-			args TEXT NOT NULL DEFAULT '[]',
-			status TEXT NOT NULL DEFAULT 'running',
-			exit_code INTEGER,
-			started_at TEXT NOT NULL,
-			finished_at TEXT
-		)`)
-		return err
+		return applyMigrationSQLFiles(dbPath)
 	}
 	t.Cleanup(func() {
 		bootstrapDatabase = original
@@ -341,6 +318,18 @@ CREATE TABLE commands (
 	finished_at TEXT,
 	FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
 );
+CREATE TABLE agents (
+	agent_id TEXT PRIMARY KEY,
+	session_id TEXT NOT NULL,
+	name TEXT UNIQUE,
+	command TEXT NOT NULL,
+	args TEXT NOT NULL DEFAULT '[]',
+	status TEXT NOT NULL DEFAULT 'running',
+	exit_code INTEGER,
+	started_at TEXT NOT NULL,
+	stopped_at TEXT,
+	FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+);
 INSERT INTO sessions (session_id, name, status, vcs_preference, origin_root, cleanup_policy, created_at, updated_at)
 VALUES ('sess-1', 'alpha', 'active', 'auto', '/tmp', 'manual', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
 INSERT INTO commands (command_id, session_id, command, args, status, started_at)
@@ -391,6 +380,78 @@ VALUES ('cmd-1', 'sess-1', 'sleep 30', '[]', 'running', '2026-01-01T00:00:00Z');
 		d.Stop()
 		<-errCh
 		t.Fatalf("command status = %q, want %q", status, "lost")
+	}
+
+	d.Stop()
+	if err := <-errCh; err != nil {
+		t.Fatalf("daemon start returned error: %v", err)
+	}
+}
+
+func TestDaemonStartMarksRunningAgentsLost(t *testing.T) {
+	socketPath := testSocketPath(t)
+	dbPath := filepath.Join(t.TempDir(), "ari.db")
+	pidPath := filepath.Join(t.TempDir(), "daemon.pid")
+
+	if err := applyMigrationSQLFiles(dbPath); err != nil {
+		t.Fatalf("apply migration files: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite db: %v", err)
+	}
+	if _, err := db.Exec(`
+INSERT INTO sessions (session_id, name, status, vcs_preference, origin_root, cleanup_policy, created_at, updated_at)
+VALUES ('sess-1', 'alpha', 'active', 'auto', '/tmp', 'manual', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+INSERT INTO agents (agent_id, session_id, name, command, args, status, started_at)
+VALUES ('agt-1', 'sess-1', 'claude', 'claude-code', '[]', 'running', '2026-01-01T00:00:00Z');
+`); err != nil {
+		_ = db.Close()
+		t.Fatalf("seed agent row: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close seed db: %v", err)
+	}
+
+	originalBootstrap := bootstrapDatabase
+	bootstrapDatabase = func(_ context.Context, _ string) error { return nil }
+	t.Cleanup(func() {
+		bootstrapDatabase = originalBootstrap
+	})
+
+	d := New(socketPath, dbPath, pidPath, "defaults", "defaults", "test-version")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- d.Start(ctx)
+	}()
+
+	callDaemonMethod(t, socketPath, "daemon.status", StatusRequest{}, &StatusResponse{})
+
+	verifyDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		d.Stop()
+		<-errCh
+		t.Fatalf("open verify db: %v", err)
+	}
+	defer func() {
+		_ = verifyDB.Close()
+	}()
+
+	var status string
+	if err := verifyDB.QueryRow(`SELECT status FROM agents WHERE agent_id = 'agt-1'`).Scan(&status); err != nil {
+		d.Stop()
+		<-errCh
+		t.Fatalf("query agent status: %v", err)
+	}
+	if status != "lost" {
+		d.Stop()
+		<-errCh
+		t.Fatalf("agent status = %q, want %q", status, "lost")
 	}
 
 	d.Stop()
@@ -455,36 +516,9 @@ func stubBootstrap(t *testing.T) {
 	t.Helper()
 
 	original := bootstrapDatabase
-	bootstrapDatabase = func(_ context.Context, dbPath string) error {
-		if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
-			return err
-		}
-
-		dbConn, err := sql.Open("sqlite", dbPath)
-		if err != nil {
-			return err
-		}
-		defer func() {
-			_ = dbConn.Close()
-		}()
-
-		if _, err := dbConn.Exec(`CREATE TABLE IF NOT EXISTS daemon_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
-			return err
-		}
-		if _, err := dbConn.Exec(`CREATE TABLE IF NOT EXISTS commands (
-			command_id TEXT PRIMARY KEY,
-			session_id TEXT NOT NULL,
-			command TEXT NOT NULL,
-			args TEXT NOT NULL DEFAULT '[]',
-			status TEXT NOT NULL DEFAULT 'running',
-			exit_code INTEGER,
-			started_at TEXT NOT NULL,
-			finished_at TEXT
-		)`); err != nil {
-			return err
-		}
-
-		return nil
+	bootstrapDatabase = func(ctx context.Context, dbPath string) error {
+		_ = ctx
+		return applyMigrationSQLFiles(dbPath)
 	}
 
 	t.Cleanup(func() {
