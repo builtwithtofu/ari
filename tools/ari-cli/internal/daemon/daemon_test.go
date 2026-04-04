@@ -469,18 +469,33 @@ func callDaemonMethod(t *testing.T, socketPath, method string, params any, resul
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
+	if err := tryDaemonMethod(ctx, socketPath, method, params, result); err != nil {
+		t.Fatalf("call %s: %v", method, err)
+	}
+}
+
+func tryDaemonMethod(ctx context.Context, socketPath, method string, params any, result any) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	var dialErr error
 	var conn net.Conn
+	dialer := &net.Dialer{}
 	for i := 0; i < 50; i++ {
-		conn, dialErr = net.Dial("unix", socketPath)
+		conn, dialErr = dialer.DialContext(ctx, "unix", socketPath)
 		if dialErr == nil {
 			break
 		}
-		time.Sleep(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return dialErr
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 
 	if dialErr != nil {
-		t.Fatalf("dial daemon socket: %v", dialErr)
+		return dialErr
 	}
 	defer func() {
 		_ = conn.Close()
@@ -496,8 +511,10 @@ func callDaemonMethod(t *testing.T, socketPath, method string, params any, resul
 	}()
 
 	if err := rpcConn.Call(ctx, method, params, result); err != nil {
-		t.Fatalf("call %s: %v", method, err)
+		return err
 	}
+
+	return nil
 }
 
 func testSocketPath(t *testing.T) string {
