@@ -2,12 +2,21 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sourcegraph/jsonrpc2"
 )
+
+var commandSmokeGet = func(ctx context.Context, socketPath, sessionID, commandID string) (CommandGetResponse, error) {
+	resp := CommandGetResponse{}
+	err := tryDaemonMethod(ctx, socketPath, "command.get", CommandGetRequest{SessionID: sessionID, CommandID: commandID}, &resp)
+	return resp, err
+}
 
 func TestCommandSmokeLifecycleOverRPC(t *testing.T) {
 	stubSessionBootstrap(t)
@@ -24,6 +33,8 @@ func TestCommandSmokeLifecycleOverRPC(t *testing.T) {
 	go func() {
 		errCh <- d.Start(ctx)
 	}()
+
+	waitForDaemonReady(t, socketPath)
 
 	repoRoot := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repoRoot, ".git"), 0o755); err != nil {
@@ -82,15 +93,117 @@ func TestCommandSmokeLifecycleOverRPC(t *testing.T) {
 func waitForCommandExited(t *testing.T, socketPath, sessionID, commandID string) {
 	t.Helper()
 
-	deadline := time.Now().Add(4 * time.Second)
-	for time.Now().Before(deadline) {
-		get := CommandGetResponse{}
-		callDaemonMethod(t, socketPath, "command.get", CommandGetRequest{SessionID: sessionID, CommandID: commandID}, &get)
-		if get.Status == "exited" {
+	ctx, cancel := context.WithTimeout(context.Background(), boundedTestTimeout(t, 4*time.Second))
+	defer cancel()
+
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+
+	lastStatus := ""
+	var lastErr error
+	for {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("command %s did not reach exited state before timeout (last status=%q, last error=%v)", commandID, lastStatus, lastErr)
+		case <-ticker.C:
+			attemptCtx, attemptCancel := context.WithTimeout(ctx, 350*time.Millisecond)
+			get, err := commandSmokeGet(attemptCtx, socketPath, sessionID, commandID)
+			attemptCancel()
+			if err != nil {
+				lastErr = err
+				if isTransientRPCError(err) {
+					continue
+				}
+				continue
+			}
+
+			lastErr = nil
+			lastStatus = get.Status
+			if get.Status == "exited" {
+				return
+			}
+		}
+	}
+}
+
+func waitForDaemonReady(t *testing.T, socketPath string) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), boundedTestTimeout(t, 3*time.Second))
+	defer cancel()
+
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+
+	var lastErr error
+	for {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("daemon did not become ready before timeout: %v", lastErr)
+		case <-ticker.C:
+			status := StatusResponse{}
+			if err := tryDaemonMethod(ctx, socketPath, "daemon.status", StatusRequest{}, &status); err != nil {
+				lastErr = err
+				continue
+			}
 			return
 		}
-		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+func isTransientRPCError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
 	}
 
-	t.Fatalf("command %s did not reach exited state before timeout", commandID)
+	var rpcErr *jsonrpc2.Error
+	if errors.As(err, &rpcErr) && rpcErr.Code == int64(jsonrpc2.CodeInternalError) {
+		return true
+	}
+
+	return false
+}
+
+func boundedTestTimeout(t *testing.T, max time.Duration) time.Duration {
+	t.Helper()
+
+	if deadline, ok := t.Deadline(); ok {
+		remaining := time.Until(deadline) - 250*time.Millisecond
+		if remaining < 100*time.Millisecond {
+			return 100 * time.Millisecond
+		}
+		if remaining < max {
+			return remaining
+		}
+	}
+
+	return max
+}
+
+func TestWaitForCommandExitedRetriesTransientInternalError(t *testing.T) {
+	original := commandSmokeGet
+	t.Cleanup(func() {
+		commandSmokeGet = original
+	})
+
+	attempts := 0
+	commandSmokeGet = func(context.Context, string, string, string) (CommandGetResponse, error) {
+		attempts++
+		switch attempts {
+		case 1:
+			return CommandGetResponse{}, &jsonrpc2.Error{Code: int64(jsonrpc2.CodeInternalError), Message: "Internal error"}
+		case 2:
+			return CommandGetResponse{Status: "running"}, nil
+		default:
+			return CommandGetResponse{Status: "exited"}, nil
+		}
+	}
+
+	waitForCommandExited(t, "unused", "sess-1", "cmd-1")
+	if attempts < 3 {
+		t.Fatalf("command.get attempts = %d, want at least 3", attempts)
+	}
 }

@@ -40,6 +40,12 @@ type Daemon struct {
 	commandLogs     map[string]string
 	commandLogOrder []string
 	commandWG       sync.WaitGroup
+	agentMu         sync.RWMutex
+	agents          map[string]*process.Process
+	agentLogs       map[string]string
+	agentLogOrder   []string
+	agentStops      map[string]bool
+	agentWG         sync.WaitGroup
 }
 
 var bootstrapDatabase = globaldb.Bootstrap
@@ -87,6 +93,10 @@ func NewWithSignalChannel(socketPath, dbPath, pidPath, configPath, configSource,
 		commands:        make(map[string]*process.Process),
 		commandLogs:     make(map[string]string),
 		commandLogOrder: make([]string, 0),
+		agents:          make(map[string]*process.Process),
+		agentLogs:       make(map[string]string),
+		agentLogOrder:   make([]string, 0),
+		agentStops:      make(map[string]bool),
 	}
 }
 
@@ -151,6 +161,10 @@ func (d *Daemon) Start(ctx context.Context) error {
 		_ = dbConn.Close()
 		return fmt.Errorf("reconcile running commands: %w", err)
 	}
+	if err := store.MarkRunningAgentsLost(ctx); err != nil {
+		_ = dbConn.Close()
+		return fmt.Errorf("reconcile running agents: %w", err)
+	}
 
 	registry := rpc.NewMethodRegistry()
 	if err := d.registerMethods(registry, store); err != nil {
@@ -188,7 +202,9 @@ func (d *Daemon) Start(ctx context.Context) error {
 		startupSucceeded = true
 		cancel()
 		d.stopAllCommands()
+		d.stopAllAgents()
 		d.commandWG.Wait()
+		d.agentWG.Wait()
 		_ = RemovePIDFileIfOwned(d.pidPath, d.pid)
 		if dbConn != nil {
 			_ = dbConn.Close()
