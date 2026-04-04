@@ -83,11 +83,11 @@ func newAgentSpawnCmd() *cobra.Command {
 	var harness string
 
 	cmd := &cobra.Command{
-		Use:   "spawn <session> [--name <name>] -- <command> [args...]",
+		Use:   "spawn <session> [--name <name>] [--harness <harness>] -- <command> [args...]",
 		Short: "Spawn an agent in session",
 		Args: func(_ *cobra.Command, args []string) error {
-			if len(args) < 2 {
-				return userFacingError{message: "Usage: ari agent spawn <session> [--name <name>] -- <command> [args...]"}
+			if len(args) < 1 {
+				return userFacingError{message: "Usage: ari agent spawn <session> [--name <name>] [--harness <harness>] -- <command> [args...]"}
 			}
 			return nil
 		},
@@ -105,12 +105,27 @@ func newAgentSpawnCmd() *cobra.Command {
 				return err
 			}
 
+			command := ""
+			commandArgs := make([]string, 0)
+			if len(args) > 1 {
+				extra := args[1:]
+				if strings.TrimSpace(harness) != "" && strings.HasPrefix(extra[0], "-") {
+					commandArgs = append(commandArgs, extra...)
+				} else {
+					command = extra[0]
+					commandArgs = append(commandArgs, extra[1:]...)
+				}
+			}
+			if strings.TrimSpace(harness) == "" && strings.TrimSpace(command) == "" {
+				return userFacingError{message: "Provide --harness or an explicit command"}
+			}
+
 			resp, err := agentSpawnRPC(ctx, cfg.Daemon.SocketPath, daemon.AgentSpawnRequest{
 				SessionID: sessionID,
 				Name:      strings.TrimSpace(name),
 				Harness:   strings.TrimSpace(harness),
-				Command:   args[1],
-				Args:      args[2:],
+				Command:   command,
+				Args:      commandArgs,
 			})
 			if err != nil {
 				return mapAgentRPCError(err)

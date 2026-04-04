@@ -187,6 +187,40 @@ func TestNewAgentTestStoreUsesIsolatedDatabase(t *testing.T) {
 	}
 }
 
+func TestCreateAgentRejectsDuplicateNameInSameSession(t *testing.T) {
+	store := newAgentTestStore(t)
+	ctx := context.Background()
+
+	if err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := store.CreateAgent(ctx, CreateAgentParams{
+		AgentID:   "agt-1",
+		SessionID: "sess-1",
+		Name:      stringPtr("claude"),
+		Command:   "claude-code",
+		Args:      `[]`,
+		Status:    "running",
+		StartedAt: "2026-04-04T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("CreateAgent first insert returned error: %v", err)
+	}
+
+	err := store.CreateAgent(ctx, CreateAgentParams{
+		AgentID:   "agt-2",
+		SessionID: "sess-1",
+		Name:      stringPtr("claude"),
+		Command:   "claude-code",
+		Args:      `[]`,
+		Status:    "running",
+		StartedAt: "2026-04-04T00:00:10Z",
+	})
+	if err == nil {
+		t.Fatal("CreateAgent returned nil error for duplicate same-session name")
+	}
+}
+
 func newAgentTestStore(t *testing.T) *Store {
 	t.Helper()
 

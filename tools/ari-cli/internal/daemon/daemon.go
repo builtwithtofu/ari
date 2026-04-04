@@ -34,6 +34,7 @@ type Daemon struct {
 	db              *sql.DB
 	cancel          context.CancelFunc
 	stopCh          chan struct{}
+	runCtx          context.Context
 	transport       *rpc.UnixSocketTransport
 	commandMu       sync.RWMutex
 	commands        map[string]*process.Process
@@ -182,6 +183,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 	d.startedAt = time.Now().UTC()
 	d.store = store
 	d.db = dbConn
+	d.runCtx = runCtx
 	d.cancel = cancel
 	d.stopCh = stopCh
 	d.transport = transport
@@ -214,6 +216,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 		d.startedAt = time.Time{}
 		d.store = nil
 		d.db = nil
+		d.runCtx = nil
 		d.cancel = nil
 		d.stopCh = nil
 		d.transport = nil

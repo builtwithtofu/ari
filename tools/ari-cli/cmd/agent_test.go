@@ -262,6 +262,43 @@ func TestAgentShowNotFoundMapsError(t *testing.T) {
 	}
 }
 
+func TestAgentSpawnAllowsHarnessWithoutExplicitCommand(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalResolve := commandResolveSessionIdentifier
+	originalSpawn := agentSpawnRPC
+	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+		return "sess-1", nil
+	}
+	var got daemon.AgentSpawnRequest
+	agentSpawnRPC = func(_ context.Context, _ string, req daemon.AgentSpawnRequest) (daemon.AgentSpawnResponse, error) {
+		got = req
+		return daemon.AgentSpawnResponse{AgentID: "agt-1", Status: "running"}, nil
+	}
+	t.Cleanup(func() {
+		commandResolveSessionIdentifier = originalResolve
+		agentSpawnRPC = originalSpawn
+	})
+
+	out, err := executeRootCommand("agent", "spawn", "alpha", "--harness", "opencode", "--", "--resume")
+	if err != nil {
+		t.Fatalf("execute harness-only spawn: %v", err)
+	}
+	if got.Harness != "opencode" {
+		t.Fatalf("spawn harness = %q, want %q", got.Harness, "opencode")
+	}
+	if got.Command != "" {
+		t.Fatalf("spawn command = %q, want empty for harness default", got.Command)
+	}
+	if len(got.Args) != 1 || got.Args[0] != "--resume" {
+		t.Fatalf("spawn args = %v, want [--resume]", got.Args)
+	}
+	if !strings.Contains(out, "Agent started: agt-1") {
+		t.Fatalf("spawn output = %q, want start confirmation", out)
+	}
+}
+
 func executeRootCommandWithInput(stdin string, args ...string) (string, error) {
 	root := NewRootCmd()
 	var out bytes.Buffer

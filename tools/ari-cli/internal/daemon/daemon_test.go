@@ -321,7 +321,7 @@ CREATE TABLE commands (
 CREATE TABLE agents (
 	agent_id TEXT PRIMARY KEY,
 	session_id TEXT NOT NULL,
-	name TEXT UNIQUE,
+	name TEXT,
 	command TEXT NOT NULL,
 	args TEXT NOT NULL DEFAULT '[]',
 	status TEXT NOT NULL DEFAULT 'running',
@@ -330,6 +330,9 @@ CREATE TABLE agents (
 	stopped_at TEXT,
 	FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
 );
+CREATE UNIQUE INDEX agents_session_id_name_uq
+	ON agents (session_id, name)
+	WHERE name IS NOT NULL;
 INSERT INTO sessions (session_id, name, status, vcs_preference, origin_root, cleanup_policy, created_at, updated_at)
 VALUES ('sess-1', 'alpha', 'active', 'auto', '/tmp', 'manual', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
 INSERT INTO commands (command_id, session_id, command, args, status, started_at)

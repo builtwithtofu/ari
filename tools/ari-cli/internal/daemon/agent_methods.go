@@ -176,7 +176,7 @@ func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globa
 
 			d.setAgentProcess(agentID, proc)
 			d.agentWG.Add(1)
-			go d.waitForAgentExit(agentID, sessionID, store, proc)
+			go d.waitForAgentExit(d.runtimeContext(), agentID, sessionID, store, proc)
 
 			return AgentSpawnResponse{AgentID: agentID, Status: "running"}, nil
 		},
@@ -385,7 +385,11 @@ func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globa
 	return nil
 }
 
-func (d *Daemon) waitForAgentExit(agentID, sessionID string, store *globaldb.Store, proc *process.Process) {
+func (d *Daemon) waitForAgentExit(ctx context.Context, agentID, sessionID string, store *globaldb.Store, proc *process.Process) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	defer d.agentWG.Done()
 	defer d.deleteAgentProcess(agentID)
 
@@ -411,15 +415,25 @@ func (d *Daemon) waitForAgentExit(agentID, sessionID string, store *globaldb.Sto
 		update.ExitCode = &result.ExitCode
 	}
 
-	if err := persistAgentStatusWithRetry(context.Background(), store, update, 5*time.Second); err != nil {
+	if err := persistAgentStatusWithRetry(ctx, store, update, 5*time.Second); err != nil {
 		fallback := globaldb.UpdateAgentStatusParams{
 			SessionID: sessionID,
 			AgentID:   agentID,
 			Status:    "lost",
 			StoppedAt: &stoppedAt,
 		}
-		_ = persistAgentStatusWithRetry(context.Background(), store, fallback, 5*time.Second)
+		_ = persistAgentStatusWithRetry(ctx, store, fallback, 5*time.Second)
 	}
+}
+
+func (d *Daemon) runtimeContext() context.Context {
+	d.mu.RLock()
+	ctx := d.runCtx
+	d.mu.RUnlock()
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
 }
 
 func (d *Daemon) setAgentProcess(agentID string, proc *process.Process) {
