@@ -533,7 +533,7 @@ func persistAgentStatusWithRetry(ctx context.Context, store *globaldb.Store, upd
 	var lastErr error
 
 	for {
-		if err := updateAgentStatus(store, context.Background(), update); err == nil {
+		if err := updateAgentStatus(store, ctx, update); err == nil {
 			return nil
 		} else {
 			lastErr = err

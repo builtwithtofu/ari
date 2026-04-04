@@ -227,6 +227,29 @@ func TestAgentSpawnRejectsUnknownHarness(t *testing.T) {
 	}
 }
 
+func TestPersistAgentStatusWithRetryHonorsContextCancellation(t *testing.T) {
+	originalUpdate := updateAgentStatus
+	updateAgentStatus = func(_ *globaldb.Store, ctx context.Context, _ globaldb.UpdateAgentStatusParams) error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			return errors.New("context was not forwarded")
+		}
+	}
+	t.Cleanup(func() {
+		updateAgentStatus = originalUpdate
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := persistAgentStatusWithRetry(ctx, nil, globaldb.UpdateAgentStatusParams{SessionID: "sess-1", AgentID: "agt-1", Status: "running"}, 60*time.Millisecond)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("persistAgentStatusWithRetry error = %v, want context.Canceled", err)
+	}
+}
+
 func waitForAgentStatus(t *testing.T, registry *rpc.MethodRegistry, sessionID, agentID, want string) {
 	t.Helper()
 
@@ -292,7 +315,7 @@ CREATE TABLE session_folders (
 CREATE TABLE agents (
 	agent_id TEXT PRIMARY KEY,
 	session_id TEXT NOT NULL,
-	name TEXT UNIQUE,
+	name TEXT,
 	command TEXT NOT NULL,
 	args TEXT NOT NULL DEFAULT '[]',
 	status TEXT NOT NULL DEFAULT 'running',
@@ -301,6 +324,9 @@ CREATE TABLE agents (
 	stopped_at TEXT,
 	FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
 );
+CREATE UNIQUE INDEX agents_session_id_name_uq
+	ON agents (session_id, name)
+	WHERE name IS NOT NULL;
 `); err != nil {
 		t.Fatalf("create schema: %v", err)
 	}

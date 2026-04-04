@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -131,10 +133,65 @@ func TestGetAgentMissingReturnsNotFound(t *testing.T) {
 	}
 }
 
+func TestCreateAgentAllowsSameNameAcrossSessions(t *testing.T) {
+	store := newAgentTestStore(t)
+	ctx := context.Background()
+
+	if err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin-a", "manual", "auto"); err != nil {
+		t.Fatalf("CreateSession sess-1 returned error: %v", err)
+	}
+	if err := store.CreateSession(ctx, "sess-2", "beta", "/tmp/origin-b", "manual", "auto"); err != nil {
+		t.Fatalf("CreateSession sess-2 returned error: %v", err)
+	}
+
+	if err := store.CreateAgent(ctx, CreateAgentParams{
+		AgentID:   "agt-1",
+		SessionID: "sess-1",
+		Name:      stringPtr("claude"),
+		Command:   "claude-code",
+		Args:      `[]`,
+		Status:    "running",
+		StartedAt: "2026-04-04T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("CreateAgent sess-1 returned error: %v", err)
+	}
+
+	if err := store.CreateAgent(ctx, CreateAgentParams{
+		AgentID:   "agt-2",
+		SessionID: "sess-2",
+		Name:      stringPtr("claude"),
+		Command:   "claude-code",
+		Args:      `[]`,
+		Status:    "running",
+		StartedAt: "2026-04-04T00:00:10Z",
+	}); err != nil {
+		t.Fatalf("CreateAgent sess-2 returned error: %v", err)
+	}
+}
+
+func TestNewAgentTestStoreUsesIsolatedDatabase(t *testing.T) {
+	storeA := newAgentTestStore(t)
+	storeB := newAgentTestStore(t)
+	ctx := context.Background()
+
+	if err := storeA.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
+		t.Fatalf("storeA CreateSession returned error: %v", err)
+	}
+
+	sessions, err := storeB.ListSessions(ctx)
+	if err != nil {
+		t.Fatalf("storeB ListSessions returned error: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Fatalf("storeB sessions len = %d, want 0", len(sessions))
+	}
+}
+
 func newAgentTestStore(t *testing.T) *Store {
 	t.Helper()
 
-	db, err := sql.Open("sqlite", "file::memory:?cache=shared")
+	dbName := fmt.Sprintf("file:agent-store-%d?mode=memory&cache=shared", time.Now().UnixNano())
+	db, err := sql.Open("sqlite", dbName)
 	if err != nil {
 		t.Fatalf("open sqlite db: %v", err)
 	}
@@ -156,7 +213,7 @@ CREATE TABLE sessions (
 CREATE TABLE agents (
 	agent_id TEXT PRIMARY KEY,
 	session_id TEXT NOT NULL,
-	name TEXT UNIQUE,
+	name TEXT,
 	command TEXT NOT NULL,
 	args TEXT NOT NULL DEFAULT '[]',
 	status TEXT NOT NULL DEFAULT 'running',
@@ -165,6 +222,9 @@ CREATE TABLE agents (
 	stopped_at TEXT,
 	FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
 );
+CREATE UNIQUE INDEX agents_session_id_name_uq
+	ON agents (session_id, name)
+	WHERE name IS NOT NULL;
 `); err != nil {
 		t.Fatalf("create schema: %v", err)
 	}
