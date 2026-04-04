@@ -346,6 +346,70 @@ func TestAttachDataPlaneSendsAgentExitedFrame(t *testing.T) {
 	t.Fatal("did not receive agent_exited frame before timeout")
 }
 
+func TestAttachDataPlaneReturnsAfterContextCancelWhileClientIdle(t *testing.T) {
+	store := newAgentMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerAgentMethods(registry, store); err != nil {
+		t.Fatalf("registerAgentMethods returned error: %v", err)
+	}
+	if err := d.registerAttachMethods(registry, store); err != nil {
+		t.Fatalf("registerAttachMethods returned error: %v", err)
+	}
+
+	workspace := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
+
+	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
+		SessionID: "sess-1",
+		Command:   "/bin/sh",
+		Args:      []string{"-c", "cat"},
+	})
+	t.Cleanup(func() {
+		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+		waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "stopped")
+	})
+
+	attachResp := callMethod[AgentAttachResponse](t, registry, "agent.attach", AgentAttachRequest{
+		SessionID:   "sess-1",
+		AgentID:     spawnResp.AgentID,
+		InitialCols: 120,
+		InitialRows: 40,
+	})
+
+	serverConn, clientConn := net.Pipe()
+	defer func() {
+		_ = serverConn.Close()
+		_ = clientConn.Close()
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	handlerDone := make(chan struct{})
+	go func() {
+		d.handleAttachDataPlane(ctx, serverConn)
+		close(handlerDone)
+	}()
+
+	attachPayload, err := json.Marshal(attachFramePayload{Token: attachResp.Token, Cols: 120, Rows: 40})
+	if err != nil {
+		t.Fatalf("marshal attach payload: %v", err)
+	}
+	if err := frame.WriteFrame(clientConn, frame.Frame{Type: frame.TypeAttach, Payload: attachPayload}); err != nil {
+		t.Fatalf("write attach frame: %v", err)
+	}
+
+	_ = readFrameWithTimeout(t, clientConn) // snapshot
+
+	cancel()
+
+	select {
+	case <-handlerDone:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("attach data-plane handler did not stop after context cancellation")
+	}
+}
+
 func TestAttachDataPlaneInitialResizeFailureReturnsErrorFrame(t *testing.T) {
 	store := newAgentMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()

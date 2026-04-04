@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/frame"
 )
@@ -26,7 +27,10 @@ type agentExitedFramePayload struct {
 }
 
 func (d *Daemon) routeFrameConnection(ctx context.Context, conn net.Conn, firstByte byte) {
-	_ = firstByte
+	if !frame.IsValidType(frame.Type(firstByte)) {
+		_ = conn.Close()
+		return
+	}
 	d.handleAttachDataPlane(ctx, conn)
 }
 
@@ -97,6 +101,7 @@ func (d *Daemon) handleAttachDataPlane(ctx context.Context, conn net.Conn) {
 	var stopOnce sync.Once
 	stop := func() {
 		stopOnce.Do(func() {
+			_ = conn.SetReadDeadline(time.Now())
 			close(stopCh)
 		})
 	}

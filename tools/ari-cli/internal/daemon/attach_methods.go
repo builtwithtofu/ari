@@ -170,7 +170,9 @@ func (d *Daemon) reserveAttachSession(session attachSession, now time.Time) bool
 				return false
 			}
 			if now.Sub(existing.CreatedAt) <= attachPendingSessionTTL {
-				return false
+				if existing.InitialRows == session.InitialRows && existing.InitialCols == session.InitialCols {
+					return false
+				}
 			}
 			delete(d.attachByToken, token)
 			delete(d.attachByAgent, session.AgentID)
@@ -203,7 +205,7 @@ func (d *Daemon) hasActiveAttachForAgent(agentID string) bool {
 		return false
 	}
 
-	return session.Connected
+	return true
 }
 
 func (d *Daemon) clearAttachForAgent(agentID string) {

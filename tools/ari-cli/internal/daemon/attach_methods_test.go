@@ -329,6 +329,61 @@ func TestAgentSendRejectedWhileAttached(t *testing.T) {
 	}
 }
 
+func TestAgentSendRejectedWhileAttachReservationIsPending(t *testing.T) {
+	store := newAgentMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerAgentMethods(registry, store); err != nil {
+		t.Fatalf("registerAgentMethods returned error: %v", err)
+	}
+	if err := d.registerAttachMethods(registry, store); err != nil {
+		t.Fatalf("registerAttachMethods returned error: %v", err)
+	}
+
+	workspace := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
+
+	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
+		SessionID: "sess-1",
+		Command:   "/bin/sh",
+		Args:      []string{"-c", "cat"},
+	})
+	t.Cleanup(func() {
+		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+		waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "stopped")
+	})
+
+	_ = callMethod[AgentAttachResponse](t, registry, "agent.attach", AgentAttachRequest{
+		SessionID:   "sess-1",
+		AgentID:     spawnResp.AgentID,
+		InitialCols: 120,
+		InitialRows: 40,
+	})
+
+	spec, ok := registry.Get("agent.send")
+	if !ok {
+		t.Fatal("agent.send method not registered")
+	}
+	raw, err := json.Marshal(AgentSendRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID, Input: "hello"})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+
+	_, err = spec.Call(context.Background(), raw)
+	if err == nil {
+		t.Fatal("agent.send returned nil error while attach reservation is pending")
+	}
+
+	var rpcErr *rpc.HandlerError
+	if !errors.As(err, &rpcErr) {
+		t.Fatalf("agent.send error type = %T, want *rpc.HandlerError", err)
+	}
+	if rpcErr.Code != rpc.AgentAlreadyAttached {
+		t.Fatalf("agent.send error code = %d, want %d", rpcErr.Code, rpc.AgentAlreadyAttached)
+	}
+}
+
 func TestAgentSendReturnsNotRunningAfterAttachedAgentStops(t *testing.T) {
 	store := newAgentMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
@@ -455,6 +510,56 @@ func TestAgentAttachConcurrentOnlyOneSucceeds(t *testing.T) {
 
 	if successes != 1 || alreadyAttached != 1 {
 		t.Fatalf("concurrent attach outcomes success/alreadyAttached = %d/%d, want 1/1", successes, alreadyAttached)
+	}
+}
+
+func TestAgentAttachPendingReservationAllowsRetryWithNewDimensions(t *testing.T) {
+	store := newAgentMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerAgentMethods(registry, store); err != nil {
+		t.Fatalf("registerAgentMethods returned error: %v", err)
+	}
+	if err := d.registerAttachMethods(registry, store); err != nil {
+		t.Fatalf("registerAttachMethods returned error: %v", err)
+	}
+
+	workspace := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
+
+	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
+		SessionID: "sess-1",
+		Command:   "/bin/sh",
+		Args:      []string{"-c", "cat"},
+	})
+	t.Cleanup(func() {
+		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+		waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "stopped")
+	})
+
+	first := callMethod[AgentAttachResponse](t, registry, "agent.attach", AgentAttachRequest{
+		SessionID:   "sess-1",
+		AgentID:     spawnResp.AgentID,
+		InitialCols: 80,
+		InitialRows: 24,
+	})
+	second := callMethod[AgentAttachResponse](t, registry, "agent.attach", AgentAttachRequest{
+		SessionID:   "sess-1",
+		AgentID:     spawnResp.AgentID,
+		InitialCols: 120,
+		InitialRows: 40,
+	})
+
+	if first.Token == second.Token {
+		t.Fatal("agent.attach retry returned the same token for new dimensions")
+	}
+
+	if _, ok := d.markAttachSessionConnected(first.Token); ok {
+		t.Fatal("old pending token stayed active after reservation replacement")
+	}
+	if _, ok := d.markAttachSessionConnected(second.Token); !ok {
+		t.Fatal("new pending token did not become active")
 	}
 }
 
