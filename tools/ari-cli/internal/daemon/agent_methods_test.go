@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -248,6 +249,54 @@ func TestPersistAgentStatusWithRetryHonorsContextCancellation(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("persistAgentStatusWithRetry error = %v, want context.Canceled", err)
 	}
+}
+
+func TestWriteAllBytesRetriesPartialWrites(t *testing.T) {
+	writer := &partialWriter{writes: []int{3, 2, 4}}
+
+	err := writeAllBytes(writer, []byte("abcdefghi"))
+	if err != nil {
+		t.Fatalf("writeAllBytes returned error: %v", err)
+	}
+	if writer.total != 9 {
+		t.Fatalf("writeAllBytes wrote %d bytes, want 9", writer.total)
+	}
+}
+
+func TestWriteAllBytesReturnsErrorOnZeroProgress(t *testing.T) {
+	writer := &partialWriter{writes: []int{0}}
+
+	err := writeAllBytes(writer, []byte("abc"))
+	if err == nil {
+		t.Fatal("writeAllBytes returned nil error for zero-byte write")
+	}
+	if !strings.Contains(err.Error(), "zero bytes") {
+		t.Fatalf("writeAllBytes error = %q, want mentions zero bytes", err.Error())
+	}
+}
+
+type partialWriter struct {
+	writes []int
+	index  int
+	total  int
+}
+
+func (w *partialWriter) Write(p []byte) (int, error) {
+	if w.index >= len(w.writes) {
+		n := len(p)
+		w.total += n
+		return n, nil
+	}
+	n := w.writes[w.index]
+	w.index++
+	if n > len(p) {
+		n = len(p)
+	}
+	if n < 0 {
+		return 0, io.ErrUnexpectedEOF
+	}
+	w.total += n
+	return n, nil
 }
 
 func waitForAgentStatus(t *testing.T, registry *rpc.MethodRegistry, sessionID, agentID, want string) {

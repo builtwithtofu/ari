@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -292,7 +293,7 @@ func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globa
 			if !ok {
 				return AgentSendResponse{}, rpc.NewHandlerError(rpc.AgentNotRunning, "agent is not running", sessionID)
 			}
-			if _, err := proc.Write([]byte(req.Input)); err != nil {
+			if err := writeAllBytes(proc, []byte(req.Input)); err != nil {
 				return AgentSendResponse{}, rpc.NewHandlerError(rpc.AgentNotRunning, "agent is not running", sessionID)
 			}
 
@@ -553,4 +554,23 @@ func persistAgentStatusWithRetry(ctx context.Context, store *globaldb.Store, upd
 		case <-time.After(20 * time.Millisecond):
 		}
 	}
+}
+
+func writeAllBytes(writer io.Writer, data []byte) error {
+	remaining := data
+	for len(remaining) > 0 {
+		written, err := writer.Write(remaining)
+		if err != nil {
+			return err
+		}
+		if written <= 0 {
+			return fmt.Errorf("write all bytes: wrote zero bytes")
+		}
+		if written > len(remaining) {
+			return fmt.Errorf("write all bytes: wrote more bytes than requested")
+		}
+		remaining = remaining[written:]
+	}
+
+	return nil
 }

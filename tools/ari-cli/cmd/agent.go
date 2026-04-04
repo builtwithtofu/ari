@@ -109,7 +109,7 @@ func newAgentSpawnCmd() *cobra.Command {
 			commandArgs := make([]string, 0)
 			if len(args) > 1 {
 				extra := args[1:]
-				if strings.TrimSpace(harness) != "" && strings.HasPrefix(extra[0], "-") {
+				if strings.TrimSpace(harness) != "" {
 					commandArgs = append(commandArgs, extra...)
 				} else {
 					command = extra[0]

@@ -299,6 +299,37 @@ func TestAgentSpawnAllowsHarnessWithoutExplicitCommand(t *testing.T) {
 	}
 }
 
+func TestAgentSpawnHarnessTreatsPositionalArgsAsHarnessArgs(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalResolve := commandResolveSessionIdentifier
+	originalSpawn := agentSpawnRPC
+	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+		return "sess-1", nil
+	}
+	var got daemon.AgentSpawnRequest
+	agentSpawnRPC = func(_ context.Context, _ string, req daemon.AgentSpawnRequest) (daemon.AgentSpawnResponse, error) {
+		got = req
+		return daemon.AgentSpawnResponse{AgentID: "agt-1", Status: "running"}, nil
+	}
+	t.Cleanup(func() {
+		commandResolveSessionIdentifier = originalResolve
+		agentSpawnRPC = originalSpawn
+	})
+
+	_, err := executeRootCommand("agent", "spawn", "alpha", "--harness", "opencode", "--", "review prompt")
+	if err != nil {
+		t.Fatalf("execute harness positional spawn: %v", err)
+	}
+	if got.Command != "" {
+		t.Fatalf("spawn command = %q, want empty for harness-default invocation", got.Command)
+	}
+	if len(got.Args) != 1 || got.Args[0] != "review prompt" {
+		t.Fatalf("spawn args = %v, want [review prompt]", got.Args)
+	}
+}
+
 func executeRootCommandWithInput(stdin string, args ...string) (string, error) {
 	root := NewRootCmd()
 	var out bytes.Buffer
