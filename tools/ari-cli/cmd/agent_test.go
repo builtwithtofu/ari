@@ -9,6 +9,7 @@ import (
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
 	"github.com/sourcegraph/jsonrpc2"
+	"github.com/spf13/cobra"
 )
 
 func TestRootRegistersAgentCommand(t *testing.T) {
@@ -36,6 +37,8 @@ func TestAgentSubcommandsExist(t *testing.T) {
 		{name: "spawn", path: []string{"spawn"}, want: "spawn"},
 		{name: "list", path: []string{"list"}, want: "list"},
 		{name: "show", path: []string{"show"}, want: "show"},
+		{name: "attach", path: []string{"attach"}, want: "attach"},
+		{name: "detach", path: []string{"detach"}, want: "detach"},
 		{name: "send", path: []string{"send"}, want: "send"},
 		{name: "output", path: []string{"output"}, want: "output"},
 		{name: "stop", path: []string{"stop"}, want: "stop"},
@@ -327,6 +330,74 @@ func TestAgentSpawnHarnessTreatsPositionalArgsAsHarnessArgs(t *testing.T) {
 	}
 	if len(got.Args) != 1 || got.Args[0] != "review prompt" {
 		t.Fatalf("spawn args = %v, want [review prompt]", got.Args)
+	}
+}
+
+func TestMapAgentRPCErrorAgentAlreadyAttached(t *testing.T) {
+	err := mapAgentRPCError(&jsonrpc2.Error{Code: int64(rpc.AgentAlreadyAttached), Message: "agent already has an active attach session"})
+	if err == nil {
+		t.Fatal("mapAgentRPCError returned nil error")
+	}
+	if err.Error() != "Agent already has an active attach session" {
+		t.Fatalf("mapAgentRPCError message = %q, want %q", err.Error(), "Agent already has an active attach session")
+	}
+}
+
+func TestAgentAttachAndDetachCommands(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalResolve := commandResolveSessionIdentifier
+	originalAttach := agentAttachRPC
+	originalDetach := agentDetachRPC
+	originalAttachTerminalSize := agentAttachTerminalSize
+
+	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+		return "sess-1", nil
+	}
+	var gotAttach daemon.AgentAttachRequest
+	agentAttachRPC = func(_ context.Context, _ string, req daemon.AgentAttachRequest) (daemon.AgentAttachResponse, error) {
+		gotAttach = req
+		return daemon.AgentAttachResponse{Token: "tok-1", Status: "pending"}, nil
+	}
+	var gotDetach daemon.AgentDetachRequest
+	agentDetachRPC = func(_ context.Context, _ string, req daemon.AgentDetachRequest) (daemon.AgentDetachResponse, error) {
+		gotDetach = req
+		return daemon.AgentDetachResponse{Status: "detached"}, nil
+	}
+	agentAttachTerminalSize = func(_ *cobra.Command) (uint16, uint16) {
+		return 132, 43
+	}
+	t.Cleanup(func() {
+		commandResolveSessionIdentifier = originalResolve
+		agentAttachRPC = originalAttach
+		agentDetachRPC = originalDetach
+		agentAttachTerminalSize = originalAttachTerminalSize
+	})
+
+	attachOut, err := executeRootCommand("agent", "attach", "alpha", "claude")
+	if err != nil {
+		t.Fatalf("execute agent attach: %v", err)
+	}
+	if gotAttach.SessionID != "sess-1" || gotAttach.AgentID != "claude" {
+		t.Fatalf("agent attach request = %+v, want session_id sess-1 and agent_id claude", gotAttach)
+	}
+	if gotAttach.InitialCols != 132 || gotAttach.InitialRows != 43 {
+		t.Fatalf("agent attach initial size = %dx%d, want 132x43", gotAttach.InitialCols, gotAttach.InitialRows)
+	}
+	if !strings.Contains(attachOut, "Attach token: tok-1") {
+		t.Fatalf("attach output = %q, want token line", attachOut)
+	}
+
+	detachOut, err := executeRootCommand("agent", "detach", "alpha", "claude")
+	if err != nil {
+		t.Fatalf("execute agent detach: %v", err)
+	}
+	if gotDetach.SessionID != "sess-1" || gotDetach.AgentID != "claude" {
+		t.Fatalf("agent detach request = %+v, want session_id sess-1 and agent_id claude", gotDetach)
+	}
+	if !strings.Contains(detachOut, "Agent detach: detached") {
+		t.Fatalf("detach output = %q, want detached line", detachOut)
 	}
 }
 

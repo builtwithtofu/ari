@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -10,16 +11,24 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/frame"
 	"github.com/sourcegraph/jsonrpc2"
 )
 
+type FrameRouter func(ctx context.Context, conn net.Conn, firstByte byte)
+
 type UnixSocketTransport struct {
-	path   string
-	server *Server
+	path        string
+	server      *Server
+	frameRouter FrameRouter
 }
 
 func NewUnixSocketTransport(path string, server *Server) *UnixSocketTransport {
 	return &UnixSocketTransport{path: path, server: server}
+}
+
+func NewUnixSocketTransportWithFrameRouter(path string, server *Server, frameRouter FrameRouter) *UnixSocketTransport {
+	return &UnixSocketTransport{path: path, server: server, frameRouter: frameRouter}
 }
 
 func (t *UnixSocketTransport) Run(ctx context.Context) error {
@@ -73,15 +82,50 @@ func (t *UnixSocketTransport) Run(ctx context.Context) error {
 		wg.Add(1)
 		go func(c net.Conn) {
 			defer wg.Done()
-			//nolint:staticcheck // Ari standardizes on PlainObjectCodec framing for local RPC.
-			stream := jsonrpc2.NewBufferedStream(c, jsonrpc2.PlainObjectCodec{})
-			rpcConn := jsonrpc2.NewConn(ctx, stream, t.server)
-			select {
-			case <-rpcConn.DisconnectNotify():
-			case <-ctx.Done():
-				_ = rpcConn.Close()
+
+			closeOnCancelDone := make(chan struct{})
+			go func() {
+				select {
+				case <-ctx.Done():
+					_ = c.Close()
+				case <-closeOnCancelDone:
+				}
+			}()
+			defer close(closeOnCancelDone)
+
+			reader := bufio.NewReader(c)
+			firstByte, err := readFirstNonSpaceByte(reader)
+			if err != nil {
+				_ = c.Close()
+				return
 			}
-			_ = c.Close()
+			if err := reader.UnreadByte(); err != nil {
+				_ = c.Close()
+				return
+			}
+
+			conn := &bufferedConn{Conn: c, reader: reader}
+
+			if firstByte == '{' {
+				//nolint:staticcheck // Ari standardizes on PlainObjectCodec framing for local RPC.
+				stream := jsonrpc2.NewBufferedStream(conn, jsonrpc2.PlainObjectCodec{})
+				rpcConn := jsonrpc2.NewConn(ctx, stream, t.server)
+				select {
+				case <-rpcConn.DisconnectNotify():
+				case <-ctx.Done():
+					_ = rpcConn.Close()
+				}
+				_ = conn.Close()
+				return
+			}
+
+			if frame.IsValidType(frame.Type(firstByte)) && t.frameRouter != nil {
+				t.frameRouter(ctx, conn, firstByte)
+				_ = conn.Close()
+				return
+			}
+
+			_ = conn.Close()
 		}(conn)
 	}
 
@@ -91,6 +135,31 @@ func (t *UnixSocketTransport) Run(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+type bufferedConn struct {
+	net.Conn
+	reader *bufio.Reader
+}
+
+func (c *bufferedConn) Read(p []byte) (int, error) {
+	return c.reader.Read(p)
+}
+
+func readFirstNonSpaceByte(reader *bufio.Reader) (byte, error) {
+	for {
+		value, err := reader.ReadByte()
+		if err != nil {
+			return 0, err
+		}
+
+		switch value {
+		case ' ', '\n', '\r', '\t':
+			continue
+		default:
+			return value, nil
+		}
+	}
 }
 
 func ensureSocketPathAvailable(path string) error {

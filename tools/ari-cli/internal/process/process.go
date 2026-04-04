@@ -110,6 +110,10 @@ func (p *Process) Start() error {
 
 	if err := unix.SetNonblock(int(ptyFile.Fd()), true); err != nil {
 		_ = ptyFile.Close()
+		if cmd.Process != nil && cmd.Process.Pid > 0 {
+			_ = processGroupKill(-cmd.Process.Pid, syscall.SIGKILL)
+			_, _ = cmd.Process.Wait()
+		}
 		p.mu.Unlock()
 		return fmt.Errorf("set pty nonblocking: %w", err)
 	}
@@ -203,6 +207,10 @@ func (p *Process) PID() int {
 	return p.cmd.Process.Pid
 }
 
+func (p *Process) Done() <-chan struct{} {
+	return p.done
+}
+
 func (p *Process) Write(input []byte) (int, error) {
 	p.mu.RLock()
 	ptyFile := p.ptyFile
@@ -226,9 +234,22 @@ func (p *Process) OutputSnapshot() []byte {
 }
 
 func (p *Process) SubscribeOutput() (<-chan []byte, func()) {
+	_, updates, unsubscribe := p.subscribeOutput(false)
+	return updates, unsubscribe
+}
+
+func (p *Process) SnapshotAndSubscribe() ([]byte, <-chan []byte, func()) {
+	return p.subscribeOutput(true)
+}
+
+func (p *Process) subscribeOutput(withSnapshot bool) ([]byte, <-chan []byte, func()) {
 	updates := make(chan []byte, 32)
 
 	p.mu.Lock()
+	var snapshot []byte
+	if withSnapshot {
+		snapshot = p.outputBuffer.Snapshot()
+	}
 	p.outputSubs[updates] = struct{}{}
 	p.mu.Unlock()
 
@@ -241,7 +262,7 @@ func (p *Process) SubscribeOutput() (<-chan []byte, func()) {
 		p.mu.Unlock()
 	}
 
-	return updates, unsubscribe
+	return snapshot, updates, unsubscribe
 }
 
 func (p *Process) Resize(rows, cols uint16) error {
