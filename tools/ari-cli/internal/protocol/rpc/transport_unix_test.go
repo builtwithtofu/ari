@@ -1,10 +1,14 @@
 package rpc
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -195,6 +199,175 @@ func TestUnixSocketTransportStopsWithOpenConnection(t *testing.T) {
 	}
 
 	_ = conn.Close()
+}
+
+func TestUnixSocketTransportRoutesFrameConnectionsByFirstByte(t *testing.T) {
+	registry := NewMethodRegistry()
+	err := RegisterMethod(registry, Method[echoRequest, echoResponse]{
+		Name: "test.echo",
+		Handler: func(ctx context.Context, req echoRequest) (echoResponse, error) {
+			return echoResponse{Echoed: req.Message}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("register method: %v", err)
+	}
+
+	socketPath := testSocketPath(t)
+
+	var routed atomic.Bool
+	transport := NewUnixSocketTransportWithFrameRouter(socketPath, NewServer(registry), func(ctx context.Context, conn net.Conn, firstByte byte) {
+		_ = ctx
+		if firstByte != 0x01 {
+			t.Errorf("firstByte = 0x%02x, want 0x01", firstByte)
+		}
+		routed.Store(true)
+		_, _ = io.Copy(io.Discard, conn)
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- transport.Run(ctx)
+	}()
+	defer func() {
+		cancel()
+		<-errCh
+	}()
+
+	conn := waitForDial(t, socketPath)
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	if _, err := conn.Write([]byte{0x01, 0xAA, 0xBB}); err != nil {
+		t.Fatalf("write frame bytes: %v", err)
+	}
+
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for !routed.Load() {
+		if time.Now().After(deadline) {
+			t.Fatal("frame router was not called")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestUnixSocketTransportRejectsInvalidFirstByte(t *testing.T) {
+	registry := NewMethodRegistry()
+	err := RegisterMethod(registry, Method[echoRequest, echoResponse]{
+		Name: "test.echo",
+		Handler: func(ctx context.Context, req echoRequest) (echoResponse, error) {
+			return echoResponse{Echoed: req.Message}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("register method: %v", err)
+	}
+
+	socketPath := testSocketPath(t)
+	transport := NewUnixSocketTransportWithFrameRouter(socketPath, NewServer(registry), nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- transport.Run(ctx)
+	}()
+	defer func() {
+		cancel()
+		<-errCh
+	}()
+
+	conn := waitForDial(t, socketPath)
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	if _, err := conn.Write([]byte{0x20}); err != nil {
+		t.Fatalf("write invalid first byte: %v", err)
+	}
+
+	reader := bufio.NewReader(conn)
+	_ = conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	_, err = reader.ReadByte()
+	if err == nil {
+		t.Fatal("read returned nil error, want connection close error")
+	}
+}
+
+func TestUnixSocketTransportAcceptsJSONWithLeadingWhitespace(t *testing.T) {
+	registry := NewMethodRegistry()
+	err := RegisterMethod(registry, Method[echoRequest, echoResponse]{
+		Name: "test.echo",
+		Handler: func(ctx context.Context, req echoRequest) (echoResponse, error) {
+			return echoResponse{Echoed: req.Message}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("register method: %v", err)
+	}
+
+	socketPath := testSocketPath(t)
+	transport := NewUnixSocketTransportWithFrameRouter(socketPath, NewServer(registry), nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- transport.Run(ctx)
+	}()
+	defer func() {
+		cancel()
+		<-errCh
+	}()
+
+	conn := waitForDial(t, socketPath)
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	request := []byte("\n{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"test.echo\",\"params\":{\"message\":\"ping\"}}")
+	if _, err := conn.Write(request); err != nil {
+		t.Fatalf("write json-rpc request: %v", err)
+	}
+
+	_ = conn.SetReadDeadline(time.Now().Add(1 * time.Second))
+	buf := make([]byte, 1024)
+	n, err := conn.Read(buf)
+	if err != nil {
+		t.Fatalf("read json-rpc response: %v", err)
+	}
+	if n == 0 {
+		t.Fatal("read zero bytes for json-rpc response")
+	}
+
+	var response ResponseEnvelope[echoResponse]
+	if err := json.Unmarshal(buf[:n], &response); err != nil {
+		t.Fatalf("unmarshal json-rpc response: %v", err)
+	}
+	if response.Error != nil {
+		t.Fatalf("json-rpc response error = %+v, want nil", *response.Error)
+	}
+	if response.Result.Echoed != "ping" {
+		t.Fatalf("json-rpc echoed result = %q, want %q", response.Result.Echoed, "ping")
+	}
+}
+
+func waitForDial(t *testing.T, socketPath string) net.Conn {
+	t.Helper()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for socket %s", socketPath)
+		}
+
+		conn, err := net.Dial("unix", socketPath)
+		if err == nil {
+			return conn
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func TestListenUnixSocketKeepsLiveSocketPath(t *testing.T) {

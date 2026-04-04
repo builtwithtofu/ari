@@ -180,6 +180,107 @@ func TestProcessStateUpdatesWithoutExplicitWait(t *testing.T) {
 	}
 }
 
+func TestProcessDoneClosesOnNaturalExit(t *testing.T) {
+	p, err := New("/bin/sh", []string{"-c", "exit 0"}, Options{Dir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+
+	if err := p.Start(); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+
+	select {
+	case <-p.Done():
+		// expected
+	case <-time.After(2 * time.Second):
+		t.Fatal("Done channel did not close after natural exit")
+	}
+
+	if _, err := p.Wait(); err != nil {
+		t.Fatalf("Wait returned error: %v", err)
+	}
+}
+
+func TestProcessDoneClosesAfterStop(t *testing.T) {
+	p, err := New("/bin/sh", []string{"-c", "while true; do sleep 1; done"}, Options{Dir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+
+	if err := p.Start(); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+
+	waitForState(t, p, StateRunning)
+
+	if err := p.Stop(); err != nil {
+		t.Fatalf("Stop returned error: %v", err)
+	}
+
+	select {
+	case <-p.Done():
+		// expected
+	case <-time.After(2 * time.Second):
+		t.Fatal("Done channel did not close after stop")
+	}
+
+	if _, err := p.Wait(); err != nil {
+		t.Fatalf("Wait returned error: %v", err)
+	}
+}
+
+func TestProcessSnapshotAndSubscribeReturnsSnapshotAndLiveUpdates(t *testing.T) {
+	p, err := New("/bin/sh", []string{"-c", "cat"}, Options{Dir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+
+	if err := p.Start(); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = p.Stop()
+		_, _ = p.Wait()
+	})
+
+	if _, err := p.Write([]byte("before\n")); err != nil {
+		t.Fatalf("Write(before) returned error: %v", err)
+	}
+	beforeDeadline := time.Now().Add(2 * time.Second)
+	for !strings.Contains(string(p.OutputSnapshot()), "before") {
+		if time.Now().After(beforeDeadline) {
+			t.Fatal("snapshot did not contain 'before' before timeout")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	snapshot, updates, unsubscribe := p.SnapshotAndSubscribe()
+	defer unsubscribe()
+
+	if !strings.Contains(string(snapshot), "before") {
+		t.Fatalf("snapshot = %q, want contains %q", string(snapshot), "before")
+	}
+
+	if _, err := p.Write([]byte("after\n")); err != nil {
+		t.Fatalf("Write(after) returned error: %v", err)
+	}
+
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+
+	for {
+		select {
+		case chunk := <-updates:
+			if strings.Contains(string(chunk), "after") {
+				return
+			}
+		case <-deadline.C:
+			t.Fatal("did not receive live update containing 'after'")
+		}
+	}
+}
+
 func TestProcessExternalSIGTERMReportsSignaled(t *testing.T) {
 	p, err := New("/bin/sh", []string{"-c", "while true; do sleep 1; done"}, Options{Dir: t.TempDir()})
 	if err != nil {
@@ -439,10 +540,7 @@ func TestProcessConcurrentWriteAndSnapshot(t *testing.T) {
 	}
 
 	wg.Wait()
-
-	if len(p.OutputSnapshot()) == 0 {
-		t.Fatal("OutputSnapshot is empty after concurrent write/snapshot")
-	}
+	waitForSnapshotContains(t, p, "chunk")
 }
 
 func TestProcessLargeOutputKeepsNewestData(t *testing.T) {

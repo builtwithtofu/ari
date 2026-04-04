@@ -7,7 +7,8 @@ require (
 	github.com/sourcegraph/jsonrpc2 v0.2.0
 	github.com/spf13/cobra v1.8.1
 	github.com/spf13/viper v1.21.0
-	golang.org/x/sys v0.37.0
+	golang.org/x/sys v0.42.0
+	golang.org/x/term v0.41.0
 	modernc.org/sqlite v1.40.0
 )
 

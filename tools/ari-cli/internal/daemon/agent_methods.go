@@ -288,6 +288,9 @@ func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globa
 			if err != nil {
 				return AgentSendResponse{}, mapAgentStoreError(err, sessionID)
 			}
+			if d.hasActiveAttachForAgent(agent.AgentID) {
+				return AgentSendResponse{}, rpc.NewHandlerError(rpc.AgentAlreadyAttached, "agent has an active attach session", sessionID)
+			}
 
 			proc, ok := d.getAgentProcess(agent.AgentID)
 			if !ok {
@@ -392,7 +395,9 @@ func (d *Daemon) waitForAgentExit(ctx context.Context, agentID, sessionID string
 	}
 
 	defer d.agentWG.Done()
+	defer d.closeAttachConnection(agentID)
 	defer d.deleteAgentProcess(agentID)
+	defer d.clearAttachForAgent(agentID)
 
 	result, err := proc.Wait()
 	stoppedAt := time.Now().UTC().Format(time.RFC3339Nano)

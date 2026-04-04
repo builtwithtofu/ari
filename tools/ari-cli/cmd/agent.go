@@ -14,6 +14,7 @@ import (
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
 	"github.com/sourcegraph/jsonrpc2"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var (
@@ -65,6 +66,38 @@ var (
 		}
 		return response, nil
 	}
+	agentAttachRPC = func(ctx context.Context, socketPath string, req daemon.AgentAttachRequest) (daemon.AgentAttachResponse, error) {
+		rpcClient := client.New(socketPath)
+		var response daemon.AgentAttachResponse
+		if err := rpcClient.Call(ctx, "agent.attach", req, &response); err != nil {
+			return daemon.AgentAttachResponse{}, err
+		}
+		return response, nil
+	}
+	agentDetachRPC = func(ctx context.Context, socketPath string, req daemon.AgentDetachRequest) (daemon.AgentDetachResponse, error) {
+		rpcClient := client.New(socketPath)
+		var response daemon.AgentDetachResponse
+		if err := rpcClient.Call(ctx, "agent.detach", req, &response); err != nil {
+			return daemon.AgentDetachResponse{}, err
+		}
+		return response, nil
+	}
+	agentAttachTerminalSize = func(cmd *cobra.Command) (uint16, uint16) {
+		candidates := []any{cmd.InOrStdin(), cmd.ErrOrStderr(), cmd.OutOrStdout()}
+		for _, candidate := range candidates {
+			file, ok := candidate.(*os.File)
+			if !ok {
+				continue
+			}
+
+			cols, rows, err := term.GetSize(int(file.Fd()))
+			if err == nil && cols > 0 && rows > 0 {
+				return uint16(cols), uint16(rows)
+			}
+		}
+
+		return 80, 24
+	}
 )
 
 func NewAgentCmd() *cobra.Command {
@@ -72,10 +105,85 @@ func NewAgentCmd() *cobra.Command {
 	cmd.AddCommand(newAgentSpawnCmd())
 	cmd.AddCommand(newAgentListCmd())
 	cmd.AddCommand(newAgentShowCmd())
+	cmd.AddCommand(newAgentAttachCmd())
+	cmd.AddCommand(newAgentDetachCmd())
 	cmd.AddCommand(newAgentSendCmd())
 	cmd.AddCommand(newAgentOutputCmd())
 	cmd.AddCommand(newAgentStopCmd())
 	return cmd
+}
+
+func newAgentAttachCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "attach <session> <id-or-name>",
+		Short: "Reserve an attach token for an agent",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := configuredDaemonConfig()
+			if err != nil {
+				return err
+			}
+
+			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
+			defer cancel()
+
+			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, args[0])
+			if err != nil {
+				return err
+			}
+
+			cols, rows := agentAttachTerminalSize(cmd)
+
+			resp, err := agentAttachRPC(ctx, cfg.Daemon.SocketPath, daemon.AgentAttachRequest{
+				SessionID:   sessionID,
+				AgentID:     strings.TrimSpace(args[1]),
+				InitialCols: cols,
+				InitialRows: rows,
+			})
+			if err != nil {
+				return mapAgentRPCError(err)
+			}
+
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Attach token: %s\n", resp.Token); err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Attach state: %s\n", resp.Status)
+			return err
+		},
+	}
+}
+
+func newAgentDetachCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "detach <session> <id-or-name>",
+		Short: "Detach any active attach session for an agent",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := configuredDaemonConfig()
+			if err != nil {
+				return err
+			}
+
+			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
+			defer cancel()
+
+			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, args[0])
+			if err != nil {
+				return err
+			}
+
+			resp, err := agentDetachRPC(ctx, cfg.Daemon.SocketPath, daemon.AgentDetachRequest{
+				SessionID: sessionID,
+				AgentID:   strings.TrimSpace(args[1]),
+			})
+			if err != nil {
+				return mapAgentRPCError(err)
+			}
+
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Agent detach: %s\n", resp.Status)
+			return err
+		},
+	}
 }
 
 func newAgentSpawnCmd() *cobra.Command {
@@ -401,6 +509,8 @@ func mapAgentRPCError(err error) error {
 			return userFacingError{message: "Agent not found"}
 		case int64(rpc.AgentNotRunning):
 			return userFacingError{message: "Agent is not running"}
+		case int64(rpc.AgentAlreadyAttached):
+			return userFacingError{message: "Agent already has an active attach session"}
 		case int64(rpc.InvalidParams):
 			return userFacingError{message: rpcErr.Message}
 		}
