@@ -83,11 +83,11 @@ func newAgentSpawnCmd() *cobra.Command {
 	var harness string
 
 	cmd := &cobra.Command{
-		Use:   "spawn <session> [--name <name>] [--harness <harness>] -- <command> [args...]",
+		Use:   "spawn <session> [--name <name>] [--harness <harness>] [-- <command> [args...]]",
 		Short: "Spawn an agent in session",
 		Args: func(_ *cobra.Command, args []string) error {
 			if len(args) < 1 {
-				return userFacingError{message: "Usage: ari agent spawn <session> [--name <name>] [--harness <harness>] -- <command> [args...]"}
+				return userFacingError{message: "Usage: ari agent spawn <session> [--name <name>] [--harness <harness>] [-- <command> [args...]]"}
 			}
 			return nil
 		},

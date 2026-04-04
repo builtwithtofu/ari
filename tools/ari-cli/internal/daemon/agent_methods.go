@@ -176,7 +176,7 @@ func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globa
 
 			d.setAgentProcess(agentID, proc)
 			d.agentWG.Add(1)
-			go d.waitForAgentExit(d.runtimeContext(), agentID, sessionID, store, proc)
+			go d.waitForAgentExit(context.Background(), agentID, sessionID, store, proc)
 
 			return AgentSpawnResponse{AgentID: agentID, Status: "running"}, nil
 		},
@@ -424,16 +424,6 @@ func (d *Daemon) waitForAgentExit(ctx context.Context, agentID, sessionID string
 		}
 		_ = persistAgentStatusWithRetry(ctx, store, fallback, 5*time.Second)
 	}
-}
-
-func (d *Daemon) runtimeContext() context.Context {
-	d.mu.RLock()
-	ctx := d.runCtx
-	d.mu.RUnlock()
-	if ctx == nil {
-		return context.Background()
-	}
-	return ctx
 }
 
 func (d *Daemon) setAgentProcess(agentID string, proc *process.Process) {
