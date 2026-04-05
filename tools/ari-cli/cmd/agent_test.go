@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"io"
 	"strings"
 	"testing"
 
@@ -351,6 +352,7 @@ func TestAgentAttachAndDetachCommands(t *testing.T) {
 	originalAttach := agentAttachRPC
 	originalDetach := agentDetachRPC
 	originalAttachTerminalSize := agentAttachTerminalSize
+	originalAttachRunSession := agentAttachRunSession
 
 	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
 		return "sess-1", nil
@@ -368,14 +370,20 @@ func TestAgentAttachAndDetachCommands(t *testing.T) {
 	agentAttachTerminalSize = func(_ *cobra.Command) (uint16, uint16) {
 		return 132, 43
 	}
+	agentAttachRunSession = func(input io.Reader) error {
+		buf := make([]byte, 8)
+		_, err := input.Read(buf)
+		return err
+	}
 	t.Cleanup(func() {
 		commandResolveSessionIdentifier = originalResolve
 		agentAttachRPC = originalAttach
 		agentDetachRPC = originalDetach
 		agentAttachTerminalSize = originalAttachTerminalSize
+		agentAttachRunSession = originalAttachRunSession
 	})
 
-	attachOut, err := executeRootCommand("agent", "attach", "alpha", "claude")
+	attachOut, err := executeRootCommandWithInput(string([]byte{0x1c}), "agent", "attach", "alpha", "claude")
 	if err != nil {
 		t.Fatalf("execute agent attach: %v", err)
 	}
@@ -385,8 +393,8 @@ func TestAgentAttachAndDetachCommands(t *testing.T) {
 	if gotAttach.InitialCols != 132 || gotAttach.InitialRows != 43 {
 		t.Fatalf("agent attach initial size = %dx%d, want 132x43", gotAttach.InitialCols, gotAttach.InitialRows)
 	}
-	if !strings.Contains(attachOut, "Attach token: tok-1") {
-		t.Fatalf("attach output = %q, want token line", attachOut)
+	if !strings.Contains(attachOut, "Detached from agent \"claude\".") {
+		t.Fatalf("attach output = %q, want detach line", attachOut)
 	}
 
 	detachOut, err := executeRootCommand("agent", "detach", "alpha", "claude")

@@ -12,10 +12,21 @@ import (
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/client"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
+	termio "github.com/builtwithtofu/ari/tools/ari-cli/internal/terminal"
 	"github.com/sourcegraph/jsonrpc2"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
+
+func isDaemonDisconnectError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.EOF) {
+		return true
+	}
+	return strings.TrimSpace(err.Error()) == "EOF"
+}
 
 var (
 	agentSpawnRPC = func(ctx context.Context, socketPath string, req daemon.AgentSpawnRequest) (daemon.AgentSpawnResponse, error) {
@@ -98,6 +109,27 @@ var (
 
 		return 80, 24
 	}
+	agentAttachRunSession = func(input io.Reader) error {
+		scanner := termio.NewDetachScanner()
+		buf := make([]byte, 1024)
+
+		for {
+			n, err := input.Read(buf)
+			if n > 0 {
+				_, shouldDetach := scanner.Scan(buf[:n])
+				if shouldDetach {
+					return nil
+				}
+			}
+
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					return io.EOF
+				}
+				return err
+			}
+		}
+	}
 )
 
 func NewAgentCmd() *cobra.Command {
@@ -134,20 +166,27 @@ func newAgentAttachCmd() *cobra.Command {
 
 			cols, rows := agentAttachTerminalSize(cmd)
 
-			resp, err := agentAttachRPC(ctx, cfg.Daemon.SocketPath, daemon.AgentAttachRequest{
+			_, err = agentAttachRPC(ctx, cfg.Daemon.SocketPath, daemon.AgentAttachRequest{
 				SessionID:   sessionID,
 				AgentID:     strings.TrimSpace(args[1]),
 				InitialCols: cols,
 				InitialRows: rows,
 			})
 			if err != nil {
+				if isDaemonDisconnectError(err) {
+					return userFacingError{message: "Daemon disconnected. Agent may still be running."}
+				}
 				return mapAgentRPCError(err)
 			}
 
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Attach token: %s\n", resp.Token); err != nil {
+			if err := agentAttachRunSession(cmd.InOrStdin()); err != nil {
+				if isDaemonDisconnectError(err) {
+					return userFacingError{message: "Daemon disconnected. Agent may still be running."}
+				}
 				return err
 			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Attach state: %s\n", resp.Status)
+
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Detached from agent %q.\n", strings.TrimSpace(args[1]))
 			return err
 		},
 	}
