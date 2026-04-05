@@ -66,15 +66,7 @@ func agentAttachPrepareTerminal(cmd *cobra.Command, ctx context.Context) (func()
 		return nil, err
 	}
 
-	signalCtx, cancelSignalCleanup := context.WithCancel(ctx)
-	signalCh := make(chan os.Signal, 1)
-	signal.Notify(signalCh, os.Interrupt, syscall.SIGTERM)
-	stopSignalCleanup := manager.StartSignalCleanup(signalCtx, signalCh)
-
 	return func() {
-		stopSignalCleanup()
-		signal.Stop(signalCh)
-		cancelSignalCleanup()
 		_ = manager.Restore()
 	}, nil
 }
@@ -226,6 +218,7 @@ var (
 		buf := make([]byte, 1024)
 		inputResultCh := make(chan attachSessionOutcome, 1)
 		errCh := make(chan error, 2)
+		detachRequestedCh := make(chan struct{}, 1)
 
 		go func() {
 			for {
@@ -243,12 +236,20 @@ var (
 							errCh <- err
 							return
 						}
+						select {
+						case detachRequestedCh <- struct{}{}:
+						default:
+						}
+						_ = session.Close()
 						inputResultCh <- attachSessionOutcome{Detached: true}
 						return
 					}
 				}
 
 				if readErr != nil {
+					if errors.Is(readErr, io.EOF) {
+						return
+					}
 					errCh <- readErr
 					return
 				}
@@ -268,6 +269,11 @@ var (
 
 			msg, err := session.ReadFrame()
 			if err != nil {
+				select {
+				case <-detachRequestedCh:
+					return attachSessionOutcome{Detached: true}, nil
+				default:
+				}
 				return attachSessionOutcome{}, err
 			}
 
@@ -318,12 +324,15 @@ func newAgentAttachCmd() *cobra.Command {
 				return err
 			}
 
-			rpcCtx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
-			defer cancel()
 			runCtx := cmd.Context()
 			if runCtx == nil {
 				runCtx = context.Background()
 			}
+			runCtx, stopSignals := signal.NotifyContext(runCtx, os.Interrupt, syscall.SIGTERM)
+			defer stopSignals()
+
+			rpcCtx, cancel := context.WithTimeout(runCtx, 5*time.Second)
+			defer cancel()
 
 			terminalCleanup, err := agentAttachPrepareTerminal(cmd, runCtx)
 			if err != nil {

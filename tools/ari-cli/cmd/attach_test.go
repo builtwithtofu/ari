@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -295,9 +296,72 @@ func TestAgentAttachRunSessionStreamsDataBeforeAgentExit(t *testing.T) {
 	}
 }
 
+func TestAgentAttachRunSessionDetachClosesIdleRead(t *testing.T) {
+	originalOpen := agentAttachOpenSession
+	t.Cleanup(func() {
+		agentAttachOpenSession = originalOpen
+	})
+
+	session := newFakeBlockingAttachSession()
+	agentAttachOpenSession = func(context.Context, string, string, uint16, uint16) (attachFrameSession, []byte, error) {
+		return session, nil, nil
+	}
+
+	input := bytes.NewReader([]byte("abc\x1cdef"))
+	outcome, err := agentAttachRunSession(context.Background(), input, io.Discard, "/tmp/ari.sock", "tok-1", 120, 40, nil, nil)
+	if err != nil {
+		t.Fatalf("agentAttachRunSession returned error: %v", err)
+	}
+	if !outcome.Detached {
+		t.Fatal("attach run session did not report detach outcome")
+	}
+	if !session.detachSent {
+		t.Fatal("attach run session did not send detach frame")
+	}
+	if got := string(session.sentData); got != "abc" {
+		t.Fatalf("attach run session data = %q, want %q", got, "abc")
+	}
+}
+
+func TestAgentAttachRunSessionLocalInputEOFDropsInputOnly(t *testing.T) {
+	originalOpen := agentAttachOpenSession
+	t.Cleanup(func() {
+		agentAttachOpenSession = originalOpen
+	})
+
+	exitPayload, err := json.Marshal(agentExitedFramePayload{ExitCode: 0})
+	if err != nil {
+		t.Fatalf("marshal agent exited payload: %v", err)
+	}
+	session := &fakeStreamAttachSession{frames: []frame.Frame{{Type: frame.TypeAgentExited, Payload: exitPayload}}}
+	agentAttachOpenSession = func(context.Context, string, string, uint16, uint16) (attachFrameSession, []byte, error) {
+		return session, nil, nil
+	}
+
+	reader := bytes.NewReader(nil)
+	outcome, err := agentAttachRunSession(context.Background(), reader, io.Discard, "/tmp/ari.sock", "tok-1", 120, 40, nil, nil)
+	if err != nil {
+		t.Fatalf("agentAttachRunSession returned error: %v", err)
+	}
+	if outcome.ExitCode == nil || *outcome.ExitCode != 0 {
+		t.Fatalf("attach run session exit outcome = %v, want 0", outcome.ExitCode)
+	}
+}
+
 type fakeStreamAttachSession struct {
 	frames []frame.Frame
 	index  int
+}
+
+type fakeBlockingAttachSession struct {
+	sentData   []byte
+	detachSent bool
+	closedCh   chan struct{}
+	once       sync.Once
+}
+
+func newFakeBlockingAttachSession() *fakeBlockingAttachSession {
+	return &fakeBlockingAttachSession{closedCh: make(chan struct{})}
 }
 
 func (s *fakeStreamAttachSession) ReadFrame() (frame.Frame, error) {
@@ -322,5 +386,31 @@ func (s *fakeStreamAttachSession) SendResize(uint16, uint16) error {
 }
 
 func (s *fakeStreamAttachSession) Close() error {
+	return nil
+}
+
+func (s *fakeBlockingAttachSession) ReadFrame() (frame.Frame, error) {
+	<-s.closedCh
+	return frame.Frame{}, io.EOF
+}
+
+func (s *fakeBlockingAttachSession) SendData(payload []byte) error {
+	s.sentData = append(s.sentData, payload...)
+	return nil
+}
+
+func (s *fakeBlockingAttachSession) SendDetach() error {
+	s.detachSent = true
+	return nil
+}
+
+func (s *fakeBlockingAttachSession) SendResize(uint16, uint16) error {
+	return nil
+}
+
+func (s *fakeBlockingAttachSession) Close() error {
+	s.once.Do(func() {
+		close(s.closedCh)
+	})
 	return nil
 }
