@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -214,4 +216,74 @@ func (s *fakeResizeAttachSession) calledWith(cols, rows uint16) bool {
 		}
 	}
 	return false
+}
+
+func TestAgentAttachRunSessionStreamsDataBeforeAgentExit(t *testing.T) {
+	originalOpen := agentAttachOpenSession
+	t.Cleanup(func() {
+		agentAttachOpenSession = originalOpen
+	})
+
+	exitPayload, err := json.Marshal(agentExitedFramePayload{ExitCode: 7})
+	if err != nil {
+		t.Fatalf("marshal agent exited payload: %v", err)
+	}
+
+	session := &fakeStreamAttachSession{
+		frames: []frame.Frame{
+			{Type: frame.TypeDataServerToClient, Payload: []byte("live-output\n")},
+			{Type: frame.TypeAgentExited, Payload: exitPayload},
+		},
+	}
+	agentAttachOpenSession = func(context.Context, string, string, uint16, uint16) (attachFrameSession, []byte, error) {
+		return session, []byte("snapshot\n"), nil
+	}
+
+	reader, writer := io.Pipe()
+	defer func() {
+		_ = writer.Close()
+	}()
+	var out bytes.Buffer
+
+	outcome, err := agentAttachRunSession(context.Background(), reader, &out, "/tmp/ari.sock", "tok-1", 120, 40, nil, nil)
+	_ = reader.Close()
+	if err != nil {
+		t.Fatalf("agentAttachRunSession returned error: %v", err)
+	}
+	if outcome.ExitCode == nil || *outcome.ExitCode != 7 {
+		t.Fatalf("run outcome exit code = %v, want 7", outcome.ExitCode)
+	}
+	if got := out.String(); got != "snapshot\nlive-output\n" {
+		t.Fatalf("attach output = %q, want %q", got, "snapshot\nlive-output\n")
+	}
+}
+
+type fakeStreamAttachSession struct {
+	frames []frame.Frame
+	index  int
+}
+
+func (s *fakeStreamAttachSession) ReadFrame() (frame.Frame, error) {
+	if s.index >= len(s.frames) {
+		return frame.Frame{}, io.EOF
+	}
+	frameValue := s.frames[s.index]
+	s.index++
+	return frameValue, nil
+}
+
+func (s *fakeStreamAttachSession) SendData([]byte) error {
+	return nil
+}
+
+func (s *fakeStreamAttachSession) SendDetach() error {
+	return nil
+}
+
+func (s *fakeStreamAttachSession) SendResize(uint16, uint16) error {
+	return nil
+}
+
+func (s *fakeStreamAttachSession) Close() error {
+	return nil
 }
