@@ -45,7 +45,10 @@ type attachSession struct {
 	Connected   bool
 }
 
-const attachPendingSessionTTL = 30 * time.Second
+const (
+	attachPendingSessionTTL    = 30 * time.Second
+	attachTokenCleanupInterval = 10 * time.Second
+)
 
 var resizeAgentProcess = func(proc *process.Process, rows, cols uint16) error {
 	return proc.Resize(rows, cols)
@@ -290,5 +293,45 @@ func (d *Daemon) closeAttachConnection(agentID string) {
 
 	if ok {
 		_ = conn.Close()
+	}
+}
+
+func (d *Daemon) startAttachTokenCleanupLoop(ctx context.Context, interval time.Duration) {
+	if ctx == nil {
+		panic("attach cleanup context is required")
+	}
+	if interval <= 0 {
+		panic("attach cleanup interval must be greater than zero")
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			d.cleanupExpiredAttachSessions(now.UTC())
+		}
+	}
+}
+
+func (d *Daemon) cleanupExpiredAttachSessions(now time.Time) {
+	d.attachMu.Lock()
+	defer d.attachMu.Unlock()
+
+	for token, session := range d.attachByToken {
+		if session.Connected {
+			continue
+		}
+		if now.Sub(session.CreatedAt) <= attachPendingSessionTTL {
+			continue
+		}
+
+		delete(d.attachByToken, token)
+		if activeToken, exists := d.attachByAgent[session.AgentID]; exists && activeToken == token {
+			delete(d.attachByAgent, session.AgentID)
+		}
 	}
 }

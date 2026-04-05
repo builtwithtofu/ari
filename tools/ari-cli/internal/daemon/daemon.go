@@ -206,6 +206,8 @@ func (d *Daemon) Start(ctx context.Context) error {
 		}
 	}()
 
+	go d.startAttachTokenCleanupLoop(runCtx, attachTokenCleanupInterval)
+
 	defer func() {
 		startupSucceeded = true
 		cancel()
