@@ -310,7 +310,7 @@ func NewAgentCmd() *cobra.Command {
 func newAgentAttachCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "attach <session> <id-or-name>",
-		Short: "Reserve an attach token for an agent",
+		Short: "Attach to a running agent terminal",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := configuredDaemonConfig()
@@ -318,23 +318,27 @@ func newAgentAttachCmd() *cobra.Command {
 				return err
 			}
 
-			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
+			rpcCtx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
+			runCtx := cmd.Context()
+			if runCtx == nil {
+				runCtx = context.Background()
+			}
 
-			terminalCleanup, err := agentAttachPrepareTerminal(cmd, cmd.Context())
+			terminalCleanup, err := agentAttachPrepareTerminal(cmd, runCtx)
 			if err != nil {
 				return err
 			}
 			defer terminalCleanup()
 
-			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, args[0])
+			sessionID, err := commandResolveSessionIdentifier(rpcCtx, cfg.Daemon.SocketPath, args[0])
 			if err != nil {
 				return err
 			}
 
 			cols, rows := agentAttachTerminalSize(cmd)
 
-			resp, err := agentAttachRPC(ctx, cfg.Daemon.SocketPath, daemon.AgentAttachRequest{
+			resp, err := agentAttachRPC(rpcCtx, cfg.Daemon.SocketPath, daemon.AgentAttachRequest{
 				SessionID:   sessionID,
 				AgentID:     strings.TrimSpace(args[1]),
 				InitialCols: cols,
@@ -352,7 +356,7 @@ func newAgentAttachCmd() *cobra.Command {
 			defer signal.Stop(resizeSignalCh)
 
 			outcome, err := agentAttachRunSession(
-				ctx,
+				runCtx,
 				cmd.InOrStdin(),
 				cmd.OutOrStdout(),
 				cfg.Daemon.SocketPath,

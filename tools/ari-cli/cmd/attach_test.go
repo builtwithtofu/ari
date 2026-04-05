@@ -159,6 +159,43 @@ func TestAgentAttachActiveWriterError(t *testing.T) {
 	}
 }
 
+func TestAgentAttachRunSessionUsesCommandContextWithoutTimeout(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalResolve := commandResolveSessionIdentifier
+	originalAttach := agentAttachRPC
+	originalSize := agentAttachTerminalSize
+	originalRunSession := agentAttachRunSession
+
+	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+		return "sess-1", nil
+	}
+	agentAttachRPC = func(_ context.Context, _ string, _ daemon.AgentAttachRequest) (daemon.AgentAttachResponse, error) {
+		return daemon.AgentAttachResponse{Token: "tok-1", Status: "pending"}, nil
+	}
+	agentAttachTerminalSize = func(_ *cobra.Command) (uint16, uint16) {
+		return 120, 40
+	}
+	agentAttachRunSession = func(ctx context.Context, _ io.Reader, _ io.Writer, _ string, _ string, _ uint16, _ uint16, _ <-chan os.Signal, _ func() (uint16, uint16)) (attachSessionOutcome, error) {
+		if _, hasDeadline := ctx.Deadline(); hasDeadline {
+			return attachSessionOutcome{}, errors.New("attach run session context unexpectedly has timeout deadline")
+		}
+		return attachSessionOutcome{Detached: true}, nil
+	}
+	t.Cleanup(func() {
+		commandResolveSessionIdentifier = originalResolve
+		agentAttachRPC = originalAttach
+		agentAttachTerminalSize = originalSize
+		agentAttachRunSession = originalRunSession
+	})
+
+	_, err := executeRootCommandWithInput(string([]byte{0x1c}), "agent", "attach", "alpha", "claude")
+	if err != nil {
+		t.Fatalf("execute agent attach: %v", err)
+	}
+}
+
 func TestRunAttachResizeLoopForwardsSIGWINCH(t *testing.T) {
 	session := &fakeResizeAttachSession{}
 	resizeSignals := make(chan os.Signal, 1)
