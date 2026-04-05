@@ -272,6 +272,58 @@ func TestRunAttachResizeLoopForwardsSIGWINCH(t *testing.T) {
 	t.Fatal("resize loop did not forward SIGWINCH dimensions")
 }
 
+func TestRunAttachResizeLoopIgnoresZeroDimensions(t *testing.T) {
+	session := &fakeResizeAttachSession{}
+	resizeSignals := make(chan os.Signal, 1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	stop := runAttachResizeLoop(ctx, session, resizeSignals, func() (uint16, uint16) {
+		return 0, 0
+	})
+	defer stop()
+
+	resizeSignals <- syscall.SIGWINCH
+	time.Sleep(50 * time.Millisecond)
+
+	if calls := session.callCount(); calls != 0 {
+		t.Fatalf("resize loop call count = %d, want 0", calls)
+	}
+}
+
+func TestRunAttachResizeLoopStopPreventsFurtherResizes(t *testing.T) {
+	session := &fakeResizeAttachSession{}
+	resizeSignals := make(chan os.Signal, 2)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	stop := runAttachResizeLoop(ctx, session, resizeSignals, func() (uint16, uint16) {
+		return 120, 40
+	})
+
+	resizeSignals <- syscall.SIGWINCH
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if session.callCount() == 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if calls := session.callCount(); calls != 1 {
+		t.Fatalf("resize loop initial call count = %d, want 1", calls)
+	}
+
+	stop()
+	resizeSignals <- syscall.SIGWINCH
+	time.Sleep(50 * time.Millisecond)
+
+	if calls := session.callCount(); calls != 1 {
+		t.Fatalf("resize loop call count after stop = %d, want 1", calls)
+	}
+}
+
 type fakeResizeAttachSession struct {
 	mu          sync.Mutex
 	resizeCalls []frame.Frame
@@ -313,6 +365,13 @@ func (s *fakeResizeAttachSession) calledWith(cols, rows uint16) bool {
 	return false
 }
 
+func (s *fakeResizeAttachSession) callCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return len(s.resizeCalls)
+}
+
 func TestAgentAttachRunSessionStreamsDataBeforeAgentExit(t *testing.T) {
 	originalOpen := agentAttachOpenSession
 	t.Cleanup(func() {
@@ -351,6 +410,95 @@ func TestAgentAttachRunSessionStreamsDataBeforeAgentExit(t *testing.T) {
 	if got := out.String(); got != "snapshot\nlive-output\n" {
 		t.Fatalf("attach output = %q, want %q", got, "snapshot\nlive-output\n")
 	}
+}
+
+func TestAgentAttachRunSessionExitWithoutTrailingOutput(t *testing.T) {
+	originalOpen := agentAttachOpenSession
+	t.Cleanup(func() {
+		agentAttachOpenSession = originalOpen
+	})
+
+	exitPayload, err := json.Marshal(agentExitedFramePayload{ExitCode: 0})
+	if err != nil {
+		t.Fatalf("marshal agent exited payload: %v", err)
+	}
+
+	session := &fakeStreamAttachSession{
+		frames: []frame.Frame{{Type: frame.TypeAgentExited, Payload: exitPayload}},
+	}
+	agentAttachOpenSession = func(context.Context, string, string, uint16, uint16) (attachFrameSession, []byte, error) {
+		return session, []byte("snapshot-only\n"), nil
+	}
+
+	reader, writer := io.Pipe()
+	defer func() {
+		_ = writer.Close()
+	}()
+	var out bytes.Buffer
+
+	outcome, err := agentAttachRunSession(context.Background(), reader, &out, "/tmp/ari.sock", "tok-1", 120, 40, nil, nil)
+	_ = reader.Close()
+	if err != nil {
+		t.Fatalf("agentAttachRunSession returned error: %v", err)
+	}
+	if outcome.ExitCode == nil || *outcome.ExitCode != 0 {
+		t.Fatalf("run outcome exit code = %v, want 0", outcome.ExitCode)
+	}
+	if got := out.String(); got != "snapshot-only\n" {
+		t.Fatalf("attach output = %q, want %q", got, "snapshot-only\n")
+	}
+}
+
+func TestAgentAttachRestoresTerminalOnRunSessionPanic(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalResolve := commandResolveSessionIdentifier
+	originalAttach := agentAttachRPC
+	originalSize := agentAttachTerminalSize
+	originalRunSession := agentAttachRunSession
+	originalPrepareTerminal := agentAttachPrepareTerminalFn
+
+	restoreCalls := 0
+	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+		return "sess-1", nil
+	}
+	agentAttachRPC = func(_ context.Context, _ string, _ daemon.AgentAttachRequest) (daemon.AgentAttachResponse, error) {
+		return daemon.AgentAttachResponse{Token: "tok-1", Status: "pending"}, nil
+	}
+	agentAttachTerminalSize = func(_ *cobra.Command) (uint16, uint16) {
+		return 120, 40
+	}
+	agentAttachRunSession = func(_ context.Context, _ io.Reader, _ io.Writer, _ string, _ string, _ uint16, _ uint16, _ <-chan os.Signal, _ func() (uint16, uint16)) (attachSessionOutcome, error) {
+		panic("attach run panic")
+	}
+	agentAttachPrepareTerminalFn = func(_ *cobra.Command, _ context.Context) (func(), error) {
+		return func() {
+			restoreCalls++
+		}, nil
+	}
+	t.Cleanup(func() {
+		commandResolveSessionIdentifier = originalResolve
+		agentAttachRPC = originalAttach
+		agentAttachTerminalSize = originalSize
+		agentAttachRunSession = originalRunSession
+		agentAttachPrepareTerminalFn = originalPrepareTerminal
+	})
+
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			t.Fatal("agent attach did not panic")
+		}
+		if recovered != "attach run panic" {
+			t.Fatalf("recovered panic = %v, want %q", recovered, "attach run panic")
+		}
+		if restoreCalls != 1 {
+			t.Fatalf("terminal restore calls = %d, want 1", restoreCalls)
+		}
+	}()
+
+	_, _ = executeRootCommand("agent", "attach", "alpha", "claude")
 }
 
 func TestAgentAttachRunSessionDetachClosesIdleRead(t *testing.T) {
