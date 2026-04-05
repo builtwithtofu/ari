@@ -103,3 +103,50 @@ func TestOpenAttachSessionReturnsErrorFrameMessage(t *testing.T) {
 		t.Fatalf("OpenAttachSession error text = %q, want %q", err.Error(), "attach protocol error: attach token is not active")
 	}
 }
+
+func TestOpenAttachSessionRespectsContextCancelDuringHandshake(t *testing.T) {
+	serverConn, clientConn := net.Pipe()
+	t.Cleanup(func() {
+		_ = serverConn.Close()
+		_ = clientConn.Close()
+	})
+
+	originalDial := attachDialContext
+	attachDialContext = func(context.Context, string) (net.Conn, error) {
+		return clientConn, nil
+	}
+	t.Cleanup(func() {
+		attachDialContext = originalDial
+	})
+
+	attachReceived := make(chan struct{}, 1)
+	go func() {
+		_, _ = frame.ReadFrame(serverConn)
+		attachReceived <- struct{}{}
+		select {}
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		_, _, err := OpenAttachSession(ctx, "/tmp/ari.sock", AttachConnectRequest{Token: "tok-1", Cols: 120, Rows: 40})
+		errCh <- err
+	}()
+
+	select {
+	case <-attachReceived:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("server did not receive attach frame")
+	}
+
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("OpenAttachSession error = %v, want context.Canceled", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("OpenAttachSession did not return after context cancellation")
+	}
+}

@@ -70,9 +70,22 @@ func OpenAttachSession(ctx context.Context, socketPath string, req AttachConnect
 		return nil, nil, fmt.Errorf("open attach session: write attach frame: %w", err)
 	}
 
+	handshakeDone := make(chan struct{})
+	defer close(handshakeDone)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-handshakeDone:
+		}
+	}()
+
 	first, err := frame.ReadFrame(conn)
 	if err != nil {
 		_ = conn.Close()
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, nil, ctxErr
+		}
 		return nil, nil, err
 	}
 	if first.Type == frame.TypeError {

@@ -194,7 +194,8 @@ var (
 	agentAttachOpenSession = func(ctx context.Context, socketPath, token string, cols, rows uint16) (attachFrameSession, []byte, error) {
 		return client.OpenAttachSession(ctx, socketPath, client.AttachConnectRequest{Token: token, Cols: cols, Rows: rows})
 	}
-	agentAttachRunSession = func(ctx context.Context, input io.Reader, output io.Writer, socketPath, token string, cols, rows uint16, resizeSignals <-chan os.Signal, sizeProvider func() (uint16, uint16)) (attachSessionOutcome, error) {
+	agentAttachPrepareTerminalFn = agentAttachPrepareTerminal
+	agentAttachRunSession        = func(ctx context.Context, input io.Reader, output io.Writer, socketPath, token string, cols, rows uint16, resizeSignals <-chan os.Signal, sizeProvider func() (uint16, uint16)) (attachSessionOutcome, error) {
 		session, snapshot, err := agentAttachOpenSession(ctx, socketPath, token, cols, rows)
 		if err != nil {
 			return attachSessionOutcome{}, err
@@ -344,11 +345,19 @@ func newAgentAttachCmd() *cobra.Command {
 			rpcCtx, cancel := context.WithTimeout(runCtx, 5*time.Second)
 			defer cancel()
 
-			terminalCleanup, err := agentAttachPrepareTerminal(cmd, runCtx)
+			terminalCleanup, err := agentAttachPrepareTerminalFn(cmd, runCtx)
 			if err != nil {
 				return err
 			}
-			defer terminalCleanup()
+			terminalRestored := false
+			restoreTerminal := func() {
+				if terminalRestored {
+					return
+				}
+				terminalRestored = true
+				terminalCleanup()
+			}
+			defer restoreTerminal()
 
 			sessionID, err := commandResolveSessionIdentifier(rpcCtx, cfg.Daemon.SocketPath, args[0])
 			if err != nil {
@@ -391,6 +400,7 @@ func newAgentAttachCmd() *cobra.Command {
 				}
 				return err
 			}
+			restoreTerminal()
 			if outcome.ExitCode != nil {
 				_, err = fmt.Fprintf(cmd.OutOrStdout(), "Agent exited (code %d).\n", *outcome.ExitCode)
 				return err
