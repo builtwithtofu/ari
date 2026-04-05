@@ -3,8 +3,10 @@ package daemon
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +14,12 @@ import (
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
 	"github.com/sourcegraph/jsonrpc2"
 )
+
+var sessionSmokeStop = func(ctx context.Context, socketPath string) (StopResponse, error) {
+	stop := StopResponse{}
+	err := tryDaemonMethod(ctx, socketPath, "daemon.stop", StopRequest{}, &stop)
+	return stop, err
+}
 
 func TestSessionSmokeLifecycleOverRPC(t *testing.T) {
 	stubSessionBootstrap(t)
@@ -100,11 +108,7 @@ func TestSessionSmokeLifecycleOverRPC(t *testing.T) {
 		t.Fatalf("session.get missing error code = %d, want %d", rpcErr.Code, rpc.SessionNotFound)
 	}
 
-	stop := StopResponse{}
-	callDaemonMethod(t, socketPath, "daemon.stop", StopRequest{}, &stop)
-	if stop.Status != "stopping" {
-		t.Fatalf("daemon.stop status = %q, want %q", stop.Status, "stopping")
-	}
+	requestDaemonStop(t, socketPath)
 
 	select {
 	case err := <-errCh:
@@ -128,4 +132,92 @@ func stubSessionBootstrap(t *testing.T) {
 	t.Cleanup(func() {
 		bootstrapDatabase = original
 	})
+}
+
+func requestDaemonStop(t *testing.T, socketPath string) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), boundedTestTimeout(t, 2*time.Second))
+	defer cancel()
+
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+
+	var lastErr error
+	for {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("daemon.stop did not succeed before timeout: %v", lastErr)
+		case <-ticker.C:
+			attemptCtx, attemptCancel := context.WithTimeout(ctx, 350*time.Millisecond)
+			stopResp, err := sessionSmokeStop(attemptCtx, socketPath)
+			attemptCancel()
+			if err != nil {
+				lastErr = err
+				if isTransientRPCError(err) || isClosedConnectionError(err) {
+					if isClosedConnectionError(err) {
+						return
+					}
+					continue
+				}
+				continue
+			}
+
+			if stopResp.Status != "stopping" {
+				t.Fatalf("daemon.stop status = %q, want %q", stopResp.Status, "stopping")
+			}
+			return
+		}
+	}
+}
+
+func isClosedConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.EOF) {
+		return true
+	}
+
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(msg, "connection is closed") || strings.Contains(msg, "use of closed network connection")
+}
+
+func TestRequestDaemonStopRetriesTransientErrors(t *testing.T) {
+	original := sessionSmokeStop
+	t.Cleanup(func() {
+		sessionSmokeStop = original
+	})
+
+	attempts := 0
+	sessionSmokeStop = func(context.Context, string) (StopResponse, error) {
+		attempts++
+		if attempts == 1 {
+			return StopResponse{}, context.DeadlineExceeded
+		}
+		return StopResponse{Status: "stopping"}, nil
+	}
+
+	requestDaemonStop(t, "unused")
+	if attempts != 2 {
+		t.Fatalf("daemon.stop attempts = %d, want 2", attempts)
+	}
+}
+
+func TestRequestDaemonStopAcceptsClosedConnection(t *testing.T) {
+	original := sessionSmokeStop
+	t.Cleanup(func() {
+		sessionSmokeStop = original
+	})
+
+	attempts := 0
+	sessionSmokeStop = func(context.Context, string) (StopResponse, error) {
+		attempts++
+		return StopResponse{}, errors.New("jsonrpc2: connection is closed")
+	}
+
+	requestDaemonStop(t, "unused")
+	if attempts != 1 {
+		t.Fatalf("daemon.stop attempts = %d, want 1", attempts)
+	}
 }
