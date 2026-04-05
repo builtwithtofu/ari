@@ -107,10 +107,7 @@ func isDaemonDisconnectError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, io.EOF) {
-		return true
-	}
-	return strings.TrimSpace(err.Error()) == "EOF"
+	return errors.Is(err, io.EOF)
 }
 
 var (
@@ -219,6 +216,16 @@ var (
 		inputResultCh := make(chan attachSessionOutcome, 1)
 		errCh := make(chan error, 2)
 		detachRequestedCh := make(chan struct{}, 1)
+		sessionDoneCh := make(chan struct{})
+		defer close(sessionDoneCh)
+
+		go func() {
+			select {
+			case <-ctx.Done():
+				_ = session.Close()
+			case <-sessionDoneCh:
+			}
+		}()
 
 		go func() {
 			for {
@@ -273,6 +280,9 @@ var (
 				case <-detachRequestedCh:
 					return attachSessionOutcome{Detached: true}, nil
 				default:
+				}
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return attachSessionOutcome{}, ctxErr
 				}
 				return attachSessionOutcome{}, err
 			}

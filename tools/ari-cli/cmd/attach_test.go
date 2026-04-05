@@ -70,7 +70,7 @@ func TestAgentAttachDaemonDisconnectMessage(t *testing.T) {
 		return "sess-1", nil
 	}
 	agentAttachRPC = func(_ context.Context, _ string, _ daemon.AgentAttachRequest) (daemon.AgentAttachResponse, error) {
-		return daemon.AgentAttachResponse{}, errors.New("EOF")
+		return daemon.AgentAttachResponse{}, io.EOF
 	}
 	agentAttachTerminalSize = func(_ *cobra.Command) (uint16, uint16) {
 		return 120, 40
@@ -89,6 +89,12 @@ func TestAgentAttachDaemonDisconnectMessage(t *testing.T) {
 
 	if err.Error() != "Daemon disconnected. Agent may still be running." {
 		t.Fatalf("agent attach error = %q, want %q", err.Error(), "Daemon disconnected. Agent may still be running.")
+	}
+}
+
+func TestIsDaemonDisconnectErrorDoesNotMatchPlainStringEOF(t *testing.T) {
+	if isDaemonDisconnectError(errors.New("EOF")) {
+		t.Fatal("plain string EOF error unexpectedly classified as daemon disconnect")
 	}
 }
 
@@ -223,6 +229,7 @@ func TestRunAttachResizeLoopForwardsSIGWINCH(t *testing.T) {
 }
 
 type fakeResizeAttachSession struct {
+	mu          sync.Mutex
 	resizeCalls []frame.Frame
 }
 
@@ -239,6 +246,9 @@ func (s *fakeResizeAttachSession) SendDetach() error {
 }
 
 func (s *fakeResizeAttachSession) SendResize(cols, rows uint16) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	s.resizeCalls = append(s.resizeCalls, frame.Frame{Type: frame.TypeResize, Payload: []byte{byte(cols), byte(rows)}})
 	return nil
 }
@@ -248,6 +258,9 @@ func (s *fakeResizeAttachSession) Close() error {
 }
 
 func (s *fakeResizeAttachSession) calledWith(cols, rows uint16) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	for _, call := range s.resizeCalls {
 		if len(call.Payload) == 2 && call.Payload[0] == byte(cols) && call.Payload[1] == byte(rows) {
 			return true
@@ -345,6 +358,38 @@ func TestAgentAttachRunSessionLocalInputEOFDropsInputOnly(t *testing.T) {
 	}
 	if outcome.ExitCode == nil || *outcome.ExitCode != 0 {
 		t.Fatalf("attach run session exit outcome = %v, want 0", outcome.ExitCode)
+	}
+}
+
+func TestAgentAttachRunSessionReturnsOnContextCancelWhileReadBlocked(t *testing.T) {
+	originalOpen := agentAttachOpenSession
+	t.Cleanup(func() {
+		agentAttachOpenSession = originalOpen
+	})
+
+	session := newFakeBlockingAttachSession()
+	agentAttachOpenSession = func(context.Context, string, string, uint16, uint16) (attachFrameSession, []byte, error) {
+		return session, nil, nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	resultCh := make(chan error, 1)
+	go func() {
+		_, err := agentAttachRunSession(ctx, bytes.NewReader(nil), io.Discard, "/tmp/ari.sock", "tok-1", 120, 40, nil, nil)
+		resultCh <- err
+	}()
+
+	time.Sleep(25 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-resultCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("agentAttachRunSession error = %v, want context.Canceled", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		_ = session.Close()
+		t.Fatal("agentAttachRunSession did not return after context cancellation")
 	}
 }
 
