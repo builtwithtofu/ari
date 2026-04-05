@@ -329,6 +329,57 @@ func TestAgentSendRejectedWhileAttached(t *testing.T) {
 	}
 }
 
+func TestAgentSendAllowedAfterDetach(t *testing.T) {
+	store := newAgentMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerAgentMethods(registry, store); err != nil {
+		t.Fatalf("registerAgentMethods returned error: %v", err)
+	}
+	if err := d.registerAttachMethods(registry, store); err != nil {
+		t.Fatalf("registerAttachMethods returned error: %v", err)
+	}
+
+	workspace := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
+
+	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
+		SessionID: "sess-1",
+		Command:   "/bin/sh",
+		Args:      []string{"-c", "cat"},
+	})
+	t.Cleanup(func() {
+		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+		waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "stopped")
+	})
+
+	attachResp := callMethod[AgentAttachResponse](t, registry, "agent.attach", AgentAttachRequest{
+		SessionID:   "sess-1",
+		AgentID:     spawnResp.AgentID,
+		InitialCols: 120,
+		InitialRows: 40,
+	})
+	clientConn := openAttachSession(t, d, attachResp.Token, 120, 40)
+
+	_ = callMethod[AgentDetachResponse](t, registry, "agent.detach", AgentDetachRequest{
+		SessionID: "sess-1",
+		AgentID:   spawnResp.AgentID,
+	})
+
+	if err := clientConn.SetReadDeadline(time.Now().Add(500 * time.Millisecond)); err == nil {
+		if _, err := frame.ReadFrame(clientConn); err == nil {
+			t.Fatal("old attach connection remained open after agent.detach")
+		}
+	}
+	_ = clientConn.Close()
+
+	resp := callMethod[AgentSendResponse](t, registry, "agent.send", AgentSendRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID, Input: "after-detach\n"})
+	if resp.Status != "sent" {
+		t.Fatalf("agent.send status = %q, want %q", resp.Status, "sent")
+	}
+}
+
 func TestAgentSendRejectedWhileAttachReservationIsPending(t *testing.T) {
 	store := newAgentMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()

@@ -10,6 +10,7 @@ node_modules/
 *.exe
 /ari-cli
 /tools/ari-cli/ari-cli
+/tools/ari-cli/*.test
 
 # JJ working copy state (agent-managed)
 .wip/

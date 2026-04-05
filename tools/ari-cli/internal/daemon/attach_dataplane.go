@@ -26,6 +26,8 @@ type agentExitedFramePayload struct {
 	ExitCode int `json:"exit_code"`
 }
 
+var writeAllBytesToAgentProcess = writeAllBytes
+
 func (d *Daemon) routeFrameConnection(ctx context.Context, conn net.Conn, firstByte byte) {
 	if !frame.IsValidType(frame.Type(firstByte)) {
 		_ = conn.Close()
@@ -95,7 +97,9 @@ func (d *Daemon) handleAttachDataPlane(ctx context.Context, conn net.Conn) {
 	snapshot, updates, unsubscribe := proc.SnapshotAndSubscribe()
 	defer unsubscribe()
 	defer d.clearAttachForToken(session.AgentID, session.Token)
-	_ = writer.write(frame.Frame{Type: frame.TypeSnapshot, Payload: snapshot})
+	if err := writer.write(frame.Frame{Type: frame.TypeSnapshot, Payload: snapshot}); err != nil {
+		return
+	}
 
 	stopCh := make(chan struct{})
 	var stopOnce sync.Once
@@ -163,7 +167,7 @@ func (d *Daemon) handleAttachDataPlane(ctx context.Context, conn net.Conn) {
 
 		switch msg.Type {
 		case frame.TypeDataClientToServer:
-			if err := writeAllBytes(proc, msg.Payload); err != nil {
+			if err := writeAllBytesToAgentProcess(proc, msg.Payload); err != nil {
 				return
 			}
 		case frame.TypeResize:
@@ -174,7 +178,7 @@ func (d *Daemon) handleAttachDataPlane(ctx context.Context, conn net.Conn) {
 			}
 			if resize.Rows == 0 || resize.Cols == 0 {
 				_ = writer.write(frame.Frame{Type: frame.TypeError, Payload: []byte("resize rows and cols must be greater than zero")})
-				return
+				continue
 			}
 			if err := resizeAgentProcess(proc, resize.Rows, resize.Cols); err != nil {
 				_ = writer.write(frame.Frame{Type: frame.TypeError, Payload: []byte("agent is not running")})
