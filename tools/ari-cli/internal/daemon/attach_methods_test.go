@@ -574,8 +574,8 @@ func TestClearAttachForTokenDoesNotClearDifferentActiveToken(t *testing.T) {
 
 	d.clearAttachForToken("agt-1", "tok-old")
 
-	d.attachMu.RLock()
-	defer d.attachMu.RUnlock()
+	d.attachMu.Lock()
+	defer d.attachMu.Unlock()
 
 	if active := d.attachByAgent["agt-1"]; active != "tok-new" {
 		t.Fatalf("attachByAgent active token = %q, want %q", active, "tok-new")
@@ -608,14 +608,14 @@ func TestAttachTokenCleanupLoopRemovesExpiredPendingReservations(t *testing.T) {
 
 	deadline := time.Now().Add(500 * time.Millisecond)
 	for time.Now().Before(deadline) {
-		d.attachMu.RLock()
+		d.attachMu.Lock()
 		_, expiredTokenExists := d.attachByToken["tok-expired"]
 		_, expiredAgentExists := d.attachByAgent["agt-expired"]
 		_, pendingTokenExists := d.attachByToken["tok-pending"]
 		_, pendingAgentExists := d.attachByAgent["agt-pending"]
 		_, connectedTokenExists := d.attachByToken["tok-connected"]
 		_, connectedAgentExists := d.attachByAgent["agt-connected"]
-		d.attachMu.RUnlock()
+		d.attachMu.Unlock()
 
 		if !expiredTokenExists && !expiredAgentExists {
 			if !pendingTokenExists || !pendingAgentExists {

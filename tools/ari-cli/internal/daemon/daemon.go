@@ -47,7 +47,7 @@ type Daemon struct {
 	agentLogOrder     []string
 	agentStops        map[string]bool
 	agentWG           sync.WaitGroup
-	attachMu          sync.RWMutex
+	attachMu          sync.Mutex
 	attachByToken     map[string]attachSession
 	attachByAgent     map[string]string
 	attachConnByAgent map[string]net.Conn

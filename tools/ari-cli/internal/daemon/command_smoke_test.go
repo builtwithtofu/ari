@@ -68,11 +68,7 @@ func TestCommandSmokeLifecycleOverRPC(t *testing.T) {
 		t.Fatal("command.list returned no commands")
 	}
 
-	output := CommandOutputResponse{}
-	callDaemonMethod(t, socketPath, "command.output", CommandOutputRequest{SessionID: create.SessionID, CommandID: run.CommandID}, &output)
-	if !strings.Contains(output.Output, "smoke-output") {
-		t.Fatalf("command.output = %q, want contains %q", output.Output, "smoke-output")
-	}
+	waitForCommandOutputContains(t, socketPath, create.SessionID, run.CommandID, "smoke-output")
 
 	stop := StopResponse{}
 	callDaemonMethod(t, socketPath, "daemon.stop", StopRequest{}, &stop)
@@ -120,6 +116,43 @@ func waitForCommandExited(t *testing.T, socketPath, sessionID, commandID string)
 			lastErr = nil
 			lastStatus = get.Status
 			if get.Status == "exited" {
+				return
+			}
+		}
+	}
+}
+
+func waitForCommandOutputContains(t *testing.T, socketPath, sessionID, commandID, want string) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), boundedTestTimeout(t, 4*time.Second))
+	defer cancel()
+
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+
+	lastOutput := ""
+	var lastErr error
+	for {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("command %s output did not include %q before timeout (last output=%q, last error=%v)", commandID, want, lastOutput, lastErr)
+		case <-ticker.C:
+			attemptCtx, attemptCancel := context.WithTimeout(ctx, 350*time.Millisecond)
+			output := CommandOutputResponse{}
+			err := tryDaemonMethod(attemptCtx, socketPath, "command.output", CommandOutputRequest{SessionID: sessionID, CommandID: commandID}, &output)
+			attemptCancel()
+			if err != nil {
+				lastErr = err
+				if isTransientRPCError(err) {
+					continue
+				}
+				continue
+			}
+
+			lastErr = nil
+			lastOutput = output.Output
+			if strings.Contains(output.Output, want) {
 				return
 			}
 		}
