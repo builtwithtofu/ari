@@ -45,7 +45,10 @@ type attachSession struct {
 	Connected   bool
 }
 
-const attachPendingSessionTTL = 30 * time.Second
+const (
+	attachPendingSessionTTL    = 30 * time.Second
+	attachTokenCleanupInterval = 10 * time.Second
+)
 
 var resizeAgentProcess = func(proc *process.Process, rows, cols uint16) error {
 	return proc.Resize(rows, cols)
@@ -166,16 +169,16 @@ func (d *Daemon) reserveAttachSession(session attachSession, now time.Time) bool
 		if !ok {
 			delete(d.attachByAgent, session.AgentID)
 		} else {
-			if existing.Connected {
-				return false
-			}
-			if now.Sub(existing.CreatedAt) <= attachPendingSessionTTL {
+			if !d.expirePendingAttachLocked(token, existing, now) {
+				if existing.Connected {
+					return false
+				}
 				if existing.InitialRows == session.InitialRows && existing.InitialCols == session.InitialCols {
 					return false
 				}
+				delete(d.attachByToken, token)
+				delete(d.attachByAgent, session.AgentID)
 			}
-			delete(d.attachByToken, token)
-			delete(d.attachByAgent, session.AgentID)
 		}
 	}
 
@@ -199,9 +202,7 @@ func (d *Daemon) hasActiveAttachForAgent(agentID string) bool {
 		return false
 	}
 
-	if !session.Connected && time.Since(session.CreatedAt) > attachPendingSessionTTL {
-		delete(d.attachByAgent, agentID)
-		delete(d.attachByToken, token)
+	if d.expirePendingAttachLocked(token, session, time.Now().UTC()) {
 		return false
 	}
 
@@ -243,11 +244,7 @@ func (d *Daemon) markAttachSessionConnected(token string) (attachSession, bool) 
 		return attachSession{}, false
 	}
 
-	if time.Since(session.CreatedAt) > attachPendingSessionTTL {
-		delete(d.attachByToken, token)
-		if activeToken, exists := d.attachByAgent[session.AgentID]; exists && activeToken == token {
-			delete(d.attachByAgent, session.AgentID)
-		}
+	if d.expirePendingAttachLocked(token, session, time.Now().UTC()) {
 		return attachSession{}, false
 	}
 
@@ -291,4 +288,50 @@ func (d *Daemon) closeAttachConnection(agentID string) {
 	if ok {
 		_ = conn.Close()
 	}
+}
+
+func (d *Daemon) startAttachTokenCleanupLoop(ctx context.Context, interval time.Duration) {
+	if ctx == nil {
+		panic("attach cleanup context is required")
+	}
+	if interval <= 0 {
+		panic("attach cleanup interval must be greater than zero")
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			d.cleanupExpiredAttachSessions(now.UTC())
+		}
+	}
+}
+
+func (d *Daemon) cleanupExpiredAttachSessions(now time.Time) {
+	d.attachMu.Lock()
+	defer d.attachMu.Unlock()
+
+	for token, session := range d.attachByToken {
+		d.expirePendingAttachLocked(token, session, now)
+	}
+}
+
+func (d *Daemon) expirePendingAttachLocked(token string, session attachSession, now time.Time) bool {
+	if session.Connected {
+		return false
+	}
+	if now.Sub(session.CreatedAt) <= attachPendingSessionTTL {
+		return false
+	}
+
+	delete(d.attachByToken, token)
+	if activeToken, exists := d.attachByAgent[session.AgentID]; exists && activeToken == token {
+		delete(d.attachByAgent, session.AgentID)
+	}
+
+	return true
 }

@@ -93,10 +93,10 @@ func TestAttachDataPlaneStreamsInputAndOutput(t *testing.T) {
 
 	cleanupDeadline := time.Now().Add(500 * time.Millisecond)
 	for {
-		d.attachMu.RLock()
+		d.attachMu.Lock()
 		_, hasAgent := d.attachByAgent[spawnResp.AgentID]
 		_, hasToken := d.attachByToken[attachResp.Token]
-		d.attachMu.RUnlock()
+		d.attachMu.Unlock()
 
 		if !hasAgent && !hasToken {
 			break
@@ -650,10 +650,10 @@ func TestAttachDataPlaneRejectsStoppedAgentAndClearsAttachState(t *testing.T) {
 		t.Fatalf("stopped-agent payload = %q, want %q", got, "attach token is not active")
 	}
 
-	d.attachMu.RLock()
+	d.attachMu.Lock()
 	_, hasAgent := d.attachByAgent[spawnResp.AgentID]
 	_, hasToken := d.attachByToken[attachResp.Token]
-	d.attachMu.RUnlock()
+	d.attachMu.Unlock()
 	if hasAgent || hasToken {
 		t.Fatalf("stopped-agent attach state not cleared (hasAgent=%t hasToken=%t)", hasAgent, hasToken)
 	}

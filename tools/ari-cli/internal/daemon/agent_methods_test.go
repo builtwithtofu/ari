@@ -84,7 +84,7 @@ func TestAgentSpawnUsesSessionPrimaryFolderAsCWD(t *testing.T) {
 		Args:      []string{"-c", "pwd"},
 	})
 
-	waitForAgentOutput(t, registry, "sess-1", spawnResp.AgentID, workspace)
+	waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "exited")
 
 	outputResp := callMethod[AgentOutputResponse](t, registry, "agent.output", AgentOutputRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
 	if !strings.Contains(outputResp.Output, workspace) {
@@ -92,7 +92,6 @@ func TestAgentSpawnUsesSessionPrimaryFolderAsCWD(t *testing.T) {
 	}
 
 	_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
-	waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "exited")
 }
 
 func TestAgentListAndGetIncludeSpawnedAgent(t *testing.T) {

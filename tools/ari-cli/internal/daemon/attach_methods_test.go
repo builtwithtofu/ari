@@ -574,8 +574,8 @@ func TestClearAttachForTokenDoesNotClearDifferentActiveToken(t *testing.T) {
 
 	d.clearAttachForToken("agt-1", "tok-old")
 
-	d.attachMu.RLock()
-	defer d.attachMu.RUnlock()
+	d.attachMu.Lock()
+	defer d.attachMu.Unlock()
 
 	if active := d.attachByAgent["agt-1"]; active != "tok-new" {
 		t.Fatalf("attachByAgent active token = %q, want %q", active, "tok-new")
@@ -586,6 +586,51 @@ func TestClearAttachForTokenDoesNotClearDifferentActiveToken(t *testing.T) {
 	if _, ok := d.attachByToken["tok-old"]; ok {
 		t.Fatal("old token still present after old-token cleanup")
 	}
+}
+
+func TestAttachTokenCleanupLoopRemovesExpiredPendingReservations(t *testing.T) {
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	now := time.Now().UTC()
+
+	d.attachMu.Lock()
+	d.attachByToken["tok-expired"] = attachSession{Token: "tok-expired", AgentID: "agt-expired", CreatedAt: now.Add(-(attachPendingSessionTTL + time.Second))}
+	d.attachByAgent["agt-expired"] = "tok-expired"
+	d.attachByToken["tok-pending"] = attachSession{Token: "tok-pending", AgentID: "agt-pending", CreatedAt: now}
+	d.attachByAgent["agt-pending"] = "tok-pending"
+	d.attachByToken["tok-connected"] = attachSession{Token: "tok-connected", AgentID: "agt-connected", CreatedAt: now.Add(-(attachPendingSessionTTL + time.Second)), Connected: true}
+	d.attachByAgent["agt-connected"] = "tok-connected"
+	d.attachMu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go d.startAttachTokenCleanupLoop(ctx, 5*time.Millisecond)
+
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		d.attachMu.Lock()
+		_, expiredTokenExists := d.attachByToken["tok-expired"]
+		_, expiredAgentExists := d.attachByAgent["agt-expired"]
+		_, pendingTokenExists := d.attachByToken["tok-pending"]
+		_, pendingAgentExists := d.attachByAgent["agt-pending"]
+		_, connectedTokenExists := d.attachByToken["tok-connected"]
+		_, connectedAgentExists := d.attachByAgent["agt-connected"]
+		d.attachMu.Unlock()
+
+		if !expiredTokenExists && !expiredAgentExists {
+			if !pendingTokenExists || !pendingAgentExists {
+				t.Fatal("cleanup loop removed non-expired pending reservation")
+			}
+			if !connectedTokenExists || !connectedAgentExists {
+				t.Fatal("cleanup loop removed connected attach reservation")
+			}
+			return
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	t.Fatal("cleanup loop did not remove expired pending attach reservation")
 }
 
 func openAttachSession(t *testing.T, d *Daemon, token string, cols, rows uint16) net.Conn {

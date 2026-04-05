@@ -2,20 +2,113 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/client"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/frame"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
+	termio "github.com/builtwithtofu/ari/tools/ari-cli/internal/terminal"
 	"github.com/sourcegraph/jsonrpc2"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
+
+type attachSessionOutcome struct {
+	Detached bool
+	ExitCode *int
+}
+
+type attachFrameSession interface {
+	ReadFrame() (frame.Frame, error)
+	SendData(payload []byte) error
+	SendDetach() error
+	SendResize(cols, rows uint16) error
+	Close() error
+}
+
+type agentExitedFramePayload struct {
+	ExitCode int `json:"exit_code"`
+}
+
+func agentAttachPrepareTerminal(cmd *cobra.Command, ctx context.Context) (func(), error) {
+	if cmd == nil {
+		return nil, fmt.Errorf("attach terminal setup: command is required")
+	}
+	if ctx == nil {
+		return nil, fmt.Errorf("attach terminal setup: context is required")
+	}
+
+	inputFile, ok := cmd.InOrStdin().(*os.File)
+	if !ok {
+		return func() {}, nil
+	}
+	fd := int(inputFile.Fd())
+	if !term.IsTerminal(fd) {
+		return func() {}, nil
+	}
+
+	manager := termio.NewStateManager(fd, cmd.OutOrStdout())
+	if err := manager.EnterRaw(); err != nil {
+		return nil, err
+	}
+	if err := manager.EnterAltScreen(); err != nil {
+		_ = manager.Restore()
+		return nil, err
+	}
+
+	return func() {
+		_ = manager.Restore()
+	}, nil
+}
+
+func runAttachResizeLoop(ctx context.Context, session attachFrameSession, resizeSignals <-chan os.Signal, sizeProvider func() (uint16, uint16)) func() {
+	if ctx == nil || session == nil || resizeSignals == nil || sizeProvider == nil {
+		return func() {}
+	}
+
+	stopCh := make(chan struct{})
+	var stopOnce sync.Once
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-stopCh:
+				return
+			case <-resizeSignals:
+				cols, rows := sizeProvider()
+				if cols == 0 || rows == 0 {
+					continue
+				}
+				_ = session.SendResize(cols, rows)
+			}
+		}
+	}()
+
+	return func() {
+		stopOnce.Do(func() {
+			close(stopCh)
+		})
+	}
+}
+
+func isDaemonDisconnectError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, io.EOF)
+}
 
 var (
 	agentSpawnRPC = func(ctx context.Context, socketPath string, req daemon.AgentSpawnRequest) (daemon.AgentSpawnResponse, error) {
@@ -98,6 +191,124 @@ var (
 
 		return 80, 24
 	}
+	agentAttachOpenSession = func(ctx context.Context, socketPath, token string, cols, rows uint16) (attachFrameSession, []byte, error) {
+		return client.OpenAttachSession(ctx, socketPath, client.AttachConnectRequest{Token: token, Cols: cols, Rows: rows})
+	}
+	agentAttachPrepareTerminalFn = agentAttachPrepareTerminal
+	agentAttachRunSession        = func(ctx context.Context, input io.Reader, output io.Writer, socketPath, token string, cols, rows uint16, resizeSignals <-chan os.Signal, sizeProvider func() (uint16, uint16)) (attachSessionOutcome, error) {
+		session, snapshot, err := agentAttachOpenSession(ctx, socketPath, token, cols, rows)
+		if err != nil {
+			return attachSessionOutcome{}, err
+		}
+		defer func() {
+			_ = session.Close()
+		}()
+		stopResizeLoop := runAttachResizeLoop(ctx, session, resizeSignals, sizeProvider)
+		defer stopResizeLoop()
+
+		if len(snapshot) > 0 {
+			if _, err := output.Write(snapshot); err != nil {
+				return attachSessionOutcome{}, err
+			}
+		}
+
+		scanner := termio.NewDetachScanner()
+		buf := make([]byte, 1024)
+		inputResultCh := make(chan attachSessionOutcome, 1)
+		errCh := make(chan error, 2)
+		detachRequestedCh := make(chan struct{}, 1)
+		sessionDoneCh := make(chan struct{})
+		defer close(sessionDoneCh)
+
+		go func() {
+			select {
+			case <-ctx.Done():
+				_ = session.Close()
+			case <-sessionDoneCh:
+			}
+		}()
+
+		go func() {
+			for {
+				n, readErr := input.Read(buf)
+				if n > 0 {
+					passthrough, shouldDetach := scanner.Scan(buf[:n])
+					if len(passthrough) > 0 {
+						if err := session.SendData(passthrough); err != nil {
+							errCh <- err
+							return
+						}
+					}
+					if shouldDetach {
+						if err := session.SendDetach(); err != nil {
+							errCh <- err
+							return
+						}
+						select {
+						case detachRequestedCh <- struct{}{}:
+						default:
+						}
+						_ = session.Close()
+						inputResultCh <- attachSessionOutcome{Detached: true}
+						return
+					}
+				}
+
+				if readErr != nil {
+					if errors.Is(readErr, io.EOF) {
+						return
+					}
+					errCh <- readErr
+					return
+				}
+			}
+		}()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return attachSessionOutcome{}, ctx.Err()
+			case outcome := <-inputResultCh:
+				return outcome, nil
+			case runErr := <-errCh:
+				return attachSessionOutcome{}, runErr
+			default:
+			}
+
+			msg, err := session.ReadFrame()
+			if err != nil {
+				select {
+				case <-detachRequestedCh:
+					return attachSessionOutcome{Detached: true}, nil
+				default:
+				}
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return attachSessionOutcome{}, ctxErr
+				}
+				return attachSessionOutcome{}, err
+			}
+
+			switch msg.Type {
+			case frame.TypeDataServerToClient:
+				if len(msg.Payload) == 0 {
+					continue
+				}
+				if _, err := output.Write(msg.Payload); err != nil {
+					return attachSessionOutcome{}, err
+				}
+			case frame.TypeAgentExited:
+				var payload agentExitedFramePayload
+				if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+					return attachSessionOutcome{}, fmt.Errorf("decode agent exited payload: %w", err)
+				}
+				return attachSessionOutcome{ExitCode: &payload.ExitCode}, nil
+			case frame.TypeError:
+				return attachSessionOutcome{}, fmt.Errorf("attach protocol error: %s", string(msg.Payload))
+			default:
+				return attachSessionOutcome{}, fmt.Errorf("attach protocol error: unsupported frame type 0x%02x", byte(msg.Type))
+			}
+		}
+	}
 )
 
 func NewAgentCmd() *cobra.Command {
@@ -116,7 +327,7 @@ func NewAgentCmd() *cobra.Command {
 func newAgentAttachCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "attach <session> <id-or-name>",
-		Short: "Reserve an attach token for an agent",
+		Short: "Attach to a running agent terminal",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := configuredDaemonConfig()
@@ -124,30 +335,81 @@ func newAgentAttachCmd() *cobra.Command {
 				return err
 			}
 
-			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
+			runCtx := cmd.Context()
+			if runCtx == nil {
+				runCtx = context.Background()
+			}
+			runCtx, stopSignals := signal.NotifyContext(runCtx, os.Interrupt, syscall.SIGTERM)
+			defer stopSignals()
+
+			rpcCtx, cancel := context.WithTimeout(runCtx, 5*time.Second)
 			defer cancel()
 
-			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, args[0])
+			terminalCleanup, err := agentAttachPrepareTerminalFn(cmd, runCtx)
+			if err != nil {
+				return err
+			}
+			terminalRestored := false
+			restoreTerminal := func() {
+				if terminalRestored {
+					return
+				}
+				terminalRestored = true
+				terminalCleanup()
+			}
+			defer restoreTerminal()
+
+			sessionID, err := commandResolveSessionIdentifier(rpcCtx, cfg.Daemon.SocketPath, args[0])
 			if err != nil {
 				return err
 			}
 
 			cols, rows := agentAttachTerminalSize(cmd)
 
-			resp, err := agentAttachRPC(ctx, cfg.Daemon.SocketPath, daemon.AgentAttachRequest{
+			resp, err := agentAttachRPC(rpcCtx, cfg.Daemon.SocketPath, daemon.AgentAttachRequest{
 				SessionID:   sessionID,
 				AgentID:     strings.TrimSpace(args[1]),
 				InitialCols: cols,
 				InitialRows: rows,
 			})
 			if err != nil {
+				if isDaemonDisconnectError(err) {
+					return userFacingError{message: "Daemon disconnected. Agent may still be running."}
+				}
 				return mapAgentRPCError(err)
 			}
 
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Attach token: %s\n", resp.Token); err != nil {
+			resizeSignalCh := make(chan os.Signal, 1)
+			signal.Notify(resizeSignalCh, syscall.SIGWINCH)
+			defer signal.Stop(resizeSignalCh)
+
+			outcome, err := agentAttachRunSession(
+				runCtx,
+				cmd.InOrStdin(),
+				cmd.OutOrStdout(),
+				cfg.Daemon.SocketPath,
+				resp.Token,
+				cols,
+				rows,
+				resizeSignalCh,
+				func() (uint16, uint16) { return agentAttachTerminalSize(cmd) },
+			)
+			if err != nil {
+				if isDaemonDisconnectError(err) {
+					return userFacingError{message: "Daemon disconnected. Agent may still be running."}
+				}
 				return err
 			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Attach state: %s\n", resp.Status)
+			restoreTerminal()
+			if outcome.ExitCode != nil {
+				_, err = fmt.Fprintf(cmd.OutOrStdout(), "Agent exited (code %d).\n", *outcome.ExitCode)
+				return err
+			}
+			if !outcome.Detached {
+				return userFacingError{message: "Attach session ended unexpectedly"}
+			}
+
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Detached from agent %q.\n", strings.TrimSpace(args[1]))
 			return err
 		},
 	}
