@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -31,6 +32,7 @@ type attachFrameSession interface {
 	ReadFrame() (frame.Frame, error)
 	SendData(payload []byte) error
 	SendDetach() error
+	SendResize(cols, rows uint16) error
 	Close() error
 }
 
@@ -75,6 +77,38 @@ func agentAttachPrepareTerminal(cmd *cobra.Command, ctx context.Context) (func()
 		cancelSignalCleanup()
 		_ = manager.Restore()
 	}, nil
+}
+
+func runAttachResizeLoop(ctx context.Context, session attachFrameSession, resizeSignals <-chan os.Signal, sizeProvider func() (uint16, uint16)) func() {
+	if ctx == nil || session == nil || resizeSignals == nil || sizeProvider == nil {
+		return func() {}
+	}
+
+	stopCh := make(chan struct{})
+	var stopOnce sync.Once
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-stopCh:
+				return
+			case <-resizeSignals:
+				cols, rows := sizeProvider()
+				if cols == 0 || rows == 0 {
+					continue
+				}
+				_ = session.SendResize(cols, rows)
+			}
+		}
+	}()
+
+	return func() {
+		stopOnce.Do(func() {
+			close(stopCh)
+		})
+	}
 }
 
 func isDaemonDisconnectError(err error) bool {
@@ -171,7 +205,7 @@ var (
 	agentAttachOpenSession = func(ctx context.Context, socketPath, token string, cols, rows uint16) (attachFrameSession, []byte, error) {
 		return client.OpenAttachSession(ctx, socketPath, client.AttachConnectRequest{Token: token, Cols: cols, Rows: rows})
 	}
-	agentAttachRunSession = func(ctx context.Context, input io.Reader, output io.Writer, socketPath, token string, cols, rows uint16) (attachSessionOutcome, error) {
+	agentAttachRunSession = func(ctx context.Context, input io.Reader, output io.Writer, socketPath, token string, cols, rows uint16, resizeSignals <-chan os.Signal, sizeProvider func() (uint16, uint16)) (attachSessionOutcome, error) {
 		session, snapshot, err := agentAttachOpenSession(ctx, socketPath, token, cols, rows)
 		if err != nil {
 			return attachSessionOutcome{}, err
@@ -179,6 +213,8 @@ var (
 		defer func() {
 			_ = session.Close()
 		}()
+		stopResizeLoop := runAttachResizeLoop(ctx, session, resizeSignals, sizeProvider)
+		defer stopResizeLoop()
 
 		if len(snapshot) > 0 {
 			if _, err := output.Write(snapshot); err != nil {
@@ -311,7 +347,21 @@ func newAgentAttachCmd() *cobra.Command {
 				return mapAgentRPCError(err)
 			}
 
-			outcome, err := agentAttachRunSession(ctx, cmd.InOrStdin(), cmd.OutOrStdout(), cfg.Daemon.SocketPath, resp.Token, cols, rows)
+			resizeSignalCh := make(chan os.Signal, 1)
+			signal.Notify(resizeSignalCh, syscall.SIGWINCH)
+			defer signal.Stop(resizeSignalCh)
+
+			outcome, err := agentAttachRunSession(
+				ctx,
+				cmd.InOrStdin(),
+				cmd.OutOrStdout(),
+				cfg.Daemon.SocketPath,
+				resp.Token,
+				cols,
+				rows,
+				resizeSignalCh,
+				func() (uint16, uint16) { return agentAttachTerminalSize(cmd) },
+			)
 			if err != nil {
 				if isDaemonDisconnectError(err) {
 					return userFacingError{message: "Daemon disconnected. Agent may still be running."}

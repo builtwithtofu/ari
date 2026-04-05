@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/frame"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
 	"github.com/sourcegraph/jsonrpc2"
 	"github.com/spf13/cobra"
@@ -30,7 +34,7 @@ func TestAgentAttachDetachViaCtrlBackslash(t *testing.T) {
 	agentAttachTerminalSize = func(_ *cobra.Command) (uint16, uint16) {
 		return 120, 40
 	}
-	agentAttachRunSession = func(_ context.Context, _ io.Reader, _ io.Writer, _ string, _ string, _ uint16, _ uint16) (attachSessionOutcome, error) {
+	agentAttachRunSession = func(_ context.Context, _ io.Reader, _ io.Writer, _ string, _ string, _ uint16, _ uint16, _ <-chan os.Signal, _ func() (uint16, uint16)) (attachSessionOutcome, error) {
 		return attachSessionOutcome{Detached: true}, nil
 	}
 	t.Cleanup(func() {
@@ -151,4 +155,63 @@ func TestAgentAttachActiveWriterError(t *testing.T) {
 	if err.Error() != "Agent already has an active attach session" {
 		t.Fatalf("agent attach error = %q, want %q", err.Error(), "Agent already has an active attach session")
 	}
+}
+
+func TestRunAttachResizeLoopForwardsSIGWINCH(t *testing.T) {
+	session := &fakeResizeAttachSession{}
+	resizeSignals := make(chan os.Signal, 1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	stop := runAttachResizeLoop(ctx, session, resizeSignals, func() (uint16, uint16) {
+		return 132, 41
+	})
+	defer stop()
+
+	resizeSignals <- syscall.SIGWINCH
+
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if session.calledWith(132, 41) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	t.Fatal("resize loop did not forward SIGWINCH dimensions")
+}
+
+type fakeResizeAttachSession struct {
+	resizeCalls []frame.Frame
+}
+
+func (s *fakeResizeAttachSession) ReadFrame() (frame.Frame, error) {
+	return frame.Frame{}, io.EOF
+}
+
+func (s *fakeResizeAttachSession) SendData([]byte) error {
+	return nil
+}
+
+func (s *fakeResizeAttachSession) SendDetach() error {
+	return nil
+}
+
+func (s *fakeResizeAttachSession) SendResize(cols, rows uint16) error {
+	s.resizeCalls = append(s.resizeCalls, frame.Frame{Type: frame.TypeResize, Payload: []byte{byte(cols), byte(rows)}})
+	return nil
+}
+
+func (s *fakeResizeAttachSession) Close() error {
+	return nil
+}
+
+func (s *fakeResizeAttachSession) calledWith(cols, rows uint16) bool {
+	for _, call := range s.resizeCalls {
+		if len(call.Payload) == 2 && call.Payload[0] == byte(cols) && call.Payload[1] == byte(rows) {
+			return true
+		}
+	}
+	return false
 }

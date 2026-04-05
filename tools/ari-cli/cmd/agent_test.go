@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"os"
 	"strings"
 	"testing"
 
@@ -370,7 +371,7 @@ func TestAgentAttachAndDetachCommands(t *testing.T) {
 	agentAttachTerminalSize = func(_ *cobra.Command) (uint16, uint16) {
 		return 132, 43
 	}
-	agentAttachRunSession = func(_ context.Context, input io.Reader, _ io.Writer, _ string, _ string, _ uint16, _ uint16) (attachSessionOutcome, error) {
+	agentAttachRunSession = func(_ context.Context, input io.Reader, _ io.Writer, _ string, _ string, _ uint16, _ uint16, _ <-chan os.Signal, _ func() (uint16, uint16)) (attachSessionOutcome, error) {
 		buf := make([]byte, 8)
 		_, _ = input.Read(buf)
 		return attachSessionOutcome{Detached: true}, nil
