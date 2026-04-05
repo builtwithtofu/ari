@@ -370,10 +370,10 @@ func TestAgentAttachAndDetachCommands(t *testing.T) {
 	agentAttachTerminalSize = func(_ *cobra.Command) (uint16, uint16) {
 		return 132, 43
 	}
-	agentAttachRunSession = func(input io.Reader) error {
+	agentAttachRunSession = func(_ context.Context, input io.Reader, _ io.Writer, _ string, _ string, _ uint16, _ uint16) (attachSessionOutcome, error) {
 		buf := make([]byte, 8)
-		_, err := input.Read(buf)
-		return err
+		_, _ = input.Read(buf)
+		return attachSessionOutcome{Detached: true}, nil
 	}
 	t.Cleanup(func() {
 		commandResolveSessionIdentifier = originalResolve

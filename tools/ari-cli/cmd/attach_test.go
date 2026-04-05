@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"errors"
+	"io"
 	"testing"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
@@ -18,6 +19,7 @@ func TestAgentAttachDetachViaCtrlBackslash(t *testing.T) {
 	originalResolve := commandResolveSessionIdentifier
 	originalAttach := agentAttachRPC
 	originalSize := agentAttachTerminalSize
+	originalRunSession := agentAttachRunSession
 
 	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
 		return "sess-1", nil
@@ -28,10 +30,14 @@ func TestAgentAttachDetachViaCtrlBackslash(t *testing.T) {
 	agentAttachTerminalSize = func(_ *cobra.Command) (uint16, uint16) {
 		return 120, 40
 	}
+	agentAttachRunSession = func(_ context.Context, _ io.Reader, _ io.Writer, _ string, _ string, _ uint16, _ uint16) (attachSessionOutcome, error) {
+		return attachSessionOutcome{Detached: true}, nil
+	}
 	t.Cleanup(func() {
 		commandResolveSessionIdentifier = originalResolve
 		agentAttachRPC = originalAttach
 		agentAttachTerminalSize = originalSize
+		agentAttachRunSession = originalRunSession
 	})
 
 	out, err := executeRootCommandWithInput(string([]byte{0x1c}), "agent", "attach", "alpha", "claude")
@@ -51,6 +57,7 @@ func TestAgentAttachDaemonDisconnectMessage(t *testing.T) {
 	originalResolve := commandResolveSessionIdentifier
 	originalAttach := agentAttachRPC
 	originalSize := agentAttachTerminalSize
+	originalRunSession := agentAttachRunSession
 
 	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
 		return "sess-1", nil
@@ -65,6 +72,7 @@ func TestAgentAttachDaemonDisconnectMessage(t *testing.T) {
 		commandResolveSessionIdentifier = originalResolve
 		agentAttachRPC = originalAttach
 		agentAttachTerminalSize = originalSize
+		agentAttachRunSession = originalRunSession
 	})
 
 	_, err := executeRootCommand("agent", "attach", "alpha", "claude")
@@ -84,6 +92,7 @@ func TestAgentAttachStoppedAgentError(t *testing.T) {
 	originalResolve := commandResolveSessionIdentifier
 	originalAttach := agentAttachRPC
 	originalSize := agentAttachTerminalSize
+	originalRunSession := agentAttachRunSession
 
 	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
 		return "sess-1", nil
@@ -98,6 +107,7 @@ func TestAgentAttachStoppedAgentError(t *testing.T) {
 		commandResolveSessionIdentifier = originalResolve
 		agentAttachRPC = originalAttach
 		agentAttachTerminalSize = originalSize
+		agentAttachRunSession = originalRunSession
 	})
 
 	_, err := executeRootCommand("agent", "attach", "alpha", "claude")
@@ -116,6 +126,7 @@ func TestAgentAttachActiveWriterError(t *testing.T) {
 	originalResolve := commandResolveSessionIdentifier
 	originalAttach := agentAttachRPC
 	originalSize := agentAttachTerminalSize
+	originalRunSession := agentAttachRunSession
 
 	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
 		return "sess-1", nil
@@ -130,6 +141,7 @@ func TestAgentAttachActiveWriterError(t *testing.T) {
 		commandResolveSessionIdentifier = originalResolve
 		agentAttachRPC = originalAttach
 		agentAttachTerminalSize = originalSize
+		agentAttachRunSession = originalRunSession
 	})
 
 	_, err := executeRootCommand("agent", "attach", "alpha", "claude")
