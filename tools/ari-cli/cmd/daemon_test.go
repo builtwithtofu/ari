@@ -856,28 +856,22 @@ func executeRootCommandWithContext(ctx context.Context, args ...string) (string,
 		cwd = wd
 	}
 
-	sessionGetRPC = func(callCtx context.Context, socketPath, idOrName string) (daemon.SessionGetResponse, error) {
-		resp, err := originalSessionGet(callCtx, socketPath, idOrName)
-		if err == nil || !isDaemonUnavailable(err) {
-			return resp, err
+	if len(args) > 0 && (args[0] == "command" || args[0] == "agent") {
+		sessionGetRPC = func(_ context.Context, _ string, idOrName string) (daemon.SessionGetResponse, error) {
+			resolved := strings.TrimSpace(idOrName)
+			if resolved == "" {
+				return daemon.SessionGetResponse{}, userFacingError{message: "Session identifier is required"}
+			}
+			return daemon.SessionGetResponse{
+				SessionID:  resolved,
+				Name:       resolved,
+				OriginRoot: cwd,
+				Folders:    []daemon.SessionFolderInfo{{Path: cwd, VCSType: "none", IsPrimary: true}},
+			}, nil
 		}
-		resolved := strings.TrimSpace(idOrName)
-		if resolved == "" {
-			return daemon.SessionGetResponse{}, err
+		sessionListRPC = func(context.Context, string) (daemon.SessionListResponse, error) {
+			return daemon.SessionListResponse{Sessions: []daemon.SessionSummary{{SessionID: "sess-1", Name: "alpha", Status: "active", FolderCount: 1}}}, nil
 		}
-		return daemon.SessionGetResponse{
-			SessionID:  resolved,
-			Name:       resolved,
-			OriginRoot: cwd,
-			Folders:    []daemon.SessionFolderInfo{{Path: cwd, VCSType: "none", IsPrimary: true}},
-		}, nil
-	}
-	sessionListRPC = func(callCtx context.Context, socketPath string) (daemon.SessionListResponse, error) {
-		resp, err := originalSessionList(callCtx, socketPath)
-		if err == nil || !isDaemonUnavailable(err) {
-			return resp, err
-		}
-		return daemon.SessionListResponse{Sessions: []daemon.SessionSummary{{SessionID: "sess-1", Name: "alpha", Status: "active", FolderCount: 1}}}, nil
 	}
 	defer func() {
 		commandEnsureDaemonRunning = originalCommandEnsure
