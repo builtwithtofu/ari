@@ -395,7 +395,6 @@ func (d *Daemon) waitForAgentExit(ctx context.Context, agentID, sessionID string
 	}
 
 	defer d.agentWG.Done()
-	defer d.closeAttachConnection(agentID)
 	defer d.deleteAgentProcess(agentID)
 	defer d.clearAttachForAgent(agentID)
 

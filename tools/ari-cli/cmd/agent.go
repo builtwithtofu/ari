@@ -112,9 +112,12 @@ func isDaemonDisconnectError(err error) bool {
 }
 
 var (
-	agentReadActiveSession   = config.ReadActiveSession
-	agentEnsureDaemonRunning = ensureDaemonRunning
-	agentSpawnRPC            = func(ctx context.Context, socketPath string, req daemon.AgentSpawnRequest) (daemon.AgentSpawnResponse, error) {
+	agentReadActiveSession    = config.ReadActiveSession
+	agentEnsureDaemonRunning  = ensureDaemonRunning
+	agentEnsureWorkspaceScope = func(session *daemon.SessionGetResponse, sessionOverride string) error {
+		return enforceActiveWorkspaceScope(session, sessionOverride)
+	}
+	agentSpawnRPC = func(ctx context.Context, socketPath string, req daemon.AgentSpawnRequest) (daemon.AgentSpawnResponse, error) {
 		rpcClient := client.New(socketPath)
 		var response daemon.AgentSpawnResponse
 		if err := rpcClient.Call(ctx, "agent.spawn", req, &response); err != nil {
@@ -370,15 +373,18 @@ func newAgentAttachCmd() *cobra.Command {
 			}
 			defer restoreTerminal()
 
-			sessionID, err := commandResolveSessionIdentifier(rpcCtx, cfg.Daemon.SocketPath, sessionReference)
+			target, err := commandResolveSessionTarget(rpcCtx, cfg.Daemon.SocketPath, sessionReference)
 			if err != nil {
+				return err
+			}
+			if err := agentEnsureWorkspaceScope(target.Session, sessionRef); err != nil {
 				return err
 			}
 
 			cols, rows := agentAttachTerminalSize(cmd)
 
 			resp, err := agentAttachRPC(rpcCtx, cfg.Daemon.SocketPath, daemon.AgentAttachRequest{
-				SessionID:   sessionID,
+				SessionID:   target.SessionID,
 				AgentID:     strings.TrimSpace(args[0]),
 				InitialCols: cols,
 				InitialRows: rows,
@@ -450,13 +456,16 @@ func newAgentDetachCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, sessionReference)
+			target, err := commandResolveSessionTarget(ctx, cfg.Daemon.SocketPath, sessionReference)
 			if err != nil {
+				return err
+			}
+			if err := agentEnsureWorkspaceScope(target.Session, sessionRef); err != nil {
 				return err
 			}
 
 			resp, err := agentDetachRPC(ctx, cfg.Daemon.SocketPath, daemon.AgentDetachRequest{
-				SessionID: sessionID,
+				SessionID: target.SessionID,
 				AgentID:   strings.TrimSpace(args[0]),
 			})
 			if err != nil {
@@ -498,8 +507,11 @@ func newAgentSpawnCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, sessionReference)
+			target, err := commandResolveSessionTarget(ctx, cfg.Daemon.SocketPath, sessionReference)
 			if err != nil {
+				return err
+			}
+			if err := agentEnsureWorkspaceScope(target.Session, sessionRef); err != nil {
 				return err
 			}
 
@@ -519,7 +531,7 @@ func newAgentSpawnCmd() *cobra.Command {
 			}
 
 			resp, err := agentSpawnRPC(ctx, cfg.Daemon.SocketPath, daemon.AgentSpawnRequest{
-				SessionID: sessionID,
+				SessionID: target.SessionID,
 				Name:      strings.TrimSpace(name),
 				Harness:   strings.TrimSpace(harness),
 				Command:   command,
@@ -562,12 +574,15 @@ func newAgentListCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, sessionReference)
+			target, err := commandResolveSessionTarget(ctx, cfg.Daemon.SocketPath, sessionReference)
 			if err != nil {
 				return err
 			}
+			if err := agentEnsureWorkspaceScope(target.Session, sessionRef); err != nil {
+				return err
+			}
 
-			resp, err := agentListRPC(ctx, cfg.Daemon.SocketPath, sessionID)
+			resp, err := agentListRPC(ctx, cfg.Daemon.SocketPath, target.SessionID)
 			if err != nil {
 				return mapAgentRPCError(err)
 			}
@@ -614,12 +629,15 @@ func newAgentShowCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, sessionReference)
+			target, err := commandResolveSessionTarget(ctx, cfg.Daemon.SocketPath, sessionReference)
 			if err != nil {
 				return err
 			}
+			if err := agentEnsureWorkspaceScope(target.Session, sessionRef); err != nil {
+				return err
+			}
 
-			resp, err := agentGetRPC(ctx, cfg.Daemon.SocketPath, sessionID, strings.TrimSpace(args[0]))
+			resp, err := agentGetRPC(ctx, cfg.Daemon.SocketPath, target.SessionID, strings.TrimSpace(args[0]))
 			if err != nil {
 				return mapAgentRPCError(err)
 			}
@@ -698,13 +716,16 @@ func newAgentSendCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, sessionReference)
+			target, err := commandResolveSessionTarget(ctx, cfg.Daemon.SocketPath, sessionReference)
 			if err != nil {
+				return err
+			}
+			if err := agentEnsureWorkspaceScope(target.Session, sessionRef); err != nil {
 				return err
 			}
 
 			if _, err := agentSendRPC(ctx, cfg.Daemon.SocketPath, daemon.AgentSendRequest{
-				SessionID: sessionID,
+				SessionID: target.SessionID,
 				AgentID:   strings.TrimSpace(args[0]),
 				Input:     input,
 			}); err != nil {
@@ -743,12 +764,15 @@ func newAgentOutputCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, sessionReference)
+			target, err := commandResolveSessionTarget(ctx, cfg.Daemon.SocketPath, sessionReference)
 			if err != nil {
 				return err
 			}
+			if err := agentEnsureWorkspaceScope(target.Session, sessionRef); err != nil {
+				return err
+			}
 
-			resp, err := agentOutputRPC(ctx, cfg.Daemon.SocketPath, sessionID, strings.TrimSpace(args[0]))
+			resp, err := agentOutputRPC(ctx, cfg.Daemon.SocketPath, target.SessionID, strings.TrimSpace(args[0]))
 			if err != nil {
 				return mapAgentRPCError(err)
 			}
@@ -783,12 +807,15 @@ func newAgentStopCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, sessionReference)
+			target, err := commandResolveSessionTarget(ctx, cfg.Daemon.SocketPath, sessionReference)
 			if err != nil {
 				return err
 			}
+			if err := agentEnsureWorkspaceScope(target.Session, sessionRef); err != nil {
+				return err
+			}
 
-			resp, err := agentStopRPC(ctx, cfg.Daemon.SocketPath, sessionID, strings.TrimSpace(args[0]))
+			resp, err := agentStopRPC(ctx, cfg.Daemon.SocketPath, target.SessionID, strings.TrimSpace(args[0]))
 			if err != nil {
 				return mapAgentRPCError(err)
 			}

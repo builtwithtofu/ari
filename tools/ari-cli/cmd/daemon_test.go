@@ -845,13 +845,40 @@ func executeRootCommandWithContext(ctx context.Context, args ...string) (string,
 	originalCommandEnsure := commandEnsureDaemonRunning
 	originalAgentEnsure := agentEnsureDaemonRunning
 	originalSessionEnsure := sessionEnsureDaemonRunning
+	originalSessionGet := sessionGetRPC
+	originalSessionList := sessionListRPC
 	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	agentEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	sessionEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+
+	cwd := "."
+	if wd, err := os.Getwd(); err == nil {
+		cwd = wd
+	}
+
+	if len(args) > 0 && (args[0] == "command" || args[0] == "agent") {
+		sessionGetRPC = func(_ context.Context, _ string, idOrName string) (daemon.SessionGetResponse, error) {
+			resolved := strings.TrimSpace(idOrName)
+			if resolved == "" {
+				return daemon.SessionGetResponse{}, userFacingError{message: "Session identifier is required"}
+			}
+			return daemon.SessionGetResponse{
+				SessionID:  resolved,
+				Name:       resolved,
+				OriginRoot: cwd,
+				Folders:    []daemon.SessionFolderInfo{{Path: cwd, VCSType: "none", IsPrimary: true}},
+			}, nil
+		}
+		sessionListRPC = func(context.Context, string) (daemon.SessionListResponse, error) {
+			return daemon.SessionListResponse{Sessions: []daemon.SessionSummary{{SessionID: "sess-1", Name: "alpha", Status: "active", FolderCount: 1}}}, nil
+		}
+	}
 	defer func() {
 		commandEnsureDaemonRunning = originalCommandEnsure
 		agentEnsureDaemonRunning = originalAgentEnsure
 		sessionEnsureDaemonRunning = originalSessionEnsure
+		sessionGetRPC = originalSessionGet
+		sessionListRPC = originalSessionList
 	}()
 
 	root := NewRootCmd()

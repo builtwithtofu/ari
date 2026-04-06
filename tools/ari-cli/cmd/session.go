@@ -1,11 +1,13 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,11 +18,22 @@ import (
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/vcs"
 	"github.com/sourcegraph/jsonrpc2"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var (
-	sessionEnsureDaemonRunning = ensureDaemonRunning
-	sessionCreateRPC           = func(ctx context.Context, socketPath string, req daemon.SessionCreateRequest) (daemon.SessionCreateResponse, error) {
+	sessionEnsureDaemonRunning         = ensureDaemonRunning
+	sessionSwitchIsInteractiveTerminal = func(cmd *cobra.Command) bool {
+		if cmd == nil {
+			return false
+		}
+		inputFile, ok := cmd.InOrStdin().(*os.File)
+		if !ok {
+			return false
+		}
+		return term.IsTerminal(int(inputFile.Fd()))
+	}
+	sessionCreateRPC = func(ctx context.Context, socketPath string, req daemon.SessionCreateRequest) (daemon.SessionCreateResponse, error) {
 		rpcClient := client.New(socketPath)
 		var response daemon.SessionCreateResponse
 		if err := rpcClient.Call(ctx, "session.create", req, &response); err != nil {
@@ -93,6 +106,7 @@ func NewSessionCmd() *cobra.Command {
 	cmd.AddCommand(newSessionResumeCmd())
 	cmd.AddCommand(newSessionSetCmd())
 	cmd.AddCommand(newSessionCurrentCmd())
+	cmd.AddCommand(newSessionSwitchCmd())
 	cmd.AddCommand(newSessionClearCmd())
 	cmd.AddCommand(newSessionFolderCmd())
 	return cmd
@@ -119,16 +133,7 @@ func newSessionSetCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := config.WriteActiveSession(sessionID); err != nil {
-				return err
-			}
-			if strings.TrimSpace(os.Getenv("ARI_ACTIVE_SESSION")) != "" {
-				_, err = fmt.Fprintf(cmd.OutOrStdout(), "Persisted active workspace set: %s; ARI_ACTIVE_SESSION still overrides it in this shell\n", sessionID)
-				return err
-			}
-
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Active workspace set: %s\n", sessionID)
-			return err
+			return writeAndReportActiveSession(cmd, sessionID)
 		},
 	}
 }
@@ -167,6 +172,92 @@ func newSessionClearCmd() *cobra.Command {
 			return err
 		},
 	}
+}
+
+func newSessionSwitchCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "switch",
+		Short: "Switch active workspace session",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg, err := configuredDaemonConfig()
+			if err != nil {
+				return err
+			}
+			if err := sessionEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
+				return err
+			}
+			if !sessionSwitchIsInteractiveTerminal(cmd) {
+				return userFacingError{message: "session switch requires an interactive terminal; use session set <id-or-name>"}
+			}
+
+			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
+			defer cancel()
+
+			response, err := sessionListRPC(ctx, cfg.Daemon.SocketPath)
+			if err != nil {
+				return mapSessionRPCError(err)
+			}
+
+			available := make([]daemon.SessionSummary, 0, len(response.Sessions))
+			for _, session := range response.Sessions {
+				if strings.EqualFold(strings.TrimSpace(session.Status), "closed") {
+					continue
+				}
+				available = append(available, session)
+			}
+
+			if len(available) == 0 {
+				return userFacingError{message: "No open sessions available; create one with `ari session create <name>`"}
+			}
+
+			selected := daemon.SessionSummary{}
+			if len(available) == 1 {
+				selected = available[0]
+			} else {
+				if _, err := fmt.Fprintln(cmd.OutOrStdout(), "Select workspace session:"); err != nil {
+					return err
+				}
+				for index, session := range available {
+					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  %d) %s (%s)\n", index+1, session.Name, session.SessionID); err != nil {
+						return err
+					}
+				}
+				if _, err := fmt.Fprint(cmd.OutOrStdout(), "Enter selection number: "); err != nil {
+					return err
+				}
+
+				line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+				if err != nil {
+					return userFacingError{message: "Unable to read session selection"}
+				}
+				selection, err := strconv.Atoi(strings.TrimSpace(line))
+				if err != nil || selection < 1 || selection > len(available) {
+					return userFacingError{message: "Invalid session selection"}
+				}
+				selected = available[selection-1]
+			}
+
+			return writeAndReportActiveSession(cmd, selected.SessionID)
+		},
+	}
+}
+
+func writeAndReportActiveSession(cmd *cobra.Command, sessionID string) error {
+	if cmd == nil {
+		return fmt.Errorf("active session write: command is required")
+	}
+	if strings.TrimSpace(sessionID) == "" {
+		return userFacingError{message: "Session identifier is required"}
+	}
+	if err := config.WriteActiveSession(sessionID); err != nil {
+		return err
+	}
+	if strings.TrimSpace(os.Getenv("ARI_ACTIVE_SESSION")) != "" {
+		_, err := fmt.Fprintf(cmd.OutOrStdout(), "Persisted active workspace set: %s; ARI_ACTIVE_SESSION still overrides it in this shell\n", sessionID)
+		return err
+	}
+	_, err := fmt.Fprintf(cmd.OutOrStdout(), "Active workspace set: %s\n", sessionID)
+	return err
 }
 
 func newSessionCreateCmd() *cobra.Command {
@@ -518,39 +609,53 @@ func newSessionFolderCmd() *cobra.Command {
 }
 
 func resolveSessionIdentifier(ctx context.Context, socketPath, idOrName string) (string, error) {
+	target, err := resolveSessionTarget(ctx, socketPath, idOrName)
+	if err != nil {
+		return "", err
+	}
+	return target.SessionID, nil
+}
+
+type resolvedSessionTarget struct {
+	SessionID string
+	Session   *daemon.SessionGetResponse
+}
+
+func resolveSessionTarget(ctx context.Context, socketPath, idOrName string) (resolvedSessionTarget, error) {
 	idOrName = strings.TrimSpace(idOrName)
 	if idOrName == "" {
-		return "", userFacingError{message: "Session identifier is required"}
+		return resolvedSessionTarget{}, userFacingError{message: "Session identifier is required"}
 	}
 
 	if session, err := sessionGetRPC(ctx, socketPath, idOrName); err == nil {
-		return session.SessionID, nil
+		resolved := session
+		return resolvedSessionTarget{SessionID: session.SessionID, Session: &resolved}, nil
 	} else if !isSessionNotFoundError(err) {
-		return "", mapSessionRPCError(err)
+		return resolvedSessionTarget{}, mapSessionRPCError(err)
 	}
 
 	list, err := sessionListRPC(ctx, socketPath)
 	if err != nil {
-		return "", mapSessionRPCError(err)
+		return resolvedSessionTarget{}, mapSessionRPCError(err)
 	}
 
 	prefixMatches := make([]string, 0)
 	for _, session := range list.Sessions {
 		if session.Name == idOrName {
-			return session.SessionID, nil
+			return resolvedSessionTarget{SessionID: session.SessionID}, nil
 		}
 		if strings.HasPrefix(session.SessionID, idOrName) {
 			prefixMatches = append(prefixMatches, session.SessionID)
 		}
 	}
 	if len(prefixMatches) == 1 {
-		return prefixMatches[0], nil
+		return resolvedSessionTarget{SessionID: prefixMatches[0]}, nil
 	}
 	if len(prefixMatches) > 1 {
-		return "", userFacingError{message: "Session ID prefix is ambiguous"}
+		return resolvedSessionTarget{}, userFacingError{message: "Session ID prefix is ambiguous"}
 	}
 
-	return "", userFacingError{message: "Session not found"}
+	return resolvedSessionTarget{}, userFacingError{message: "Session not found"}
 }
 
 func mapSessionRPCError(err error) error {

@@ -11,6 +11,7 @@ import (
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
 	"github.com/sourcegraph/jsonrpc2"
+	"github.com/spf13/cobra"
 )
 
 func TestRootRegistersSessionCommand(t *testing.T) {
@@ -68,6 +69,10 @@ func TestSessionSubcommandsExist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("find session clear: %v", err)
 	}
+	switchCmd, _, err := session.Find([]string{"switch"})
+	if err != nil {
+		t.Fatalf("find session switch: %v", err)
+	}
 	folderAdd, _, err := session.Find([]string{"folder", "add"})
 	if err != nil {
 		t.Fatalf("find session folder add: %v", err)
@@ -77,8 +82,146 @@ func TestSessionSubcommandsExist(t *testing.T) {
 		t.Fatalf("find session folder remove: %v", err)
 	}
 
-	if create == nil || list == nil || show == nil || closeCmd == nil || suspend == nil || resume == nil || set == nil || current == nil || clear == nil || folderAdd == nil || folderRemove == nil {
+	if create == nil || list == nil || show == nil || closeCmd == nil || suspend == nil || resume == nil || set == nil || current == nil || clear == nil || switchCmd == nil || folderAdd == nil || folderRemove == nil {
 		t.Fatal("expected session subcommands to be registered")
+	}
+}
+
+func TestSessionSwitchRequiresInteractiveTerminal(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalTTY := sessionSwitchIsInteractiveTerminal
+	sessionSwitchIsInteractiveTerminal = func(*cobra.Command) bool { return false }
+	t.Cleanup(func() {
+		sessionSwitchIsInteractiveTerminal = originalTTY
+	})
+
+	_, err := executeRootCommand("session", "switch")
+	if err == nil {
+		t.Fatal("session switch returned nil error for non-interactive terminal")
+	}
+	if err.Error() != "session switch requires an interactive terminal; use session set <id-or-name>" {
+		t.Fatalf("session switch error = %q, want %q", err.Error(), "session switch requires an interactive terminal; use session set <id-or-name>")
+	}
+}
+
+func TestSessionSwitchSelectsOnlyAvailableSession(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalTTY := sessionSwitchIsInteractiveTerminal
+	originalList := sessionListRPC
+	sessionSwitchIsInteractiveTerminal = func(*cobra.Command) bool { return true }
+	sessionListRPC = func(context.Context, string) (daemon.SessionListResponse, error) {
+		return daemon.SessionListResponse{Sessions: []daemon.SessionSummary{{SessionID: "sess-11111111", Name: "alpha", Status: "active"}}}, nil
+	}
+	t.Cleanup(func() {
+		sessionSwitchIsInteractiveTerminal = originalTTY
+		sessionListRPC = originalList
+	})
+
+	out, err := executeRootCommand("session", "switch")
+	if err != nil {
+		t.Fatalf("execute session switch: %v", err)
+	}
+	if !strings.Contains(out, "Active workspace set: sess-11111111") {
+		t.Fatalf("session switch output = %q, want active workspace confirmation", out)
+	}
+
+	active, err := config.ReadPersistedActiveSession()
+	if err != nil {
+		t.Fatalf("ReadPersistedActiveSession returned error: %v", err)
+	}
+	if active != "sess-11111111" {
+		t.Fatalf("persisted active session = %q, want %q", active, "sess-11111111")
+	}
+}
+
+func TestSessionSwitchSkipsClosedSessions(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalTTY := sessionSwitchIsInteractiveTerminal
+	originalList := sessionListRPC
+	sessionSwitchIsInteractiveTerminal = func(*cobra.Command) bool { return true }
+	sessionListRPC = func(context.Context, string) (daemon.SessionListResponse, error) {
+		return daemon.SessionListResponse{Sessions: []daemon.SessionSummary{{SessionID: "sess-closed", Name: "old", Status: "closed"}}}, nil
+	}
+	t.Cleanup(func() {
+		sessionSwitchIsInteractiveTerminal = originalTTY
+		sessionListRPC = originalList
+	})
+
+	_, err := executeRootCommand("session", "switch")
+	if err == nil {
+		t.Fatal("session switch returned nil error with only closed sessions")
+	}
+	if err.Error() != "No open sessions available; create one with `ari session create <name>`" {
+		t.Fatalf("session switch error = %q, want %q", err.Error(), "No open sessions available; create one with `ari session create <name>`")
+	}
+}
+
+func TestSessionSwitchInteractiveSelectionForMultipleSessions(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalTTY := sessionSwitchIsInteractiveTerminal
+	originalList := sessionListRPC
+	sessionSwitchIsInteractiveTerminal = func(*cobra.Command) bool { return true }
+	sessionListRPC = func(context.Context, string) (daemon.SessionListResponse, error) {
+		return daemon.SessionListResponse{Sessions: []daemon.SessionSummary{
+			{SessionID: "sess-11111111", Name: "alpha", Status: "active"},
+			{SessionID: "sess-22222222", Name: "beta", Status: "suspended"},
+		}}, nil
+	}
+	t.Cleanup(func() {
+		sessionSwitchIsInteractiveTerminal = originalTTY
+		sessionListRPC = originalList
+	})
+
+	out, err := executeRootCommandWithInput("2\n", "session", "switch")
+	if err != nil {
+		t.Fatalf("execute session switch: %v", err)
+	}
+	if !strings.Contains(out, "Select workspace session") {
+		t.Fatalf("session switch output = %q, want selection prompt", out)
+	}
+	if !strings.Contains(out, "sess-11111111") || !strings.Contains(out, "sess-22222222") {
+		t.Fatalf("session switch output = %q, want full session ids", out)
+	}
+
+	active, err := config.ReadPersistedActiveSession()
+	if err != nil {
+		t.Fatalf("ReadPersistedActiveSession returned error: %v", err)
+	}
+	if active != "sess-22222222" {
+		t.Fatalf("persisted active session = %q, want %q", active, "sess-22222222")
+	}
+}
+
+func TestSessionSwitchWithEnvOverrideMentionsPersistedValue(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ARI_ACTIVE_SESSION", "sess-env")
+
+	originalTTY := sessionSwitchIsInteractiveTerminal
+	originalList := sessionListRPC
+	sessionSwitchIsInteractiveTerminal = func(*cobra.Command) bool { return true }
+	sessionListRPC = func(context.Context, string) (daemon.SessionListResponse, error) {
+		return daemon.SessionListResponse{Sessions: []daemon.SessionSummary{{SessionID: "sess-11111111", Name: "alpha", Status: "active"}}}, nil
+	}
+	t.Cleanup(func() {
+		sessionSwitchIsInteractiveTerminal = originalTTY
+		sessionListRPC = originalList
+	})
+
+	out, err := executeRootCommand("session", "switch")
+	if err != nil {
+		t.Fatalf("execute session switch: %v", err)
+	}
+	if !strings.Contains(out, "Persisted active workspace set: sess-11111111; ARI_ACTIVE_SESSION still overrides it in this shell") {
+		t.Fatalf("session switch output = %q, want env override warning", out)
 	}
 }
 

@@ -3,6 +3,8 @@ package cmd
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -37,6 +39,344 @@ func TestRootRegistersCommandCommand(t *testing.T) {
 				t.Fatalf("command name = %q, want %q", cmd.Name(), tc.want)
 			}
 		})
+	}
+}
+
+func TestCommandListRejectsActiveSessionOutsideWorkspace(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cwd := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd returned error: %v", err)
+	}
+	if err := os.Chdir(cwd); err != nil {
+		t.Fatalf("os.Chdir returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(originalWD)
+	})
+
+	originalResolve := commandResolveSessionIdentifier
+	originalReadActive := commandReadActiveSession
+	originalEnsure := commandEnsureDaemonRunning
+	originalSessionGet := sessionGetRPC
+	originalList := commandListRPC
+
+	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+		return "sess-1", nil
+	}
+	commandReadActiveSession = func() (string, error) {
+		return "sess-1", nil
+	}
+	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	sessionGetRPC = func(context.Context, string, string) (daemon.SessionGetResponse, error) {
+		return daemon.SessionGetResponse{SessionID: "sess-1", OriginRoot: t.TempDir()}, nil
+	}
+	commandListRPC = func(context.Context, string, string) (daemon.CommandListResponse, error) {
+		return daemon.CommandListResponse{}, errors.New("command list should not be called")
+	}
+	t.Cleanup(func() {
+		commandResolveSessionIdentifier = originalResolve
+		commandReadActiveSession = originalReadActive
+		commandEnsureDaemonRunning = originalEnsure
+		sessionGetRPC = originalSessionGet
+		commandListRPC = originalList
+	})
+
+	_, err = executeRootCommandRaw("command", "list")
+	if err == nil {
+		t.Fatal("command list returned nil error for cross-workspace active session")
+	}
+	if err.Error() != "Active workspace session belongs to a different workspace; use --session <id-or-name> to override" {
+		t.Fatalf("command list error = %q, want %q", err.Error(), "Active workspace session belongs to a different workspace; use --session <id-or-name> to override")
+	}
+}
+
+func TestCommandListSessionOverrideBypassesWorkspaceSafety(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalResolve := commandResolveSessionIdentifier
+	originalReadActive := commandReadActiveSession
+	originalEnsure := commandEnsureDaemonRunning
+	originalSessionGet := sessionGetRPC
+	originalList := commandListRPC
+
+	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+		return "sess-1", nil
+	}
+	commandReadActiveSession = func() (string, error) {
+		return "", errors.New("active session should not be read when --session is provided")
+	}
+	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	sessionGetRPC = func(context.Context, string, string) (daemon.SessionGetResponse, error) {
+		return daemon.SessionGetResponse{SessionID: "sess-1", OriginRoot: t.TempDir()}, nil
+	}
+	called := false
+	commandListRPC = func(context.Context, string, string) (daemon.CommandListResponse, error) {
+		called = true
+		return daemon.CommandListResponse{}, nil
+	}
+	t.Cleanup(func() {
+		commandResolveSessionIdentifier = originalResolve
+		commandReadActiveSession = originalReadActive
+		commandEnsureDaemonRunning = originalEnsure
+		sessionGetRPC = originalSessionGet
+		commandListRPC = originalList
+	})
+
+	_, err := executeRootCommand("command", "list", "--session", "alpha")
+	if err != nil {
+		t.Fatalf("command list with --session returned error: %v", err)
+	}
+	if !called {
+		t.Fatal("command list RPC not called with --session override")
+	}
+}
+
+func TestCommandListAllowsOriginRootWhenBroaderThanFolder(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	workspaceRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspaceRoot, "repo-a"), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll returned error: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(workspaceRoot, "repo-b"), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll returned error: %v", err)
+	}
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd returned error: %v", err)
+	}
+	if err := os.Chdir(filepath.Join(workspaceRoot, "repo-b")); err != nil {
+		t.Fatalf("os.Chdir returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(originalWD)
+	})
+
+	originalResolve := commandResolveSessionIdentifier
+	originalReadActive := commandReadActiveSession
+	originalEnsure := commandEnsureDaemonRunning
+	originalSessionGet := sessionGetRPC
+	originalList := commandListRPC
+
+	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+		return "sess-1", nil
+	}
+	commandReadActiveSession = func() (string, error) {
+		return "sess-1", nil
+	}
+	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	sessionGetRPC = func(context.Context, string, string) (daemon.SessionGetResponse, error) {
+		return daemon.SessionGetResponse{
+			SessionID:  "sess-1",
+			OriginRoot: workspaceRoot,
+			Folders:    []daemon.SessionFolderInfo{{Path: filepath.Join(workspaceRoot, "repo-a")}},
+		}, nil
+	}
+	called := false
+	commandListRPC = func(context.Context, string, string) (daemon.CommandListResponse, error) {
+		called = true
+		return daemon.CommandListResponse{}, nil
+	}
+	t.Cleanup(func() {
+		commandResolveSessionIdentifier = originalResolve
+		commandReadActiveSession = originalReadActive
+		commandEnsureDaemonRunning = originalEnsure
+		sessionGetRPC = originalSessionGet
+		commandListRPC = originalList
+	})
+
+	_, err = executeRootCommand("command", "list")
+	if err != nil {
+		t.Fatalf("command list returned error: %v", err)
+	}
+	if !called {
+		t.Fatal("command list RPC not called when cwd is within origin root")
+	}
+}
+
+func TestCommandListEnvActiveSessionBypassesWorkspaceSafety(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ARI_ACTIVE_SESSION", "sess-env")
+
+	originalResolve := commandResolveSessionIdentifier
+	originalReadActive := commandReadActiveSession
+	originalEnsure := commandEnsureDaemonRunning
+	originalSessionGet := sessionGetRPC
+	originalList := commandListRPC
+
+	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+		return "sess-env", nil
+	}
+	commandReadActiveSession = func() (string, error) {
+		return "sess-env", nil
+	}
+	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	sessionGetRPC = func(context.Context, string, string) (daemon.SessionGetResponse, error) {
+		return daemon.SessionGetResponse{SessionID: "sess-env", OriginRoot: t.TempDir()}, nil
+	}
+	called := false
+	commandListRPC = func(context.Context, string, string) (daemon.CommandListResponse, error) {
+		called = true
+		return daemon.CommandListResponse{}, nil
+	}
+	t.Cleanup(func() {
+		commandResolveSessionIdentifier = originalResolve
+		commandReadActiveSession = originalReadActive
+		commandEnsureDaemonRunning = originalEnsure
+		sessionGetRPC = originalSessionGet
+		commandListRPC = originalList
+	})
+
+	_, err := executeRootCommandRaw("command", "list")
+	if err != nil {
+		t.Fatalf("command list with env override returned error: %v", err)
+	}
+	if !called {
+		t.Fatal("command list RPC not called with env active-session override")
+	}
+}
+
+func TestCommandSubcommandsRejectActiveSessionOutsideWorkspace(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cwd := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd returned error: %v", err)
+	}
+	if err := os.Chdir(cwd); err != nil {
+		t.Fatalf("os.Chdir returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(originalWD)
+	})
+
+	originalResolve := commandResolveSessionIdentifier
+	originalReadActive := commandReadActiveSession
+	originalEnsure := commandEnsureDaemonRunning
+	originalSessionGet := sessionGetRPC
+	originalRun := commandRunRPC
+	originalList := commandListRPC
+	originalShow := commandGetRPC
+	originalOutput := commandOutputRPC
+	originalStop := commandStopRPC
+
+	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+		return "sess-1", nil
+	}
+	commandReadActiveSession = func() (string, error) {
+		return "sess-1", nil
+	}
+	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	sessionGetRPC = func(context.Context, string, string) (daemon.SessionGetResponse, error) {
+		return daemon.SessionGetResponse{SessionID: "sess-1", OriginRoot: t.TempDir()}, nil
+	}
+	commandRunRPC = func(context.Context, string, daemon.CommandRunRequest) (daemon.CommandRunResponse, error) {
+		return daemon.CommandRunResponse{}, errors.New("command run should not be called")
+	}
+	commandListRPC = func(context.Context, string, string) (daemon.CommandListResponse, error) {
+		return daemon.CommandListResponse{}, errors.New("command list should not be called")
+	}
+	commandGetRPC = func(context.Context, string, string, string) (daemon.CommandGetResponse, error) {
+		return daemon.CommandGetResponse{}, errors.New("command show should not be called")
+	}
+	commandOutputRPC = func(context.Context, string, string, string) (daemon.CommandOutputResponse, error) {
+		return daemon.CommandOutputResponse{}, errors.New("command output should not be called")
+	}
+	commandStopRPC = func(context.Context, string, string, string) (daemon.CommandStopResponse, error) {
+		return daemon.CommandStopResponse{}, errors.New("command stop should not be called")
+	}
+	t.Cleanup(func() {
+		commandResolveSessionIdentifier = originalResolve
+		commandReadActiveSession = originalReadActive
+		commandEnsureDaemonRunning = originalEnsure
+		sessionGetRPC = originalSessionGet
+		commandRunRPC = originalRun
+		commandListRPC = originalList
+		commandGetRPC = originalShow
+		commandOutputRPC = originalOutput
+		commandStopRPC = originalStop
+	})
+
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "run", args: []string{"command", "run", "--", "echo", "hi"}},
+		{name: "list", args: []string{"command", "list"}},
+		{name: "show", args: []string{"command", "show", "cmd-1"}},
+		{name: "output", args: []string{"command", "output", "cmd-1"}},
+		{name: "stop", args: []string{"command", "stop", "cmd-1"}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := executeRootCommandRaw(tc.args...)
+			if err == nil {
+				t.Fatalf("%s returned nil error", tc.name)
+			}
+			if err.Error() != "Active workspace session belongs to a different workspace; use --session <id-or-name> to override" {
+				t.Fatalf("%s error = %q, want workspace mismatch error", tc.name, err.Error())
+			}
+		})
+	}
+}
+
+func TestCommandListUsesSingleSessionGetForActiveWorkspace(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ARI_ACTIVE_SESSION", "")
+
+	workspaceRoot := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd returned error: %v", err)
+	}
+	if err := os.Chdir(workspaceRoot); err != nil {
+		t.Fatalf("os.Chdir returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(originalWD)
+	})
+
+	originalReadActive := commandReadActiveSession
+	originalEnsure := commandEnsureDaemonRunning
+	originalSessionGet := sessionGetRPC
+	originalList := commandListRPC
+
+	commandReadActiveSession = func() (string, error) {
+		return "sess-1", nil
+	}
+	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	sessionGetCalls := 0
+	sessionGetRPC = func(context.Context, string, string) (daemon.SessionGetResponse, error) {
+		sessionGetCalls++
+		return daemon.SessionGetResponse{SessionID: "sess-1", OriginRoot: workspaceRoot}, nil
+	}
+	commandListRPC = func(context.Context, string, string) (daemon.CommandListResponse, error) {
+		return daemon.CommandListResponse{}, nil
+	}
+	t.Cleanup(func() {
+		commandReadActiveSession = originalReadActive
+		commandEnsureDaemonRunning = originalEnsure
+		sessionGetRPC = originalSessionGet
+		commandListRPC = originalList
+	})
+
+	if _, err := executeRootCommandRaw("command", "list"); err != nil {
+		t.Fatalf("command list returned error: %v", err)
+	}
+	if sessionGetCalls != 1 {
+		t.Fatalf("sessionGetRPC calls = %d, want 1", sessionGetCalls)
 	}
 }
 
@@ -248,14 +588,14 @@ func TestCommandListUsesSessionFlagOverride(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	originalResolve := commandResolveSessionIdentifier
+	originalResolveTarget := commandResolveSessionTarget
 	originalReadActive := commandReadActiveSession
 	originalList := commandListRPC
 
 	var gotLookup string
-	commandResolveSessionIdentifier = func(_ context.Context, _ string, idOrName string) (string, error) {
+	commandResolveSessionTarget = func(_ context.Context, _ string, idOrName string) (resolvedSessionTarget, error) {
 		gotLookup = idOrName
-		return "sess-override", nil
+		return resolvedSessionTarget{SessionID: "sess-override", Session: &daemon.SessionGetResponse{SessionID: "sess-override", OriginRoot: t.TempDir()}}, nil
 	}
 	commandReadActiveSession = func() (string, error) {
 		return "sess-active", nil
@@ -264,7 +604,7 @@ func TestCommandListUsesSessionFlagOverride(t *testing.T) {
 		return daemon.CommandListResponse{}, nil
 	}
 	t.Cleanup(func() {
-		commandResolveSessionIdentifier = originalResolve
+		commandResolveSessionTarget = originalResolveTarget
 		commandReadActiveSession = originalReadActive
 		commandListRPC = originalList
 	})
@@ -329,7 +669,7 @@ func TestCommandSubcommandsUseSessionFlagOverride(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	originalResolve := commandResolveSessionIdentifier
+	originalResolveTarget := commandResolveSessionTarget
 	originalReadActive := commandReadActiveSession
 	originalRun := commandRunRPC
 	originalList := commandListRPC
@@ -356,7 +696,7 @@ func TestCommandSubcommandsUseSessionFlagOverride(t *testing.T) {
 		return daemon.CommandStopResponse{Status: "stopping"}, nil
 	}
 	t.Cleanup(func() {
-		commandResolveSessionIdentifier = originalResolve
+		commandResolveSessionTarget = originalResolveTarget
 		commandReadActiveSession = originalReadActive
 		commandRunRPC = originalRun
 		commandListRPC = originalList
@@ -379,9 +719,9 @@ func TestCommandSubcommandsUseSessionFlagOverride(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			gotLookup := ""
-			commandResolveSessionIdentifier = func(_ context.Context, _ string, idOrName string) (string, error) {
+			commandResolveSessionTarget = func(_ context.Context, _ string, idOrName string) (resolvedSessionTarget, error) {
 				gotLookup = idOrName
-				return "sess-override", nil
+				return resolvedSessionTarget{SessionID: "sess-override", Session: &daemon.SessionGetResponse{SessionID: "sess-override", OriginRoot: t.TempDir()}}, nil
 			}
 
 			_, err := executeRootCommand(tc.args...)
