@@ -845,17 +845,26 @@ func executeRootCommandWithContext(ctx context.Context, args ...string) (string,
 	originalCommandEnsure := commandEnsureDaemonRunning
 	originalAgentEnsure := agentEnsureDaemonRunning
 	originalSessionEnsure := sessionEnsureDaemonRunning
+	originalResolveTarget := commandResolveSessionTarget
 	originalCommandScope := commandEnsureWorkspaceScope
 	originalAgentScope := agentEnsureWorkspaceScope
 	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	agentEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	sessionEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
-	commandEnsureWorkspaceScope = func(context.Context, string, string, string) error { return nil }
-	agentEnsureWorkspaceScope = func(context.Context, string, string, string) error { return nil }
+	commandResolveSessionTarget = func(ctx context.Context, socketPath, idOrName string) (resolvedSessionTarget, error) {
+		sessionID, err := commandResolveSessionIdentifier(ctx, socketPath, idOrName)
+		if err != nil {
+			return resolvedSessionTarget{}, err
+		}
+		return resolvedSessionTarget{SessionID: sessionID, Session: &daemon.SessionGetResponse{SessionID: sessionID}}, nil
+	}
+	commandEnsureWorkspaceScope = func(*daemon.SessionGetResponse, string) error { return nil }
+	agentEnsureWorkspaceScope = func(*daemon.SessionGetResponse, string) error { return nil }
 	defer func() {
 		commandEnsureDaemonRunning = originalCommandEnsure
 		agentEnsureDaemonRunning = originalAgentEnsure
 		sessionEnsureDaemonRunning = originalSessionEnsure
+		commandResolveSessionTarget = originalResolveTarget
 		commandEnsureWorkspaceScope = originalCommandScope
 		agentEnsureWorkspaceScope = originalAgentScope
 	}()

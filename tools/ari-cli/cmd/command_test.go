@@ -331,6 +331,55 @@ func TestCommandSubcommandsRejectActiveSessionOutsideWorkspace(t *testing.T) {
 	}
 }
 
+func TestCommandListUsesSingleSessionGetForActiveWorkspace(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ARI_ACTIVE_SESSION", "")
+
+	workspaceRoot := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd returned error: %v", err)
+	}
+	if err := os.Chdir(workspaceRoot); err != nil {
+		t.Fatalf("os.Chdir returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(originalWD)
+	})
+
+	originalReadActive := commandReadActiveSession
+	originalEnsure := commandEnsureDaemonRunning
+	originalSessionGet := sessionGetRPC
+	originalList := commandListRPC
+
+	commandReadActiveSession = func() (string, error) {
+		return "sess-1", nil
+	}
+	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	sessionGetCalls := 0
+	sessionGetRPC = func(context.Context, string, string) (daemon.SessionGetResponse, error) {
+		sessionGetCalls++
+		return daemon.SessionGetResponse{SessionID: "sess-1", OriginRoot: workspaceRoot}, nil
+	}
+	commandListRPC = func(context.Context, string, string) (daemon.CommandListResponse, error) {
+		return daemon.CommandListResponse{}, nil
+	}
+	t.Cleanup(func() {
+		commandReadActiveSession = originalReadActive
+		commandEnsureDaemonRunning = originalEnsure
+		sessionGetRPC = originalSessionGet
+		commandListRPC = originalList
+	})
+
+	if _, err := executeRootCommandRaw("command", "list"); err != nil {
+		t.Fatalf("command list returned error: %v", err)
+	}
+	if sessionGetCalls != 1 {
+		t.Fatalf("sessionGetRPC calls = %d, want 1", sessionGetCalls)
+	}
+}
+
 func TestCommandSubcommandsExist(t *testing.T) {
 	command := NewCommandCmd()
 

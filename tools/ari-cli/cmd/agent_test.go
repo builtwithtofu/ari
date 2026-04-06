@@ -230,6 +230,55 @@ func TestAgentSubcommandsRejectActiveSessionOutsideWorkspace(t *testing.T) {
 	}
 }
 
+func TestAgentListUsesSingleSessionGetForActiveWorkspace(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ARI_ACTIVE_SESSION", "")
+
+	workspaceRoot := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd returned error: %v", err)
+	}
+	if err := os.Chdir(workspaceRoot); err != nil {
+		t.Fatalf("os.Chdir returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(originalWD)
+	})
+
+	originalReadActive := agentReadActiveSession
+	originalEnsure := agentEnsureDaemonRunning
+	originalSessionGet := sessionGetRPC
+	originalList := agentListRPC
+
+	agentReadActiveSession = func() (string, error) {
+		return "sess-1", nil
+	}
+	agentEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	sessionGetCalls := 0
+	sessionGetRPC = func(context.Context, string, string) (daemon.SessionGetResponse, error) {
+		sessionGetCalls++
+		return daemon.SessionGetResponse{SessionID: "sess-1", OriginRoot: workspaceRoot}, nil
+	}
+	agentListRPC = func(context.Context, string, string) (daemon.AgentListResponse, error) {
+		return daemon.AgentListResponse{}, nil
+	}
+	t.Cleanup(func() {
+		agentReadActiveSession = originalReadActive
+		agentEnsureDaemonRunning = originalEnsure
+		sessionGetRPC = originalSessionGet
+		agentListRPC = originalList
+	})
+
+	if _, err := executeRootCommandRaw("agent", "list"); err != nil {
+		t.Fatalf("agent list returned error: %v", err)
+	}
+	if sessionGetCalls != 1 {
+		t.Fatalf("sessionGetRPC calls = %d, want 1", sessionGetCalls)
+	}
+}
+
 func TestAgentSubcommandsExist(t *testing.T) {
 	agent := NewAgentCmd()
 
@@ -829,17 +878,26 @@ func executeRootCommandWithInput(stdin string, args ...string) (string, error) {
 	originalCommandEnsure := commandEnsureDaemonRunning
 	originalAgentEnsure := agentEnsureDaemonRunning
 	originalSessionEnsure := sessionEnsureDaemonRunning
+	originalResolveTarget := commandResolveSessionTarget
 	originalCommandScope := commandEnsureWorkspaceScope
 	originalAgentScope := agentEnsureWorkspaceScope
 	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	agentEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	sessionEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
-	commandEnsureWorkspaceScope = func(context.Context, string, string, string) error { return nil }
-	agentEnsureWorkspaceScope = func(context.Context, string, string, string) error { return nil }
+	commandResolveSessionTarget = func(ctx context.Context, socketPath, idOrName string) (resolvedSessionTarget, error) {
+		sessionID, err := commandResolveSessionIdentifier(ctx, socketPath, idOrName)
+		if err != nil {
+			return resolvedSessionTarget{}, err
+		}
+		return resolvedSessionTarget{SessionID: sessionID, Session: &daemon.SessionGetResponse{SessionID: sessionID}}, nil
+	}
+	commandEnsureWorkspaceScope = func(*daemon.SessionGetResponse, string) error { return nil }
+	agentEnsureWorkspaceScope = func(*daemon.SessionGetResponse, string) error { return nil }
 	defer func() {
 		commandEnsureDaemonRunning = originalCommandEnsure
 		agentEnsureDaemonRunning = originalAgentEnsure
 		sessionEnsureDaemonRunning = originalSessionEnsure
+		commandResolveSessionTarget = originalResolveTarget
 		commandEnsureWorkspaceScope = originalCommandScope
 		agentEnsureWorkspaceScope = originalAgentScope
 	}()

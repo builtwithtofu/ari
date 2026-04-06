@@ -609,39 +609,53 @@ func newSessionFolderCmd() *cobra.Command {
 }
 
 func resolveSessionIdentifier(ctx context.Context, socketPath, idOrName string) (string, error) {
+	target, err := resolveSessionTarget(ctx, socketPath, idOrName)
+	if err != nil {
+		return "", err
+	}
+	return target.SessionID, nil
+}
+
+type resolvedSessionTarget struct {
+	SessionID string
+	Session   *daemon.SessionGetResponse
+}
+
+func resolveSessionTarget(ctx context.Context, socketPath, idOrName string) (resolvedSessionTarget, error) {
 	idOrName = strings.TrimSpace(idOrName)
 	if idOrName == "" {
-		return "", userFacingError{message: "Session identifier is required"}
+		return resolvedSessionTarget{}, userFacingError{message: "Session identifier is required"}
 	}
 
 	if session, err := sessionGetRPC(ctx, socketPath, idOrName); err == nil {
-		return session.SessionID, nil
+		resolved := session
+		return resolvedSessionTarget{SessionID: session.SessionID, Session: &resolved}, nil
 	} else if !isSessionNotFoundError(err) {
-		return "", mapSessionRPCError(err)
+		return resolvedSessionTarget{}, mapSessionRPCError(err)
 	}
 
 	list, err := sessionListRPC(ctx, socketPath)
 	if err != nil {
-		return "", mapSessionRPCError(err)
+		return resolvedSessionTarget{}, mapSessionRPCError(err)
 	}
 
 	prefixMatches := make([]string, 0)
 	for _, session := range list.Sessions {
 		if session.Name == idOrName {
-			return session.SessionID, nil
+			return resolvedSessionTarget{SessionID: session.SessionID}, nil
 		}
 		if strings.HasPrefix(session.SessionID, idOrName) {
 			prefixMatches = append(prefixMatches, session.SessionID)
 		}
 	}
 	if len(prefixMatches) == 1 {
-		return prefixMatches[0], nil
+		return resolvedSessionTarget{SessionID: prefixMatches[0]}, nil
 	}
 	if len(prefixMatches) > 1 {
-		return "", userFacingError{message: "Session ID prefix is ambiguous"}
+		return resolvedSessionTarget{}, userFacingError{message: "Session ID prefix is ambiguous"}
 	}
 
-	return "", userFacingError{message: "Session not found"}
+	return resolvedSessionTarget{}, userFacingError{message: "Session not found"}
 }
 
 func mapSessionRPCError(err error) error {

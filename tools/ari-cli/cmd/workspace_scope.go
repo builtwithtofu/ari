@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,27 +9,22 @@ import (
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
 )
 
-func enforceActiveWorkspaceScope(ctx context.Context, socketPath, sessionID, sessionOverride string) error {
+func enforceActiveWorkspaceScope(session *daemon.SessionGetResponse, sessionOverride string) error {
 	if strings.TrimSpace(sessionOverride) != "" {
 		return nil
 	}
 	if strings.TrimSpace(os.Getenv("ARI_ACTIVE_SESSION")) != "" {
 		return nil
 	}
-	if ctx == nil {
-		return fmt.Errorf("workspace scope: context is required")
-	}
-
-	resolvedSession, err := sessionGetRPC(ctx, socketPath, sessionID)
-	if err != nil {
-		return mapSessionRPCError(err)
+	if session == nil {
+		return userFacingError{message: "Active workspace session details are unavailable; use --session <id-or-name> to override"}
 	}
 
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
 	}
-	matches, err := workspaceMatchesSession(cwd, resolvedSession)
+	matches, err := workspaceMatchesSession(cwd, *session)
 	if err != nil {
 		return err
 	}
