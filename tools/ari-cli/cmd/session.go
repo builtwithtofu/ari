@@ -19,7 +19,8 @@ import (
 )
 
 var (
-	sessionCreateRPC = func(ctx context.Context, socketPath string, req daemon.SessionCreateRequest) (daemon.SessionCreateResponse, error) {
+	sessionEnsureDaemonRunning = ensureDaemonRunning
+	sessionCreateRPC           = func(ctx context.Context, socketPath string, req daemon.SessionCreateRequest) (daemon.SessionCreateResponse, error) {
 		rpcClient := client.New(socketPath)
 		var response daemon.SessionCreateResponse
 		if err := rpcClient.Call(ctx, "session.create", req, &response); err != nil {
@@ -107,6 +108,9 @@ func newSessionSetCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := sessionEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
+				return err
+			}
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
@@ -169,6 +173,9 @@ func newSessionCreateCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := configuredDaemonConfig()
 			if err != nil {
+				return err
+			}
+			if err := sessionEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
 
@@ -234,6 +241,9 @@ func newSessionListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := sessionEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
+				return err
+			}
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
@@ -269,6 +279,9 @@ func newSessionShowCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := configuredDaemonConfig()
 			if err != nil {
+				return err
+			}
+			if err := sessionEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
 
@@ -316,13 +329,46 @@ func newSessionShowCmd() *cobra.Command {
 }
 
 func newSessionCloseCmd() *cobra.Command {
-	return newSessionStatusCommand("close", "Close session", func(ctx context.Context, socketPath, sessionID string) (string, error) {
-		resp, err := sessionCloseRPC(ctx, socketPath, sessionID)
-		if err != nil {
-			return "", err
-		}
-		return resp.Status, nil
-	})
+	return &cobra.Command{
+		Use:   "close <id-or-name>",
+		Short: "Close session",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := configuredDaemonConfig()
+			if err != nil {
+				return err
+			}
+			if err := sessionEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
+				return err
+			}
+
+			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
+			defer cancel()
+
+			sessionID, err := resolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, args[0])
+			if err != nil {
+				return err
+			}
+
+			resp, err := sessionCloseRPC(ctx, cfg.Daemon.SocketPath, sessionID)
+			if err != nil {
+				return mapSessionRPCError(err)
+			}
+
+			activeSession, err := config.ReadActiveSession()
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(activeSession) == sessionID {
+				if err := config.WriteActiveSession(""); err != nil {
+					return err
+				}
+			}
+
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Session close: %s\n", resp.Status)
+			return err
+		},
+	}
 }
 
 func newSessionSuspendCmd() *cobra.Command {
@@ -355,6 +401,9 @@ func newSessionStatusCommand(use, short string, call func(context.Context, strin
 			if err != nil {
 				return err
 			}
+			if err := sessionEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
+				return err
+			}
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
@@ -385,6 +434,9 @@ func newSessionFolderCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := configuredDaemonConfig()
 			if err != nil {
+				return err
+			}
+			if err := sessionEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
 
@@ -422,6 +474,9 @@ func newSessionFolderCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := configuredDaemonConfig()
 			if err != nil {
+				return err
+			}
+			if err := sessionEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
 

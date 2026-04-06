@@ -3,11 +3,13 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/config"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
 	"github.com/sourcegraph/jsonrpc2"
@@ -67,6 +69,7 @@ func TestAgentSpawnListShowOutputStop(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	originalResolve := commandResolveSessionIdentifier
+	originalReadActive := agentReadActiveSession
 	originalSpawn := agentSpawnRPC
 	originalList := agentListRPC
 	originalGet := agentGetRPC
@@ -74,6 +77,9 @@ func TestAgentSpawnListShowOutputStop(t *testing.T) {
 	originalStop := agentStopRPC
 
 	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+		return "sess-1", nil
+	}
+	agentReadActiveSession = func() (string, error) {
 		return "sess-1", nil
 	}
 	var gotSpawn daemon.AgentSpawnRequest
@@ -96,6 +102,7 @@ func TestAgentSpawnListShowOutputStop(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		commandResolveSessionIdentifier = originalResolve
+		agentReadActiveSession = originalReadActive
 		agentSpawnRPC = originalSpawn
 		agentListRPC = originalList
 		agentGetRPC = originalGet
@@ -103,7 +110,7 @@ func TestAgentSpawnListShowOutputStop(t *testing.T) {
 		agentStopRPC = originalStop
 	})
 
-	spawnOut, err := executeRootCommand("agent", "spawn", "alpha", "--name", "claude", "--", "claude-code", "--resume")
+	spawnOut, err := executeRootCommand("agent", "spawn", "--name", "claude", "--", "claude-code", "--resume")
 	if err != nil {
 		t.Fatalf("execute agent spawn: %v", err)
 	}
@@ -120,7 +127,7 @@ func TestAgentSpawnListShowOutputStop(t *testing.T) {
 		t.Fatalf("spawn output = %q, want start confirmation", spawnOut)
 	}
 
-	listOut, err := executeRootCommand("agent", "list", "alpha")
+	listOut, err := executeRootCommand("agent", "list")
 	if err != nil {
 		t.Fatalf("execute agent list: %v", err)
 	}
@@ -128,7 +135,7 @@ func TestAgentSpawnListShowOutputStop(t *testing.T) {
 		t.Fatalf("list output = %q, want agent name", listOut)
 	}
 
-	showOut, err := executeRootCommand("agent", "show", "alpha", "claude")
+	showOut, err := executeRootCommand("agent", "show", "claude")
 	if err != nil {
 		t.Fatalf("execute agent show: %v", err)
 	}
@@ -136,7 +143,7 @@ func TestAgentSpawnListShowOutputStop(t *testing.T) {
 		t.Fatalf("show output = %q, want status", showOut)
 	}
 
-	outputOut, err := executeRootCommand("agent", "output", "alpha", "claude")
+	outputOut, err := executeRootCommand("agent", "output", "claude")
 	if err != nil {
 		t.Fatalf("execute agent output: %v", err)
 	}
@@ -144,7 +151,7 @@ func TestAgentSpawnListShowOutputStop(t *testing.T) {
 		t.Fatalf("output output = %q, want output payload", outputOut)
 	}
 
-	stopOut, err := executeRootCommand("agent", "stop", "alpha", "claude")
+	stopOut, err := executeRootCommand("agent", "stop", "claude")
 	if err != nil {
 		t.Fatalf("execute agent stop: %v", err)
 	}
@@ -158,8 +165,12 @@ func TestAgentSendWithFlagInput(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	originalResolve := commandResolveSessionIdentifier
+	originalReadActive := agentReadActiveSession
 	originalSend := agentSendRPC
 	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+		return "sess-1", nil
+	}
+	agentReadActiveSession = func() (string, error) {
 		return "sess-1", nil
 	}
 	var got daemon.AgentSendRequest
@@ -169,10 +180,11 @@ func TestAgentSendWithFlagInput(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		commandResolveSessionIdentifier = originalResolve
+		agentReadActiveSession = originalReadActive
 		agentSendRPC = originalSend
 	})
 
-	out, err := executeRootCommand("agent", "send", "alpha", "claude", "--input", "fix bug")
+	out, err := executeRootCommand("agent", "send", "claude", "--input", "fix bug")
 	if err != nil {
 		t.Fatalf("execute agent send with --input: %v", err)
 	}
@@ -189,8 +201,12 @@ func TestAgentSendWithStdinPipe(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	originalResolve := commandResolveSessionIdentifier
+	originalReadActive := agentReadActiveSession
 	originalSend := agentSendRPC
 	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+		return "sess-1", nil
+	}
+	agentReadActiveSession = func() (string, error) {
 		return "sess-1", nil
 	}
 	var got daemon.AgentSendRequest
@@ -200,10 +216,11 @@ func TestAgentSendWithStdinPipe(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		commandResolveSessionIdentifier = originalResolve
+		agentReadActiveSession = originalReadActive
 		agentSendRPC = originalSend
 	})
 
-	out, err := executeRootCommandWithInput("hello from stdin", "agent", "send", "alpha", "claude")
+	out, err := executeRootCommandWithInput("hello from stdin", "agent", "send", "claude")
 	if err != nil {
 		t.Fatalf("execute agent send with stdin: %v", err)
 	}
@@ -219,7 +236,7 @@ func TestAgentSendRejectsBothFlagAndStdin(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	_, err := executeRootCommandWithInput("from-stdin", "agent", "send", "alpha", "claude", "--input", "from-flag")
+	_, err := executeRootCommandWithInput("from-stdin", "agent", "send", "claude", "--input", "from-flag")
 	if err == nil {
 		t.Fatal("agent send returned nil error when both --input and stdin provided")
 	}
@@ -232,7 +249,7 @@ func TestAgentSendRejectsMissingInput(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	_, err := executeRootCommand("agent", "send", "alpha", "claude")
+	_, err := executeRootCommand("agent", "send", "claude")
 	if err == nil {
 		t.Fatal("agent send returned nil error when input missing")
 	}
@@ -246,8 +263,12 @@ func TestAgentShowNotFoundMapsError(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	originalResolve := commandResolveSessionIdentifier
+	originalReadActive := agentReadActiveSession
 	originalGet := agentGetRPC
 	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+		return "sess-1", nil
+	}
+	agentReadActiveSession = func() (string, error) {
 		return "sess-1", nil
 	}
 	agentGetRPC = func(context.Context, string, string, string) (daemon.AgentGetResponse, error) {
@@ -255,10 +276,11 @@ func TestAgentShowNotFoundMapsError(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		commandResolveSessionIdentifier = originalResolve
+		agentReadActiveSession = originalReadActive
 		agentGetRPC = originalGet
 	})
 
-	_, err := executeRootCommand("agent", "show", "alpha", "missing")
+	_, err := executeRootCommand("agent", "show", "missing")
 	if err == nil {
 		t.Fatal("agent show returned nil error for missing agent")
 	}
@@ -272,8 +294,12 @@ func TestAgentSpawnAllowsHarnessWithoutExplicitCommand(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	originalResolve := commandResolveSessionIdentifier
+	originalReadActive := agentReadActiveSession
 	originalSpawn := agentSpawnRPC
 	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+		return "sess-1", nil
+	}
+	agentReadActiveSession = func() (string, error) {
 		return "sess-1", nil
 	}
 	var got daemon.AgentSpawnRequest
@@ -283,10 +309,11 @@ func TestAgentSpawnAllowsHarnessWithoutExplicitCommand(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		commandResolveSessionIdentifier = originalResolve
+		agentReadActiveSession = originalReadActive
 		agentSpawnRPC = originalSpawn
 	})
 
-	out, err := executeRootCommand("agent", "spawn", "alpha", "--harness", "opencode", "--", "--resume")
+	out, err := executeRootCommand("agent", "spawn", "--harness", "opencode", "--", "--resume")
 	if err != nil {
 		t.Fatalf("execute harness-only spawn: %v", err)
 	}
@@ -309,8 +336,12 @@ func TestAgentSpawnHarnessTreatsPositionalArgsAsHarnessArgs(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	originalResolve := commandResolveSessionIdentifier
+	originalReadActive := agentReadActiveSession
 	originalSpawn := agentSpawnRPC
 	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+		return "sess-1", nil
+	}
+	agentReadActiveSession = func() (string, error) {
 		return "sess-1", nil
 	}
 	var got daemon.AgentSpawnRequest
@@ -320,10 +351,11 @@ func TestAgentSpawnHarnessTreatsPositionalArgsAsHarnessArgs(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		commandResolveSessionIdentifier = originalResolve
+		agentReadActiveSession = originalReadActive
 		agentSpawnRPC = originalSpawn
 	})
 
-	_, err := executeRootCommand("agent", "spawn", "alpha", "--harness", "opencode", "--", "review prompt")
+	_, err := executeRootCommand("agent", "spawn", "--harness", "opencode", "--", "review prompt")
 	if err != nil {
 		t.Fatalf("execute harness positional spawn: %v", err)
 	}
@@ -350,12 +382,16 @@ func TestAgentAttachAndDetachCommands(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	originalResolve := commandResolveSessionIdentifier
+	originalReadActive := agentReadActiveSession
 	originalAttach := agentAttachRPC
 	originalDetach := agentDetachRPC
 	originalAttachTerminalSize := agentAttachTerminalSize
 	originalAttachRunSession := agentAttachRunSession
 
 	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+		return "sess-1", nil
+	}
+	agentReadActiveSession = func() (string, error) {
 		return "sess-1", nil
 	}
 	var gotAttach daemon.AgentAttachRequest
@@ -378,13 +414,14 @@ func TestAgentAttachAndDetachCommands(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		commandResolveSessionIdentifier = originalResolve
+		agentReadActiveSession = originalReadActive
 		agentAttachRPC = originalAttach
 		agentDetachRPC = originalDetach
 		agentAttachTerminalSize = originalAttachTerminalSize
 		agentAttachRunSession = originalAttachRunSession
 	})
 
-	attachOut, err := executeRootCommandWithInput(string([]byte{0x1c}), "agent", "attach", "alpha", "claude")
+	attachOut, err := executeRootCommandWithInput(string([]byte{0x1c}), "agent", "attach", "claude")
 	if err != nil {
 		t.Fatalf("execute agent attach: %v", err)
 	}
@@ -398,7 +435,7 @@ func TestAgentAttachAndDetachCommands(t *testing.T) {
 		t.Fatalf("attach output = %q, want detach line", attachOut)
 	}
 
-	detachOut, err := executeRootCommand("agent", "detach", "alpha", "claude")
+	detachOut, err := executeRootCommand("agent", "detach", "claude")
 	if err != nil {
 		t.Fatalf("execute agent detach: %v", err)
 	}
@@ -410,7 +447,171 @@ func TestAgentAttachAndDetachCommands(t *testing.T) {
 	}
 }
 
+func TestAgentListUsesSessionFlagOverride(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalResolve := commandResolveSessionIdentifier
+	originalReadActive := agentReadActiveSession
+	originalList := agentListRPC
+
+	var gotLookup string
+	commandResolveSessionIdentifier = func(_ context.Context, _ string, idOrName string) (string, error) {
+		gotLookup = idOrName
+		return "sess-override", nil
+	}
+	agentReadActiveSession = func() (string, error) {
+		return "sess-active", nil
+	}
+	agentListRPC = func(context.Context, string, string) (daemon.AgentListResponse, error) {
+		return daemon.AgentListResponse{}, nil
+	}
+	t.Cleanup(func() {
+		commandResolveSessionIdentifier = originalResolve
+		agentReadActiveSession = originalReadActive
+		agentListRPC = originalList
+	})
+
+	_, err := executeRootCommand("agent", "list", "--session", "alpha")
+	if err != nil {
+		t.Fatalf("execute agent list with --session: %v", err)
+	}
+	if gotLookup != "alpha" {
+		t.Fatalf("session lookup argument = %q, want %q", gotLookup, "alpha")
+	}
+}
+
+func TestAgentListRequiresActiveWorkspaceWhenSessionNotProvided(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalReadActive := agentReadActiveSession
+	agentReadActiveSession = func() (string, error) {
+		return "", nil
+	}
+	t.Cleanup(func() {
+		agentReadActiveSession = originalReadActive
+	})
+
+	_, err := executeRootCommand("agent", "list")
+	if err == nil {
+		t.Fatal("agent list returned nil error without active session")
+	}
+	if err.Error() != "No active workspace session is set" {
+		t.Fatalf("agent list error = %q, want %q", err.Error(), "No active workspace session is set")
+	}
+}
+
+func TestAgentSubcommandsUseSessionFlagOverride(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalResolve := commandResolveSessionIdentifier
+	originalReadActive := agentReadActiveSession
+	originalSpawn := agentSpawnRPC
+	originalList := agentListRPC
+	originalGet := agentGetRPC
+	originalAttach := agentAttachRPC
+	originalDetach := agentDetachRPC
+	originalSend := agentSendRPC
+	originalOutput := agentOutputRPC
+	originalStop := agentStopRPC
+	originalAttachTerminalSize := agentAttachTerminalSize
+	originalAttachRunSession := agentAttachRunSession
+
+	agentReadActiveSession = func() (string, error) {
+		return "", errors.New("active session should not be read when --session is provided")
+	}
+	agentSpawnRPC = func(context.Context, string, daemon.AgentSpawnRequest) (daemon.AgentSpawnResponse, error) {
+		return daemon.AgentSpawnResponse{AgentID: "agt-1", Status: "running"}, nil
+	}
+	agentListRPC = func(context.Context, string, string) (daemon.AgentListResponse, error) {
+		return daemon.AgentListResponse{}, nil
+	}
+	agentGetRPC = func(context.Context, string, string, string) (daemon.AgentGetResponse, error) {
+		return daemon.AgentGetResponse{AgentID: "agt-1", SessionID: "sess-1", Command: "claude-code", Status: "running", StartedAt: "now"}, nil
+	}
+	agentAttachRPC = func(context.Context, string, daemon.AgentAttachRequest) (daemon.AgentAttachResponse, error) {
+		return daemon.AgentAttachResponse{Token: "tok-1", Status: "pending"}, nil
+	}
+	agentDetachRPC = func(context.Context, string, daemon.AgentDetachRequest) (daemon.AgentDetachResponse, error) {
+		return daemon.AgentDetachResponse{Status: "detached"}, nil
+	}
+	agentSendRPC = func(context.Context, string, daemon.AgentSendRequest) (daemon.AgentSendResponse, error) {
+		return daemon.AgentSendResponse{Status: "sent"}, nil
+	}
+	agentOutputRPC = func(context.Context, string, string, string) (daemon.AgentOutputResponse, error) {
+		return daemon.AgentOutputResponse{Output: "ok\n"}, nil
+	}
+	agentStopRPC = func(context.Context, string, string, string) (daemon.AgentStopResponse, error) {
+		return daemon.AgentStopResponse{Status: "stopping"}, nil
+	}
+	agentAttachTerminalSize = func(*cobra.Command) (uint16, uint16) { return 120, 40 }
+	agentAttachRunSession = func(context.Context, io.Reader, io.Writer, string, string, uint16, uint16, <-chan os.Signal, func() (uint16, uint16)) (attachSessionOutcome, error) {
+		return attachSessionOutcome{Detached: true}, nil
+	}
+
+	t.Cleanup(func() {
+		commandResolveSessionIdentifier = originalResolve
+		agentReadActiveSession = originalReadActive
+		agentSpawnRPC = originalSpawn
+		agentListRPC = originalList
+		agentGetRPC = originalGet
+		agentAttachRPC = originalAttach
+		agentDetachRPC = originalDetach
+		agentSendRPC = originalSend
+		agentOutputRPC = originalOutput
+		agentStopRPC = originalStop
+		agentAttachTerminalSize = originalAttachTerminalSize
+		agentAttachRunSession = originalAttachRunSession
+	})
+
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "spawn", args: []string{"agent", "spawn", "--session", "alpha", "--harness", "opencode", "--", "--resume"}},
+		{name: "list", args: []string{"agent", "list", "--session", "alpha"}},
+		{name: "show", args: []string{"agent", "show", "claude", "--session", "alpha"}},
+		{name: "attach", args: []string{"agent", "attach", "claude", "--session", "alpha"}},
+		{name: "detach", args: []string{"agent", "detach", "claude", "--session", "alpha"}},
+		{name: "send", args: []string{"agent", "send", "claude", "--session", "alpha", "--input", "hello"}},
+		{name: "output", args: []string{"agent", "output", "claude", "--session", "alpha"}},
+		{name: "stop", args: []string{"agent", "stop", "claude", "--session", "alpha"}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			gotLookup := ""
+			commandResolveSessionIdentifier = func(_ context.Context, _ string, idOrName string) (string, error) {
+				gotLookup = idOrName
+				return "sess-override", nil
+			}
+
+			_, err := executeRootCommand(tc.args...)
+			if err != nil {
+				t.Fatalf("execute agent %s with --session: %v", tc.name, err)
+			}
+			if gotLookup != "alpha" {
+				t.Fatalf("session lookup argument = %q, want %q", gotLookup, "alpha")
+			}
+		})
+	}
+}
+
 func executeRootCommandWithInput(stdin string, args ...string) (string, error) {
+	originalCommandEnsure := commandEnsureDaemonRunning
+	originalAgentEnsure := agentEnsureDaemonRunning
+	originalSessionEnsure := sessionEnsureDaemonRunning
+	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	agentEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	sessionEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	defer func() {
+		commandEnsureDaemonRunning = originalCommandEnsure
+		agentEnsureDaemonRunning = originalAgentEnsure
+		sessionEnsureDaemonRunning = originalSessionEnsure
+	}()
+
 	root := NewRootCmd()
 	var out bytes.Buffer
 	root.SetOut(&out)

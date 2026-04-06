@@ -24,11 +24,15 @@ func TestAgentAttachDetachViaCtrlBackslash(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	originalResolve := commandResolveSessionIdentifier
+	originalReadActive := agentReadActiveSession
 	originalAttach := agentAttachRPC
 	originalSize := agentAttachTerminalSize
 	originalRunSession := agentAttachRunSession
 
 	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+		return "sess-1", nil
+	}
+	agentReadActiveSession = func() (string, error) {
 		return "sess-1", nil
 	}
 	agentAttachRPC = func(_ context.Context, _ string, _ daemon.AgentAttachRequest) (daemon.AgentAttachResponse, error) {
@@ -42,12 +46,13 @@ func TestAgentAttachDetachViaCtrlBackslash(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		commandResolveSessionIdentifier = originalResolve
+		agentReadActiveSession = originalReadActive
 		agentAttachRPC = originalAttach
 		agentAttachTerminalSize = originalSize
 		agentAttachRunSession = originalRunSession
 	})
 
-	out, err := executeRootCommandWithInput(string([]byte{0x1c}), "agent", "attach", "alpha", "claude")
+	out, err := executeRootCommandWithInput(string([]byte{0x1c}), "agent", "attach", "claude")
 	if err != nil {
 		t.Fatalf("execute agent attach: %v", err)
 	}
@@ -62,11 +67,15 @@ func TestAgentAttachDaemonDisconnectMessage(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	originalResolve := commandResolveSessionIdentifier
+	originalReadActive := agentReadActiveSession
 	originalAttach := agentAttachRPC
 	originalSize := agentAttachTerminalSize
 	originalRunSession := agentAttachRunSession
 
 	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+		return "sess-1", nil
+	}
+	agentReadActiveSession = func() (string, error) {
 		return "sess-1", nil
 	}
 	agentAttachRPC = func(_ context.Context, _ string, _ daemon.AgentAttachRequest) (daemon.AgentAttachResponse, error) {
@@ -77,12 +86,13 @@ func TestAgentAttachDaemonDisconnectMessage(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		commandResolveSessionIdentifier = originalResolve
+		agentReadActiveSession = originalReadActive
 		agentAttachRPC = originalAttach
 		agentAttachTerminalSize = originalSize
 		agentAttachRunSession = originalRunSession
 	})
 
-	_, err := executeRootCommand("agent", "attach", "alpha", "claude")
+	_, err := executeRootCommand("agent", "attach", "claude")
 	if err == nil {
 		t.Fatal("agent attach returned nil error on disconnect")
 	}
@@ -103,11 +113,15 @@ func TestAgentAttachStoppedAgentError(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	originalResolve := commandResolveSessionIdentifier
+	originalReadActive := agentReadActiveSession
 	originalAttach := agentAttachRPC
 	originalSize := agentAttachTerminalSize
 	originalRunSession := agentAttachRunSession
 
 	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+		return "sess-1", nil
+	}
+	agentReadActiveSession = func() (string, error) {
 		return "sess-1", nil
 	}
 	agentAttachRPC = func(_ context.Context, _ string, _ daemon.AgentAttachRequest) (daemon.AgentAttachResponse, error) {
@@ -118,12 +132,13 @@ func TestAgentAttachStoppedAgentError(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		commandResolveSessionIdentifier = originalResolve
+		agentReadActiveSession = originalReadActive
 		agentAttachRPC = originalAttach
 		agentAttachTerminalSize = originalSize
 		agentAttachRunSession = originalRunSession
 	})
 
-	_, err := executeRootCommand("agent", "attach", "alpha", "claude")
+	_, err := executeRootCommand("agent", "attach", "claude")
 	if err == nil {
 		t.Fatal("agent attach returned nil error for stopped agent")
 	}
@@ -137,11 +152,15 @@ func TestAgentAttachActiveWriterError(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	originalResolve := commandResolveSessionIdentifier
+	originalReadActive := agentReadActiveSession
 	originalAttach := agentAttachRPC
 	originalSize := agentAttachTerminalSize
 	originalRunSession := agentAttachRunSession
 
 	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+		return "sess-1", nil
+	}
+	agentReadActiveSession = func() (string, error) {
 		return "sess-1", nil
 	}
 	agentAttachRPC = func(_ context.Context, _ string, _ daemon.AgentAttachRequest) (daemon.AgentAttachResponse, error) {
@@ -152,12 +171,13 @@ func TestAgentAttachActiveWriterError(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		commandResolveSessionIdentifier = originalResolve
+		agentReadActiveSession = originalReadActive
 		agentAttachRPC = originalAttach
 		agentAttachTerminalSize = originalSize
 		agentAttachRunSession = originalRunSession
 	})
 
-	_, err := executeRootCommand("agent", "attach", "alpha", "claude")
+	_, err := executeRootCommand("agent", "attach", "claude")
 	if err == nil {
 		t.Fatal("agent attach returned nil error for active writer")
 	}
@@ -171,11 +191,15 @@ func TestAgentAttachRunSessionUsesCommandContextWithoutTimeout(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	originalResolve := commandResolveSessionIdentifier
+	originalReadActive := agentReadActiveSession
 	originalAttach := agentAttachRPC
 	originalSize := agentAttachTerminalSize
 	originalRunSession := agentAttachRunSession
 
 	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+		return "sess-1", nil
+	}
+	agentReadActiveSession = func() (string, error) {
 		return "sess-1", nil
 	}
 	agentAttachRPC = func(_ context.Context, _ string, _ daemon.AgentAttachRequest) (daemon.AgentAttachResponse, error) {
@@ -192,12 +216,13 @@ func TestAgentAttachRunSessionUsesCommandContextWithoutTimeout(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		commandResolveSessionIdentifier = originalResolve
+		agentReadActiveSession = originalReadActive
 		agentAttachRPC = originalAttach
 		agentAttachTerminalSize = originalSize
 		agentAttachRunSession = originalRunSession
 	})
 
-	_, err := executeRootCommandWithInput(string([]byte{0x1c}), "agent", "attach", "alpha", "claude")
+	_, err := executeRootCommandWithInput(string([]byte{0x1c}), "agent", "attach", "claude")
 	if err != nil {
 		t.Fatalf("execute agent attach: %v", err)
 	}
@@ -208,12 +233,16 @@ func TestAgentAttachRestoresTerminalBeforeFinalStatus(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	originalResolve := commandResolveSessionIdentifier
+	originalReadActive := agentReadActiveSession
 	originalAttach := agentAttachRPC
 	originalSize := agentAttachTerminalSize
 	originalRunSession := agentAttachRunSession
 	originalPrepareTerminal := agentAttachPrepareTerminalFn
 
 	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+		return "sess-1", nil
+	}
+	agentReadActiveSession = func() (string, error) {
 		return "sess-1", nil
 	}
 	agentAttachRPC = func(_ context.Context, _ string, _ daemon.AgentAttachRequest) (daemon.AgentAttachResponse, error) {
@@ -232,13 +261,14 @@ func TestAgentAttachRestoresTerminalBeforeFinalStatus(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		commandResolveSessionIdentifier = originalResolve
+		agentReadActiveSession = originalReadActive
 		agentAttachRPC = originalAttach
 		agentAttachTerminalSize = originalSize
 		agentAttachRunSession = originalRunSession
 		agentAttachPrepareTerminalFn = originalPrepareTerminal
 	})
 
-	out, err := executeRootCommandWithInput(string([]byte{0x1c}), "agent", "attach", "alpha", "claude")
+	out, err := executeRootCommandWithInput(string([]byte{0x1c}), "agent", "attach", "claude")
 	if err != nil {
 		t.Fatalf("execute agent attach: %v", err)
 	}
@@ -454,6 +484,7 @@ func TestAgentAttachRestoresTerminalOnRunSessionPanic(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	originalResolve := commandResolveSessionIdentifier
+	originalReadActive := agentReadActiveSession
 	originalAttach := agentAttachRPC
 	originalSize := agentAttachTerminalSize
 	originalRunSession := agentAttachRunSession
@@ -461,6 +492,9 @@ func TestAgentAttachRestoresTerminalOnRunSessionPanic(t *testing.T) {
 
 	restoreCalls := 0
 	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+		return "sess-1", nil
+	}
+	agentReadActiveSession = func() (string, error) {
 		return "sess-1", nil
 	}
 	agentAttachRPC = func(_ context.Context, _ string, _ daemon.AgentAttachRequest) (daemon.AgentAttachResponse, error) {
@@ -479,6 +513,7 @@ func TestAgentAttachRestoresTerminalOnRunSessionPanic(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		commandResolveSessionIdentifier = originalResolve
+		agentReadActiveSession = originalReadActive
 		agentAttachRPC = originalAttach
 		agentAttachTerminalSize = originalSize
 		agentAttachRunSession = originalRunSession
@@ -498,7 +533,7 @@ func TestAgentAttachRestoresTerminalOnRunSessionPanic(t *testing.T) {
 		}
 	}()
 
-	_, _ = executeRootCommand("agent", "attach", "alpha", "claude")
+	_, _ = executeRootCommand("agent", "attach", "claude")
 }
 
 func TestAgentAttachRunSessionDetachClosesIdleRead(t *testing.T) {

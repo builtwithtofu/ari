@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/config"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
 )
 
@@ -298,6 +299,61 @@ func TestDaemonStartWhenAlreadyRunningFromPIDFile(t *testing.T) {
 	want := "Daemon is already running (PID 1).\nHint: Run `ari daemon status` or `ari daemon stop`."
 	if strings.TrimSpace(out) != want {
 		t.Fatalf("unexpected output: %q", out)
+	}
+}
+
+func TestEnsureDaemonRunningReturnsWhenHealthy(t *testing.T) {
+	originalStatus := daemonStatusRPC
+	originalLaunch := daemonAutoStartLaunch
+	daemonStatusRPC = func(context.Context, string) (daemon.StatusResponse, error) {
+		return daemon.StatusResponse{PID: 111}, nil
+	}
+	launchCalled := false
+	daemonAutoStartLaunch = func(*config.Config) error {
+		launchCalled = true
+		return nil
+	}
+	t.Cleanup(func() {
+		daemonStatusRPC = originalStatus
+		daemonAutoStartLaunch = originalLaunch
+	})
+
+	cfg := &config.Config{Daemon: config.DaemonConfig{SocketPath: "/tmp/ari.sock", DBPath: "/tmp/ari.db", PIDPath: "/tmp/ari.pid"}}
+	if err := ensureDaemonRunning(context.Background(), cfg); err != nil {
+		t.Fatalf("ensureDaemonRunning returned error: %v", err)
+	}
+	if launchCalled {
+		t.Fatal("daemon auto-start launched despite healthy daemon")
+	}
+}
+
+func TestEnsureDaemonRunningLaunchesWhenUnavailable(t *testing.T) {
+	originalStatus := daemonStatusRPC
+	originalLaunch := daemonAutoStartLaunch
+	statusCalls := 0
+	daemonStatusRPC = func(context.Context, string) (daemon.StatusResponse, error) {
+		statusCalls++
+		if statusCalls < 3 {
+			return daemon.StatusResponse{}, os.ErrNotExist
+		}
+		return daemon.StatusResponse{PID: 222}, nil
+	}
+	launchCalled := false
+	daemonAutoStartLaunch = func(*config.Config) error {
+		launchCalled = true
+		return nil
+	}
+	t.Cleanup(func() {
+		daemonStatusRPC = originalStatus
+		daemonAutoStartLaunch = originalLaunch
+	})
+
+	cfg := &config.Config{Daemon: config.DaemonConfig{SocketPath: "/tmp/ari.sock", DBPath: "/tmp/ari.db", PIDPath: "/tmp/ari.pid"}}
+	if err := ensureDaemonRunning(context.Background(), cfg); err != nil {
+		t.Fatalf("ensureDaemonRunning returned error: %v", err)
+	}
+	if !launchCalled {
+		t.Fatal("daemon auto-start launch not called for unavailable daemon")
 	}
 }
 
@@ -664,6 +720,18 @@ func executeRootCommand(args ...string) (string, error) {
 }
 
 func executeRootCommandWithContext(ctx context.Context, args ...string) (string, error) {
+	originalCommandEnsure := commandEnsureDaemonRunning
+	originalAgentEnsure := agentEnsureDaemonRunning
+	originalSessionEnsure := sessionEnsureDaemonRunning
+	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	agentEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	sessionEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	defer func() {
+		commandEnsureDaemonRunning = originalCommandEnsure
+		agentEnsureDaemonRunning = originalAgentEnsure
+		sessionEnsureDaemonRunning = originalSessionEnsure
+	}()
+
 	root := NewRootCmd()
 	var out bytes.Buffer
 	root.SetOut(&out)
@@ -672,4 +740,72 @@ func executeRootCommandWithContext(ctx context.Context, args ...string) (string,
 	root.SetArgs(args)
 	err := root.Execute()
 	return out.String(), err
+}
+
+func executeRootCommandRaw(args ...string) (string, error) {
+	root := NewRootCmd()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetContext(context.Background())
+	root.SetArgs(args)
+	err := root.Execute()
+	return out.String(), err
+}
+
+func TestCommandListReturnsEnsureDaemonError(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	originalEnsure := commandEnsureDaemonRunning
+	commandEnsureDaemonRunning = func(context.Context, *config.Config) error {
+		return userFacingError{message: "daemon ensure failed"}
+	}
+	t.Cleanup(func() {
+		commandEnsureDaemonRunning = originalEnsure
+	})
+
+	_, err := executeRootCommandRaw("command", "list")
+	if err == nil {
+		t.Fatal("command list returned nil error")
+	}
+	if err.Error() != "daemon ensure failed" {
+		t.Fatalf("command list error = %q, want %q", err.Error(), "daemon ensure failed")
+	}
+}
+
+func TestAgentListReturnsEnsureDaemonError(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	originalEnsure := agentEnsureDaemonRunning
+	agentEnsureDaemonRunning = func(context.Context, *config.Config) error {
+		return userFacingError{message: "daemon ensure failed"}
+	}
+	t.Cleanup(func() {
+		agentEnsureDaemonRunning = originalEnsure
+	})
+
+	_, err := executeRootCommandRaw("agent", "list")
+	if err == nil {
+		t.Fatal("agent list returned nil error")
+	}
+	if err.Error() != "daemon ensure failed" {
+		t.Fatalf("agent list error = %q, want %q", err.Error(), "daemon ensure failed")
+	}
+}
+
+func TestSessionListReturnsEnsureDaemonError(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	originalEnsure := sessionEnsureDaemonRunning
+	sessionEnsureDaemonRunning = func(context.Context, *config.Config) error {
+		return userFacingError{message: "daemon ensure failed"}
+	}
+	t.Cleanup(func() {
+		sessionEnsureDaemonRunning = originalEnsure
+	})
+
+	_, err := executeRootCommandRaw("session", "list")
+	if err == nil {
+		t.Fatal("session list returned nil error")
+	}
+	if err.Error() != "daemon ensure failed" {
+		t.Fatalf("session list error = %q, want %q", err.Error(), "daemon ensure failed")
+	}
 }

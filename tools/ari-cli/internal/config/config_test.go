@@ -236,3 +236,17 @@ func TestWriteActiveSessionPatchesOnlyActiveSessionKey(t *testing.T) {
 		t.Fatalf("daemon.socket_path = %v, want %q", daemonValue["socket_path"], "/tmp/original.sock")
 	}
 }
+
+func TestReadActiveSessionUsesEnvironmentOverride(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("ARI_ACTIVE_SESSION", "sess-env")
+
+	got, err := ReadActiveSession()
+	if err != nil {
+		t.Fatalf("ReadActiveSession returned error: %v", err)
+	}
+	if got != "sess-env" {
+		t.Fatalf("ReadActiveSession with env override = %q, want %q", got, "sess-env")
+	}
+}

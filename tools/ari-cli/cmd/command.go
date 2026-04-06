@@ -18,6 +18,7 @@ import (
 var (
 	commandResolveSessionIdentifier = resolveSessionIdentifier
 	commandReadActiveSession        = config.ReadActiveSession
+	commandEnsureDaemonRunning      = ensureDaemonRunning
 	commandRunRPC                   = func(ctx context.Context, socketPath string, req daemon.CommandRunRequest) (daemon.CommandRunResponse, error) {
 		rpcClient := client.New(socketPath)
 		var response daemon.CommandRunResponse
@@ -86,6 +87,9 @@ func newCommandRunCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := commandEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
+				return err
+			}
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
@@ -121,6 +125,9 @@ func newCommandListCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := configuredDaemonConfig()
 			if err != nil {
+				return err
+			}
+			if err := commandEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
 
@@ -166,6 +173,9 @@ func newCommandShowCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := configuredDaemonConfig()
 			if err != nil {
+				return err
+			}
+			if err := commandEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
 
@@ -220,6 +230,9 @@ func newCommandOutputCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := commandEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
+				return err
+			}
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
@@ -251,6 +264,9 @@ func newCommandStopCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := configuredDaemonConfig()
 			if err != nil {
+				return err
+			}
+			if err := commandEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
 

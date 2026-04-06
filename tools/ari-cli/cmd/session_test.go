@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/config"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
 	"github.com/sourcegraph/jsonrpc2"
@@ -128,6 +129,41 @@ func TestSessionSetCurrentAndClear(t *testing.T) {
 	}
 	if err.Error() != "No active workspace session is set" {
 		t.Fatalf("session current after clear error = %q, want %q", err.Error(), "No active workspace session is set")
+	}
+}
+
+func TestSessionCloseClearsMatchingActiveSession(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalGet := sessionGetRPC
+	originalClose := sessionCloseRPC
+	sessionGetRPC = func(context.Context, string, string) (daemon.SessionGetResponse, error) {
+		return daemon.SessionGetResponse{SessionID: "sess-1", Name: "alpha"}, nil
+	}
+	sessionCloseRPC = func(context.Context, string, string) (daemon.SessionCloseResponse, error) {
+		return daemon.SessionCloseResponse{Status: "closed"}, nil
+	}
+	t.Cleanup(func() {
+		sessionGetRPC = originalGet
+		sessionCloseRPC = originalClose
+	})
+
+	if err := config.WriteActiveSession("sess-1"); err != nil {
+		t.Fatalf("WriteActiveSession returned error: %v", err)
+	}
+
+	_, err := executeRootCommand("session", "close", "alpha")
+	if err != nil {
+		t.Fatalf("execute session close: %v", err)
+	}
+
+	active, err := config.ReadActiveSession()
+	if err != nil {
+		t.Fatalf("ReadActiveSession returned error: %v", err)
+	}
+	if active != "" {
+		t.Fatalf("active session after close = %q, want empty", active)
 	}
 }
 

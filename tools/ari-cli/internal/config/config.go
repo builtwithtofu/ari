@@ -146,30 +146,14 @@ func normalizeConfig(cfg *Config) (*Config, error) {
 }
 
 func ReadActiveSession() (string, error) {
-	path, err := configPath()
+	cfg, err := Load()
 	if err != nil {
 		return "", err
 	}
-	body, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", nil
-		}
-		return "", fmt.Errorf("read active session: %w", err)
+	if cfg == nil {
+		return "", fmt.Errorf("read active session: config is required")
 	}
-	var parsed map[string]json.RawMessage
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return "", fmt.Errorf("read active session: parse config: %w", err)
-	}
-	raw, ok := parsed["active_session"]
-	if !ok {
-		return "", nil
-	}
-	var sessionID string
-	if err := json.Unmarshal(raw, &sessionID); err != nil {
-		return "", fmt.Errorf("read active session: parse active_session: %w", err)
-	}
-	return strings.TrimSpace(sessionID), nil
+	return strings.TrimSpace(cfg.ActiveSession), nil
 }
 
 func WriteActiveSession(sessionID string) error {
