@@ -547,7 +547,7 @@ func newAgentSpawnCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&name, "name", "", "Optional agent name")
-	cmd.Flags().StringVar(&harness, "harness", "", "Harness identity (claude-code|codex|opencode)")
+	cmd.Flags().StringVar(&harness, "harness", "", fmt.Sprintf("Harness identity (%s)", strings.Join(daemon.SupportedHarnesses(), "|")))
 	cmd.Flags().StringVar(&sessionRef, "session", "", "Session id or name override (defaults to active workspace session)")
 	return cmd
 }

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -31,6 +32,25 @@ type namedHarnessLauncher struct {
 	binary string
 }
 
+type harnessDefinition struct {
+	launcher      agentLauncher
+	resumableFlag string
+}
+
+var harnessDefinitions = map[string]harnessDefinition{
+	"claude-code": {
+		launcher:      namedHarnessLauncher{binary: "claude-code"},
+		resumableFlag: "--resume",
+	},
+	"codex": {
+		launcher: namedHarnessLauncher{binary: "codex"},
+	},
+	"opencode": {
+		launcher:      namedHarnessLauncher{binary: "opencode"},
+		resumableFlag: "--session",
+	},
+}
+
 func (l namedHarnessLauncher) prepare(command string, args []string) (agentLaunchSpec, error) {
 	if command = strings.TrimSpace(command); command == "" {
 		command = l.binary
@@ -50,15 +70,26 @@ func resolveAgentLauncher(harness string) (agentLauncher, error) {
 	if harness == "" {
 		return passthroughAgentLauncher{}, nil
 	}
-
-	switch harness {
-	case "claude-code":
-		return namedHarnessLauncher{binary: "claude-code"}, nil
-	case "codex":
-		return namedHarnessLauncher{binary: "codex"}, nil
-	case "opencode":
-		return namedHarnessLauncher{binary: "opencode"}, nil
-	default:
+	definition, ok := harnessDefinitions[harness]
+	if !ok {
 		return nil, fmt.Errorf("unsupported harness %q", harness)
 	}
+	return definition.launcher, nil
+}
+
+func resumableFlagForHarness(harness string) string {
+	definition, ok := harnessDefinitions[strings.TrimSpace(harness)]
+	if !ok {
+		return ""
+	}
+	return definition.resumableFlag
+}
+
+func SupportedHarnesses() []string {
+	names := make([]string, 0, len(harnessDefinitions))
+	for name := range harnessDefinitions {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }

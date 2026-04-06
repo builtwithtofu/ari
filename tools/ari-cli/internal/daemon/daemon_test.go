@@ -281,58 +281,15 @@ func TestDaemonStartMarksRunningCommandsLost(t *testing.T) {
 	socketPath := testSocketPath(t)
 	dbPath := filepath.Join(t.TempDir(), "ari.db")
 	pidPath := filepath.Join(t.TempDir(), "daemon.pid")
+	if err := applyMigrationSQLFiles(dbPath); err != nil {
+		t.Fatalf("apply migration files: %v", err)
+	}
 
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatalf("open sqlite db: %v", err)
 	}
 	if _, err := db.Exec(`
-CREATE TABLE daemon_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-CREATE TABLE sessions (
-	session_id TEXT PRIMARY KEY,
-	name TEXT NOT NULL UNIQUE,
-	status TEXT NOT NULL DEFAULT 'active',
-	vcs_preference TEXT NOT NULL DEFAULT 'auto',
-	origin_root TEXT NOT NULL,
-	cleanup_policy TEXT NOT NULL DEFAULT 'manual',
-	created_at TEXT NOT NULL,
-	updated_at TEXT NOT NULL
-);
-CREATE TABLE session_folders (
-	session_id TEXT NOT NULL,
-	folder_path TEXT NOT NULL,
-	vcs_type TEXT NOT NULL DEFAULT 'unknown',
-	is_primary INTEGER NOT NULL DEFAULT 0,
-	added_at TEXT NOT NULL,
-	PRIMARY KEY (session_id, folder_path),
-	FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
-);
-CREATE TABLE commands (
-	command_id TEXT PRIMARY KEY,
-	session_id TEXT NOT NULL,
-	command TEXT NOT NULL,
-	args TEXT NOT NULL DEFAULT '[]',
-	status TEXT NOT NULL DEFAULT 'running',
-	exit_code INTEGER,
-	started_at TEXT NOT NULL,
-	finished_at TEXT,
-	FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
-);
-CREATE TABLE agents (
-	agent_id TEXT PRIMARY KEY,
-	session_id TEXT NOT NULL,
-	name TEXT,
-	command TEXT NOT NULL,
-	args TEXT NOT NULL DEFAULT '[]',
-	status TEXT NOT NULL DEFAULT 'running',
-	exit_code INTEGER,
-	started_at TEXT NOT NULL,
-	stopped_at TEXT,
-	FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
-);
-CREATE UNIQUE INDEX agents_session_id_name_uq
-	ON agents (session_id, name)
-	WHERE name IS NOT NULL;
 INSERT INTO sessions (session_id, name, status, vcs_preference, origin_root, cleanup_policy, created_at, updated_at)
 VALUES ('sess-1', 'alpha', 'active', 'auto', '/tmp', 'manual', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
 INSERT INTO commands (command_id, session_id, command, args, status, started_at)
