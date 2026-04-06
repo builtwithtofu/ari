@@ -55,6 +55,18 @@ func TestSessionSubcommandsExist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("find session resume: %v", err)
 	}
+	set, _, err := session.Find([]string{"set"})
+	if err != nil {
+		t.Fatalf("find session set: %v", err)
+	}
+	current, _, err := session.Find([]string{"current"})
+	if err != nil {
+		t.Fatalf("find session current: %v", err)
+	}
+	clear, _, err := session.Find([]string{"clear"})
+	if err != nil {
+		t.Fatalf("find session clear: %v", err)
+	}
 	folderAdd, _, err := session.Find([]string{"folder", "add"})
 	if err != nil {
 		t.Fatalf("find session folder add: %v", err)
@@ -64,8 +76,58 @@ func TestSessionSubcommandsExist(t *testing.T) {
 		t.Fatalf("find session folder remove: %v", err)
 	}
 
-	if create == nil || list == nil || show == nil || closeCmd == nil || suspend == nil || resume == nil || folderAdd == nil || folderRemove == nil {
+	if create == nil || list == nil || show == nil || closeCmd == nil || suspend == nil || resume == nil || set == nil || current == nil || clear == nil || folderAdd == nil || folderRemove == nil {
 		t.Fatal("expected session subcommands to be registered")
+	}
+}
+
+func TestSessionSetCurrentAndClear(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalGet := sessionGetRPC
+	originalList := sessionListRPC
+	sessionGetRPC = func(context.Context, string, string) (daemon.SessionGetResponse, error) {
+		return daemon.SessionGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "session not found"}
+	}
+	sessionListRPC = func(context.Context, string) (daemon.SessionListResponse, error) {
+		return daemon.SessionListResponse{Sessions: []daemon.SessionSummary{{SessionID: "sess-12345678", Name: "alpha", Status: "active"}}}, nil
+	}
+	t.Cleanup(func() {
+		sessionGetRPC = originalGet
+		sessionListRPC = originalList
+	})
+
+	setOut, err := executeRootCommand("session", "set", "alpha")
+	if err != nil {
+		t.Fatalf("execute session set: %v", err)
+	}
+	if !strings.Contains(setOut, "sess-12345678") {
+		t.Fatalf("session set output = %q, want canonical session id", setOut)
+	}
+
+	currentOut, err := executeRootCommand("session", "current")
+	if err != nil {
+		t.Fatalf("execute session current: %v", err)
+	}
+	if !strings.Contains(currentOut, "sess-12345678") {
+		t.Fatalf("session current output = %q, want stored session id", currentOut)
+	}
+
+	clearOut, err := executeRootCommand("session", "clear")
+	if err != nil {
+		t.Fatalf("execute session clear: %v", err)
+	}
+	if !strings.Contains(clearOut, "Cleared active workspace session") {
+		t.Fatalf("session clear output = %q, want clear confirmation", clearOut)
+	}
+
+	_, err = executeRootCommand("session", "current")
+	if err == nil {
+		t.Fatal("session current after clear returned nil error")
+	}
+	if err.Error() != "No active workspace session is set" {
+		t.Fatalf("session current after clear error = %q, want %q", err.Error(), "No active workspace session is set")
 	}
 }
 

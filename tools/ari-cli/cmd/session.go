@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/client"
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/config"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/vcs"
@@ -89,8 +90,71 @@ func NewSessionCmd() *cobra.Command {
 	cmd.AddCommand(newSessionCloseCmd())
 	cmd.AddCommand(newSessionSuspendCmd())
 	cmd.AddCommand(newSessionResumeCmd())
+	cmd.AddCommand(newSessionSetCmd())
+	cmd.AddCommand(newSessionCurrentCmd())
+	cmd.AddCommand(newSessionClearCmd())
 	cmd.AddCommand(newSessionFolderCmd())
 	return cmd
+}
+
+func newSessionSetCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "set <id-or-name>",
+		Short: "Set active workspace session",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := configuredDaemonConfig()
+			if err != nil {
+				return err
+			}
+
+			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
+			defer cancel()
+
+			sessionID, err := resolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, args[0])
+			if err != nil {
+				return err
+			}
+			if err := config.WriteActiveSession(sessionID); err != nil {
+				return err
+			}
+
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Active workspace set: %s\n", sessionID)
+			return err
+		},
+	}
+}
+
+func newSessionCurrentCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "current",
+		Short: "Show active workspace session",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			sessionID, err := config.ReadActiveSession()
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(sessionID) == "" {
+				return userFacingError{message: "No active workspace session is set"}
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Current workspace session: %s\n", sessionID)
+			return err
+		},
+	}
+}
+
+func newSessionClearCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "clear",
+		Short: "Clear active workspace session",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := config.WriteActiveSession(""); err != nil {
+				return err
+			}
+			_, err := fmt.Fprintln(cmd.OutOrStdout(), "Cleared active workspace session")
+			return err
+		},
+	}
 }
 
 func newSessionCreateCmd() *cobra.Command {
