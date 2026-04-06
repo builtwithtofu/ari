@@ -845,28 +845,46 @@ func executeRootCommandWithContext(ctx context.Context, args ...string) (string,
 	originalCommandEnsure := commandEnsureDaemonRunning
 	originalAgentEnsure := agentEnsureDaemonRunning
 	originalSessionEnsure := sessionEnsureDaemonRunning
-	originalResolveTarget := commandResolveSessionTarget
-	originalCommandScope := commandEnsureWorkspaceScope
-	originalAgentScope := agentEnsureWorkspaceScope
+	originalSessionGet := sessionGetRPC
+	originalSessionList := sessionListRPC
 	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	agentEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	sessionEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
-	commandResolveSessionTarget = func(ctx context.Context, socketPath, idOrName string) (resolvedSessionTarget, error) {
-		sessionID, err := commandResolveSessionIdentifier(ctx, socketPath, idOrName)
-		if err != nil {
-			return resolvedSessionTarget{}, err
-		}
-		return resolvedSessionTarget{SessionID: sessionID, Session: &daemon.SessionGetResponse{SessionID: sessionID}}, nil
+
+	cwd := "."
+	if wd, err := os.Getwd(); err == nil {
+		cwd = wd
 	}
-	commandEnsureWorkspaceScope = func(*daemon.SessionGetResponse, string) error { return nil }
-	agentEnsureWorkspaceScope = func(*daemon.SessionGetResponse, string) error { return nil }
+
+	sessionGetRPC = func(callCtx context.Context, socketPath, idOrName string) (daemon.SessionGetResponse, error) {
+		resp, err := originalSessionGet(callCtx, socketPath, idOrName)
+		if err == nil || !isDaemonUnavailable(err) {
+			return resp, err
+		}
+		resolved := strings.TrimSpace(idOrName)
+		if resolved == "" {
+			return daemon.SessionGetResponse{}, err
+		}
+		return daemon.SessionGetResponse{
+			SessionID:  resolved,
+			Name:       resolved,
+			OriginRoot: cwd,
+			Folders:    []daemon.SessionFolderInfo{{Path: cwd, VCSType: "none", IsPrimary: true}},
+		}, nil
+	}
+	sessionListRPC = func(callCtx context.Context, socketPath string) (daemon.SessionListResponse, error) {
+		resp, err := originalSessionList(callCtx, socketPath)
+		if err == nil || !isDaemonUnavailable(err) {
+			return resp, err
+		}
+		return daemon.SessionListResponse{Sessions: []daemon.SessionSummary{{SessionID: "sess-1", Name: "alpha", Status: "active", FolderCount: 1}}}, nil
+	}
 	defer func() {
 		commandEnsureDaemonRunning = originalCommandEnsure
 		agentEnsureDaemonRunning = originalAgentEnsure
 		sessionEnsureDaemonRunning = originalSessionEnsure
-		commandResolveSessionTarget = originalResolveTarget
-		commandEnsureWorkspaceScope = originalCommandScope
-		agentEnsureWorkspaceScope = originalAgentScope
+		sessionGetRPC = originalSessionGet
+		sessionListRPC = originalSessionList
 	}()
 
 	root := NewRootCmd()

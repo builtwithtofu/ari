@@ -588,14 +588,14 @@ func TestCommandListUsesSessionFlagOverride(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	originalResolve := commandResolveSessionIdentifier
+	originalResolveTarget := commandResolveSessionTarget
 	originalReadActive := commandReadActiveSession
 	originalList := commandListRPC
 
 	var gotLookup string
-	commandResolveSessionIdentifier = func(_ context.Context, _ string, idOrName string) (string, error) {
+	commandResolveSessionTarget = func(_ context.Context, _ string, idOrName string) (resolvedSessionTarget, error) {
 		gotLookup = idOrName
-		return "sess-override", nil
+		return resolvedSessionTarget{SessionID: "sess-override", Session: &daemon.SessionGetResponse{SessionID: "sess-override", OriginRoot: t.TempDir()}}, nil
 	}
 	commandReadActiveSession = func() (string, error) {
 		return "sess-active", nil
@@ -604,7 +604,7 @@ func TestCommandListUsesSessionFlagOverride(t *testing.T) {
 		return daemon.CommandListResponse{}, nil
 	}
 	t.Cleanup(func() {
-		commandResolveSessionIdentifier = originalResolve
+		commandResolveSessionTarget = originalResolveTarget
 		commandReadActiveSession = originalReadActive
 		commandListRPC = originalList
 	})
@@ -669,7 +669,7 @@ func TestCommandSubcommandsUseSessionFlagOverride(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	originalResolve := commandResolveSessionIdentifier
+	originalResolveTarget := commandResolveSessionTarget
 	originalReadActive := commandReadActiveSession
 	originalRun := commandRunRPC
 	originalList := commandListRPC
@@ -696,7 +696,7 @@ func TestCommandSubcommandsUseSessionFlagOverride(t *testing.T) {
 		return daemon.CommandStopResponse{Status: "stopping"}, nil
 	}
 	t.Cleanup(func() {
-		commandResolveSessionIdentifier = originalResolve
+		commandResolveSessionTarget = originalResolveTarget
 		commandReadActiveSession = originalReadActive
 		commandRunRPC = originalRun
 		commandListRPC = originalList
@@ -719,9 +719,9 @@ func TestCommandSubcommandsUseSessionFlagOverride(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			gotLookup := ""
-			commandResolveSessionIdentifier = func(_ context.Context, _ string, idOrName string) (string, error) {
+			commandResolveSessionTarget = func(_ context.Context, _ string, idOrName string) (resolvedSessionTarget, error) {
 				gotLookup = idOrName
-				return "sess-override", nil
+				return resolvedSessionTarget{SessionID: "sess-override", Session: &daemon.SessionGetResponse{SessionID: "sess-override", OriginRoot: t.TempDir()}}, nil
 			}
 
 			_, err := executeRootCommand(tc.args...)
