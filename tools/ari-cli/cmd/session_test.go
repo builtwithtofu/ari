@@ -167,6 +167,67 @@ func TestSessionCloseClearsMatchingActiveSession(t *testing.T) {
 	}
 }
 
+func TestSessionClearWithEnvOverrideClearsPersistedValue(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ARI_ACTIVE_SESSION", "sess-env")
+	if err := config.WriteActiveSession("sess-stored"); err != nil {
+		t.Fatalf("WriteActiveSession returned error: %v", err)
+	}
+
+	out, err := executeRootCommand("session", "clear")
+	if err != nil {
+		t.Fatalf("execute session clear: %v", err)
+	}
+	if !strings.Contains(out, "Cleared persisted active workspace session") {
+		t.Fatalf("session clear output = %q, want persisted-clear message", out)
+	}
+
+	persisted, err := config.ReadPersistedActiveSession()
+	if err != nil {
+		t.Fatalf("ReadPersistedActiveSession returned error: %v", err)
+	}
+	if persisted != "" {
+		t.Fatalf("persisted active session after clear = %q, want empty", persisted)
+	}
+}
+
+func TestSessionCloseDoesNotUseEnvOverrideToClearPersistedActive(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ARI_ACTIVE_SESSION", "sess-env")
+
+	originalGet := sessionGetRPC
+	originalClose := sessionCloseRPC
+	sessionGetRPC = func(context.Context, string, string) (daemon.SessionGetResponse, error) {
+		return daemon.SessionGetResponse{SessionID: "sess-env", Name: "alpha"}, nil
+	}
+	sessionCloseRPC = func(context.Context, string, string) (daemon.SessionCloseResponse, error) {
+		return daemon.SessionCloseResponse{Status: "closed"}, nil
+	}
+	t.Cleanup(func() {
+		sessionGetRPC = originalGet
+		sessionCloseRPC = originalClose
+	})
+
+	if err := config.WriteActiveSession("sess-stored"); err != nil {
+		t.Fatalf("WriteActiveSession returned error: %v", err)
+	}
+
+	_, err := executeRootCommand("session", "close", "alpha")
+	if err != nil {
+		t.Fatalf("execute session close: %v", err)
+	}
+
+	persisted, err := config.ReadPersistedActiveSession()
+	if err != nil {
+		t.Fatalf("ReadPersistedActiveSession returned error: %v", err)
+	}
+	if persisted != "sess-stored" {
+		t.Fatalf("persisted active session after close = %q, want %q", persisted, "sess-stored")
+	}
+}
+
 func TestSessionCreateUsesCWDDefaults(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

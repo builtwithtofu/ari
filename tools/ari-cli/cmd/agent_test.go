@@ -502,6 +502,32 @@ func TestAgentListRequiresActiveWorkspaceWhenSessionNotProvided(t *testing.T) {
 	}
 }
 
+func TestAgentListMissingActiveSessionDoesNotCallEnsure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalReadActive := agentReadActiveSession
+	originalEnsure := agentEnsureDaemonRunning
+	agentReadActiveSession = func() (string, error) {
+		return "", nil
+	}
+	agentEnsureDaemonRunning = func(context.Context, *config.Config) error {
+		return userFacingError{message: "ensure called unexpectedly"}
+	}
+	t.Cleanup(func() {
+		agentReadActiveSession = originalReadActive
+		agentEnsureDaemonRunning = originalEnsure
+	})
+
+	_, err := executeRootCommandRaw("agent", "list")
+	if err == nil {
+		t.Fatal("agent list returned nil error without active session")
+	}
+	if err.Error() != "No active workspace session is set" {
+		t.Fatalf("agent list error = %q, want %q", err.Error(), "No active workspace session is set")
+	}
+}
+
 func TestAgentSubcommandsUseSessionFlagOverride(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

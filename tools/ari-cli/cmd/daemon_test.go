@@ -763,7 +763,7 @@ func TestCommandListReturnsEnsureDaemonError(t *testing.T) {
 		commandEnsureDaemonRunning = originalEnsure
 	})
 
-	_, err := executeRootCommandRaw("command", "list")
+	_, err := executeRootCommandRaw("command", "list", "--session", "alpha")
 	if err == nil {
 		t.Fatal("command list returned nil error")
 	}
@@ -782,7 +782,7 @@ func TestAgentListReturnsEnsureDaemonError(t *testing.T) {
 		agentEnsureDaemonRunning = originalEnsure
 	})
 
-	_, err := executeRootCommandRaw("agent", "list")
+	_, err := executeRootCommandRaw("agent", "list", "--session", "alpha")
 	if err == nil {
 		t.Fatal("agent list returned nil error")
 	}

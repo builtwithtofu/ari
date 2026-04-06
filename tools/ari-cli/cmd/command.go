@@ -87,6 +87,10 @@ func newCommandRunCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			sessionReference, err := commandSessionReference(sessionRef)
+			if err != nil {
+				return err
+			}
 			if err := commandEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
@@ -94,7 +98,7 @@ func newCommandRunCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			sessionID, err := commandResolveTargetSession(ctx, cfg.Daemon.SocketPath, sessionRef)
+			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, sessionReference)
 			if err != nil {
 				return err
 			}
@@ -127,6 +131,10 @@ func newCommandListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			sessionReference, err := commandSessionReference(sessionRef)
+			if err != nil {
+				return err
+			}
 			if err := commandEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
@@ -134,7 +142,7 @@ func newCommandListCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			sessionID, err := commandResolveTargetSession(ctx, cfg.Daemon.SocketPath, sessionRef)
+			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, sessionReference)
 			if err != nil {
 				return err
 			}
@@ -175,6 +183,10 @@ func newCommandShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			sessionReference, err := commandSessionReference(sessionRef)
+			if err != nil {
+				return err
+			}
 			if err := commandEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
@@ -182,7 +194,7 @@ func newCommandShowCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			sessionID, err := commandResolveTargetSession(ctx, cfg.Daemon.SocketPath, sessionRef)
+			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, sessionReference)
 			if err != nil {
 				return err
 			}
@@ -230,6 +242,10 @@ func newCommandOutputCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			sessionReference, err := commandSessionReference(sessionRef)
+			if err != nil {
+				return err
+			}
 			if err := commandEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
@@ -237,7 +253,7 @@ func newCommandOutputCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			sessionID, err := commandResolveTargetSession(ctx, cfg.Daemon.SocketPath, sessionRef)
+			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, sessionReference)
 			if err != nil {
 				return err
 			}
@@ -266,6 +282,10 @@ func newCommandStopCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			sessionReference, err := commandSessionReference(sessionRef)
+			if err != nil {
+				return err
+			}
 			if err := commandEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
@@ -273,7 +293,7 @@ func newCommandStopCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			sessionID, err := commandResolveTargetSession(ctx, cfg.Daemon.SocketPath, sessionRef)
+			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, sessionReference)
 			if err != nil {
 				return err
 			}
@@ -291,18 +311,8 @@ func newCommandStopCmd() *cobra.Command {
 	return cmd
 }
 
-func commandResolveTargetSession(ctx context.Context, socketPath, overrideSession string) (string, error) {
-	if strings.TrimSpace(overrideSession) != "" {
-		return commandResolveSessionIdentifier(ctx, socketPath, overrideSession)
-	}
-	activeSession, err := commandReadActiveSession()
-	if err != nil {
-		return "", err
-	}
-	if strings.TrimSpace(activeSession) == "" {
-		return "", userFacingError{message: "No active workspace session is set"}
-	}
-	return commandResolveSessionIdentifier(ctx, socketPath, activeSession)
+func commandSessionReference(overrideSession string) (string, error) {
+	return resolveWorkspaceSessionReference(overrideSession, commandReadActiveSession)
 }
 
 func mapCommandRPCError(err error) error {

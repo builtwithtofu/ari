@@ -54,9 +54,19 @@ func Load() (*Config, error) {
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 
-	if err := v.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
-			return nil, fmt.Errorf("read config: %w", err)
+	cfgPath, pathErr := configPath()
+	if pathErr != nil {
+		return nil, pathErr
+	}
+
+	configInfo, statErr := os.Stat(cfgPath)
+	if statErr == nil && configInfo.Size() == 0 {
+		// Treat empty config file as unset config.
+	} else {
+		if err := v.ReadInConfig(); err != nil {
+			if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+				return nil, fmt.Errorf("read config: %w", err)
+			}
 		}
 	}
 
@@ -154,6 +164,36 @@ func ReadActiveSession() (string, error) {
 		return "", fmt.Errorf("read active session: config is required")
 	}
 	return strings.TrimSpace(cfg.ActiveSession), nil
+}
+
+func ReadPersistedActiveSession() (string, error) {
+	path, err := configPath()
+	if err != nil {
+		return "", err
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("read persisted active session: %w", err)
+	}
+	if len(body) == 0 {
+		return "", nil
+	}
+	var parsed map[string]json.RawMessage
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return "", fmt.Errorf("read persisted active session: parse config: %w", err)
+	}
+	raw, ok := parsed["active_session"]
+	if !ok {
+		return "", nil
+	}
+	var sessionID string
+	if err := json.Unmarshal(raw, &sessionID); err != nil {
+		return "", fmt.Errorf("read persisted active session: parse active_session: %w", err)
+	}
+	return strings.TrimSpace(sessionID), nil
 }
 
 func WriteActiveSession(sessionID string) error {

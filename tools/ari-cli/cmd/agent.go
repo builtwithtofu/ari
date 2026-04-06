@@ -338,6 +338,10 @@ func newAgentAttachCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			sessionReference, err := agentSessionReference(sessionRef)
+			if err != nil {
+				return err
+			}
 			if err := agentEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
@@ -366,7 +370,7 @@ func newAgentAttachCmd() *cobra.Command {
 			}
 			defer restoreTerminal()
 
-			sessionID, err := agentResolveTargetSession(rpcCtx, cfg.Daemon.SocketPath, sessionRef)
+			sessionID, err := commandResolveSessionIdentifier(rpcCtx, cfg.Daemon.SocketPath, sessionReference)
 			if err != nil {
 				return err
 			}
@@ -435,6 +439,10 @@ func newAgentDetachCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			sessionReference, err := agentSessionReference(sessionRef)
+			if err != nil {
+				return err
+			}
 			if err := agentEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
@@ -442,7 +450,7 @@ func newAgentDetachCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			sessionID, err := agentResolveTargetSession(ctx, cfg.Daemon.SocketPath, sessionRef)
+			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, sessionReference)
 			if err != nil {
 				return err
 			}
@@ -479,6 +487,10 @@ func newAgentSpawnCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			sessionReference, err := agentSessionReference(sessionRef)
+			if err != nil {
+				return err
+			}
 			if err := agentEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
@@ -486,7 +498,7 @@ func newAgentSpawnCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			sessionID, err := agentResolveTargetSession(ctx, cfg.Daemon.SocketPath, sessionRef)
+			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, sessionReference)
 			if err != nil {
 				return err
 			}
@@ -539,6 +551,10 @@ func newAgentListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			sessionReference, err := agentSessionReference(sessionRef)
+			if err != nil {
+				return err
+			}
 			if err := agentEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
@@ -546,7 +562,7 @@ func newAgentListCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			sessionID, err := agentResolveTargetSession(ctx, cfg.Daemon.SocketPath, sessionRef)
+			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, sessionReference)
 			if err != nil {
 				return err
 			}
@@ -587,6 +603,10 @@ func newAgentShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			sessionReference, err := agentSessionReference(sessionRef)
+			if err != nil {
+				return err
+			}
 			if err := agentEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
@@ -594,7 +614,7 @@ func newAgentShowCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			sessionID, err := agentResolveTargetSession(ctx, cfg.Daemon.SocketPath, sessionRef)
+			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, sessionReference)
 			if err != nil {
 				return err
 			}
@@ -649,9 +669,6 @@ func newAgentSendCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := agentEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
-				return err
-			}
 
 			stdinText, hasStdin, err := readPipedStdin(cmd)
 			if err != nil {
@@ -670,10 +687,18 @@ func newAgentSendCmd() *cobra.Command {
 				input = stdinText
 			}
 
+			sessionReference, err := agentSessionReference(sessionRef)
+			if err != nil {
+				return err
+			}
+			if err := agentEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
+				return err
+			}
+
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			sessionID, err := agentResolveTargetSession(ctx, cfg.Daemon.SocketPath, sessionRef)
+			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, sessionReference)
 			if err != nil {
 				return err
 			}
@@ -707,6 +732,10 @@ func newAgentOutputCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			sessionReference, err := agentSessionReference(sessionRef)
+			if err != nil {
+				return err
+			}
 			if err := agentEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
@@ -714,7 +743,7 @@ func newAgentOutputCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			sessionID, err := agentResolveTargetSession(ctx, cfg.Daemon.SocketPath, sessionRef)
+			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, sessionReference)
 			if err != nil {
 				return err
 			}
@@ -743,6 +772,10 @@ func newAgentStopCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			sessionReference, err := agentSessionReference(sessionRef)
+			if err != nil {
+				return err
+			}
 			if err := agentEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
@@ -750,7 +783,7 @@ func newAgentStopCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			sessionID, err := agentResolveTargetSession(ctx, cfg.Daemon.SocketPath, sessionRef)
+			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, sessionReference)
 			if err != nil {
 				return err
 			}
@@ -768,18 +801,8 @@ func newAgentStopCmd() *cobra.Command {
 	return cmd
 }
 
-func agentResolveTargetSession(ctx context.Context, socketPath, overrideSession string) (string, error) {
-	if strings.TrimSpace(overrideSession) != "" {
-		return commandResolveSessionIdentifier(ctx, socketPath, overrideSession)
-	}
-	activeSession, err := agentReadActiveSession()
-	if err != nil {
-		return "", err
-	}
-	if strings.TrimSpace(activeSession) == "" {
-		return "", userFacingError{message: "No active workspace session is set"}
-	}
-	return commandResolveSessionIdentifier(ctx, socketPath, activeSession)
+func agentSessionReference(overrideSession string) (string, error) {
+	return resolveWorkspaceSessionReference(overrideSession, agentReadActiveSession)
 }
 
 func readPipedStdin(cmd *cobra.Command) (string, bool, error) {

@@ -155,6 +155,10 @@ func newSessionClearCmd() *cobra.Command {
 			if err := config.WriteActiveSession(""); err != nil {
 				return err
 			}
+			if strings.TrimSpace(os.Getenv("ARI_ACTIVE_SESSION")) != "" {
+				_, err := fmt.Fprintln(cmd.OutOrStdout(), "Cleared persisted active workspace session; ARI_ACTIVE_SESSION still overrides it in this shell")
+				return err
+			}
 			_, err := fmt.Fprintln(cmd.OutOrStdout(), "Cleared active workspace session")
 			return err
 		},
@@ -355,7 +359,7 @@ func newSessionCloseCmd() *cobra.Command {
 				return mapSessionRPCError(err)
 			}
 
-			activeSession, err := config.ReadActiveSession()
+			activeSession, err := config.ReadPersistedActiveSession()
 			if err != nil {
 				return err
 			}

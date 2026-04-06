@@ -250,3 +250,48 @@ func TestReadActiveSessionUsesEnvironmentOverride(t *testing.T) {
 		t.Fatalf("ReadActiveSession with env override = %q, want %q", got, "sess-env")
 	}
 }
+
+func TestReadPersistedActiveSessionHandlesEmptyConfigFile(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	configDir := filepath.Join(tmpHome, ".ari")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte{}, 0o644); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	got, err := ReadPersistedActiveSession()
+	if err != nil {
+		t.Fatalf("ReadPersistedActiveSession returned error: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("ReadPersistedActiveSession = %q, want empty", got)
+	}
+}
+
+func TestLoadTreatsEmptyConfigFileAsDefaults(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	configDir := filepath.Join(tmpHome, ".ari")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte{}, 0o644); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("Load returned nil config")
+	}
+	if cfg.Daemon.SocketPath == "" || cfg.Daemon.DBPath == "" || cfg.Daemon.PIDPath == "" {
+		t.Fatalf("Load daemon defaults were not populated: %+v", cfg.Daemon)
+	}
+}

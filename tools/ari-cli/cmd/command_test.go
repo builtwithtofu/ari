@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/config"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
 	"github.com/sourcegraph/jsonrpc2"
@@ -290,6 +291,32 @@ func TestCommandListRequiresActiveWorkspaceWhenSessionNotProvided(t *testing.T) 
 	})
 
 	_, err := executeRootCommand("command", "list")
+	if err == nil {
+		t.Fatal("command list returned nil error without active session")
+	}
+	if err.Error() != "No active workspace session is set" {
+		t.Fatalf("command list error = %q, want %q", err.Error(), "No active workspace session is set")
+	}
+}
+
+func TestCommandListMissingActiveSessionDoesNotCallEnsure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalReadActive := commandReadActiveSession
+	originalEnsure := commandEnsureDaemonRunning
+	commandReadActiveSession = func() (string, error) {
+		return "", nil
+	}
+	commandEnsureDaemonRunning = func(context.Context, *config.Config) error {
+		return userFacingError{message: "ensure called unexpectedly"}
+	}
+	t.Cleanup(func() {
+		commandReadActiveSession = originalReadActive
+		commandEnsureDaemonRunning = originalEnsure
+	})
+
+	_, err := executeRootCommandRaw("command", "list")
 	if err == nil {
 		t.Fatal("command list returned nil error without active session")
 	}
