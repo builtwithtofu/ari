@@ -357,6 +357,62 @@ func TestEnsureDaemonRunningLaunchesWhenUnavailable(t *testing.T) {
 	}
 }
 
+func TestEnsureDaemonRunningUsesSecondScaleStatusTimeouts(t *testing.T) {
+	originalStatus := daemonStatusRPC
+	originalLaunch := daemonAutoStartLaunch
+	statusCalls := 0
+	daemonStatusRPC = func(ctx context.Context, _ string) (daemon.StatusResponse, error) {
+		statusCalls++
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			return daemon.StatusResponse{}, errors.New("status context deadline missing")
+		}
+		if time.Until(deadline) < time.Second {
+			return daemon.StatusResponse{}, errors.New("status timeout below one second")
+		}
+		if statusCalls == 1 {
+			return daemon.StatusResponse{}, os.ErrNotExist
+		}
+		return daemon.StatusResponse{PID: 333}, nil
+	}
+	daemonAutoStartLaunch = func(*config.Config) error { return nil }
+	t.Cleanup(func() {
+		daemonStatusRPC = originalStatus
+		daemonAutoStartLaunch = originalLaunch
+	})
+
+	cfg := &config.Config{Daemon: config.DaemonConfig{SocketPath: "/tmp/ari.sock", DBPath: "/tmp/ari.db", PIDPath: "/tmp/ari.pid"}}
+	if err := ensureDaemonRunning(context.Background(), cfg); err != nil {
+		t.Fatalf("ensureDaemonRunning returned error: %v", err)
+	}
+	if statusCalls < 2 {
+		t.Fatalf("statusCalls = %d, want at least 2", statusCalls)
+	}
+}
+
+func TestNewDaemonAutoStartCommandUsesDetachedSession(t *testing.T) {
+	cmd := newDaemonAutoStartCommand("/tmp/ari")
+
+	if cmd == nil {
+		t.Fatal("newDaemonAutoStartCommand returned nil command")
+	}
+	if cmd.Path != "/tmp/ari" {
+		t.Fatalf("command path = %q, want %q", cmd.Path, "/tmp/ari")
+	}
+	if len(cmd.Args) != 4 {
+		t.Fatalf("command args length = %d, want 4", len(cmd.Args))
+	}
+	if cmd.Args[1] != "daemon" || cmd.Args[2] != "start" || cmd.Args[3] != "--background-child" {
+		t.Fatalf("command args = %#v, want daemon background child launch", cmd.Args)
+	}
+	if cmd.SysProcAttr == nil {
+		t.Fatal("command SysProcAttr is nil")
+	}
+	if !cmd.SysProcAttr.Setsid {
+		t.Fatal("command SysProcAttr.Setsid = false, want true")
+	}
+}
+
 func TestCheckRunningDaemonUsesSocketIdentity(t *testing.T) {
 	originalCheck := daemonPIDCheck
 	originalStatus := daemonStatusRPC

@@ -122,6 +122,10 @@ func newSessionSetCmd() *cobra.Command {
 			if err := config.WriteActiveSession(sessionID); err != nil {
 				return err
 			}
+			if strings.TrimSpace(os.Getenv("ARI_ACTIVE_SESSION")) != "" {
+				_, err = fmt.Fprintf(cmd.OutOrStdout(), "Persisted active workspace set: %s; ARI_ACTIVE_SESSION still overrides it in this shell\n", sessionID)
+				return err
+			}
 
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Active workspace set: %s\n", sessionID)
 			return err

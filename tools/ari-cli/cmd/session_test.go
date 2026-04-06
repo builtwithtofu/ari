@@ -192,6 +192,33 @@ func TestSessionClearWithEnvOverrideClearsPersistedValue(t *testing.T) {
 	}
 }
 
+func TestSessionSetWithEnvOverrideMentionsOverride(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ARI_ACTIVE_SESSION", "sess-env")
+
+	originalGet := sessionGetRPC
+	originalList := sessionListRPC
+	sessionGetRPC = func(context.Context, string, string) (daemon.SessionGetResponse, error) {
+		return daemon.SessionGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "session not found"}
+	}
+	sessionListRPC = func(context.Context, string) (daemon.SessionListResponse, error) {
+		return daemon.SessionListResponse{Sessions: []daemon.SessionSummary{{SessionID: "sess-12345678", Name: "alpha", Status: "active"}}}, nil
+	}
+	t.Cleanup(func() {
+		sessionGetRPC = originalGet
+		sessionListRPC = originalList
+	})
+
+	out, err := executeRootCommand("session", "set", "alpha")
+	if err != nil {
+		t.Fatalf("execute session set: %v", err)
+	}
+	if !strings.Contains(out, "ARI_ACTIVE_SESSION still overrides it in this shell") {
+		t.Fatalf("session set output = %q, want env override warning", out)
+	}
+}
+
 func TestSessionCloseDoesNotUseEnvOverrideToClearPersistedActive(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

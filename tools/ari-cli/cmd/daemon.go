@@ -54,7 +54,7 @@ var (
 			_ = logFile.Close()
 		}()
 
-		command := exec.Command(execPath, "daemon", "start", "--background-child")
+		command := newDaemonAutoStartCommand(execPath)
 		command.Env = append(os.Environ(),
 			"ARI_DAEMON_SOCKET_PATH="+cfg.Daemon.SocketPath,
 			"ARI_DAEMON_DB_PATH="+cfg.Daemon.DBPath,
@@ -130,7 +130,7 @@ func ensureDaemonRunning(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("daemon config is required")
 	}
 
-	statusCtx, cancel := context.WithTimeout(ctx, 600*time.Millisecond)
+	statusCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	_, statusErr := daemonStatusRPC(statusCtx, cfg.Daemon.SocketPath)
 	cancel()
 	if statusErr == nil {
@@ -150,7 +150,7 @@ func ensureDaemonRunning(ctx context.Context, cfg *config.Config) error {
 
 	deadline := time.Now().Add(8 * time.Second)
 	for time.Now().Before(deadline) {
-		pollCtx, pollCancel := context.WithTimeout(ctx, 500*time.Millisecond)
+		pollCtx, pollCancel := context.WithTimeout(ctx, 5*time.Second)
 		_, pollErr := daemonStatusRPC(pollCtx, cfg.Daemon.SocketPath)
 		pollCancel()
 		if pollErr == nil {
@@ -173,6 +173,12 @@ func ensureDaemonRunning(ctx context.Context, cfg *config.Config) error {
 		return userFacingError{message: fmt.Sprintf("Daemon auto-start failed: %v", launchErr)}
 	}
 	return userFacingError{message: "Daemon auto-start failed: daemon did not become ready"}
+}
+
+func newDaemonAutoStartCommand(execPath string) *exec.Cmd {
+	command := exec.Command(execPath, "daemon", "start", "--background-child")
+	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	return command
 }
 
 func checkRunningDaemon(ctx context.Context, socketPath, pidPath string) (int, bool, error) {
