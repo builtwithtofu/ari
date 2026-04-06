@@ -57,6 +57,7 @@ This repository is pre-alpha. Keep changes small, typed, and easy to verify.
 - NEVER modify tests to make them pass; fix the code.
 - NEVER use `assert.Contains`; assert on complete expected values.
 - Prefer real database tests over mocked tests.
+- TESTS MUST NOT write inline migration or table-creation logic; use Atlas-backed migrations/helpers as the schema source.
 - Test behavior, not implementation details.
 - For bug reports (stack traces, logs, or repro steps), add a reproducer test before fixing.
 

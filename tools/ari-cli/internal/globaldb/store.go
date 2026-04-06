@@ -3,6 +3,7 @@ package globaldb
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -151,8 +152,11 @@ WHERE status = 'running'`
 	status,
 	exit_code,
 	started_at,
-	stopped_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	stopped_at,
+	harness,
+	harness_resumable_id,
+	harness_metadata
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	agentByIDQuery = `SELECT
 	agent_id,
@@ -163,7 +167,10 @@ WHERE status = 'running'`
 	status,
 	exit_code,
 	started_at,
-	stopped_at
+	stopped_at,
+	harness,
+	harness_resumable_id,
+	harness_metadata
 FROM agents
 WHERE session_id = ? AND agent_id = ?`
 
@@ -176,7 +183,10 @@ WHERE session_id = ? AND agent_id = ?`
 	status,
 	exit_code,
 	started_at,
-	stopped_at
+	stopped_at,
+	harness,
+	harness_resumable_id,
+	harness_metadata
 FROM agents
 WHERE session_id = ? AND name = ?`
 
@@ -189,7 +199,10 @@ WHERE session_id = ? AND name = ?`
 	status,
 	exit_code,
 	started_at,
-	stopped_at
+	stopped_at,
+	harness,
+	harness_resumable_id,
+	harness_metadata
 FROM agents
 WHERE session_id = ?
 ORDER BY started_at DESC, agent_id ASC`
@@ -277,27 +290,33 @@ type UpdateCommandStatusParams struct {
 }
 
 type Agent struct {
-	AgentID   string
-	SessionID string
-	Name      *string
-	Command   string
-	Args      string
-	Status    string
-	ExitCode  *int
-	StartedAt string
-	StoppedAt *string
+	AgentID            string
+	SessionID          string
+	Name               *string
+	Command            string
+	Args               string
+	Status             string
+	ExitCode           *int
+	StartedAt          string
+	StoppedAt          *string
+	Harness            *string
+	HarnessResumableID *string
+	HarnessMetadata    string
 }
 
 type CreateAgentParams struct {
-	AgentID   string
-	SessionID string
-	Name      *string
-	Command   string
-	Args      string
-	Status    string
-	ExitCode  *int
-	StartedAt string
-	StoppedAt *string
+	AgentID            string
+	SessionID          string
+	Name               *string
+	Command            string
+	Args               string
+	Status             string
+	ExitCode           *int
+	StartedAt          string
+	StoppedAt          *string
+	Harness            *string
+	HarnessResumableID *string
+	HarnessMetadata    string
 }
 
 type UpdateAgentStatusParams struct {
@@ -777,6 +796,28 @@ func (s *Store) CreateAgent(ctx context.Context, params CreateAgentParams) error
 	if params.StartedAt = strings.TrimSpace(params.StartedAt); params.StartedAt == "" {
 		params.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
+	if params.Harness != nil {
+		trimmedHarness := strings.TrimSpace(*params.Harness)
+		if trimmedHarness == "" {
+			params.Harness = nil
+		} else {
+			params.Harness = &trimmedHarness
+		}
+	}
+	if params.HarnessResumableID != nil {
+		trimmedResumableID := strings.TrimSpace(*params.HarnessResumableID)
+		if trimmedResumableID == "" {
+			params.HarnessResumableID = nil
+		} else {
+			params.HarnessResumableID = &trimmedResumableID
+		}
+	}
+	if params.HarnessMetadata = strings.TrimSpace(params.HarnessMetadata); params.HarnessMetadata == "" {
+		params.HarnessMetadata = "{}"
+	}
+	if !json.Valid([]byte(params.HarnessMetadata)) {
+		return fmt.Errorf("%w: harness metadata must be valid json", ErrInvalidInput)
+	}
 
 	if _, err := s.db.ExecContext(
 		ctx,
@@ -790,6 +831,9 @@ func (s *Store) CreateAgent(ctx context.Context, params CreateAgentParams) error
 		params.ExitCode,
 		params.StartedAt,
 		params.StoppedAt,
+		params.Harness,
+		params.HarnessResumableID,
+		params.HarnessMetadata,
 	); err != nil {
 		return fmt.Errorf("create agent %q: %w", params.AgentID, err)
 	}
@@ -993,6 +1037,9 @@ func queryAgents(ctx context.Context, db DB, query string, args ...any) ([]Agent
 			&item.ExitCode,
 			&item.StartedAt,
 			&item.StoppedAt,
+			&item.Harness,
+			&item.HarnessResumableID,
+			&item.HarnessMetadata,
 		); err != nil {
 			return nil, err
 		}

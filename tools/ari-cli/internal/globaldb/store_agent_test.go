@@ -5,8 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/testutil"
 
 	_ "modernc.org/sqlite"
 )
@@ -20,13 +23,16 @@ func TestAgentStoreLifecycleAndReconciliation(t *testing.T) {
 	}
 
 	createReq := CreateAgentParams{
-		AgentID:   "agt-1",
-		SessionID: "sess-1",
-		Name:      stringPtr("claude"),
-		Command:   "claude-code",
-		Args:      `["--resume"]`,
-		Status:    "running",
-		StartedAt: "2026-04-04T00:00:00Z",
+		AgentID:            "agt-1",
+		SessionID:          "sess-1",
+		Name:               stringPtr("claude"),
+		Command:            "claude-code",
+		Args:               `["--resume"]`,
+		Status:             "running",
+		StartedAt:          "2026-04-04T00:00:00Z",
+		Harness:            stringPtr("claude-code"),
+		HarnessResumableID: stringPtr("sess-resume-1"),
+		HarnessMetadata:    `{"resume_source":"argv"}`,
 	}
 	if err := store.CreateAgent(ctx, createReq); err != nil {
 		t.Fatalf("CreateAgent returned error: %v", err)
@@ -41,6 +47,15 @@ func TestAgentStoreLifecycleAndReconciliation(t *testing.T) {
 	}
 	if gotByID.Status != "running" {
 		t.Fatalf("GetAgent Status = %q, want %q", gotByID.Status, "running")
+	}
+	if gotByID.Harness == nil || *gotByID.Harness != "claude-code" {
+		t.Fatalf("GetAgent Harness = %v, want %q", gotByID.Harness, "claude-code")
+	}
+	if gotByID.HarnessResumableID == nil || *gotByID.HarnessResumableID != "sess-resume-1" {
+		t.Fatalf("GetAgent HarnessResumableID = %v, want %q", gotByID.HarnessResumableID, "sess-resume-1")
+	}
+	if gotByID.HarnessMetadata != `{"resume_source":"argv"}` {
+		t.Fatalf("GetAgent HarnessMetadata = %q, want %q", gotByID.HarnessMetadata, `{"resume_source":"argv"}`)
 	}
 
 	gotByName, err := store.GetAgentByName(ctx, "sess-1", "claude")
@@ -224,44 +239,23 @@ func TestCreateAgentRejectsDuplicateNameInSameSession(t *testing.T) {
 func newAgentTestStore(t *testing.T) *Store {
 	t.Helper()
 
-	dbName := fmt.Sprintf("file:agent-store-%d?mode=memory&cache=shared", time.Now().UnixNano())
-	db, err := sql.Open("sqlite", dbName)
+	dbPath := filepath.Join(t.TempDir(), fmt.Sprintf("agent-store-%d.db", time.Now().UnixNano()))
+	if err := applyGlobalDBTestMigrations(dbPath); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatalf("open sqlite db: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
+		t.Fatalf("set busy timeout: %v", err)
 	}
 	t.Cleanup(func() {
 		_ = db.Close()
 	})
-
-	if _, err := db.Exec(`
-CREATE TABLE sessions (
-	session_id TEXT PRIMARY KEY,
-	name TEXT NOT NULL UNIQUE,
-	status TEXT NOT NULL DEFAULT 'active',
-	vcs_preference TEXT NOT NULL DEFAULT 'auto',
-	origin_root TEXT NOT NULL,
-	cleanup_policy TEXT NOT NULL DEFAULT 'manual',
-	created_at TEXT NOT NULL,
-	updated_at TEXT NOT NULL
-);
-CREATE TABLE agents (
-	agent_id TEXT PRIMARY KEY,
-	session_id TEXT NOT NULL,
-	name TEXT,
-	command TEXT NOT NULL,
-	args TEXT NOT NULL DEFAULT '[]',
-	status TEXT NOT NULL DEFAULT 'running',
-	exit_code INTEGER,
-	started_at TEXT NOT NULL,
-	stopped_at TEXT,
-	FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
-);
-CREATE UNIQUE INDEX agents_session_id_name_uq
-	ON agents (session_id, name)
-	WHERE name IS NOT NULL;
-`); err != nil {
-		t.Fatalf("create schema: %v", err)
-	}
 
 	store, err := NewSQLStore(db)
 	if err != nil {
@@ -269,4 +263,12 @@ CREATE UNIQUE INDEX agents_session_id_name_uq
 	}
 
 	return store
+}
+
+func applyGlobalDBTestMigrations(dbPath string) error {
+	migrationsDir, err := atlasMigrationsDir()
+	if err != nil {
+		return err
+	}
+	return testutil.ApplySQLMigrations(dbPath, migrationsDir)
 }

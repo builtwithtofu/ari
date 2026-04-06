@@ -5,8 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -191,6 +192,130 @@ func TestAgentSpawnHarnessLauncherUsesDefaultBinaryWhenCommandMissing(t *testing
 	}
 }
 
+func TestAgentSpawnPersistsHarnessSessionIdentityFromResumeArgs(t *testing.T) {
+	store := newAgentMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerAgentMethods(registry, store); err != nil {
+		t.Fatalf("registerAgentMethods returned error: %v", err)
+	}
+
+	workspace := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
+	shim := writeNoopCommandShim(t)
+
+	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
+		SessionID: "sess-1",
+		Harness:   "opencode",
+		Command:   shim,
+		Args:      []string{"--session", "resume-xyz"},
+	})
+
+	getResp := callMethod[AgentGetResponse](t, registry, "agent.get", AgentGetRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+	if getResp.Harness != "opencode" {
+		t.Fatalf("agent.get harness = %q, want %q", getResp.Harness, "opencode")
+	}
+	if getResp.HarnessResumableID != "resume-xyz" {
+		t.Fatalf("agent.get harness_resumable_id = %q, want %q", getResp.HarnessResumableID, "resume-xyz")
+	}
+	if string(getResp.HarnessMetadata) != `{"resume_source":"argv"}` {
+		t.Fatalf("agent.get harness_metadata = %q, want %q", string(getResp.HarnessMetadata), `{"resume_source":"argv"}`)
+	}
+
+	_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+}
+
+func TestAgentSpawnLeavesResumableIdentityEmptyWhenHarnessDoesNotExposeOne(t *testing.T) {
+	store := newAgentMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerAgentMethods(registry, store); err != nil {
+		t.Fatalf("registerAgentMethods returned error: %v", err)
+	}
+
+	workspace := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
+	shim := writeNoopCommandShim(t)
+
+	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
+		SessionID: "sess-1",
+		Harness:   "codex",
+		Command:   shim,
+		Args:      []string{"--model", "gpt-5-codex"},
+	})
+
+	getResp := callMethod[AgentGetResponse](t, registry, "agent.get", AgentGetRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+	if getResp.Harness != "codex" {
+		t.Fatalf("agent.get harness = %q, want %q", getResp.Harness, "codex")
+	}
+	if getResp.HarnessResumableID != "" {
+		t.Fatalf("agent.get harness_resumable_id = %q, want empty", getResp.HarnessResumableID)
+	}
+	if string(getResp.HarnessMetadata) != "{}" {
+		t.Fatalf("agent.get harness_metadata = %q, want %q", string(getResp.HarnessMetadata), "{}")
+	}
+
+	_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+}
+
+func TestAgentSpawnInfersHarnessFromExplicitCommand(t *testing.T) {
+	store := newAgentMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerAgentMethods(registry, store); err != nil {
+		t.Fatalf("registerAgentMethods returned error: %v", err)
+	}
+
+	workspace := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
+	shim := writeNamedNoopCommandShim(t, "claude-code")
+
+	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
+		SessionID: "sess-1",
+		Command:   shim,
+		Args:      []string{"--resume=cl-abc"},
+	})
+
+	getResp := callMethod[AgentGetResponse](t, registry, "agent.get", AgentGetRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+	if getResp.Harness != "claude-code" {
+		t.Fatalf("agent.get harness = %q, want %q", getResp.Harness, "claude-code")
+	}
+	if getResp.HarnessResumableID != "cl-abc" {
+		t.Fatalf("agent.get harness_resumable_id = %q, want %q", getResp.HarnessResumableID, "cl-abc")
+	}
+
+	_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+}
+
+func TestParseHarnessResumableID(t *testing.T) {
+	tests := []struct {
+		name    string
+		harness string
+		args    []string
+		want    string
+	}{
+		{name: "opencode long form", harness: "opencode", args: []string{"--session", "op-123"}, want: "op-123"},
+		{name: "opencode equals form", harness: "opencode", args: []string{"--session=op-456"}, want: "op-456"},
+		{name: "opencode missing value", harness: "opencode", args: []string{"--session"}, want: ""},
+		{name: "claude long form", harness: "claude-code", args: []string{"--resume", "cl-123"}, want: "cl-123"},
+		{name: "claude equals form", harness: "claude-code", args: []string{"--resume=cl-456"}, want: "cl-456"},
+		{name: "claude missing value", harness: "claude-code", args: []string{"--resume"}, want: ""},
+		{name: "claude next flag", harness: "claude-code", args: []string{"--resume", "--model", "sonnet"}, want: ""},
+		{name: "unsupported harness", harness: "codex", args: []string{"--resume", "cx-1"}, want: ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := parseHarnessResumableID(tc.harness, tc.args); got != tc.want {
+				t.Fatalf("parseHarnessResumableID = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestAgentSpawnRejectsUnknownHarness(t *testing.T) {
 	store := newAgentMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
@@ -331,53 +456,23 @@ func waitForAgentOutput(t *testing.T, registry *rpc.MethodRegistry, sessionID, a
 func newAgentMethodTestStore(t *testing.T) *globaldb.Store {
 	t.Helper()
 
-	dbName := fmt.Sprintf("file:agent-method-%d?mode=memory&cache=shared", time.Now().UnixNano())
-	db, err := sql.Open("sqlite", dbName)
+	dbPath := filepath.Join(t.TempDir(), "agent-method.db")
+	if err := applyMigrationSQLFiles(dbPath); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatalf("open sqlite db: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
+		t.Fatalf("set busy timeout: %v", err)
 	}
 	t.Cleanup(func() {
 		_ = db.Close()
 	})
-
-	if _, err := db.Exec(`
-CREATE TABLE sessions (
-	session_id TEXT PRIMARY KEY,
-	name TEXT NOT NULL UNIQUE,
-	status TEXT NOT NULL DEFAULT 'active',
-	vcs_preference TEXT NOT NULL DEFAULT 'auto',
-	origin_root TEXT NOT NULL,
-	cleanup_policy TEXT NOT NULL DEFAULT 'manual',
-	created_at TEXT NOT NULL,
-	updated_at TEXT NOT NULL
-);
-CREATE TABLE session_folders (
-	session_id TEXT NOT NULL,
-	folder_path TEXT NOT NULL,
-	vcs_type TEXT NOT NULL DEFAULT 'unknown',
-	is_primary INTEGER NOT NULL DEFAULT 0,
-	added_at TEXT NOT NULL,
-	PRIMARY KEY (session_id, folder_path),
-	FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
-);
-CREATE TABLE agents (
-	agent_id TEXT PRIMARY KEY,
-	session_id TEXT NOT NULL,
-	name TEXT,
-	command TEXT NOT NULL,
-	args TEXT NOT NULL DEFAULT '[]',
-	status TEXT NOT NULL DEFAULT 'running',
-	exit_code INTEGER,
-	started_at TEXT NOT NULL,
-	stopped_at TEXT,
-	FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
-);
-CREATE UNIQUE INDEX agents_session_id_name_uq
-	ON agents (session_id, name)
-	WHERE name IS NOT NULL;
-`); err != nil {
-		t.Fatalf("create schema: %v", err)
-	}
 
 	store, err := globaldb.NewSQLStore(db)
 	if err != nil {
@@ -385,4 +480,22 @@ CREATE UNIQUE INDEX agents_session_id_name_uq
 	}
 
 	return store
+}
+
+func writeNoopCommandShim(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "noop.sh")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatalf("write shim: %v", err)
+	}
+	return path
+}
+
+func writeNamedNoopCommandShim(t *testing.T, name string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatalf("write shim: %v", err)
+	}
+	return path
 }

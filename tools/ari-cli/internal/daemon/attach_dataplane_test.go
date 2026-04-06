@@ -577,6 +577,7 @@ func TestAttachDataPlaneSendsAgentExitedFrame(t *testing.T) {
 		if exited.ExitCode != 7 {
 			t.Fatalf("agent_exited exit_code = %d, want 7", exited.ExitCode)
 		}
+		waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "exited")
 		return
 	}
 

@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -50,15 +52,18 @@ type AgentGetRequest struct {
 }
 
 type AgentGetResponse struct {
-	AgentID   string `json:"agent_id"`
-	SessionID string `json:"session_id"`
-	Name      string `json:"name,omitempty"`
-	Command   string `json:"command"`
-	Args      string `json:"args"`
-	Status    string `json:"status"`
-	ExitCode  *int   `json:"exit_code"`
-	StartedAt string `json:"started_at"`
-	StoppedAt string `json:"stopped_at,omitempty"`
+	AgentID            string          `json:"agent_id"`
+	SessionID          string          `json:"session_id"`
+	Name               string          `json:"name,omitempty"`
+	Command            string          `json:"command"`
+	Args               string          `json:"args"`
+	Status             string          `json:"status"`
+	ExitCode           *int            `json:"exit_code"`
+	StartedAt          string          `json:"started_at"`
+	StoppedAt          string          `json:"stopped_at,omitempty"`
+	Harness            string          `json:"harness,omitempty"`
+	HarnessResumableID string          `json:"harness_resumable_id,omitempty"`
+	HarnessMetadata    json.RawMessage `json:"harness_metadata,omitempty"`
 }
 
 type AgentSendRequest struct {
@@ -158,13 +163,21 @@ func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globa
 			}
 
 			startedAt := time.Now().UTC().Format(time.RFC3339Nano)
+			harnessName := strings.TrimSpace(req.Harness)
+			if harnessName == "" {
+				harnessName = inferHarnessFromCommand(launchSpec.Command)
+			}
+			harnessIdentity := deriveHarnessIdentity(harnessName, launchSpec.Args)
 			createParams := globaldb.CreateAgentParams{
-				AgentID:   agentID,
-				SessionID: sessionID,
-				Command:   launchSpec.Command,
-				Args:      encodeArgs(launchSpec.Args),
-				Status:    "running",
-				StartedAt: startedAt,
+				AgentID:            agentID,
+				SessionID:          sessionID,
+				Command:            launchSpec.Command,
+				Args:               encodeArgs(launchSpec.Args),
+				Status:             "running",
+				StartedAt:          startedAt,
+				Harness:            harnessIdentity.Harness,
+				HarnessResumableID: harnessIdentity.ResumableID,
+				HarnessMetadata:    harnessIdentity.Metadata,
 			}
 			if name := strings.TrimSpace(req.Name); name != "" {
 				createParams.Name = &name
@@ -257,6 +270,15 @@ func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globa
 			}
 			if agent.StoppedAt != nil {
 				resp.StoppedAt = *agent.StoppedAt
+			}
+			if agent.Harness != nil {
+				resp.Harness = *agent.Harness
+			}
+			if agent.HarnessResumableID != nil {
+				resp.HarnessResumableID = *agent.HarnessResumableID
+			}
+			if strings.TrimSpace(agent.HarnessMetadata) != "" && json.Valid([]byte(agent.HarnessMetadata)) {
+				resp.HarnessMetadata = json.RawMessage(agent.HarnessMetadata)
 			}
 
 			return resp, nil
@@ -387,6 +409,71 @@ func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globa
 	}
 
 	return nil
+}
+
+type harnessIdentity struct {
+	Harness     *string
+	ResumableID *string
+	Metadata    string
+}
+
+func deriveHarnessIdentity(harness string, args []string) harnessIdentity {
+	identity := harnessIdentity{Metadata: "{}"}
+	harness = strings.TrimSpace(harness)
+	if harness != "" {
+		identity.Harness = &harness
+	}
+
+	resumableID := parseHarnessResumableID(harness, args)
+	if resumableID == "" {
+		return identity
+	}
+	identity.ResumableID = &resumableID
+	metadata := map[string]string{
+		"resume_source": "argv",
+	}
+	if encoded, err := json.Marshal(metadata); err == nil {
+		identity.Metadata = string(encoded)
+	}
+	return identity
+}
+
+func inferHarnessFromCommand(command string) string {
+	base := strings.TrimSpace(filepath.Base(strings.TrimSpace(command)))
+	if base == "" {
+		return ""
+	}
+	base = strings.TrimSuffix(base, ".exe")
+	if _, ok := harnessDefinitions[base]; ok {
+		return base
+	}
+	return ""
+}
+
+func parseHarnessResumableID(harness string, args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+	flag := resumableFlagForHarness(harness)
+	if flag == "" {
+		return ""
+	}
+	for index := 0; index < len(args); index++ {
+		argument := strings.TrimSpace(args[index])
+		if argument == flag {
+			if index+1 < len(args) {
+				next := strings.TrimSpace(args[index+1])
+				if next != "" && !strings.HasPrefix(next, "-") {
+					return next
+				}
+			}
+			return ""
+		}
+		if strings.HasPrefix(argument, flag+"=") {
+			return strings.TrimSpace(strings.TrimPrefix(argument, flag+"="))
+		}
+	}
+	return ""
 }
 
 func (d *Daemon) waitForAgentExit(ctx context.Context, agentID, sessionID string, store *globaldb.Store, proc *process.Process) {

@@ -547,7 +547,7 @@ func newAgentSpawnCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&name, "name", "", "Optional agent name")
-	cmd.Flags().StringVar(&harness, "harness", "", "Harness identity (claude-code|codex|opencode)")
+	cmd.Flags().StringVar(&harness, "harness", "", fmt.Sprintf("Harness identity (%s)", strings.Join(daemon.SupportedHarnesses(), "|")))
 	cmd.Flags().StringVar(&sessionRef, "session", "", "Session id or name override (defaults to active workspace session)")
 	return cmd
 }
@@ -663,6 +663,21 @@ func newAgentShowCmd() *cobra.Command {
 			}
 			if resp.StoppedAt != "" {
 				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Stopped: %s\n", resp.StoppedAt); err != nil {
+					return err
+				}
+			}
+			if resp.Harness != "" {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Harness: %s\n", resp.Harness); err != nil {
+					return err
+				}
+			}
+			if resp.HarnessResumableID != "" {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Harness Resumable ID: %s\n", resp.HarnessResumableID); err != nil {
+					return err
+				}
+			}
+			if len(resp.HarnessMetadata) > 0 {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Harness Metadata: %s\n", string(resp.HarnessMetadata)); err != nil {
 					return err
 				}
 			}
