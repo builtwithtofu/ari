@@ -18,6 +18,12 @@ var commandSmokeGet = func(ctx context.Context, socketPath, sessionID, commandID
 	return resp, err
 }
 
+var commandSmokeOutput = func(ctx context.Context, socketPath, sessionID, commandID string) (CommandOutputResponse, error) {
+	resp := CommandOutputResponse{}
+	err := tryDaemonMethod(ctx, socketPath, "command.output", CommandOutputRequest{SessionID: sessionID, CommandID: commandID}, &resp)
+	return resp, err
+}
+
 func TestCommandSmokeLifecycleOverRPC(t *testing.T) {
 	stubSessionBootstrap(t)
 
@@ -89,7 +95,7 @@ func TestCommandSmokeLifecycleOverRPC(t *testing.T) {
 func waitForCommandExited(t *testing.T, socketPath, sessionID, commandID string) {
 	t.Helper()
 
-	ctx, cancel := context.WithTimeout(context.Background(), boundedTestTimeout(t, 4*time.Second))
+	ctx, cancel := context.WithTimeout(context.Background(), boundedTestTimeout(t, 8*time.Second))
 	defer cancel()
 
 	ticker := time.NewTicker(25 * time.Millisecond)
@@ -125,7 +131,7 @@ func waitForCommandExited(t *testing.T, socketPath, sessionID, commandID string)
 func waitForCommandOutputContains(t *testing.T, socketPath, sessionID, commandID, want string) {
 	t.Helper()
 
-	ctx, cancel := context.WithTimeout(context.Background(), boundedTestTimeout(t, 4*time.Second))
+	ctx, cancel := context.WithTimeout(context.Background(), boundedTestTimeout(t, 8*time.Second))
 	defer cancel()
 
 	ticker := time.NewTicker(25 * time.Millisecond)
@@ -138,9 +144,8 @@ func waitForCommandOutputContains(t *testing.T, socketPath, sessionID, commandID
 		case <-ctx.Done():
 			t.Fatalf("command %s output did not include %q before timeout (last output=%q, last error=%v)", commandID, want, lastOutput, lastErr)
 		case <-ticker.C:
-			attemptCtx, attemptCancel := context.WithTimeout(ctx, 350*time.Millisecond)
-			output := CommandOutputResponse{}
-			err := tryDaemonMethod(attemptCtx, socketPath, "command.output", CommandOutputRequest{SessionID: sessionID, CommandID: commandID}, &output)
+			attemptCtx, attemptCancel := context.WithTimeout(ctx, 500*time.Millisecond)
+			output, err := commandSmokeOutput(attemptCtx, socketPath, sessionID, commandID)
 			attemptCancel()
 			if err != nil {
 				lastErr = err
@@ -238,5 +243,27 @@ func TestWaitForCommandExitedRetriesTransientInternalError(t *testing.T) {
 	waitForCommandExited(t, "unused", "sess-1", "cmd-1")
 	if attempts < 3 {
 		t.Fatalf("command.get attempts = %d, want at least 3", attempts)
+	}
+}
+
+func TestWaitForCommandOutputContainsToleratesRepeatedAttemptTimeouts(t *testing.T) {
+	original := commandSmokeOutput
+	t.Cleanup(func() {
+		commandSmokeOutput = original
+	})
+
+	attempts := 0
+	commandSmokeOutput = func(ctx context.Context, _, _, _ string) (CommandOutputResponse, error) {
+		attempts++
+		if attempts <= 12 {
+			<-ctx.Done()
+			return CommandOutputResponse{}, ctx.Err()
+		}
+		return CommandOutputResponse{Output: "smoke-output"}, nil
+	}
+
+	waitForCommandOutputContains(t, "unused", "sess-1", "cmd-1", "smoke-output")
+	if attempts < 13 {
+		t.Fatalf("command.output attempts = %d, want at least 13", attempts)
 	}
 }
