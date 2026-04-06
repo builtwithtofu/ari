@@ -845,13 +845,19 @@ func executeRootCommandWithContext(ctx context.Context, args ...string) (string,
 	originalCommandEnsure := commandEnsureDaemonRunning
 	originalAgentEnsure := agentEnsureDaemonRunning
 	originalSessionEnsure := sessionEnsureDaemonRunning
+	originalCommandScope := commandEnsureWorkspaceScope
+	originalAgentScope := agentEnsureWorkspaceScope
 	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	agentEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	sessionEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	commandEnsureWorkspaceScope = func(context.Context, string, string, string) error { return nil }
+	agentEnsureWorkspaceScope = func(context.Context, string, string, string) error { return nil }
 	defer func() {
 		commandEnsureDaemonRunning = originalCommandEnsure
 		agentEnsureDaemonRunning = originalAgentEnsure
 		sessionEnsureDaemonRunning = originalSessionEnsure
+		commandEnsureWorkspaceScope = originalCommandScope
+		agentEnsureWorkspaceScope = originalAgentScope
 	}()
 
 	root := NewRootCmd()

@@ -19,6 +19,7 @@ var (
 	commandResolveSessionIdentifier = resolveSessionIdentifier
 	commandReadActiveSession        = config.ReadActiveSession
 	commandEnsureDaemonRunning      = ensureDaemonRunning
+	commandEnsureWorkspaceScope     = enforceActiveWorkspaceScope
 	commandRunRPC                   = func(ctx context.Context, socketPath string, req daemon.CommandRunRequest) (daemon.CommandRunResponse, error) {
 		rpcClient := client.New(socketPath)
 		var response daemon.CommandRunResponse
@@ -102,6 +103,9 @@ func newCommandRunCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := commandEnsureWorkspaceScope(ctx, cfg.Daemon.SocketPath, sessionID, sessionRef); err != nil {
+				return err
+			}
 
 			resp, err := commandRunRPC(ctx, cfg.Daemon.SocketPath, daemon.CommandRunRequest{
 				SessionID: sessionID,
@@ -144,6 +148,9 @@ func newCommandListCmd() *cobra.Command {
 
 			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, sessionReference)
 			if err != nil {
+				return err
+			}
+			if err := commandEnsureWorkspaceScope(ctx, cfg.Daemon.SocketPath, sessionID, sessionRef); err != nil {
 				return err
 			}
 
@@ -196,6 +203,9 @@ func newCommandShowCmd() *cobra.Command {
 
 			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, sessionReference)
 			if err != nil {
+				return err
+			}
+			if err := commandEnsureWorkspaceScope(ctx, cfg.Daemon.SocketPath, sessionID, sessionRef); err != nil {
 				return err
 			}
 
@@ -257,6 +267,9 @@ func newCommandOutputCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := commandEnsureWorkspaceScope(ctx, cfg.Daemon.SocketPath, sessionID, sessionRef); err != nil {
+				return err
+			}
 
 			resp, err := commandOutputRPC(ctx, cfg.Daemon.SocketPath, sessionID, strings.TrimSpace(args[0]))
 			if err != nil {
@@ -295,6 +308,9 @@ func newCommandStopCmd() *cobra.Command {
 
 			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, sessionReference)
 			if err != nil {
+				return err
+			}
+			if err := commandEnsureWorkspaceScope(ctx, cfg.Daemon.SocketPath, sessionID, sessionRef); err != nil {
 				return err
 			}
 

@@ -30,6 +30,206 @@ func TestRootRegistersAgentCommand(t *testing.T) {
 	}
 }
 
+func TestAgentListRejectsActiveSessionOutsideWorkspace(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cwd := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd returned error: %v", err)
+	}
+	if err := os.Chdir(cwd); err != nil {
+		t.Fatalf("os.Chdir returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(originalWD)
+	})
+
+	originalResolve := commandResolveSessionIdentifier
+	originalReadActive := agentReadActiveSession
+	originalEnsure := agentEnsureDaemonRunning
+	originalSessionGet := sessionGetRPC
+	originalList := agentListRPC
+
+	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+		return "sess-1", nil
+	}
+	agentReadActiveSession = func() (string, error) {
+		return "sess-1", nil
+	}
+	agentEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	sessionGetRPC = func(context.Context, string, string) (daemon.SessionGetResponse, error) {
+		return daemon.SessionGetResponse{SessionID: "sess-1", OriginRoot: t.TempDir()}, nil
+	}
+	agentListRPC = func(context.Context, string, string) (daemon.AgentListResponse, error) {
+		return daemon.AgentListResponse{}, errors.New("agent list should not be called")
+	}
+	t.Cleanup(func() {
+		commandResolveSessionIdentifier = originalResolve
+		agentReadActiveSession = originalReadActive
+		agentEnsureDaemonRunning = originalEnsure
+		sessionGetRPC = originalSessionGet
+		agentListRPC = originalList
+	})
+
+	_, err = executeRootCommandRaw("agent", "list")
+	if err == nil {
+		t.Fatal("agent list returned nil error for cross-workspace active session")
+	}
+	if err.Error() != "Active workspace session belongs to a different workspace; use --session <id-or-name> to override" {
+		t.Fatalf("agent list error = %q, want %q", err.Error(), "Active workspace session belongs to a different workspace; use --session <id-or-name> to override")
+	}
+}
+
+func TestAgentListEnvActiveSessionBypassesWorkspaceSafety(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ARI_ACTIVE_SESSION", "sess-env")
+
+	originalResolve := commandResolveSessionIdentifier
+	originalReadActive := agentReadActiveSession
+	originalEnsure := agentEnsureDaemonRunning
+	originalSessionGet := sessionGetRPC
+	originalList := agentListRPC
+
+	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+		return "sess-env", nil
+	}
+	agentReadActiveSession = func() (string, error) {
+		return "sess-env", nil
+	}
+	agentEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	sessionGetRPC = func(context.Context, string, string) (daemon.SessionGetResponse, error) {
+		return daemon.SessionGetResponse{SessionID: "sess-env", OriginRoot: t.TempDir()}, nil
+	}
+	called := false
+	agentListRPC = func(context.Context, string, string) (daemon.AgentListResponse, error) {
+		called = true
+		return daemon.AgentListResponse{}, nil
+	}
+	t.Cleanup(func() {
+		commandResolveSessionIdentifier = originalResolve
+		agentReadActiveSession = originalReadActive
+		agentEnsureDaemonRunning = originalEnsure
+		sessionGetRPC = originalSessionGet
+		agentListRPC = originalList
+	})
+
+	_, err := executeRootCommandRaw("agent", "list")
+	if err != nil {
+		t.Fatalf("agent list with env override returned error: %v", err)
+	}
+	if !called {
+		t.Fatal("agent list RPC not called with env active-session override")
+	}
+}
+
+func TestAgentSubcommandsRejectActiveSessionOutsideWorkspace(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cwd := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd returned error: %v", err)
+	}
+	if err := os.Chdir(cwd); err != nil {
+		t.Fatalf("os.Chdir returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(originalWD)
+	})
+
+	originalResolve := commandResolveSessionIdentifier
+	originalReadActive := agentReadActiveSession
+	originalEnsure := agentEnsureDaemonRunning
+	originalSessionGet := sessionGetRPC
+	originalSpawn := agentSpawnRPC
+	originalList := agentListRPC
+	originalGet := agentGetRPC
+	originalSend := agentSendRPC
+	originalOutput := agentOutputRPC
+	originalStop := agentStopRPC
+	originalAttach := agentAttachRPC
+	originalDetach := agentDetachRPC
+
+	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+		return "sess-1", nil
+	}
+	agentReadActiveSession = func() (string, error) {
+		return "sess-1", nil
+	}
+	agentEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	sessionGetRPC = func(context.Context, string, string) (daemon.SessionGetResponse, error) {
+		return daemon.SessionGetResponse{SessionID: "sess-1", OriginRoot: t.TempDir()}, nil
+	}
+	agentSpawnRPC = func(context.Context, string, daemon.AgentSpawnRequest) (daemon.AgentSpawnResponse, error) {
+		return daemon.AgentSpawnResponse{}, errors.New("agent spawn should not be called")
+	}
+	agentListRPC = func(context.Context, string, string) (daemon.AgentListResponse, error) {
+		return daemon.AgentListResponse{}, errors.New("agent list should not be called")
+	}
+	agentGetRPC = func(context.Context, string, string, string) (daemon.AgentGetResponse, error) {
+		return daemon.AgentGetResponse{}, errors.New("agent show should not be called")
+	}
+	agentSendRPC = func(context.Context, string, daemon.AgentSendRequest) (daemon.AgentSendResponse, error) {
+		return daemon.AgentSendResponse{}, errors.New("agent send should not be called")
+	}
+	agentOutputRPC = func(context.Context, string, string, string) (daemon.AgentOutputResponse, error) {
+		return daemon.AgentOutputResponse{}, errors.New("agent output should not be called")
+	}
+	agentStopRPC = func(context.Context, string, string, string) (daemon.AgentStopResponse, error) {
+		return daemon.AgentStopResponse{}, errors.New("agent stop should not be called")
+	}
+	agentAttachRPC = func(context.Context, string, daemon.AgentAttachRequest) (daemon.AgentAttachResponse, error) {
+		return daemon.AgentAttachResponse{}, errors.New("agent attach should not be called")
+	}
+	agentDetachRPC = func(context.Context, string, daemon.AgentDetachRequest) (daemon.AgentDetachResponse, error) {
+		return daemon.AgentDetachResponse{}, errors.New("agent detach should not be called")
+	}
+	t.Cleanup(func() {
+		commandResolveSessionIdentifier = originalResolve
+		agentReadActiveSession = originalReadActive
+		agentEnsureDaemonRunning = originalEnsure
+		sessionGetRPC = originalSessionGet
+		agentSpawnRPC = originalSpawn
+		agentListRPC = originalList
+		agentGetRPC = originalGet
+		agentSendRPC = originalSend
+		agentOutputRPC = originalOutput
+		agentStopRPC = originalStop
+		agentAttachRPC = originalAttach
+		agentDetachRPC = originalDetach
+	})
+
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "spawn", args: []string{"agent", "spawn", "--", "claude-code"}},
+		{name: "list", args: []string{"agent", "list"}},
+		{name: "show", args: []string{"agent", "show", "claude"}},
+		{name: "attach", args: []string{"agent", "attach", "claude"}},
+		{name: "detach", args: []string{"agent", "detach", "claude"}},
+		{name: "send", args: []string{"agent", "send", "claude", "--input", "hi"}},
+		{name: "output", args: []string{"agent", "output", "claude"}},
+		{name: "stop", args: []string{"agent", "stop", "claude"}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := executeRootCommandRaw(tc.args...)
+			if err == nil {
+				t.Fatalf("%s returned nil error", tc.name)
+			}
+			if err.Error() != "Active workspace session belongs to a different workspace; use --session <id-or-name> to override" {
+				t.Fatalf("%s error = %q, want workspace mismatch error", tc.name, err.Error())
+			}
+		})
+	}
+}
+
 func TestAgentSubcommandsExist(t *testing.T) {
 	agent := NewAgentCmd()
 
@@ -629,13 +829,19 @@ func executeRootCommandWithInput(stdin string, args ...string) (string, error) {
 	originalCommandEnsure := commandEnsureDaemonRunning
 	originalAgentEnsure := agentEnsureDaemonRunning
 	originalSessionEnsure := sessionEnsureDaemonRunning
+	originalCommandScope := commandEnsureWorkspaceScope
+	originalAgentScope := agentEnsureWorkspaceScope
 	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	agentEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	sessionEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	commandEnsureWorkspaceScope = func(context.Context, string, string, string) error { return nil }
+	agentEnsureWorkspaceScope = func(context.Context, string, string, string) error { return nil }
 	defer func() {
 		commandEnsureDaemonRunning = originalCommandEnsure
 		agentEnsureDaemonRunning = originalAgentEnsure
 		sessionEnsureDaemonRunning = originalSessionEnsure
+		commandEnsureWorkspaceScope = originalCommandScope
+		agentEnsureWorkspaceScope = originalAgentScope
 	}()
 
 	root := NewRootCmd()
