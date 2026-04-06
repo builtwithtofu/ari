@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -293,5 +294,26 @@ func TestLoadTreatsEmptyConfigFileAsDefaults(t *testing.T) {
 	}
 	if cfg.Daemon.SocketPath == "" || cfg.Daemon.DBPath == "" || cfg.Daemon.PIDPath == "" {
 		t.Fatalf("Load daemon defaults were not populated: %+v", cfg.Daemon)
+	}
+}
+
+func TestLoadFallsBackWhenHomeDirectoryCannotBeResolved(t *testing.T) {
+	originalUserHomeDir := osUserHomeDir
+	osUserHomeDir = func() (string, error) {
+		return "", errors.New("home unavailable")
+	}
+	t.Cleanup(func() {
+		osUserHomeDir = originalUserHomeDir
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("Load returned nil config")
+	}
+	if cfg.Daemon.SocketPath == "" {
+		t.Fatalf("Load returned empty daemon socket path")
 	}
 }

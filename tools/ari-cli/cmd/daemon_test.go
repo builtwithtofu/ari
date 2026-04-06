@@ -357,6 +357,72 @@ func TestEnsureDaemonRunningLaunchesWhenUnavailable(t *testing.T) {
 	}
 }
 
+func TestEnsureDaemonRunningReturnsLaunchErrorWithoutPolling(t *testing.T) {
+	originalStatus := daemonStatusRPC
+	originalLaunch := daemonAutoStartLaunch
+	daemonStatusRPC = func(context.Context, string) (daemon.StatusResponse, error) {
+		return daemon.StatusResponse{}, os.ErrNotExist
+	}
+	daemonAutoStartLaunch = func(*config.Config) error {
+		return errors.New("launch failed")
+	}
+	t.Cleanup(func() {
+		daemonStatusRPC = originalStatus
+		daemonAutoStartLaunch = originalLaunch
+	})
+
+	cfg := &config.Config{Daemon: config.DaemonConfig{SocketPath: "/tmp/ari.sock", DBPath: "/tmp/ari.db", PIDPath: "/tmp/ari.pid"}}
+	err := ensureDaemonRunning(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("ensureDaemonRunning returned nil error")
+	}
+	if err.Error() != "Daemon auto-start failed: launch failed" {
+		t.Fatalf("ensureDaemonRunning error = %q, want %q", err.Error(), "Daemon auto-start failed: launch failed")
+	}
+}
+
+func TestEnsureDaemonRunningPollTimeoutDoesNotOutliveDeadline(t *testing.T) {
+	originalStatus := daemonStatusRPC
+	originalLaunch := daemonAutoStartLaunch
+	originalWindow := daemonAutoStartWaitWindow
+	originalPollTimeout := daemonAutoStartPollTimeout
+	originalPollInterval := daemonAutoStartPollInterval
+	daemonAutoStartWaitWindow = 120 * time.Millisecond
+	daemonAutoStartPollTimeout = 200 * time.Millisecond
+	daemonAutoStartPollInterval = 1 * time.Millisecond
+
+	statusCalls := 0
+	daemonStatusRPC = func(ctx context.Context, _ string) (daemon.StatusResponse, error) {
+		statusCalls++
+		if statusCalls == 1 {
+			return daemon.StatusResponse{}, os.ErrNotExist
+		}
+		<-ctx.Done()
+		return daemon.StatusResponse{}, ctx.Err()
+	}
+	daemonAutoStartLaunch = func(*config.Config) error { return nil }
+	t.Cleanup(func() {
+		daemonStatusRPC = originalStatus
+		daemonAutoStartLaunch = originalLaunch
+		daemonAutoStartWaitWindow = originalWindow
+		daemonAutoStartPollTimeout = originalPollTimeout
+		daemonAutoStartPollInterval = originalPollInterval
+	})
+
+	start := time.Now()
+	cfg := &config.Config{Daemon: config.DaemonConfig{SocketPath: "/tmp/ari.sock", DBPath: "/tmp/ari.db", PIDPath: "/tmp/ari.pid"}}
+	err := ensureDaemonRunning(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("ensureDaemonRunning returned nil error")
+	}
+	if err.Error() != "Daemon auto-start failed: daemon did not become ready" {
+		t.Fatalf("ensureDaemonRunning error = %q, want %q", err.Error(), "Daemon auto-start failed: daemon did not become ready")
+	}
+	if time.Since(start) > 300*time.Millisecond {
+		t.Fatalf("ensureDaemonRunning duration exceeded deadline budget: %v", time.Since(start))
+	}
+}
+
 func TestEnsureDaemonRunningUsesSecondScaleStatusTimeouts(t *testing.T) {
 	originalStatus := daemonStatusRPC
 	originalLaunch := daemonAutoStartLaunch

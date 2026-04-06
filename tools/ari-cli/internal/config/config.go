@@ -10,6 +10,8 @@ import (
 	"github.com/spf13/viper"
 )
 
+var osUserHomeDir = os.UserHomeDir
+
 type Config struct {
 	Daemon        DaemonConfig `json:"daemon" mapstructure:"daemon"`
 	LogLevel      string       `json:"log_level" mapstructure:"log_level"`
@@ -55,13 +57,17 @@ func Load() (*Config, error) {
 	v.AutomaticEnv()
 
 	cfgPath, pathErr := configPath()
-	if pathErr != nil {
-		return nil, pathErr
-	}
-
-	configInfo, statErr := os.Stat(cfgPath)
-	if statErr == nil && configInfo.Size() == 0 {
-		// Treat empty config file as unset config.
+	if pathErr == nil {
+		configInfo, statErr := os.Stat(cfgPath)
+		if statErr == nil && configInfo.Size() == 0 {
+			// Treat empty config file as unset config.
+		} else {
+			if err := v.ReadInConfig(); err != nil {
+				if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+					return nil, fmt.Errorf("read config: %w", err)
+				}
+			}
+		}
 	} else {
 		if err := v.ReadInConfig(); err != nil {
 			if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
@@ -241,7 +247,7 @@ func WriteActiveSession(sessionID string) error {
 }
 
 func configPath() (string, error) {
-	home, err := os.UserHomeDir()
+	home, err := osUserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve home dir: %w", err)
 	}
@@ -267,7 +273,7 @@ func normalizePath(path string) (string, error) {
 }
 
 func userHomeDir() string {
-	home, err := os.UserHomeDir()
+	home, err := osUserHomeDir()
 	if err != nil {
 		return "."
 	}

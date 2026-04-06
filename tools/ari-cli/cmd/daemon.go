@@ -19,6 +19,11 @@ import (
 )
 
 var (
+	daemonStatusProbeTimeout    = 5 * time.Second
+	daemonAutoStartWaitWindow   = 8 * time.Second
+	daemonAutoStartPollTimeout  = 5 * time.Second
+	daemonAutoStartPollInterval = 100 * time.Millisecond
+
 	daemonPIDCheck = daemon.CheckPIDFile
 	daemonStopRPC  = func(ctx context.Context, socketPath string) error {
 		rpcClient := client.New(socketPath)
@@ -130,7 +135,7 @@ func ensureDaemonRunning(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("daemon config is required")
 	}
 
-	statusCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	statusCtx, cancel := context.WithTimeout(ctx, daemonStatusProbeTimeout)
 	_, statusErr := daemonStatusRPC(statusCtx, cfg.Daemon.SocketPath)
 	cancel()
 	if statusErr == nil {
@@ -147,10 +152,21 @@ func ensureDaemonRunning(ctx context.Context, cfg *config.Config) error {
 	}
 
 	launchErr := daemonAutoStartLaunch(cfg)
+	if launchErr != nil {
+		return userFacingError{message: fmt.Sprintf("Daemon auto-start failed: %v", launchErr)}
+	}
 
-	deadline := time.Now().Add(8 * time.Second)
+	deadline := time.Now().Add(daemonAutoStartWaitWindow)
 	for time.Now().Before(deadline) {
-		pollCtx, pollCancel := context.WithTimeout(ctx, 5*time.Second)
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			break
+		}
+		pollTimeout := daemonAutoStartPollTimeout
+		if remaining < pollTimeout {
+			pollTimeout = remaining
+		}
+		pollCtx, pollCancel := context.WithTimeout(ctx, pollTimeout)
 		_, pollErr := daemonStatusRPC(pollCtx, cfg.Daemon.SocketPath)
 		pollCancel()
 		if pollErr == nil {
@@ -161,16 +177,12 @@ func ensureDaemonRunning(ctx context.Context, cfg *config.Config) error {
 		}
 		if !isDaemonUnavailable(pollErr) {
 			if isTimeoutError(pollErr) {
-				time.Sleep(100 * time.Millisecond)
+				time.Sleep(daemonAutoStartPollInterval)
 				continue
 			}
 			return pollErr
 		}
-		time.Sleep(100 * time.Millisecond)
-	}
-
-	if launchErr != nil {
-		return userFacingError{message: fmt.Sprintf("Daemon auto-start failed: %v", launchErr)}
+		time.Sleep(daemonAutoStartPollInterval)
 	}
 	return userFacingError{message: "Daemon auto-start failed: daemon did not become ready"}
 }
