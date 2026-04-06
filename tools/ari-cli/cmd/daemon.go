@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,11 @@ import (
 )
 
 var (
+	daemonStatusProbeTimeout    = 5 * time.Second
+	daemonAutoStartWaitWindow   = 8 * time.Second
+	daemonAutoStartPollTimeout  = 5 * time.Second
+	daemonAutoStartPollInterval = 100 * time.Millisecond
+
 	daemonPIDCheck = daemon.CheckPIDFile
 	daemonStopRPC  = func(ctx context.Context, socketPath string) error {
 		rpcClient := client.New(socketPath)
@@ -35,6 +41,37 @@ var (
 	daemonSignalProcess = func(pid int, sig syscall.Signal) error {
 		return syscall.Kill(pid, sig)
 	}
+	daemonAutoStartLaunch = func(cfg *config.Config) error {
+		execPath, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("resolve executable: %w", err)
+		}
+
+		logPath := filepath.Join(filepath.Dir(cfg.Daemon.PIDPath), "daemon-autostart.log")
+		if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+			return fmt.Errorf("create daemon autostart log dir: %w", err)
+		}
+		logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			return fmt.Errorf("open daemon autostart log: %w", err)
+		}
+		defer func() {
+			_ = logFile.Close()
+		}()
+
+		command := newDaemonAutoStartCommand(execPath)
+		command.Env = append(os.Environ(),
+			"ARI_DAEMON_SOCKET_PATH="+cfg.Daemon.SocketPath,
+			"ARI_DAEMON_DB_PATH="+cfg.Daemon.DBPath,
+			"ARI_DAEMON_PID_PATH="+cfg.Daemon.PIDPath,
+		)
+		command.Stdout = logFile
+		command.Stderr = logFile
+		if err := command.Start(); err != nil {
+			return fmt.Errorf("start daemon child process: %w", err)
+		}
+		return nil
+	}
 )
 
 func NewDaemonCmd() *cobra.Command {
@@ -51,7 +88,8 @@ func NewDaemonCmd() *cobra.Command {
 }
 
 func newDaemonStartCmd() *cobra.Command {
-	return &cobra.Command{
+	var backgroundChild bool
+	cmd := &cobra.Command{
 		Use:   "start",
 		Short: "Start Ari daemon",
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -78,13 +116,81 @@ func newDaemonStartCmd() *cobra.Command {
 
 			runningDaemon := daemon.NewWithSignalChannel(cfg.Daemon.SocketPath, cfg.Daemon.DBPath, pidPath, configPath, configSource, "", sigCh)
 
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Ari daemon starting (PID %d, socket %s)\n", os.Getpid(), cfg.Daemon.SocketPath); err != nil {
-				return err
+			if !backgroundChild {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Ari daemon starting (PID %d, socket %s)\n", os.Getpid(), cfg.Daemon.SocketPath); err != nil {
+					return err
+				}
 			}
 
 			return runningDaemon.Start(cmd.Context())
 		},
 	}
+	cmd.Flags().BoolVar(&backgroundChild, "background-child", false, "Internal: run daemon in background child mode")
+	_ = cmd.Flags().MarkHidden("background-child")
+	return cmd
+}
+
+func ensureDaemonRunning(ctx context.Context, cfg *config.Config) error {
+	if cfg == nil {
+		return fmt.Errorf("daemon config is required")
+	}
+
+	statusCtx, cancel := context.WithTimeout(ctx, daemonStatusProbeTimeout)
+	_, statusErr := daemonStatusRPC(statusCtx, cfg.Daemon.SocketPath)
+	cancel()
+	if statusErr == nil {
+		return nil
+	}
+	if isPermissionDenied(statusErr) {
+		return socketPermissionError(cfg.Daemon.SocketPath)
+	}
+	if !isDaemonUnavailable(statusErr) {
+		if isTimeoutError(statusErr) {
+			return timeoutError()
+		}
+		return statusErr
+	}
+
+	launchErr := daemonAutoStartLaunch(cfg)
+	if launchErr != nil {
+		return userFacingError{message: fmt.Sprintf("Daemon auto-start failed: %v", launchErr)}
+	}
+
+	deadline := time.Now().Add(daemonAutoStartWaitWindow)
+	for time.Now().Before(deadline) {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			break
+		}
+		pollTimeout := daemonAutoStartPollTimeout
+		if remaining < pollTimeout {
+			pollTimeout = remaining
+		}
+		pollCtx, pollCancel := context.WithTimeout(ctx, pollTimeout)
+		_, pollErr := daemonStatusRPC(pollCtx, cfg.Daemon.SocketPath)
+		pollCancel()
+		if pollErr == nil {
+			return nil
+		}
+		if isPermissionDenied(pollErr) {
+			return socketPermissionError(cfg.Daemon.SocketPath)
+		}
+		if !isDaemonUnavailable(pollErr) {
+			if isTimeoutError(pollErr) {
+				time.Sleep(daemonAutoStartPollInterval)
+				continue
+			}
+			return pollErr
+		}
+		time.Sleep(daemonAutoStartPollInterval)
+	}
+	return userFacingError{message: "Daemon auto-start failed: daemon did not become ready"}
+}
+
+func newDaemonAutoStartCommand(execPath string) *exec.Cmd {
+	command := exec.Command(execPath, "daemon", "start", "--background-child")
+	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	return command
 }
 
 func checkRunningDaemon(ctx context.Context, socketPath, pidPath string) (int, bool, error) {

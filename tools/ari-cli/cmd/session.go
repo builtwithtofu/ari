@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/client"
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/config"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/vcs"
@@ -18,7 +19,8 @@ import (
 )
 
 var (
-	sessionCreateRPC = func(ctx context.Context, socketPath string, req daemon.SessionCreateRequest) (daemon.SessionCreateResponse, error) {
+	sessionEnsureDaemonRunning = ensureDaemonRunning
+	sessionCreateRPC           = func(ctx context.Context, socketPath string, req daemon.SessionCreateRequest) (daemon.SessionCreateResponse, error) {
 		rpcClient := client.New(socketPath)
 		var response daemon.SessionCreateResponse
 		if err := rpcClient.Call(ctx, "session.create", req, &response); err != nil {
@@ -89,8 +91,82 @@ func NewSessionCmd() *cobra.Command {
 	cmd.AddCommand(newSessionCloseCmd())
 	cmd.AddCommand(newSessionSuspendCmd())
 	cmd.AddCommand(newSessionResumeCmd())
+	cmd.AddCommand(newSessionSetCmd())
+	cmd.AddCommand(newSessionCurrentCmd())
+	cmd.AddCommand(newSessionClearCmd())
 	cmd.AddCommand(newSessionFolderCmd())
 	return cmd
+}
+
+func newSessionSetCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "set <id-or-name>",
+		Short: "Set active workspace session",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := configuredDaemonConfig()
+			if err != nil {
+				return err
+			}
+			if err := sessionEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
+				return err
+			}
+
+			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
+			defer cancel()
+
+			sessionID, err := resolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, args[0])
+			if err != nil {
+				return err
+			}
+			if err := config.WriteActiveSession(sessionID); err != nil {
+				return err
+			}
+			if strings.TrimSpace(os.Getenv("ARI_ACTIVE_SESSION")) != "" {
+				_, err = fmt.Fprintf(cmd.OutOrStdout(), "Persisted active workspace set: %s; ARI_ACTIVE_SESSION still overrides it in this shell\n", sessionID)
+				return err
+			}
+
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Active workspace set: %s\n", sessionID)
+			return err
+		},
+	}
+}
+
+func newSessionCurrentCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "current",
+		Short: "Show active workspace session",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			sessionID, err := config.ReadActiveSession()
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(sessionID) == "" {
+				return userFacingError{message: "No active workspace session is set"}
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Current workspace session: %s\n", sessionID)
+			return err
+		},
+	}
+}
+
+func newSessionClearCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "clear",
+		Short: "Clear active workspace session",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := config.WriteActiveSession(""); err != nil {
+				return err
+			}
+			if strings.TrimSpace(os.Getenv("ARI_ACTIVE_SESSION")) != "" {
+				_, err := fmt.Fprintln(cmd.OutOrStdout(), "Cleared persisted active workspace session; ARI_ACTIVE_SESSION still overrides it in this shell")
+				return err
+			}
+			_, err := fmt.Fprintln(cmd.OutOrStdout(), "Cleared active workspace session")
+			return err
+		},
+	}
 }
 
 func newSessionCreateCmd() *cobra.Command {
@@ -105,6 +181,9 @@ func newSessionCreateCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := configuredDaemonConfig()
 			if err != nil {
+				return err
+			}
+			if err := sessionEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
 
@@ -170,6 +249,9 @@ func newSessionListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := sessionEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
+				return err
+			}
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
@@ -205,6 +287,9 @@ func newSessionShowCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := configuredDaemonConfig()
 			if err != nil {
+				return err
+			}
+			if err := sessionEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
 
@@ -252,13 +337,46 @@ func newSessionShowCmd() *cobra.Command {
 }
 
 func newSessionCloseCmd() *cobra.Command {
-	return newSessionStatusCommand("close", "Close session", func(ctx context.Context, socketPath, sessionID string) (string, error) {
-		resp, err := sessionCloseRPC(ctx, socketPath, sessionID)
-		if err != nil {
-			return "", err
-		}
-		return resp.Status, nil
-	})
+	return &cobra.Command{
+		Use:   "close <id-or-name>",
+		Short: "Close session",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := configuredDaemonConfig()
+			if err != nil {
+				return err
+			}
+			if err := sessionEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
+				return err
+			}
+
+			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
+			defer cancel()
+
+			sessionID, err := resolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, args[0])
+			if err != nil {
+				return err
+			}
+
+			resp, err := sessionCloseRPC(ctx, cfg.Daemon.SocketPath, sessionID)
+			if err != nil {
+				return mapSessionRPCError(err)
+			}
+
+			activeSession, err := config.ReadPersistedActiveSession()
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(activeSession) == sessionID {
+				if err := config.WriteActiveSession(""); err != nil {
+					return err
+				}
+			}
+
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Session close: %s\n", resp.Status)
+			return err
+		},
+	}
 }
 
 func newSessionSuspendCmd() *cobra.Command {
@@ -291,6 +409,9 @@ func newSessionStatusCommand(use, short string, call func(context.Context, strin
 			if err != nil {
 				return err
 			}
+			if err := sessionEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
+				return err
+			}
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
@@ -321,6 +442,9 @@ func newSessionFolderCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := configuredDaemonConfig()
 			if err != nil {
+				return err
+			}
+			if err := sessionEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
 
@@ -358,6 +482,9 @@ func newSessionFolderCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := configuredDaemonConfig()
 			if err != nil {
+				return err
+			}
+			if err := sessionEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
 

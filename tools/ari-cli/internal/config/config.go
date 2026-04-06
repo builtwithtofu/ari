@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,10 +10,13 @@ import (
 	"github.com/spf13/viper"
 )
 
+var osUserHomeDir = os.UserHomeDir
+
 type Config struct {
 	Daemon        DaemonConfig `json:"daemon" mapstructure:"daemon"`
 	LogLevel      string       `json:"log_level" mapstructure:"log_level"`
 	VCSPreference string       `json:"vcs_preference" mapstructure:"vcs_preference"`
+	ActiveSession string       `json:"active_session,omitempty" mapstructure:"active_session"`
 }
 
 type DaemonConfig struct {
@@ -43,6 +47,7 @@ func Load() (*Config, error) {
 	v.SetDefault("daemon.pid_path", defaults.Daemon.PIDPath)
 	v.SetDefault("log_level", defaults.LogLevel)
 	v.SetDefault("vcs_preference", defaults.VCSPreference)
+	v.SetDefault("active_session", "")
 
 	v.SetConfigName("config")
 	v.SetConfigType("json")
@@ -51,9 +56,23 @@ func Load() (*Config, error) {
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 
-	if err := v.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
-			return nil, fmt.Errorf("read config: %w", err)
+	cfgPath, pathErr := configPath()
+	if pathErr == nil {
+		configInfo, statErr := os.Stat(cfgPath)
+		if statErr == nil && configInfo.Size() == 0 {
+			// Treat empty config file as unset config.
+		} else {
+			if err := v.ReadInConfig(); err != nil {
+				if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+					return nil, fmt.Errorf("read config: %w", err)
+				}
+			}
+		}
+	} else {
+		if err := v.ReadInConfig(); err != nil {
+			if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+				return nil, fmt.Errorf("read config: %w", err)
+			}
 		}
 	}
 
@@ -138,7 +157,101 @@ func normalizeConfig(cfg *Config) (*Config, error) {
 		},
 		LogLevel:      logLevel,
 		VCSPreference: vcsPreference,
+		ActiveSession: strings.TrimSpace(cfg.ActiveSession),
 	}, nil
+}
+
+func ReadActiveSession() (string, error) {
+	cfg, err := Load()
+	if err != nil {
+		return "", err
+	}
+	if cfg == nil {
+		return "", fmt.Errorf("read active session: config is required")
+	}
+	return strings.TrimSpace(cfg.ActiveSession), nil
+}
+
+func ReadPersistedActiveSession() (string, error) {
+	path, err := configPath()
+	if err != nil {
+		return "", err
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("read persisted active session: %w", err)
+	}
+	if len(body) == 0 {
+		return "", nil
+	}
+	var parsed map[string]json.RawMessage
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return "", fmt.Errorf("read persisted active session: parse config: %w", err)
+	}
+	raw, ok := parsed["active_session"]
+	if !ok {
+		return "", nil
+	}
+	var sessionID string
+	if err := json.Unmarshal(raw, &sessionID); err != nil {
+		return "", fmt.Errorf("read persisted active session: parse active_session: %w", err)
+	}
+	return strings.TrimSpace(sessionID), nil
+}
+
+func WriteActiveSession(sessionID string) error {
+	path, err := configPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("write active session: mkdir config dir: %w", err)
+	}
+
+	parsed := map[string]json.RawMessage{}
+	body, err := os.ReadFile(path)
+	if err == nil {
+		if len(body) > 0 {
+			if err := json.Unmarshal(body, &parsed); err != nil {
+				return fmt.Errorf("write active session: parse config: %w", err)
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("write active session: read config: %w", err)
+	}
+
+	trimmed := strings.TrimSpace(sessionID)
+	if trimmed == "" {
+		delete(parsed, "active_session")
+	} else {
+		raw, err := json.Marshal(trimmed)
+		if err != nil {
+			return fmt.Errorf("write active session: marshal value: %w", err)
+		}
+		parsed["active_session"] = raw
+	}
+
+	encoded, err := json.MarshalIndent(parsed, "", "  ")
+	if err != nil {
+		return fmt.Errorf("write active session: marshal config: %w", err)
+	}
+	encoded = append(encoded, '\n')
+
+	if err := os.WriteFile(path, encoded, 0o644); err != nil {
+		return fmt.Errorf("write active session: write file: %w", err)
+	}
+	return nil
+}
+
+func configPath() (string, error) {
+	home, err := osUserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home dir: %w", err)
+	}
+	return filepath.Join(home, ".ari", "config.json"), nil
 }
 
 func normalizePath(path string) (string, error) {
@@ -160,7 +273,7 @@ func normalizePath(path string) (string, error) {
 }
 
 func userHomeDir() string {
-	home, err := os.UserHomeDir()
+	home, err := osUserHomeDir()
 	if err != nil {
 		return "."
 	}

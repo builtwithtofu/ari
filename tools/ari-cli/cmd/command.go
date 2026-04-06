@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/client"
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/config"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
 	"github.com/sourcegraph/jsonrpc2"
@@ -16,6 +17,8 @@ import (
 
 var (
 	commandResolveSessionIdentifier = resolveSessionIdentifier
+	commandReadActiveSession        = config.ReadActiveSession
+	commandEnsureDaemonRunning      = ensureDaemonRunning
 	commandRunRPC                   = func(ctx context.Context, socketPath string, req daemon.CommandRunRequest) (daemon.CommandRunResponse, error) {
 		rpcClient := client.New(socketPath)
 		var response daemon.CommandRunResponse
@@ -69,12 +72,13 @@ func NewCommandCmd() *cobra.Command {
 }
 
 func newCommandRunCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "run <session> -- <command> [args...]",
+	var sessionRef string
+	cmd := &cobra.Command{
+		Use:   "run [--session <id-or-name>] -- <command> [args...]",
 		Short: "Run command in session",
 		Args: func(_ *cobra.Command, args []string) error {
-			if len(args) < 2 {
-				return userFacingError{message: "Usage: ari command run <session> -- <command> [args...]"}
+			if len(args) < 1 {
+				return userFacingError{message: "Usage: ari command run [--session <id-or-name>] -- <command> [args...]"}
 			}
 			return nil
 		},
@@ -83,19 +87,26 @@ func newCommandRunCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			sessionReference, err := commandSessionReference(sessionRef)
+			if err != nil {
+				return err
+			}
+			if err := commandEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
+				return err
+			}
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, args[0])
+			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, sessionReference)
 			if err != nil {
 				return err
 			}
 
 			resp, err := commandRunRPC(ctx, cfg.Daemon.SocketPath, daemon.CommandRunRequest{
 				SessionID: sessionID,
-				Command:   args[1],
-				Args:      args[2:],
+				Command:   args[0],
+				Args:      args[1:],
 			})
 			if err != nil {
 				return mapCommandRPCError(err)
@@ -105,23 +116,33 @@ func newCommandRunCmd() *cobra.Command {
 			return err
 		},
 	}
+	cmd.Flags().StringVar(&sessionRef, "session", "", "Session id or name override (defaults to active workspace session)")
+	return cmd
 }
 
 func newCommandListCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "list <session>",
+	var sessionRef string
+	cmd := &cobra.Command{
+		Use:   "list [--session <id-or-name>]",
 		Short: "List commands for a session",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := configuredDaemonConfig()
 			if err != nil {
+				return err
+			}
+			sessionReference, err := commandSessionReference(sessionRef)
+			if err != nil {
+				return err
+			}
+			if err := commandEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, args[0])
+			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, sessionReference)
 			if err != nil {
 				return err
 			}
@@ -147,28 +168,38 @@ func newCommandListCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&sessionRef, "session", "", "Session id or name override (defaults to active workspace session)")
+	return cmd
 }
 
 func newCommandShowCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "show <session> <command-id>",
+	var sessionRef string
+	cmd := &cobra.Command{
+		Use:   "show <command-id> [--session <id-or-name>]",
 		Short: "Show command details",
-		Args:  cobra.ExactArgs(2),
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := configuredDaemonConfig()
 			if err != nil {
+				return err
+			}
+			sessionReference, err := commandSessionReference(sessionRef)
+			if err != nil {
+				return err
+			}
+			if err := commandEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, args[0])
+			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, sessionReference)
 			if err != nil {
 				return err
 			}
 
-			resp, err := commandGetRPC(ctx, cfg.Daemon.SocketPath, sessionID, strings.TrimSpace(args[1]))
+			resp, err := commandGetRPC(ctx, cfg.Daemon.SocketPath, sessionID, strings.TrimSpace(args[0]))
 			if err != nil {
 				return mapCommandRPCError(err)
 			}
@@ -196,28 +227,38 @@ func newCommandShowCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&sessionRef, "session", "", "Session id or name override (defaults to active workspace session)")
+	return cmd
 }
 
 func newCommandOutputCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "output <session> <command-id>",
+	var sessionRef string
+	cmd := &cobra.Command{
+		Use:   "output <command-id> [--session <id-or-name>]",
 		Short: "Show command output snapshot",
-		Args:  cobra.ExactArgs(2),
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := configuredDaemonConfig()
 			if err != nil {
+				return err
+			}
+			sessionReference, err := commandSessionReference(sessionRef)
+			if err != nil {
+				return err
+			}
+			if err := commandEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, args[0])
+			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, sessionReference)
 			if err != nil {
 				return err
 			}
 
-			resp, err := commandOutputRPC(ctx, cfg.Daemon.SocketPath, sessionID, strings.TrimSpace(args[1]))
+			resp, err := commandOutputRPC(ctx, cfg.Daemon.SocketPath, sessionID, strings.TrimSpace(args[0]))
 			if err != nil {
 				return mapCommandRPCError(err)
 			}
@@ -226,28 +267,38 @@ func newCommandOutputCmd() *cobra.Command {
 			return err
 		},
 	}
+	cmd.Flags().StringVar(&sessionRef, "session", "", "Session id or name override (defaults to active workspace session)")
+	return cmd
 }
 
 func newCommandStopCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "stop <session> <command-id>",
+	var sessionRef string
+	cmd := &cobra.Command{
+		Use:   "stop <command-id> [--session <id-or-name>]",
 		Short: "Stop a running command",
-		Args:  cobra.ExactArgs(2),
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := configuredDaemonConfig()
 			if err != nil {
+				return err
+			}
+			sessionReference, err := commandSessionReference(sessionRef)
+			if err != nil {
+				return err
+			}
+			if err := commandEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, args[0])
+			sessionID, err := commandResolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, sessionReference)
 			if err != nil {
 				return err
 			}
 
-			resp, err := commandStopRPC(ctx, cfg.Daemon.SocketPath, sessionID, strings.TrimSpace(args[1]))
+			resp, err := commandStopRPC(ctx, cfg.Daemon.SocketPath, sessionID, strings.TrimSpace(args[0]))
 			if err != nil {
 				return mapCommandRPCError(err)
 			}
@@ -256,6 +307,12 @@ func newCommandStopCmd() *cobra.Command {
 			return err
 		},
 	}
+	cmd.Flags().StringVar(&sessionRef, "session", "", "Session id or name override (defaults to active workspace session)")
+	return cmd
+}
+
+func commandSessionReference(overrideSession string) (string, error) {
+	return resolveWorkspaceSessionReference(overrideSession, commandReadActiveSession)
 }
 
 func mapCommandRPCError(err error) error {
