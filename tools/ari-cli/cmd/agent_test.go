@@ -341,7 +341,7 @@ func TestAgentSpawnListShowOutputStop(t *testing.T) {
 	}
 	agentGetRPC = func(context.Context, string, string, string) (daemon.AgentGetResponse, error) {
 		exitCode := 0
-		return daemon.AgentGetResponse{AgentID: "agt-1", SessionID: "sess-1", Name: "claude", Command: "claude-code", Args: `["--resume"]`, Status: "stopped", ExitCode: &exitCode, StartedAt: "now", StoppedAt: "later"}, nil
+		return daemon.AgentGetResponse{AgentID: "agt-1", SessionID: "sess-1", Name: "claude", Command: "claude-code", Args: `["--resume"]`, Status: "stopped", ExitCode: &exitCode, StartedAt: "now", StoppedAt: "later", Harness: "claude-code", HarnessResumableID: "resume-123", HarnessMetadata: []byte(`{"resume_source":"argv"}`)}, nil
 	}
 	agentOutputRPC = func(context.Context, string, string, string) (daemon.AgentOutputResponse, error) {
 		return daemon.AgentOutputResponse{Output: "agent-output\n"}, nil
@@ -390,6 +390,15 @@ func TestAgentSpawnListShowOutputStop(t *testing.T) {
 	}
 	if !strings.Contains(showOut, "Status: stopped") {
 		t.Fatalf("show output = %q, want status", showOut)
+	}
+	if !strings.Contains(showOut, "Harness: claude-code") {
+		t.Fatalf("show output = %q, want harness", showOut)
+	}
+	if !strings.Contains(showOut, "Harness Resumable ID: resume-123") {
+		t.Fatalf("show output = %q, want harness resumable id", showOut)
+	}
+	if !strings.Contains(showOut, `Harness Metadata: {"resume_source":"argv"}`) {
+		t.Fatalf("show output = %q, want harness metadata", showOut)
 	}
 
 	outputOut, err := executeRootCommand("agent", "output", "claude")

@@ -666,6 +666,21 @@ func newAgentShowCmd() *cobra.Command {
 					return err
 				}
 			}
+			if resp.Harness != "" {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Harness: %s\n", resp.Harness); err != nil {
+					return err
+				}
+			}
+			if resp.HarnessResumableID != "" {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Harness Resumable ID: %s\n", resp.HarnessResumableID); err != nil {
+					return err
+				}
+			}
+			if len(resp.HarnessMetadata) > 0 {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Harness Metadata: %s\n", string(resp.HarnessMetadata)); err != nil {
+					return err
+				}
+			}
 
 			return nil
 		},
