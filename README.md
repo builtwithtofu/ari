@@ -36,6 +36,22 @@ Every project you touch with Ari becomes a **world**. A living, structured repre
 
 ---
 
+## Development and verification
+
+Run all project tooling through Nix so local behavior matches CI:
+
+```bash
+# Full verification gate
+nix develop -c just verify
+
+# Targeted Go test runs
+nix develop -c go test ./...
+```
+
+For migration-related checks, run them from `nix develop` as well so Atlas and SQLite tool versions are consistent.
+
+---
+
 ## Architecture
 
 ```

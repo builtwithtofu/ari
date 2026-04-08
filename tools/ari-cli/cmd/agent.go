@@ -112,9 +112,9 @@ func isDaemonDisconnectError(err error) bool {
 }
 
 var (
-	agentReadActiveSession    = config.ReadActiveSession
+	agentReadActiveSession    = config.ReadActiveWorkspace
 	agentEnsureDaemonRunning  = ensureDaemonRunning
-	agentEnsureWorkspaceScope = func(session *daemon.SessionGetResponse, sessionOverride string) error {
+	agentEnsureWorkspaceScope = func(session *daemon.WorkspaceGetResponse, sessionOverride string) error {
 		return enforceActiveWorkspaceScope(session, sessionOverride)
 	}
 	agentSpawnRPC = func(ctx context.Context, socketPath string, req daemon.AgentSpawnRequest) (daemon.AgentSpawnResponse, error) {
@@ -128,7 +128,7 @@ var (
 	agentListRPC = func(ctx context.Context, socketPath, sessionID string) (daemon.AgentListResponse, error) {
 		rpcClient := client.New(socketPath)
 		var response daemon.AgentListResponse
-		if err := rpcClient.Call(ctx, "agent.list", daemon.AgentListRequest{SessionID: sessionID}, &response); err != nil {
+		if err := rpcClient.Call(ctx, "agent.list", daemon.AgentListRequest{WorkspaceID: sessionID}, &response); err != nil {
 			return daemon.AgentListResponse{}, err
 		}
 		return response, nil
@@ -136,7 +136,7 @@ var (
 	agentGetRPC = func(ctx context.Context, socketPath, sessionID, agentID string) (daemon.AgentGetResponse, error) {
 		rpcClient := client.New(socketPath)
 		var response daemon.AgentGetResponse
-		if err := rpcClient.Call(ctx, "agent.get", daemon.AgentGetRequest{SessionID: sessionID, AgentID: agentID}, &response); err != nil {
+		if err := rpcClient.Call(ctx, "agent.get", daemon.AgentGetRequest{WorkspaceID: sessionID, AgentID: agentID}, &response); err != nil {
 			return daemon.AgentGetResponse{}, err
 		}
 		return response, nil
@@ -152,7 +152,7 @@ var (
 	agentOutputRPC = func(ctx context.Context, socketPath, sessionID, agentID string) (daemon.AgentOutputResponse, error) {
 		rpcClient := client.New(socketPath)
 		var response daemon.AgentOutputResponse
-		if err := rpcClient.Call(ctx, "agent.output", daemon.AgentOutputRequest{SessionID: sessionID, AgentID: agentID}, &response); err != nil {
+		if err := rpcClient.Call(ctx, "agent.output", daemon.AgentOutputRequest{WorkspaceID: sessionID, AgentID: agentID}, &response); err != nil {
 			return daemon.AgentOutputResponse{}, err
 		}
 		return response, nil
@@ -160,7 +160,7 @@ var (
 	agentStopRPC = func(ctx context.Context, socketPath, sessionID, agentID string) (daemon.AgentStopResponse, error) {
 		rpcClient := client.New(socketPath)
 		var response daemon.AgentStopResponse
-		if err := rpcClient.Call(ctx, "agent.stop", daemon.AgentStopRequest{SessionID: sessionID, AgentID: agentID}, &response); err != nil {
+		if err := rpcClient.Call(ctx, "agent.stop", daemon.AgentStopRequest{WorkspaceID: sessionID, AgentID: agentID}, &response); err != nil {
 			return daemon.AgentStopResponse{}, err
 		}
 		return response, nil
@@ -318,7 +318,7 @@ var (
 )
 
 func NewAgentCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "agent", Short: "Manage session agents"}
+	cmd := &cobra.Command{Use: "agent", Short: "Manage workspace agents"}
 	cmd.AddCommand(newAgentSpawnCmd())
 	cmd.AddCommand(newAgentListCmd())
 	cmd.AddCommand(newAgentShowCmd())
@@ -333,7 +333,7 @@ func NewAgentCmd() *cobra.Command {
 func newAgentAttachCmd() *cobra.Command {
 	var sessionRef string
 	cmd := &cobra.Command{
-		Use:   "attach <id-or-name> [--session <id-or-name>]",
+		Use:   "attach <id-or-name> [--workspace <id-or-name>]",
 		Short: "Attach to a running agent terminal",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -384,7 +384,7 @@ func newAgentAttachCmd() *cobra.Command {
 			cols, rows := agentAttachTerminalSize(cmd)
 
 			resp, err := agentAttachRPC(rpcCtx, cfg.Daemon.SocketPath, daemon.AgentAttachRequest{
-				SessionID:   target.SessionID,
+				WorkspaceID: target.WorkspaceID,
 				AgentID:     strings.TrimSpace(args[0]),
 				InitialCols: cols,
 				InitialRows: rows,
@@ -430,14 +430,14 @@ func newAgentAttachCmd() *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().StringVar(&sessionRef, "session", "", "Session id or name override (defaults to active workspace session)")
+	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Workspace id or name override (defaults to active workspace)")
 	return cmd
 }
 
 func newAgentDetachCmd() *cobra.Command {
 	var sessionRef string
 	cmd := &cobra.Command{
-		Use:   "detach <id-or-name> [--session <id-or-name>]",
+		Use:   "detach <id-or-name> [--workspace <id-or-name>]",
 		Short: "Detach any active attach session for an agent",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -465,8 +465,8 @@ func newAgentDetachCmd() *cobra.Command {
 			}
 
 			resp, err := agentDetachRPC(ctx, cfg.Daemon.SocketPath, daemon.AgentDetachRequest{
-				SessionID: target.SessionID,
-				AgentID:   strings.TrimSpace(args[0]),
+				WorkspaceID: target.WorkspaceID,
+				AgentID:     strings.TrimSpace(args[0]),
 			})
 			if err != nil {
 				return mapAgentRPCError(err)
@@ -476,7 +476,7 @@ func newAgentDetachCmd() *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().StringVar(&sessionRef, "session", "", "Session id or name override (defaults to active workspace session)")
+	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Workspace id or name override (defaults to active workspace)")
 	return cmd
 }
 
@@ -486,8 +486,8 @@ func newAgentSpawnCmd() *cobra.Command {
 	var sessionRef string
 
 	cmd := &cobra.Command{
-		Use:   "spawn [--session <id-or-name>] [--name <name>] [--harness <harness>] [-- <command> [args...]]",
-		Short: "Spawn an agent in session",
+		Use:   "spawn [--workspace <id-or-name>] [--name <name>] [--harness <harness>] [-- <command> [args...]]",
+		Short: "Spawn an agent in workspace",
 		Args: func(_ *cobra.Command, args []string) error {
 			return nil
 		},
@@ -531,11 +531,11 @@ func newAgentSpawnCmd() *cobra.Command {
 			}
 
 			resp, err := agentSpawnRPC(ctx, cfg.Daemon.SocketPath, daemon.AgentSpawnRequest{
-				SessionID: target.SessionID,
-				Name:      strings.TrimSpace(name),
-				Harness:   strings.TrimSpace(harness),
-				Command:   command,
-				Args:      commandArgs,
+				WorkspaceID: target.WorkspaceID,
+				Name:        strings.TrimSpace(name),
+				Harness:     strings.TrimSpace(harness),
+				Command:     command,
+				Args:        commandArgs,
 			})
 			if err != nil {
 				return mapAgentRPCError(err)
@@ -548,15 +548,15 @@ func newAgentSpawnCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&name, "name", "", "Optional agent name")
 	cmd.Flags().StringVar(&harness, "harness", "", fmt.Sprintf("Harness identity (%s)", strings.Join(daemon.SupportedHarnesses(), "|")))
-	cmd.Flags().StringVar(&sessionRef, "session", "", "Session id or name override (defaults to active workspace session)")
+	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Workspace id or name override (defaults to active workspace)")
 	return cmd
 }
 
 func newAgentListCmd() *cobra.Command {
 	var sessionRef string
 	cmd := &cobra.Command{
-		Use:   "list [--session <id-or-name>]",
-		Short: "List agents for a session",
+		Use:   "list [--workspace <id-or-name>]",
+		Short: "List agents for a workspace",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := configuredDaemonConfig()
@@ -582,7 +582,7 @@ func newAgentListCmd() *cobra.Command {
 				return err
 			}
 
-			resp, err := agentListRPC(ctx, cfg.Daemon.SocketPath, target.SessionID)
+			resp, err := agentListRPC(ctx, cfg.Daemon.SocketPath, target.WorkspaceID)
 			if err != nil {
 				return mapAgentRPCError(err)
 			}
@@ -603,14 +603,14 @@ func newAgentListCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&sessionRef, "session", "", "Session id or name override (defaults to active workspace session)")
+	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Workspace id or name override (defaults to active workspace)")
 	return cmd
 }
 
 func newAgentShowCmd() *cobra.Command {
 	var sessionRef string
 	cmd := &cobra.Command{
-		Use:   "show <id-or-name> [--session <id-or-name>]",
+		Use:   "show <id-or-name> [--workspace <id-or-name>]",
 		Short: "Show agent details",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -637,7 +637,7 @@ func newAgentShowCmd() *cobra.Command {
 				return err
 			}
 
-			resp, err := agentGetRPC(ctx, cfg.Daemon.SocketPath, target.SessionID, strings.TrimSpace(args[0]))
+			resp, err := agentGetRPC(ctx, cfg.Daemon.SocketPath, target.WorkspaceID, strings.TrimSpace(args[0]))
 			if err != nil {
 				return mapAgentRPCError(err)
 			}
@@ -685,7 +685,7 @@ func newAgentShowCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&sessionRef, "session", "", "Session id or name override (defaults to active workspace session)")
+	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Workspace id or name override (defaults to active workspace)")
 	return cmd
 }
 
@@ -694,7 +694,7 @@ func newAgentSendCmd() *cobra.Command {
 	var sessionRef string
 
 	cmd := &cobra.Command{
-		Use:   "send <id-or-name> [--session <id-or-name>] --input <text>",
+		Use:   "send <id-or-name> [--workspace <id-or-name>] --input <text>",
 		Short: "Send input to an agent",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -740,9 +740,9 @@ func newAgentSendCmd() *cobra.Command {
 			}
 
 			if _, err := agentSendRPC(ctx, cfg.Daemon.SocketPath, daemon.AgentSendRequest{
-				SessionID: target.SessionID,
-				AgentID:   strings.TrimSpace(args[0]),
-				Input:     input,
+				WorkspaceID: target.WorkspaceID,
+				AgentID:     strings.TrimSpace(args[0]),
+				Input:       input,
 			}); err != nil {
 				return mapAgentRPCError(err)
 			}
@@ -753,14 +753,14 @@ func newAgentSendCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&inputFlag, "input", "", "Input text to send")
-	cmd.Flags().StringVar(&sessionRef, "session", "", "Session id or name override (defaults to active workspace session)")
+	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Workspace id or name override (defaults to active workspace)")
 	return cmd
 }
 
 func newAgentOutputCmd() *cobra.Command {
 	var sessionRef string
 	cmd := &cobra.Command{
-		Use:   "output <id-or-name> [--session <id-or-name>]",
+		Use:   "output <id-or-name> [--workspace <id-or-name>]",
 		Short: "Show agent output snapshot",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -787,7 +787,7 @@ func newAgentOutputCmd() *cobra.Command {
 				return err
 			}
 
-			resp, err := agentOutputRPC(ctx, cfg.Daemon.SocketPath, target.SessionID, strings.TrimSpace(args[0]))
+			resp, err := agentOutputRPC(ctx, cfg.Daemon.SocketPath, target.WorkspaceID, strings.TrimSpace(args[0]))
 			if err != nil {
 				return mapAgentRPCError(err)
 			}
@@ -796,14 +796,14 @@ func newAgentOutputCmd() *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().StringVar(&sessionRef, "session", "", "Session id or name override (defaults to active workspace session)")
+	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Workspace id or name override (defaults to active workspace)")
 	return cmd
 }
 
 func newAgentStopCmd() *cobra.Command {
 	var sessionRef string
 	cmd := &cobra.Command{
-		Use:   "stop <id-or-name> [--session <id-or-name>]",
+		Use:   "stop <id-or-name> [--workspace <id-or-name>]",
 		Short: "Stop a running agent",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -830,7 +830,7 @@ func newAgentStopCmd() *cobra.Command {
 				return err
 			}
 
-			resp, err := agentStopRPC(ctx, cfg.Daemon.SocketPath, target.SessionID, strings.TrimSpace(args[0]))
+			resp, err := agentStopRPC(ctx, cfg.Daemon.SocketPath, target.WorkspaceID, strings.TrimSpace(args[0]))
 			if err != nil {
 				return mapAgentRPCError(err)
 			}
@@ -839,12 +839,12 @@ func newAgentStopCmd() *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().StringVar(&sessionRef, "session", "", "Session id or name override (defaults to active workspace session)")
+	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Workspace id or name override (defaults to active workspace)")
 	return cmd
 }
 
 func agentSessionReference(overrideSession string) (string, error) {
-	return resolveWorkspaceSessionReference(overrideSession, agentReadActiveSession)
+	return resolveWorkspaceReference(overrideSession, agentReadActiveSession)
 }
 
 func readPipedStdin(cmd *cobra.Command) (string, bool, error) {
@@ -891,7 +891,7 @@ func mapAgentRPCError(err error) error {
 	if errors.As(err, &rpcErr) {
 		switch rpcErr.Code {
 		case int64(rpc.SessionNotFound):
-			return userFacingError{message: "Session not found"}
+			return userFacingError{message: "Workspace not found"}
 		case int64(rpc.AgentNotFound):
 			return userFacingError{message: "Agent not found"}
 		case int64(rpc.AgentNotRunning):

@@ -30,17 +30,17 @@ func TestAgentAttachReturnsTokenForRunningAgent(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
-		SessionID: "sess-1",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "while true; do sleep 1; done"},
+		WorkspaceID: "sess-1",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "while true; do sleep 1; done"},
 	})
 	t.Cleanup(func() {
-		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 		waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "stopped")
 	})
 
 	attachResp := callMethod[AgentAttachResponse](t, registry, "agent.attach", AgentAttachRequest{
-		SessionID:   "sess-1",
+		WorkspaceID: "sess-1",
 		AgentID:     spawnResp.AgentID,
 		InitialCols: 120,
 		InitialRows: 40,
@@ -53,7 +53,7 @@ func TestAgentAttachReturnsTokenForRunningAgent(t *testing.T) {
 		t.Fatalf("agent.attach status = %q, want %q", attachResp.Status, "pending")
 	}
 
-	_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+	_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 	waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "stopped")
 }
 
@@ -73,9 +73,9 @@ func TestAgentAttachErrorsForStoppedAgent(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
-		SessionID: "sess-1",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "exit 0"},
+		WorkspaceID: "sess-1",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "exit 0"},
 	})
 	waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "exited")
 
@@ -84,7 +84,7 @@ func TestAgentAttachErrorsForStoppedAgent(t *testing.T) {
 		t.Fatal("agent.attach method not registered")
 	}
 
-	raw, err := json.Marshal(AgentAttachRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID, InitialCols: 100, InitialRows: 30})
+	raw, err := json.Marshal(AgentAttachRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID, InitialCols: 100, InitialRows: 30})
 	if err != nil {
 		t.Fatalf("marshal params: %v", err)
 	}
@@ -119,17 +119,17 @@ func TestAgentAttachRejectsSecondActiveAttach(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
-		SessionID: "sess-1",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "while true; do sleep 1; done"},
+		WorkspaceID: "sess-1",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "while true; do sleep 1; done"},
 	})
 	t.Cleanup(func() {
-		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 		waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "stopped")
 	})
 
 	attachResp := callMethod[AgentAttachResponse](t, registry, "agent.attach", AgentAttachRequest{
-		SessionID:   "sess-1",
+		WorkspaceID: "sess-1",
 		AgentID:     spawnResp.AgentID,
 		InitialCols: 120,
 		InitialRows: 40,
@@ -143,7 +143,7 @@ func TestAgentAttachRejectsSecondActiveAttach(t *testing.T) {
 	if !ok {
 		t.Fatal("agent.attach method not registered")
 	}
-	raw, err := json.Marshal(AgentAttachRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID, InitialCols: 80, InitialRows: 24})
+	raw, err := json.Marshal(AgentAttachRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID, InitialCols: 80, InitialRows: 24})
 	if err != nil {
 		t.Fatalf("marshal params: %v", err)
 	}
@@ -178,12 +178,12 @@ func TestAgentAttachDoesNotResizeDuringTokenReservation(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
-		SessionID: "sess-1",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "while true; do sleep 1; done"},
+		WorkspaceID: "sess-1",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "while true; do sleep 1; done"},
 	})
 	t.Cleanup(func() {
-		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 		waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "stopped")
 	})
 
@@ -198,7 +198,7 @@ func TestAgentAttachDoesNotResizeDuringTokenReservation(t *testing.T) {
 	})
 
 	_ = callMethod[AgentAttachResponse](t, registry, "agent.attach", AgentAttachRequest{
-		SessionID:   "sess-1",
+		WorkspaceID: "sess-1",
 		AgentID:     spawnResp.AgentID,
 		InitialCols: 140,
 		InitialRows: 55,
@@ -225,17 +225,17 @@ func TestAgentDetachRemovesAttachAndAllowsReattach(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
-		SessionID: "sess-1",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "while true; do sleep 1; done"},
+		WorkspaceID: "sess-1",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "while true; do sleep 1; done"},
 	})
 	t.Cleanup(func() {
-		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 		waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "stopped")
 	})
 
 	attachResp := callMethod[AgentAttachResponse](t, registry, "agent.attach", AgentAttachRequest{
-		SessionID:   "sess-1",
+		WorkspaceID: "sess-1",
 		AgentID:     spawnResp.AgentID,
 		InitialCols: 120,
 		InitialRows: 40,
@@ -246,8 +246,8 @@ func TestAgentDetachRemovesAttachAndAllowsReattach(t *testing.T) {
 	}()
 
 	detachResp := callMethod[AgentDetachResponse](t, registry, "agent.detach", AgentDetachRequest{
-		SessionID: "sess-1",
-		AgentID:   spawnResp.AgentID,
+		WorkspaceID: "sess-1",
+		AgentID:     spawnResp.AgentID,
 	})
 	if detachResp.Status != "detached" {
 		t.Fatalf("agent.detach status = %q, want detached", detachResp.Status)
@@ -260,7 +260,7 @@ func TestAgentDetachRemovesAttachAndAllowsReattach(t *testing.T) {
 	}
 
 	retryResp := callMethod[AgentAttachResponse](t, registry, "agent.attach", AgentAttachRequest{
-		SessionID:   "sess-1",
+		WorkspaceID: "sess-1",
 		AgentID:     spawnResp.AgentID,
 		InitialCols: 80,
 		InitialRows: 24,
@@ -286,17 +286,17 @@ func TestAgentSendRejectedWhileAttached(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
-		SessionID: "sess-1",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "cat"},
+		WorkspaceID: "sess-1",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "cat"},
 	})
 	t.Cleanup(func() {
-		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 		waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "stopped")
 	})
 
 	attachResp := callMethod[AgentAttachResponse](t, registry, "agent.attach", AgentAttachRequest{
-		SessionID:   "sess-1",
+		WorkspaceID: "sess-1",
 		AgentID:     spawnResp.AgentID,
 		InitialCols: 120,
 		InitialRows: 40,
@@ -310,7 +310,7 @@ func TestAgentSendRejectedWhileAttached(t *testing.T) {
 	if !ok {
 		t.Fatal("agent.send method not registered")
 	}
-	raw, err := json.Marshal(AgentSendRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID, Input: "hello"})
+	raw, err := json.Marshal(AgentSendRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID, Input: "hello"})
 	if err != nil {
 		t.Fatalf("marshal params: %v", err)
 	}
@@ -345,17 +345,17 @@ func TestAgentSendAllowedAfterDetach(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
-		SessionID: "sess-1",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "cat"},
+		WorkspaceID: "sess-1",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "cat"},
 	})
 	t.Cleanup(func() {
-		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 		waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "stopped")
 	})
 
 	attachResp := callMethod[AgentAttachResponse](t, registry, "agent.attach", AgentAttachRequest{
-		SessionID:   "sess-1",
+		WorkspaceID: "sess-1",
 		AgentID:     spawnResp.AgentID,
 		InitialCols: 120,
 		InitialRows: 40,
@@ -363,8 +363,8 @@ func TestAgentSendAllowedAfterDetach(t *testing.T) {
 	clientConn := openAttachSession(t, d, attachResp.Token, 120, 40)
 
 	_ = callMethod[AgentDetachResponse](t, registry, "agent.detach", AgentDetachRequest{
-		SessionID: "sess-1",
-		AgentID:   spawnResp.AgentID,
+		WorkspaceID: "sess-1",
+		AgentID:     spawnResp.AgentID,
 	})
 
 	if err := clientConn.SetReadDeadline(time.Now().Add(500 * time.Millisecond)); err == nil {
@@ -374,7 +374,7 @@ func TestAgentSendAllowedAfterDetach(t *testing.T) {
 	}
 	_ = clientConn.Close()
 
-	resp := callMethod[AgentSendResponse](t, registry, "agent.send", AgentSendRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID, Input: "after-detach\n"})
+	resp := callMethod[AgentSendResponse](t, registry, "agent.send", AgentSendRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID, Input: "after-detach\n"})
 	if resp.Status != "sent" {
 		t.Fatalf("agent.send status = %q, want %q", resp.Status, "sent")
 	}
@@ -396,17 +396,17 @@ func TestAgentSendRejectedWhileAttachReservationIsPending(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
-		SessionID: "sess-1",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "cat"},
+		WorkspaceID: "sess-1",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "cat"},
 	})
 	t.Cleanup(func() {
-		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 		waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "stopped")
 	})
 
 	_ = callMethod[AgentAttachResponse](t, registry, "agent.attach", AgentAttachRequest{
-		SessionID:   "sess-1",
+		WorkspaceID: "sess-1",
 		AgentID:     spawnResp.AgentID,
 		InitialCols: 120,
 		InitialRows: 40,
@@ -416,7 +416,7 @@ func TestAgentSendRejectedWhileAttachReservationIsPending(t *testing.T) {
 	if !ok {
 		t.Fatal("agent.send method not registered")
 	}
-	raw, err := json.Marshal(AgentSendRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID, Input: "hello"})
+	raw, err := json.Marshal(AgentSendRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID, Input: "hello"})
 	if err != nil {
 		t.Fatalf("marshal params: %v", err)
 	}
@@ -451,13 +451,13 @@ func TestAgentSendReturnsNotRunningAfterAttachedAgentStops(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
-		SessionID: "sess-1",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "cat"},
+		WorkspaceID: "sess-1",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "cat"},
 	})
 
 	attachResp := callMethod[AgentAttachResponse](t, registry, "agent.attach", AgentAttachRequest{
-		SessionID:   "sess-1",
+		WorkspaceID: "sess-1",
 		AgentID:     spawnResp.AgentID,
 		InitialCols: 120,
 		InitialRows: 40,
@@ -467,14 +467,14 @@ func TestAgentSendReturnsNotRunningAfterAttachedAgentStops(t *testing.T) {
 		_ = clientConn.Close()
 	}()
 
-	_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+	_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 	waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "stopped")
 
 	spec, ok := registry.Get("agent.send")
 	if !ok {
 		t.Fatal("agent.send method not registered")
 	}
-	raw, err := json.Marshal(AgentSendRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID, Input: "hello"})
+	raw, err := json.Marshal(AgentSendRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID, Input: "hello"})
 	if err != nil {
 		t.Fatalf("marshal params: %v", err)
 	}
@@ -509,12 +509,12 @@ func TestAgentAttachConcurrentOnlyOneSucceeds(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
-		SessionID: "sess-1",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "while true; do sleep 1; done"},
+		WorkspaceID: "sess-1",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "while true; do sleep 1; done"},
 	})
 	t.Cleanup(func() {
-		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 		waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "stopped")
 	})
 
@@ -523,7 +523,7 @@ func TestAgentAttachConcurrentOnlyOneSucceeds(t *testing.T) {
 		t.Fatal("agent.attach method not registered")
 	}
 
-	raw, err := json.Marshal(AgentAttachRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID, InitialCols: 80, InitialRows: 24})
+	raw, err := json.Marshal(AgentAttachRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID, InitialCols: 80, InitialRows: 24})
 	if err != nil {
 		t.Fatalf("marshal params: %v", err)
 	}
@@ -580,23 +580,23 @@ func TestAgentAttachPendingReservationAllowsRetryWithNewDimensions(t *testing.T)
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
-		SessionID: "sess-1",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "cat"},
+		WorkspaceID: "sess-1",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "cat"},
 	})
 	t.Cleanup(func() {
-		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 		waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "stopped")
 	})
 
 	first := callMethod[AgentAttachResponse](t, registry, "agent.attach", AgentAttachRequest{
-		SessionID:   "sess-1",
+		WorkspaceID: "sess-1",
 		AgentID:     spawnResp.AgentID,
 		InitialCols: 80,
 		InitialRows: 24,
 	})
 	second := callMethod[AgentAttachResponse](t, registry, "agent.attach", AgentAttachRequest{
-		SessionID:   "sess-1",
+		WorkspaceID: "sess-1",
 		AgentID:     spawnResp.AgentID,
 		InitialCols: 120,
 		InitialRows: 40,

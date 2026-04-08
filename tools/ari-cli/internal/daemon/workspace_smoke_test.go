@@ -21,7 +21,7 @@ var sessionSmokeStop = func(ctx context.Context, socketPath string) (StopRespons
 	return stop, err
 }
 
-func TestSessionSmokeLifecycleOverRPC(t *testing.T) {
+func TestWorkspaceSmokeLifecycleOverRPC(t *testing.T) {
 	stubSessionBootstrap(t)
 
 	socketPath := testSocketPath(t)
@@ -43,31 +43,31 @@ func TestSessionSmokeLifecycleOverRPC(t *testing.T) {
 	}
 	originRoot := t.TempDir()
 
-	create := SessionCreateResponse{}
-	callDaemonMethod(t, socketPath, "session.create", SessionCreateRequest{
+	create := WorkspaceCreateResponse{}
+	callDaemonMethod(t, socketPath, "workspace.create", WorkspaceCreateRequest{
 		Name:          "alpha",
 		Folder:        repoRoot,
 		OriginRoot:    originRoot,
 		CleanupPolicy: "manual",
 	}, &create)
-	if create.SessionID == "" {
-		t.Fatal("session.create returned empty session_id")
+	if create.WorkspaceID == "" {
+		t.Fatal("workspace.create returned empty workspace_id")
 	}
 	if create.VCSType != "git" {
 		t.Fatalf("session.create vcs_type = %q, want %q", create.VCSType, "git")
 	}
 
-	list := SessionListResponse{}
-	callDaemonMethod(t, socketPath, "session.list", SessionListRequest{}, &list)
-	if len(list.Sessions) != 1 {
-		t.Fatalf("session.list len = %d, want 1", len(list.Sessions))
+	list := WorkspaceListResponse{}
+	callDaemonMethod(t, socketPath, "workspace.list", WorkspaceListRequest{}, &list)
+	if len(list.Workspaces) != 1 {
+		t.Fatalf("workspace.list len = %d, want 1", len(list.Workspaces))
 	}
-	if list.Sessions[0].SessionID != create.SessionID {
-		t.Fatalf("session.list id = %q, want %q", list.Sessions[0].SessionID, create.SessionID)
+	if list.Workspaces[0].WorkspaceID != create.WorkspaceID {
+		t.Fatalf("workspace.list id = %q, want %q", list.Workspaces[0].WorkspaceID, create.WorkspaceID)
 	}
 
-	get := SessionGetResponse{}
-	callDaemonMethod(t, socketPath, "session.get", SessionGetRequest{SessionID: create.SessionID}, &get)
+	get := WorkspaceGetResponse{}
+	callDaemonMethod(t, socketPath, "workspace.get", WorkspaceGetRequest{WorkspaceID: create.WorkspaceID}, &get)
 	if get.Name != "alpha" {
 		t.Fatalf("session.get name = %q, want %q", get.Name, "alpha")
 	}
@@ -75,27 +75,27 @@ func TestSessionSmokeLifecycleOverRPC(t *testing.T) {
 		t.Fatalf("session.get folders len = %d, want 1", len(get.Folders))
 	}
 
-	suspend := SessionSuspendResponse{}
-	callDaemonMethod(t, socketPath, "session.suspend", SessionSuspendRequest{SessionID: create.SessionID}, &suspend)
+	suspend := WorkspaceSuspendResponse{}
+	callDaemonMethod(t, socketPath, "workspace.suspend", WorkspaceSuspendRequest{WorkspaceID: create.WorkspaceID}, &suspend)
 	if suspend.Status != "suspended" {
 		t.Fatalf("session.suspend status = %q, want %q", suspend.Status, "suspended")
 	}
 
-	resume := SessionResumeResponse{}
-	callDaemonMethod(t, socketPath, "session.resume", SessionResumeRequest{SessionID: create.SessionID}, &resume)
+	resume := WorkspaceResumeResponse{}
+	callDaemonMethod(t, socketPath, "workspace.resume", WorkspaceResumeRequest{WorkspaceID: create.WorkspaceID}, &resume)
 	if resume.Status != "active" {
 		t.Fatalf("session.resume status = %q, want %q", resume.Status, "active")
 	}
 
-	closeResp := SessionCloseResponse{}
-	callDaemonMethod(t, socketPath, "session.close", SessionCloseRequest{SessionID: create.SessionID}, &closeResp)
+	closeResp := WorkspaceCloseResponse{}
+	callDaemonMethod(t, socketPath, "workspace.close", WorkspaceCloseRequest{WorkspaceID: create.WorkspaceID}, &closeResp)
 	if closeResp.Status != "closed" {
 		t.Fatalf("session.close status = %q, want %q", closeResp.Status, "closed")
 	}
 
 	cli := client.New(socketPath)
-	missing := SessionGetResponse{}
-	err := cli.Call(context.Background(), "session.get", SessionGetRequest{SessionID: "missing"}, &missing)
+	missing := WorkspaceGetResponse{}
+	err := cli.Call(context.Background(), "workspace.get", WorkspaceGetRequest{WorkspaceID: "missing"}, &missing)
 	if err == nil {
 		t.Fatal("session.get missing returned nil error")
 	}

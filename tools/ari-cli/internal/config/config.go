@@ -5,18 +5,21 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
 	"github.com/spf13/viper"
 )
 
 var osUserHomeDir = os.UserHomeDir
 
 type Config struct {
-	Daemon        DaemonConfig `json:"daemon" mapstructure:"daemon"`
-	LogLevel      string       `json:"log_level" mapstructure:"log_level"`
-	VCSPreference string       `json:"vcs_preference" mapstructure:"vcs_preference"`
-	ActiveSession string       `json:"active_session,omitempty" mapstructure:"active_session"`
+	Daemon          DaemonConfig `json:"daemon" mapstructure:"daemon"`
+	LogLevel        string       `json:"log_level" mapstructure:"log_level"`
+	VCSPreference   string       `json:"vcs_preference" mapstructure:"vcs_preference"`
+	ActiveWorkspace string       `json:"active_workspace,omitempty" mapstructure:"active_workspace"`
+	DefaultHarness  string       `json:"default_harness,omitempty" mapstructure:"default_harness"`
 }
 
 type DaemonConfig struct {
@@ -47,7 +50,8 @@ func Load() (*Config, error) {
 	v.SetDefault("daemon.pid_path", defaults.Daemon.PIDPath)
 	v.SetDefault("log_level", defaults.LogLevel)
 	v.SetDefault("vcs_preference", defaults.VCSPreference)
-	v.SetDefault("active_session", "")
+	v.SetDefault("active_workspace", "")
+	v.SetDefault("default_harness", "")
 
 	v.SetConfigName("config")
 	v.SetConfigType("json")
@@ -120,10 +124,19 @@ func Validate(cfg *Config) error {
 
 	switch vcsPreference {
 	case "auto", "jj", "git":
-		return nil
 	default:
 		return fmt.Errorf("validate config: vcs_preference must be one of auto, jj, git")
 	}
+
+	if harness := strings.TrimSpace(cfg.DefaultHarness); harness != "" {
+		supported := supportedHarnessSet()
+		if _, ok := supported[harness]; !ok {
+			names := daemon.SupportedHarnesses()
+			return fmt.Errorf("validate config: default_harness must be one of %s", strings.Join(names, ", "))
+		}
+	}
+
+	return nil
 }
 
 func normalizeConfig(cfg *Config) (*Config, error) {
@@ -155,24 +168,36 @@ func normalizeConfig(cfg *Config) (*Config, error) {
 			DBPath:     dbPath,
 			PIDPath:    pidPath,
 		},
-		LogLevel:      logLevel,
-		VCSPreference: vcsPreference,
-		ActiveSession: strings.TrimSpace(cfg.ActiveSession),
+		LogLevel:        logLevel,
+		VCSPreference:   vcsPreference,
+		ActiveWorkspace: strings.TrimSpace(cfg.ActiveWorkspace),
+		DefaultHarness:  strings.TrimSpace(cfg.DefaultHarness),
 	}, nil
 }
 
-func ReadActiveSession() (string, error) {
+func ReadDefaultHarness() (string, error) {
 	cfg, err := Load()
 	if err != nil {
 		return "", err
 	}
 	if cfg == nil {
-		return "", fmt.Errorf("read active session: config is required")
+		return "", fmt.Errorf("read default harness: config is required")
 	}
-	return strings.TrimSpace(cfg.ActiveSession), nil
+	return strings.TrimSpace(cfg.DefaultHarness), nil
 }
 
-func ReadPersistedActiveSession() (string, error) {
+func ReadActiveWorkspace() (string, error) {
+	cfg, err := Load()
+	if err != nil {
+		return "", err
+	}
+	if cfg == nil {
+		return "", fmt.Errorf("read active workspace: config is required")
+	}
+	return strings.TrimSpace(cfg.ActiveWorkspace), nil
+}
+
+func ReadPersistedActiveWorkspace() (string, error) {
 	path, err := configPath()
 	if err != nil {
 		return "", err
@@ -182,33 +207,45 @@ func ReadPersistedActiveSession() (string, error) {
 		if os.IsNotExist(err) {
 			return "", nil
 		}
-		return "", fmt.Errorf("read persisted active session: %w", err)
+		return "", fmt.Errorf("read persisted active workspace: %w", err)
 	}
 	if len(body) == 0 {
 		return "", nil
 	}
 	var parsed map[string]json.RawMessage
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return "", fmt.Errorf("read persisted active session: parse config: %w", err)
+		return "", fmt.Errorf("read persisted active workspace: parse config: %w", err)
 	}
-	raw, ok := parsed["active_session"]
+	raw, ok := parsed["active_workspace"]
 	if !ok {
 		return "", nil
 	}
-	var sessionID string
-	if err := json.Unmarshal(raw, &sessionID); err != nil {
-		return "", fmt.Errorf("read persisted active session: parse active_session: %w", err)
+	var workspaceID string
+	if err := json.Unmarshal(raw, &workspaceID); err != nil {
+		return "", fmt.Errorf("read persisted active workspace: parse active_workspace: %w", err)
 	}
-	return strings.TrimSpace(sessionID), nil
+	return strings.TrimSpace(workspaceID), nil
 }
 
-func WriteActiveSession(sessionID string) error {
+func WriteActiveWorkspace(workspaceID string) error {
+	return patchConfigKey("active_workspace", workspaceID, "write active workspace")
+}
+
+func WriteDefaultHarness(harness string) error {
+	return patchConfigKey("default_harness", harness, "write default harness")
+}
+
+func patchConfigKey(key string, value string, op string) error {
+	if key = strings.TrimSpace(key); key == "" {
+		return fmt.Errorf("%s: key is required", op)
+	}
+
 	path, err := configPath()
 	if err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("write active session: mkdir config dir: %w", err)
+		return fmt.Errorf("%s: mkdir config dir: %w", op, err)
 	}
 
 	parsed := map[string]json.RawMessage{}
@@ -216,34 +253,44 @@ func WriteActiveSession(sessionID string) error {
 	if err == nil {
 		if len(body) > 0 {
 			if err := json.Unmarshal(body, &parsed); err != nil {
-				return fmt.Errorf("write active session: parse config: %w", err)
+				return fmt.Errorf("%s: parse config: %w", op, err)
 			}
 		}
 	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("write active session: read config: %w", err)
+		return fmt.Errorf("%s: read config: %w", op, err)
 	}
 
-	trimmed := strings.TrimSpace(sessionID)
+	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
-		delete(parsed, "active_session")
+		delete(parsed, key)
 	} else {
 		raw, err := json.Marshal(trimmed)
 		if err != nil {
-			return fmt.Errorf("write active session: marshal value: %w", err)
+			return fmt.Errorf("%s: marshal value: %w", op, err)
 		}
-		parsed["active_session"] = raw
+		parsed[key] = raw
 	}
 
 	encoded, err := json.MarshalIndent(parsed, "", "  ")
 	if err != nil {
-		return fmt.Errorf("write active session: marshal config: %w", err)
+		return fmt.Errorf("%s: marshal config: %w", op, err)
 	}
 	encoded = append(encoded, '\n')
 
 	if err := os.WriteFile(path, encoded, 0o644); err != nil {
-		return fmt.Errorf("write active session: write file: %w", err)
+		return fmt.Errorf("%s: write file: %w", op, err)
 	}
 	return nil
+}
+
+func supportedHarnessSet() map[string]struct{} {
+	names := daemon.SupportedHarnesses()
+	sort.Strings(names)
+	set := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		set[name] = struct{}{}
+	}
+	return set
 }
 
 func configPath() (string, error) {

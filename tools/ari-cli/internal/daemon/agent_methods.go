@@ -18,11 +18,11 @@ import (
 )
 
 type AgentSpawnRequest struct {
-	SessionID string   `json:"session_id"`
-	Name      string   `json:"name,omitempty"`
-	Harness   string   `json:"harness,omitempty"`
-	Command   string   `json:"command"`
-	Args      []string `json:"args"`
+	WorkspaceID string   `json:"workspace_id"`
+	Name        string   `json:"name,omitempty"`
+	Harness     string   `json:"harness,omitempty"`
+	Command     string   `json:"command"`
+	Args        []string `json:"args"`
 }
 
 type AgentSpawnResponse struct {
@@ -31,7 +31,7 @@ type AgentSpawnResponse struct {
 }
 
 type AgentListRequest struct {
-	SessionID string `json:"session_id"`
+	WorkspaceID string `json:"workspace_id"`
 }
 
 type AgentSummary struct {
@@ -47,13 +47,13 @@ type AgentListResponse struct {
 }
 
 type AgentGetRequest struct {
-	SessionID string `json:"session_id"`
-	AgentID   string `json:"agent_id"`
+	WorkspaceID string `json:"workspace_id"`
+	AgentID     string `json:"agent_id"`
 }
 
 type AgentGetResponse struct {
 	AgentID            string          `json:"agent_id"`
-	SessionID          string          `json:"session_id"`
+	WorkspaceID        string          `json:"workspace_id"`
 	Name               string          `json:"name,omitempty"`
 	Command            string          `json:"command"`
 	Args               string          `json:"args"`
@@ -67,9 +67,9 @@ type AgentGetResponse struct {
 }
 
 type AgentSendRequest struct {
-	SessionID string `json:"session_id"`
-	AgentID   string `json:"agent_id"`
-	Input     string `json:"input"`
+	WorkspaceID string `json:"workspace_id"`
+	AgentID     string `json:"agent_id"`
+	Input       string `json:"input"`
 }
 
 type AgentSendResponse struct {
@@ -77,8 +77,8 @@ type AgentSendResponse struct {
 }
 
 type AgentOutputRequest struct {
-	SessionID string `json:"session_id"`
-	AgentID   string `json:"agent_id"`
+	WorkspaceID string `json:"workspace_id"`
+	AgentID     string `json:"agent_id"`
 }
 
 type AgentOutputResponse struct {
@@ -86,8 +86,8 @@ type AgentOutputResponse struct {
 }
 
 type AgentStopRequest struct {
-	SessionID string `json:"session_id"`
-	AgentID   string `json:"agent_id"`
+	WorkspaceID string `json:"workspace_id"`
+	AgentID     string `json:"agent_id"`
 }
 
 type AgentStopResponse struct {
@@ -114,25 +114,25 @@ func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globa
 
 	if err := rpc.RegisterMethod(registry, rpc.Method[AgentSpawnRequest, AgentSpawnResponse]{
 		Name:        "agent.spawn",
-		Description: "Spawn an agent process in a session",
+		Description: "Spawn an agent process in a workspace",
 		Handler: func(ctx context.Context, req AgentSpawnRequest) (AgentSpawnResponse, error) {
-			sessionID := strings.TrimSpace(req.SessionID)
+			sessionID := strings.TrimSpace(req.WorkspaceID)
 			if sessionID == "" {
-				return AgentSpawnResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "session_id is required", nil)
+				return AgentSpawnResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
 			}
 
 			session, err := store.GetSession(ctx, sessionID)
 			if err != nil {
-				return AgentSpawnResponse{}, mapSessionStoreError(err, sessionID)
+				return AgentSpawnResponse{}, mapWorkspaceStoreError(err, sessionID)
 			}
 			if session.Status == "closed" {
-				return AgentSpawnResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "session is closed", sessionID)
+				return AgentSpawnResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace is closed", sessionID)
 			}
 
 			primaryFolder, err := lookupPrimaryFolder(ctx, store, sessionID)
 			if err != nil {
 				if errors.Is(err, errNoPrimaryFolder) {
-					return AgentSpawnResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "session has no primary folder", sessionID)
+					return AgentSpawnResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace has no primary folder", sessionID)
 				}
 				return AgentSpawnResponse{}, mapAgentStoreError(err, sessionID)
 			}
@@ -170,7 +170,7 @@ func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globa
 			harnessIdentity := deriveHarnessIdentity(harnessName, launchSpec.Args)
 			createParams := globaldb.CreateAgentParams{
 				AgentID:            agentID,
-				SessionID:          sessionID,
+				WorkspaceID:        sessionID,
 				Command:            launchSpec.Command,
 				Args:               encodeArgs(launchSpec.Args),
 				Status:             "running",
@@ -200,14 +200,14 @@ func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globa
 
 	if err := rpc.RegisterMethod(registry, rpc.Method[AgentListRequest, AgentListResponse]{
 		Name:        "agent.list",
-		Description: "List agents for a session",
+		Description: "List agents for a workspace",
 		Handler: func(ctx context.Context, req AgentListRequest) (AgentListResponse, error) {
-			sessionID := strings.TrimSpace(req.SessionID)
+			sessionID := strings.TrimSpace(req.WorkspaceID)
 			if sessionID == "" {
-				return AgentListResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "session_id is required", nil)
+				return AgentListResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
 			}
 			if _, err := store.GetSession(ctx, sessionID); err != nil {
-				return AgentListResponse{}, mapSessionStoreError(err, sessionID)
+				return AgentListResponse{}, mapWorkspaceStoreError(err, sessionID)
 			}
 
 			agents, err := store.ListAgents(ctx, sessionID)
@@ -239,16 +239,16 @@ func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globa
 		Name:        "agent.get",
 		Description: "Get agent details",
 		Handler: func(ctx context.Context, req AgentGetRequest) (AgentGetResponse, error) {
-			sessionID := strings.TrimSpace(req.SessionID)
+			sessionID := strings.TrimSpace(req.WorkspaceID)
 			if sessionID == "" {
-				return AgentGetResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "session_id is required", nil)
+				return AgentGetResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
 			}
 			identifier := strings.TrimSpace(req.AgentID)
 			if identifier == "" {
 				return AgentGetResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "agent_id is required", sessionID)
 			}
 			if _, err := store.GetSession(ctx, sessionID); err != nil {
-				return AgentGetResponse{}, mapSessionStoreError(err, sessionID)
+				return AgentGetResponse{}, mapWorkspaceStoreError(err, sessionID)
 			}
 
 			agent, err := lookupAgentByIdentifier(ctx, store, sessionID, identifier)
@@ -257,13 +257,13 @@ func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globa
 			}
 
 			resp := AgentGetResponse{
-				AgentID:   agent.AgentID,
-				SessionID: agent.SessionID,
-				Command:   agent.Command,
-				Args:      agent.Args,
-				Status:    agent.Status,
-				ExitCode:  agent.ExitCode,
-				StartedAt: agent.StartedAt,
+				AgentID:     agent.AgentID,
+				WorkspaceID: agent.WorkspaceID,
+				Command:     agent.Command,
+				Args:        agent.Args,
+				Status:      agent.Status,
+				ExitCode:    agent.ExitCode,
+				StartedAt:   agent.StartedAt,
 			}
 			if agent.Name != nil {
 				resp.Name = *agent.Name
@@ -291,9 +291,9 @@ func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globa
 		Name:        "agent.send",
 		Description: "Send input to a running agent",
 		Handler: func(ctx context.Context, req AgentSendRequest) (AgentSendResponse, error) {
-			sessionID := strings.TrimSpace(req.SessionID)
+			sessionID := strings.TrimSpace(req.WorkspaceID)
 			if sessionID == "" {
-				return AgentSendResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "session_id is required", nil)
+				return AgentSendResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
 			}
 			identifier := strings.TrimSpace(req.AgentID)
 			if identifier == "" {
@@ -303,7 +303,7 @@ func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globa
 				return AgentSendResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "input is required", sessionID)
 			}
 			if _, err := store.GetSession(ctx, sessionID); err != nil {
-				return AgentSendResponse{}, mapSessionStoreError(err, sessionID)
+				return AgentSendResponse{}, mapWorkspaceStoreError(err, sessionID)
 			}
 
 			agent, err := lookupAgentByIdentifier(ctx, store, sessionID, identifier)
@@ -332,16 +332,16 @@ func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globa
 		Name:        "agent.output",
 		Description: "Get agent output snapshot",
 		Handler: func(ctx context.Context, req AgentOutputRequest) (AgentOutputResponse, error) {
-			sessionID := strings.TrimSpace(req.SessionID)
+			sessionID := strings.TrimSpace(req.WorkspaceID)
 			if sessionID == "" {
-				return AgentOutputResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "session_id is required", nil)
+				return AgentOutputResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
 			}
 			identifier := strings.TrimSpace(req.AgentID)
 			if identifier == "" {
 				return AgentOutputResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "agent_id is required", sessionID)
 			}
 			if _, err := store.GetSession(ctx, sessionID); err != nil {
-				return AgentOutputResponse{}, mapSessionStoreError(err, sessionID)
+				return AgentOutputResponse{}, mapWorkspaceStoreError(err, sessionID)
 			}
 
 			agent, err := lookupAgentByIdentifier(ctx, store, sessionID, identifier)
@@ -372,16 +372,16 @@ func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globa
 		Name:        "agent.stop",
 		Description: "Stop running agent process",
 		Handler: func(ctx context.Context, req AgentStopRequest) (AgentStopResponse, error) {
-			sessionID := strings.TrimSpace(req.SessionID)
+			sessionID := strings.TrimSpace(req.WorkspaceID)
 			if sessionID == "" {
-				return AgentStopResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "session_id is required", nil)
+				return AgentStopResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
 			}
 			identifier := strings.TrimSpace(req.AgentID)
 			if identifier == "" {
 				return AgentStopResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "agent_id is required", sessionID)
 			}
 			if _, err := store.GetSession(ctx, sessionID); err != nil {
-				return AgentStopResponse{}, mapSessionStoreError(err, sessionID)
+				return AgentStopResponse{}, mapWorkspaceStoreError(err, sessionID)
 			}
 
 			agent, err := lookupAgentByIdentifier(ctx, store, sessionID, identifier)
@@ -498,10 +498,10 @@ func (d *Daemon) waitForAgentExit(ctx context.Context, agentID, sessionID string
 	}
 
 	update := globaldb.UpdateAgentStatusParams{
-		SessionID: sessionID,
-		AgentID:   agentID,
-		Status:    status,
-		StoppedAt: &stoppedAt,
+		WorkspaceID: sessionID,
+		AgentID:     agentID,
+		Status:      status,
+		StoppedAt:   &stoppedAt,
 	}
 	if err == nil {
 		update.ExitCode = &result.ExitCode
@@ -509,10 +509,10 @@ func (d *Daemon) waitForAgentExit(ctx context.Context, agentID, sessionID string
 
 	if err := persistAgentStatusWithRetry(ctx, store, update, 5*time.Second); err != nil {
 		fallback := globaldb.UpdateAgentStatusParams{
-			SessionID: sessionID,
-			AgentID:   agentID,
-			Status:    "lost",
-			StoppedAt: &stoppedAt,
+			WorkspaceID: sessionID,
+			AgentID:     agentID,
+			Status:      "lost",
+			StoppedAt:   &stoppedAt,
 		}
 		_ = persistAgentStatusWithRetry(ctx, store, fallback, 5*time.Second)
 	}

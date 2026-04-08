@@ -1,7 +1,8 @@
-h1:vbUJVCNPnXDre/YB/sql8Dl7FhwitJoZchErxx5dBmc=
+h1:MDHqc7nAOdk2LIAto0+NY75jWb6OGuTRcnA0+VahNMA=
 202602220901_init_globaldb.sql h1:tuoakYVx2MCuwugAXwGdaj/wnRQGWqX2y/Ke4jWMegw=
 202604012220_daemon_meta.sql h1:YxaCqnoWKLDk8qtiGyrmR/sK0ZswgR6RenvLh9BkKoY=
 202604032210_command_tracking.sql h1:Ckri0gtnHdx1GDnPAc9VgJTZXIcjMs+dCwvhDDT6VrE=
 202604040757_agent_tracking.sql h1:4sZoB3qGBD7ltD5Q3LxUXgFnroxd1O6VTHzUIxQ85yk=
 202604040948_agent_name_scope_fix.sql h1:Tl9lESVaGErGQy4Nhqcj+mxpp/YkNWb+ny9YD3BYbDw=
 202604061845_agent_harness_identity.sql h1:Xo3IZ59dhvg3oyLwFINHL0xyOkfUgQ2B7tsweXfSGpU=
+202604062200_session_to_workspace.sql h1:gxnd/3cCqDpkxP5YDomvA3ToZAUkYAHhO1tjzY0Rw6Y=

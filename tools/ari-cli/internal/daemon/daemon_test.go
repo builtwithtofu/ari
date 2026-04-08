@@ -290,9 +290,9 @@ func TestDaemonStartMarksRunningCommandsLost(t *testing.T) {
 		t.Fatalf("open sqlite db: %v", err)
 	}
 	if _, err := db.Exec(`
-INSERT INTO sessions (session_id, name, status, vcs_preference, origin_root, cleanup_policy, created_at, updated_at)
+INSERT INTO workspaces (workspace_id, name, status, vcs_preference, origin_root, cleanup_policy, created_at, updated_at)
 VALUES ('sess-1', 'alpha', 'active', 'auto', '/tmp', 'manual', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
-INSERT INTO commands (command_id, session_id, command, args, status, started_at)
+INSERT INTO commands (command_id, workspace_id, command, args, status, started_at)
 VALUES ('cmd-1', 'sess-1', 'sleep 30', '[]', 'running', '2026-01-01T00:00:00Z');
 `); err != nil {
 		_ = db.Close()
@@ -362,9 +362,9 @@ func TestDaemonStartMarksRunningAgentsLost(t *testing.T) {
 		t.Fatalf("open sqlite db: %v", err)
 	}
 	if _, err := db.Exec(`
-INSERT INTO sessions (session_id, name, status, vcs_preference, origin_root, cleanup_policy, created_at, updated_at)
+INSERT INTO workspaces (workspace_id, name, status, vcs_preference, origin_root, cleanup_policy, created_at, updated_at)
 VALUES ('sess-1', 'alpha', 'active', 'auto', '/tmp', 'manual', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
-INSERT INTO agents (agent_id, session_id, name, command, args, status, started_at)
+INSERT INTO agents (agent_id, workspace_id, name, command, args, status, started_at)
 VALUES ('agt-1', 'sess-1', 'claude', 'claude-code', '[]', 'running', '2026-01-01T00:00:00Z');
 `); err != nil {
 		_ = db.Close()

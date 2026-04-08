@@ -17,7 +17,7 @@ func NewRootCmd() *cobra.Command {
 	}
 
 	rootCmd.AddCommand(NewDaemonCmd())
-	rootCmd.AddCommand(NewSessionCmd())
+	rootCmd.AddCommand(NewWorkspaceCmd())
 	rootCmd.AddCommand(NewCommandCmd())
 	rootCmd.AddCommand(NewAgentCmd())
 

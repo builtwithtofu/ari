@@ -2,13 +2,10 @@ package globaldb
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"sync"
 	"testing"
 	"time"
-
-	_ "modernc.org/sqlite"
 )
 
 func TestSessionCreateAndLookup(t *testing.T) {
@@ -368,44 +365,5 @@ func TestConcurrentRemoveFolderKeepsOneFolder(t *testing.T) {
 }
 
 func newSessionTestStore(t *testing.T) *Store {
-	t.Helper()
-
-	db, err := sql.Open("sqlite", "file::memory:?cache=shared")
-	if err != nil {
-		t.Fatalf("open sqlite db: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = db.Close()
-	})
-
-	if _, err := db.Exec(`
-CREATE TABLE sessions (
-	session_id TEXT PRIMARY KEY,
-	name TEXT NOT NULL UNIQUE,
-	status TEXT NOT NULL DEFAULT 'active',
-	vcs_preference TEXT NOT NULL DEFAULT 'auto',
-	origin_root TEXT NOT NULL,
-	cleanup_policy TEXT NOT NULL DEFAULT 'manual',
-	created_at TEXT NOT NULL,
-	updated_at TEXT NOT NULL
-);
-CREATE TABLE session_folders (
-	session_id TEXT NOT NULL,
-	folder_path TEXT NOT NULL,
-	vcs_type TEXT NOT NULL DEFAULT 'unknown',
-	is_primary INTEGER NOT NULL DEFAULT 0,
-	added_at TEXT NOT NULL,
-	PRIMARY KEY (session_id, folder_path),
-	FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
-);
-`); err != nil {
-		t.Fatalf("create schema: %v", err)
-	}
-
-	store, err := NewSQLStore(db)
-	if err != nil {
-		t.Fatalf("NewSQLStore returned error: %v", err)
-	}
-
-	return store
+	return newMigratedGlobalDBStore(t, "workspace-store")
 }

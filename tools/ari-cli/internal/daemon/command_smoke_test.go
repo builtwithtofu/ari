@@ -14,13 +14,13 @@ import (
 
 var commandSmokeGet = func(ctx context.Context, socketPath, sessionID, commandID string) (CommandGetResponse, error) {
 	resp := CommandGetResponse{}
-	err := tryDaemonMethod(ctx, socketPath, "command.get", CommandGetRequest{SessionID: sessionID, CommandID: commandID}, &resp)
+	err := tryDaemonMethod(ctx, socketPath, "command.get", CommandGetRequest{WorkspaceID: sessionID, CommandID: commandID}, &resp)
 	return resp, err
 }
 
 var commandSmokeOutput = func(ctx context.Context, socketPath, sessionID, commandID string) (CommandOutputResponse, error) {
 	resp := CommandOutputResponse{}
-	err := tryDaemonMethod(ctx, socketPath, "command.output", CommandOutputRequest{SessionID: sessionID, CommandID: commandID}, &resp)
+	err := tryDaemonMethod(ctx, socketPath, "command.output", CommandOutputRequest{WorkspaceID: sessionID, CommandID: commandID}, &resp)
 	return resp, err
 }
 
@@ -48,8 +48,8 @@ func TestCommandSmokeLifecycleOverRPC(t *testing.T) {
 	}
 	originRoot := t.TempDir()
 
-	create := SessionCreateResponse{}
-	callDaemonMethod(t, socketPath, "session.create", SessionCreateRequest{
+	create := WorkspaceCreateResponse{}
+	callDaemonMethod(t, socketPath, "workspace.create", WorkspaceCreateRequest{
 		Name:          "alpha",
 		Folder:        repoRoot,
 		OriginRoot:    originRoot,
@@ -58,23 +58,23 @@ func TestCommandSmokeLifecycleOverRPC(t *testing.T) {
 
 	run := CommandRunResponse{}
 	callDaemonMethod(t, socketPath, "command.run", CommandRunRequest{
-		SessionID: create.SessionID,
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "printf 'smoke-output'; exit 0"},
+		WorkspaceID: create.WorkspaceID,
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "printf 'smoke-output'; exit 0"},
 	}, &run)
 	if run.CommandID == "" {
 		t.Fatal("command.run returned empty command_id")
 	}
 
-	waitForCommandExited(t, socketPath, create.SessionID, run.CommandID)
+	waitForCommandExited(t, socketPath, create.WorkspaceID, run.CommandID)
 
 	list := CommandListResponse{}
-	callDaemonMethod(t, socketPath, "command.list", CommandListRequest{SessionID: create.SessionID}, &list)
+	callDaemonMethod(t, socketPath, "command.list", CommandListRequest{WorkspaceID: create.WorkspaceID}, &list)
 	if len(list.Commands) == 0 {
 		t.Fatal("command.list returned no commands")
 	}
 
-	waitForCommandOutputContains(t, socketPath, create.SessionID, run.CommandID, "smoke-output")
+	waitForCommandOutputContains(t, socketPath, create.WorkspaceID, run.CommandID, "smoke-output")
 
 	stop := StopResponse{}
 	callDaemonMethod(t, socketPath, "daemon.stop", StopRequest{}, &stop)

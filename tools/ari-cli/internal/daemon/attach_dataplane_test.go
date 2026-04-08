@@ -32,17 +32,17 @@ func TestAttachDataPlaneStreamsInputAndOutput(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
-		SessionID: "sess-1",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "stty -echo raw; cat"},
+		WorkspaceID: "sess-1",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "stty -echo raw; cat"},
 	})
 	t.Cleanup(func() {
-		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 		waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "stopped")
 	})
 
 	attachResp := callMethod[AgentAttachResponse](t, registry, "agent.attach", AgentAttachRequest{
-		SessionID:   "sess-1",
+		WorkspaceID: "sess-1",
 		AgentID:     spawnResp.AgentID,
 		InitialCols: 120,
 		InitialRows: 40,
@@ -126,17 +126,17 @@ func TestAttachDataPlaneImmediateClientDataAfterAttachIsNotLost(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
-		SessionID: "sess-1",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "cat"},
+		WorkspaceID: "sess-1",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "cat"},
 	})
 	t.Cleanup(func() {
-		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 		waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "stopped")
 	})
 
 	attachResp := callMethod[AgentAttachResponse](t, registry, "agent.attach", AgentAttachRequest{
-		SessionID:   "sess-1",
+		WorkspaceID: "sess-1",
 		AgentID:     spawnResp.AgentID,
 		InitialCols: 120,
 		InitialRows: 40,
@@ -224,17 +224,17 @@ func TestAttachDataPlaneLargeInputDeliveredCompletely(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
-		SessionID: "sess-1",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "while true; do sleep 1; done"},
+		WorkspaceID: "sess-1",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "while true; do sleep 1; done"},
 	})
 	t.Cleanup(func() {
-		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 		waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "stopped")
 	})
 
 	attachResp := callMethod[AgentAttachResponse](t, registry, "agent.attach", AgentAttachRequest{
-		SessionID:   "sess-1",
+		WorkspaceID: "sess-1",
 		AgentID:     spawnResp.AgentID,
 		InitialCols: 120,
 		InitialRows: 40,
@@ -303,17 +303,17 @@ func TestAttachDataPlaneShortWriteConnectionStillDeliversSnapshot(t *testing.T) 
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
-		SessionID: "sess-1",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "cat"},
+		WorkspaceID: "sess-1",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "cat"},
 	})
 	t.Cleanup(func() {
-		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 		waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "stopped")
 	})
 
 	attachResp := callMethod[AgentAttachResponse](t, registry, "agent.attach", AgentAttachRequest{
-		SessionID:   "sess-1",
+		WorkspaceID: "sess-1",
 		AgentID:     spawnResp.AgentID,
 		InitialCols: 120,
 		InitialRows: 40,
@@ -392,17 +392,17 @@ func TestAttachDataPlaneRejectsReusedConnectedToken(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
-		SessionID: "sess-1",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "cat"},
+		WorkspaceID: "sess-1",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "cat"},
 	})
 	t.Cleanup(func() {
-		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 		waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "stopped")
 	})
 
 	attachResp := callMethod[AgentAttachResponse](t, registry, "agent.attach", AgentAttachRequest{
-		SessionID:   "sess-1",
+		WorkspaceID: "sess-1",
 		AgentID:     spawnResp.AgentID,
 		InitialCols: 120,
 		InitialRows: 40,
@@ -466,17 +466,17 @@ func TestAttachDataPlaneRejectsExpiredPendingToken(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
-		SessionID: "sess-1",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "cat"},
+		WorkspaceID: "sess-1",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "cat"},
 	})
 	t.Cleanup(func() {
-		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 		waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "stopped")
 	})
 
 	attachResp := callMethod[AgentAttachResponse](t, registry, "agent.attach", AgentAttachRequest{
-		SessionID:   "sess-1",
+		WorkspaceID: "sess-1",
 		AgentID:     spawnResp.AgentID,
 		InitialCols: 120,
 		InitialRows: 40,
@@ -530,13 +530,13 @@ func TestAttachDataPlaneSendsAgentExitedFrame(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
-		SessionID: "sess-1",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "sleep 0.05; exit 7"},
+		WorkspaceID: "sess-1",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "sleep 0.05; exit 7"},
 	})
 
 	attachResp := callMethod[AgentAttachResponse](t, registry, "agent.attach", AgentAttachRequest{
-		SessionID:   "sess-1",
+		WorkspaceID: "sess-1",
 		AgentID:     spawnResp.AgentID,
 		InitialCols: 120,
 		InitialRows: 40,
@@ -600,17 +600,17 @@ func TestAttachDataPlaneReturnsAfterContextCancelWhileClientIdle(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
-		SessionID: "sess-1",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "cat"},
+		WorkspaceID: "sess-1",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "cat"},
 	})
 	t.Cleanup(func() {
-		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 		waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "stopped")
 	})
 
 	attachResp := callMethod[AgentAttachResponse](t, registry, "agent.attach", AgentAttachRequest{
-		SessionID:   "sess-1",
+		WorkspaceID: "sess-1",
 		AgentID:     spawnResp.AgentID,
 		InitialCols: 120,
 		InitialRows: 40,
@@ -664,17 +664,17 @@ func TestAttachDataPlaneInitialResizeFailureReturnsErrorFrame(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
-		SessionID: "sess-1",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "cat"},
+		WorkspaceID: "sess-1",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "cat"},
 	})
 	t.Cleanup(func() {
-		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 		waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "stopped")
 	})
 
 	attachResp := callMethod[AgentAttachResponse](t, registry, "agent.attach", AgentAttachRequest{
-		SessionID:   "sess-1",
+		WorkspaceID: "sess-1",
 		AgentID:     spawnResp.AgentID,
 		InitialCols: 120,
 		InitialRows: 40,
@@ -732,17 +732,17 @@ func TestAttachDataPlaneRejectsMismatchedReservedDimensions(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
-		SessionID: "sess-1",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "cat"},
+		WorkspaceID: "sess-1",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "cat"},
 	})
 	t.Cleanup(func() {
-		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 		waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "stopped")
 	})
 
 	attachResp := callMethod[AgentAttachResponse](t, registry, "agent.attach", AgentAttachRequest{
-		SessionID:   "sess-1",
+		WorkspaceID: "sess-1",
 		AgentID:     spawnResp.AgentID,
 		InitialCols: 120,
 		InitialRows: 40,
@@ -790,17 +790,17 @@ func TestAttachDataPlaneRejectsZeroDimensions(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
-		SessionID: "sess-1",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "cat"},
+		WorkspaceID: "sess-1",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "cat"},
 	})
 	t.Cleanup(func() {
-		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 		waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "stopped")
 	})
 
 	attachResp := callMethod[AgentAttachResponse](t, registry, "agent.attach", AgentAttachRequest{
-		SessionID:   "sess-1",
+		WorkspaceID: "sess-1",
 		AgentID:     spawnResp.AgentID,
 		InitialCols: 120,
 		InitialRows: 40,
@@ -848,17 +848,17 @@ func TestAttachDataPlaneZeroDimensionResizeReturnsErrorAndKeepsSession(t *testin
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
-		SessionID: "sess-1",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "cat"},
+		WorkspaceID: "sess-1",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "cat"},
 	})
 	t.Cleanup(func() {
-		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+		_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 		waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "stopped")
 	})
 
 	attachResp := callMethod[AgentAttachResponse](t, registry, "agent.attach", AgentAttachRequest{
-		SessionID:   "sess-1",
+		WorkspaceID: "sess-1",
 		AgentID:     spawnResp.AgentID,
 		InitialCols: 120,
 		InitialRows: 40,
@@ -936,19 +936,19 @@ func TestAttachDataPlaneRejectsStoppedAgentAndClearsAttachState(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
-		SessionID: "sess-1",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "while true; do sleep 1; done"},
+		WorkspaceID: "sess-1",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "while true; do sleep 1; done"},
 	})
 
 	attachResp := callMethod[AgentAttachResponse](t, registry, "agent.attach", AgentAttachRequest{
-		SessionID:   "sess-1",
+		WorkspaceID: "sess-1",
 		AgentID:     spawnResp.AgentID,
 		InitialCols: 120,
 		InitialRows: 40,
 	})
 
-	_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+	_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 	waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "stopped")
 
 	serverConn, clientConn := net.Pipe()

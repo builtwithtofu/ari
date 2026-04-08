@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -139,6 +140,48 @@ func TestLoadReadsNestedEnvOverride(t *testing.T) {
 	}
 }
 
+func TestLoadReadsDefaultHarnessFromConfigAndEnvOverride(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	configDir := filepath.Join(tmpHome, ".ari")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("create config dir: %v", err)
+	}
+
+	configBody := `{
+		"daemon": {
+			"socket_path": "~/.ari/custom.sock",
+			"db_path": "~/.ari/custom.db",
+			"pid_path": "~/.ari/custom.pid"
+		},
+		"log_level": "info",
+		"vcs_preference": "auto",
+		"default_harness": "codex"
+	}`
+
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(configBody), 0o644); err != nil {
+		t.Fatalf("write config file: %v", err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.DefaultHarness != "codex" {
+		t.Fatalf("default harness = %q, want %q", cfg.DefaultHarness, "codex")
+	}
+
+	t.Setenv("ARI_DEFAULT_HARNESS", "opencode")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("load config with env override: %v", err)
+	}
+	if cfg.DefaultHarness != "opencode" {
+		t.Fatalf("default harness with env override = %q, want %q", cfg.DefaultHarness, "opencode")
+	}
+}
+
 func TestValidateRejectsInvalidLogLevel(t *testing.T) {
 	err := Validate(&Config{
 		Daemon: DaemonConfig{
@@ -169,36 +212,126 @@ func TestValidateRejectsInvalidVCSPreference(t *testing.T) {
 	}
 }
 
-func TestWriteAndReadActiveSession(t *testing.T) {
+func TestValidateRejectsInvalidDefaultHarness(t *testing.T) {
+	err := Validate(&Config{
+		Daemon: DaemonConfig{
+			SocketPath: "/tmp/daemon.sock",
+			DBPath:     "/tmp/ari.db",
+			PIDPath:    "/tmp/daemon.pid",
+		},
+		LogLevel:       "info",
+		VCSPreference:  "auto",
+		DefaultHarness: "invalid-harness",
+	})
+	if err == nil {
+		t.Fatalf("expected validation error for default harness")
+	}
+	if !strings.Contains(err.Error(), "default_harness") {
+		t.Fatalf("expected default_harness validation error, got: %v", err)
+	}
+}
+
+func TestWriteAndReadDefaultHarness(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 
-	if err := WriteActiveSession("sess-123"); err != nil {
-		t.Fatalf("WriteActiveSession returned error: %v", err)
+	if err := WriteDefaultHarness("codex"); err != nil {
+		t.Fatalf("WriteDefaultHarness returned error: %v", err)
 	}
 
-	got, err := ReadActiveSession()
+	got, err := ReadDefaultHarness()
 	if err != nil {
-		t.Fatalf("ReadActiveSession returned error: %v", err)
+		t.Fatalf("ReadDefaultHarness returned error: %v", err)
+	}
+	if got != "codex" {
+		t.Fatalf("ReadDefaultHarness = %q, want %q", got, "codex")
+	}
+
+	if err := WriteDefaultHarness(""); err != nil {
+		t.Fatalf("WriteDefaultHarness clear returned error: %v", err)
+	}
+
+	got, err = ReadDefaultHarness()
+	if err != nil {
+		t.Fatalf("ReadDefaultHarness after clear returned error: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("ReadDefaultHarness after clear = %q, want empty", got)
+	}
+}
+
+func TestWriteDefaultHarnessPatchesOnlyDefaultHarnessKey(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	configDir := filepath.Join(tmpHome, ".ari")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+
+	original := `{"daemon":{"socket_path":"/tmp/original.sock","db_path":"/tmp/original.db","pid_path":"/tmp/original.pid"},"active_workspace":"workspace-1","log_level":"debug"}`
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(original), 0o644); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	if err := WriteDefaultHarness("opencode"); err != nil {
+		t.Fatalf("WriteDefaultHarness returned error: %v", err)
+	}
+
+	body, err := os.ReadFile(filepath.Join(configDir, "config.json"))
+	if err != nil {
+		t.Fatalf("ReadFile returned error: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("Unmarshal returned error: %v", err)
+	}
+	if parsed["default_harness"] != "opencode" {
+		t.Fatalf("default_harness = %v, want %q", parsed["default_harness"], "opencode")
+	}
+	if parsed["active_workspace"] != "workspace-1" {
+		t.Fatalf("active_workspace = %v, want %q", parsed["active_workspace"], "workspace-1")
+	}
+	daemonValue, ok := parsed["daemon"].(map[string]any)
+	if !ok {
+		t.Fatalf("daemon config missing after patch write")
+	}
+	if daemonValue["socket_path"] != "/tmp/original.sock" {
+		t.Fatalf("daemon.socket_path = %v, want %q", daemonValue["socket_path"], "/tmp/original.sock")
+	}
+}
+
+func TestWriteAndReadActiveWorkspace(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	if err := WriteActiveWorkspace("sess-123"); err != nil {
+		t.Fatalf("WriteActiveWorkspace returned error: %v", err)
+	}
+
+	got, err := ReadActiveWorkspace()
+	if err != nil {
+		t.Fatalf("ReadActiveWorkspace returned error: %v", err)
 	}
 	if got != "sess-123" {
 		t.Fatalf("ReadActiveSession = %q, want %q", got, "sess-123")
 	}
 
-	if err := WriteActiveSession(""); err != nil {
-		t.Fatalf("WriteActiveSession clear returned error: %v", err)
+	if err := WriteActiveWorkspace(""); err != nil {
+		t.Fatalf("WriteActiveWorkspace clear returned error: %v", err)
 	}
 
-	got, err = ReadActiveSession()
+	got, err = ReadActiveWorkspace()
 	if err != nil {
-		t.Fatalf("ReadActiveSession after clear returned error: %v", err)
+		t.Fatalf("ReadActiveWorkspace after clear returned error: %v", err)
 	}
 	if got != "" {
-		t.Fatalf("ReadActiveSession after clear = %q, want empty", got)
+		t.Fatalf("ReadActiveWorkspace after clear = %q, want empty", got)
 	}
 }
 
-func TestWriteActiveSessionPatchesOnlyActiveSessionKey(t *testing.T) {
+func TestWriteActiveWorkspacePatchesOnlyActiveWorkspaceKey(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 	t.Setenv("ARI_DAEMON_SOCKET_PATH", filepath.Join(tmpHome, "env.sock"))
@@ -213,8 +346,8 @@ func TestWriteActiveSessionPatchesOnlyActiveSessionKey(t *testing.T) {
 		t.Fatalf("WriteFile returned error: %v", err)
 	}
 
-	if err := WriteActiveSession("sess-abc"); err != nil {
-		t.Fatalf("WriteActiveSession returned error: %v", err)
+	if err := WriteActiveWorkspace("sess-abc"); err != nil {
+		t.Fatalf("WriteActiveWorkspace returned error: %v", err)
 	}
 
 	body, err := os.ReadFile(filepath.Join(configDir, "config.json"))
@@ -226,8 +359,8 @@ func TestWriteActiveSessionPatchesOnlyActiveSessionKey(t *testing.T) {
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		t.Fatalf("Unmarshal returned error: %v", err)
 	}
-	if parsed["active_session"] != "sess-abc" {
-		t.Fatalf("active_session = %v, want %q", parsed["active_session"], "sess-abc")
+	if parsed["active_workspace"] != "sess-abc" {
+		t.Fatalf("active_workspace = %v, want %q", parsed["active_workspace"], "sess-abc")
 	}
 	daemonValue, ok := parsed["daemon"].(map[string]any)
 	if !ok {
@@ -238,21 +371,21 @@ func TestWriteActiveSessionPatchesOnlyActiveSessionKey(t *testing.T) {
 	}
 }
 
-func TestReadActiveSessionUsesEnvironmentOverride(t *testing.T) {
+func TestReadActiveWorkspaceUsesEnvironmentOverride(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
-	t.Setenv("ARI_ACTIVE_SESSION", "sess-env")
+	t.Setenv("ARI_ACTIVE_WORKSPACE", "sess-env")
 
-	got, err := ReadActiveSession()
+	got, err := ReadActiveWorkspace()
 	if err != nil {
-		t.Fatalf("ReadActiveSession returned error: %v", err)
+		t.Fatalf("ReadActiveWorkspace returned error: %v", err)
 	}
 	if got != "sess-env" {
-		t.Fatalf("ReadActiveSession with env override = %q, want %q", got, "sess-env")
+		t.Fatalf("ReadActiveWorkspace with env override = %q, want %q", got, "sess-env")
 	}
 }
 
-func TestReadPersistedActiveSessionHandlesEmptyConfigFile(t *testing.T) {
+func TestReadPersistedActiveWorkspaceHandlesEmptyConfigFile(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 
@@ -264,12 +397,12 @@ func TestReadPersistedActiveSessionHandlesEmptyConfigFile(t *testing.T) {
 		t.Fatalf("WriteFile returned error: %v", err)
 	}
 
-	got, err := ReadPersistedActiveSession()
+	got, err := ReadPersistedActiveWorkspace()
 	if err != nil {
-		t.Fatalf("ReadPersistedActiveSession returned error: %v", err)
+		t.Fatalf("ReadPersistedActiveWorkspace returned error: %v", err)
 	}
 	if got != "" {
-		t.Fatalf("ReadPersistedActiveSession = %q, want empty", got)
+		t.Fatalf("ReadPersistedActiveWorkspace = %q, want empty", got)
 	}
 }
 

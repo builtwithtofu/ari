@@ -15,7 +15,7 @@ import (
 )
 
 type AgentAttachRequest struct {
-	SessionID   string `json:"session_id"`
+	WorkspaceID string `json:"workspace_id"`
 	AgentID     string `json:"agent_id"`
 	InitialCols uint16 `json:"initial_cols"`
 	InitialRows uint16 `json:"initial_rows"`
@@ -27,8 +27,8 @@ type AgentAttachResponse struct {
 }
 
 type AgentDetachRequest struct {
-	SessionID string `json:"session_id"`
-	AgentID   string `json:"agent_id"`
+	WorkspaceID string `json:"workspace_id"`
+	AgentID     string `json:"agent_id"`
 }
 
 type AgentDetachResponse struct {
@@ -66,9 +66,9 @@ func (d *Daemon) registerAttachMethods(registry *rpc.MethodRegistry, store *glob
 		Name:        "agent.attach",
 		Description: "Create an attach session for a running agent",
 		Handler: func(ctx context.Context, req AgentAttachRequest) (AgentAttachResponse, error) {
-			sessionID := strings.TrimSpace(req.SessionID)
+			sessionID := strings.TrimSpace(req.WorkspaceID)
 			if sessionID == "" {
-				return AgentAttachResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "session_id is required", nil)
+				return AgentAttachResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
 			}
 			identifier := strings.TrimSpace(req.AgentID)
 			if identifier == "" {
@@ -79,7 +79,7 @@ func (d *Daemon) registerAttachMethods(registry *rpc.MethodRegistry, store *glob
 			}
 
 			if _, err := store.GetSession(ctx, sessionID); err != nil {
-				return AgentAttachResponse{}, mapSessionStoreError(err, sessionID)
+				return AgentAttachResponse{}, mapWorkspaceStoreError(err, sessionID)
 			}
 
 			agent, err := lookupAgentByIdentifier(ctx, store, sessionID, identifier)
@@ -123,9 +123,9 @@ func (d *Daemon) registerAttachMethods(registry *rpc.MethodRegistry, store *glob
 		Name:        "agent.detach",
 		Description: "Remove an active attach session for an agent",
 		Handler: func(ctx context.Context, req AgentDetachRequest) (AgentDetachResponse, error) {
-			sessionID := strings.TrimSpace(req.SessionID)
+			sessionID := strings.TrimSpace(req.WorkspaceID)
 			if sessionID == "" {
-				return AgentDetachResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "session_id is required", nil)
+				return AgentDetachResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
 			}
 			identifier := strings.TrimSpace(req.AgentID)
 			if identifier == "" {
@@ -133,7 +133,7 @@ func (d *Daemon) registerAttachMethods(registry *rpc.MethodRegistry, store *glob
 			}
 
 			if _, err := store.GetSession(ctx, sessionID); err != nil {
-				return AgentDetachResponse{}, mapSessionStoreError(err, sessionID)
+				return AgentDetachResponse{}, mapWorkspaceStoreError(err, sessionID)
 			}
 
 			agent, err := lookupAgentByIdentifier(ctx, store, sessionID, identifier)

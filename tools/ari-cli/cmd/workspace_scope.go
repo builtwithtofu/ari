@@ -9,15 +9,15 @@ import (
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
 )
 
-func enforceActiveWorkspaceScope(session *daemon.SessionGetResponse, sessionOverride string) error {
+func enforceActiveWorkspaceScope(session *daemon.WorkspaceGetResponse, sessionOverride string) error {
 	if strings.TrimSpace(sessionOverride) != "" {
 		return nil
 	}
-	if strings.TrimSpace(os.Getenv("ARI_ACTIVE_SESSION")) != "" {
+	if strings.TrimSpace(os.Getenv("ARI_ACTIVE_WORKSPACE")) != "" {
 		return nil
 	}
 	if session == nil {
-		return userFacingError{message: "Active workspace session details are unavailable; use --session <id-or-name> to override"}
+		return userFacingError{message: "Active workspace details are unavailable; use --workspace <id-or-name> to override"}
 	}
 
 	cwd, err := os.Getwd()
@@ -29,12 +29,12 @@ func enforceActiveWorkspaceScope(session *daemon.SessionGetResponse, sessionOver
 		return err
 	}
 	if !matches {
-		return userFacingError{message: "Active workspace session belongs to a different workspace; use --session <id-or-name> to override"}
+		return userFacingError{message: "Active workspace belongs to a different workspace; use --workspace <id-or-name> to override"}
 	}
 	return nil
 }
 
-func workspaceMatchesSession(cwd string, session daemon.SessionGetResponse) (bool, error) {
+func workspaceMatchesSession(cwd string, session daemon.WorkspaceGetResponse) (bool, error) {
 	normalizedCWD, err := normalizeWorkspacePath(cwd)
 	if err != nil {
 		return false, err

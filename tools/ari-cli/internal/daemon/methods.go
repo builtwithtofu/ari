@@ -60,7 +60,7 @@ func (d *Daemon) registerMethods(registry *rpc.MethodRegistry, store *globaldb.S
 		return fmt.Errorf("register daemon.stop: %w", err)
 	}
 
-	if err := d.registerSessionMethods(registry, store); err != nil {
+	if err := d.registerWorkspaceMethods(registry, store); err != nil {
 		return err
 	}
 

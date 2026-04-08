@@ -59,8 +59,8 @@ func TestAgentListRejectsActiveSessionOutsideWorkspace(t *testing.T) {
 		return "sess-1", nil
 	}
 	agentEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
-	sessionGetRPC = func(context.Context, string, string) (daemon.SessionGetResponse, error) {
-		return daemon.SessionGetResponse{SessionID: "sess-1", OriginRoot: t.TempDir()}, nil
+	sessionGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
+		return daemon.WorkspaceGetResponse{WorkspaceID: "sess-1", OriginRoot: t.TempDir()}, nil
 	}
 	agentListRPC = func(context.Context, string, string) (daemon.AgentListResponse, error) {
 		return daemon.AgentListResponse{}, errors.New("agent list should not be called")
@@ -77,15 +77,15 @@ func TestAgentListRejectsActiveSessionOutsideWorkspace(t *testing.T) {
 	if err == nil {
 		t.Fatal("agent list returned nil error for cross-workspace active session")
 	}
-	if err.Error() != "Active workspace session belongs to a different workspace; use --session <id-or-name> to override" {
-		t.Fatalf("agent list error = %q, want %q", err.Error(), "Active workspace session belongs to a different workspace; use --session <id-or-name> to override")
+	if err.Error() != "Active workspace belongs to a different workspace; use --workspace <id-or-name> to override" {
+		t.Fatalf("agent list error = %q, want %q", err.Error(), "Active workspace belongs to a different workspace; use --workspace <id-or-name> to override")
 	}
 }
 
 func TestAgentListEnvActiveSessionBypassesWorkspaceSafety(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("ARI_ACTIVE_SESSION", "sess-env")
+	t.Setenv("ARI_ACTIVE_WORKSPACE", "sess-env")
 
 	originalResolve := commandResolveSessionIdentifier
 	originalReadActive := agentReadActiveSession
@@ -100,8 +100,8 @@ func TestAgentListEnvActiveSessionBypassesWorkspaceSafety(t *testing.T) {
 		return "sess-env", nil
 	}
 	agentEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
-	sessionGetRPC = func(context.Context, string, string) (daemon.SessionGetResponse, error) {
-		return daemon.SessionGetResponse{SessionID: "sess-env", OriginRoot: t.TempDir()}, nil
+	sessionGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
+		return daemon.WorkspaceGetResponse{WorkspaceID: "sess-env", OriginRoot: t.TempDir()}, nil
 	}
 	called := false
 	agentListRPC = func(context.Context, string, string) (daemon.AgentListResponse, error) {
@@ -161,8 +161,8 @@ func TestAgentSubcommandsRejectActiveSessionOutsideWorkspace(t *testing.T) {
 		return "sess-1", nil
 	}
 	agentEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
-	sessionGetRPC = func(context.Context, string, string) (daemon.SessionGetResponse, error) {
-		return daemon.SessionGetResponse{SessionID: "sess-1", OriginRoot: t.TempDir()}, nil
+	sessionGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
+		return daemon.WorkspaceGetResponse{WorkspaceID: "sess-1", OriginRoot: t.TempDir()}, nil
 	}
 	agentSpawnRPC = func(context.Context, string, daemon.AgentSpawnRequest) (daemon.AgentSpawnResponse, error) {
 		return daemon.AgentSpawnResponse{}, errors.New("agent spawn should not be called")
@@ -223,7 +223,7 @@ func TestAgentSubcommandsRejectActiveSessionOutsideWorkspace(t *testing.T) {
 			if err == nil {
 				t.Fatalf("%s returned nil error", tc.name)
 			}
-			if err.Error() != "Active workspace session belongs to a different workspace; use --session <id-or-name> to override" {
+			if err.Error() != "Active workspace belongs to a different workspace; use --workspace <id-or-name> to override" {
 				t.Fatalf("%s error = %q, want workspace mismatch error", tc.name, err.Error())
 			}
 		})
@@ -233,7 +233,7 @@ func TestAgentSubcommandsRejectActiveSessionOutsideWorkspace(t *testing.T) {
 func TestAgentListUsesSingleSessionGetForActiveWorkspace(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("ARI_ACTIVE_SESSION", "")
+	t.Setenv("ARI_ACTIVE_WORKSPACE", "")
 
 	workspaceRoot := t.TempDir()
 	originalWD, err := os.Getwd()
@@ -257,9 +257,9 @@ func TestAgentListUsesSingleSessionGetForActiveWorkspace(t *testing.T) {
 	}
 	agentEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	sessionGetCalls := 0
-	sessionGetRPC = func(context.Context, string, string) (daemon.SessionGetResponse, error) {
+	sessionGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
 		sessionGetCalls++
-		return daemon.SessionGetResponse{SessionID: "sess-1", OriginRoot: workspaceRoot}, nil
+		return daemon.WorkspaceGetResponse{WorkspaceID: "sess-1", OriginRoot: workspaceRoot}, nil
 	}
 	agentListRPC = func(context.Context, string, string) (daemon.AgentListResponse, error) {
 		return daemon.AgentListResponse{}, nil
@@ -341,7 +341,7 @@ func TestAgentSpawnListShowOutputStop(t *testing.T) {
 	}
 	agentGetRPC = func(context.Context, string, string, string) (daemon.AgentGetResponse, error) {
 		exitCode := 0
-		return daemon.AgentGetResponse{AgentID: "agt-1", SessionID: "sess-1", Name: "claude", Command: "claude-code", Args: `["--resume"]`, Status: "stopped", ExitCode: &exitCode, StartedAt: "now", StoppedAt: "later", Harness: "claude-code", HarnessResumableID: "resume-123", HarnessMetadata: []byte(`{"resume_source":"argv"}`)}, nil
+		return daemon.AgentGetResponse{AgentID: "agt-1", WorkspaceID: "sess-1", Name: "claude", Command: "claude-code", Args: `["--resume"]`, Status: "stopped", ExitCode: &exitCode, StartedAt: "now", StoppedAt: "later", Harness: "claude-code", HarnessResumableID: "resume-123", HarnessMetadata: []byte(`{"resume_source":"argv"}`)}, nil
 	}
 	agentOutputRPC = func(context.Context, string, string, string) (daemon.AgentOutputResponse, error) {
 		return daemon.AgentOutputResponse{Output: "agent-output\n"}, nil
@@ -683,8 +683,8 @@ func TestAgentAttachAndDetachCommands(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute agent attach: %v", err)
 	}
-	if gotAttach.SessionID != "sess-1" || gotAttach.AgentID != "claude" {
-		t.Fatalf("agent attach request = %+v, want session_id sess-1 and agent_id claude", gotAttach)
+	if gotAttach.WorkspaceID != "sess-1" || gotAttach.AgentID != "claude" {
+		t.Fatalf("agent attach request = %+v, want workspace_id sess-1 and agent_id claude", gotAttach)
 	}
 	if gotAttach.InitialCols != 132 || gotAttach.InitialRows != 43 {
 		t.Fatalf("agent attach initial size = %dx%d, want 132x43", gotAttach.InitialCols, gotAttach.InitialRows)
@@ -697,8 +697,8 @@ func TestAgentAttachAndDetachCommands(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute agent detach: %v", err)
 	}
-	if gotDetach.SessionID != "sess-1" || gotDetach.AgentID != "claude" {
-		t.Fatalf("agent detach request = %+v, want session_id sess-1 and agent_id claude", gotDetach)
+	if gotDetach.WorkspaceID != "sess-1" || gotDetach.AgentID != "claude" {
+		t.Fatalf("agent detach request = %+v, want workspace_id sess-1 and agent_id claude", gotDetach)
 	}
 	if !strings.Contains(detachOut, "Agent detach: detached") {
 		t.Fatalf("detach output = %q, want detached line", detachOut)
@@ -716,7 +716,7 @@ func TestAgentListUsesSessionFlagOverride(t *testing.T) {
 	var gotLookup string
 	commandResolveSessionTarget = func(_ context.Context, _ string, idOrName string) (resolvedSessionTarget, error) {
 		gotLookup = idOrName
-		return resolvedSessionTarget{SessionID: "sess-override", Session: &daemon.SessionGetResponse{SessionID: "sess-override", OriginRoot: t.TempDir()}}, nil
+		return resolvedSessionTarget{WorkspaceID: "sess-override", Session: &daemon.WorkspaceGetResponse{WorkspaceID: "sess-override", OriginRoot: t.TempDir()}}, nil
 	}
 	agentReadActiveSession = func() (string, error) {
 		return "sess-active", nil
@@ -730,9 +730,9 @@ func TestAgentListUsesSessionFlagOverride(t *testing.T) {
 		agentListRPC = originalList
 	})
 
-	_, err := executeRootCommand("agent", "list", "--session", "alpha")
+	_, err := executeRootCommand("agent", "list", "--workspace", "alpha")
 	if err != nil {
-		t.Fatalf("execute agent list with --session: %v", err)
+		t.Fatalf("execute agent list with --workspace: %v", err)
 	}
 	if gotLookup != "alpha" {
 		t.Fatalf("session lookup argument = %q, want %q", gotLookup, "alpha")
@@ -755,8 +755,8 @@ func TestAgentListRequiresActiveWorkspaceWhenSessionNotProvided(t *testing.T) {
 	if err == nil {
 		t.Fatal("agent list returned nil error without active session")
 	}
-	if err.Error() != "No active workspace session is set" {
-		t.Fatalf("agent list error = %q, want %q", err.Error(), "No active workspace session is set")
+	if err.Error() != "No active workspace is set" {
+		t.Fatalf("agent list error = %q, want %q", err.Error(), "No active workspace is set")
 	}
 }
 
@@ -781,8 +781,8 @@ func TestAgentListMissingActiveSessionDoesNotCallEnsure(t *testing.T) {
 	if err == nil {
 		t.Fatal("agent list returned nil error without active session")
 	}
-	if err.Error() != "No active workspace session is set" {
-		t.Fatalf("agent list error = %q, want %q", err.Error(), "No active workspace session is set")
+	if err.Error() != "No active workspace is set" {
+		t.Fatalf("agent list error = %q, want %q", err.Error(), "No active workspace is set")
 	}
 }
 
@@ -804,7 +804,7 @@ func TestAgentSubcommandsUseSessionFlagOverride(t *testing.T) {
 	originalAttachRunSession := agentAttachRunSession
 
 	agentReadActiveSession = func() (string, error) {
-		return "", errors.New("active session should not be read when --session is provided")
+		return "", errors.New("active workspace should not be read when --workspace is provided")
 	}
 	agentSpawnRPC = func(context.Context, string, daemon.AgentSpawnRequest) (daemon.AgentSpawnResponse, error) {
 		return daemon.AgentSpawnResponse{AgentID: "agt-1", Status: "running"}, nil
@@ -813,7 +813,7 @@ func TestAgentSubcommandsUseSessionFlagOverride(t *testing.T) {
 		return daemon.AgentListResponse{}, nil
 	}
 	agentGetRPC = func(context.Context, string, string, string) (daemon.AgentGetResponse, error) {
-		return daemon.AgentGetResponse{AgentID: "agt-1", SessionID: "sess-1", Command: "claude-code", Status: "running", StartedAt: "now"}, nil
+		return daemon.AgentGetResponse{AgentID: "agt-1", WorkspaceID: "sess-1", Command: "claude-code", Status: "running", StartedAt: "now"}, nil
 	}
 	agentAttachRPC = func(context.Context, string, daemon.AgentAttachRequest) (daemon.AgentAttachResponse, error) {
 		return daemon.AgentAttachResponse{Token: "tok-1", Status: "pending"}, nil
@@ -854,14 +854,14 @@ func TestAgentSubcommandsUseSessionFlagOverride(t *testing.T) {
 		name string
 		args []string
 	}{
-		{name: "spawn", args: []string{"agent", "spawn", "--session", "alpha", "--harness", "opencode", "--", "--resume"}},
-		{name: "list", args: []string{"agent", "list", "--session", "alpha"}},
-		{name: "show", args: []string{"agent", "show", "claude", "--session", "alpha"}},
-		{name: "attach", args: []string{"agent", "attach", "claude", "--session", "alpha"}},
-		{name: "detach", args: []string{"agent", "detach", "claude", "--session", "alpha"}},
-		{name: "send", args: []string{"agent", "send", "claude", "--session", "alpha", "--input", "hello"}},
-		{name: "output", args: []string{"agent", "output", "claude", "--session", "alpha"}},
-		{name: "stop", args: []string{"agent", "stop", "claude", "--session", "alpha"}},
+		{name: "spawn", args: []string{"agent", "spawn", "--workspace", "alpha", "--harness", "opencode", "--", "--resume"}},
+		{name: "list", args: []string{"agent", "list", "--workspace", "alpha"}},
+		{name: "show", args: []string{"agent", "show", "claude", "--workspace", "alpha"}},
+		{name: "attach", args: []string{"agent", "attach", "claude", "--workspace", "alpha"}},
+		{name: "detach", args: []string{"agent", "detach", "claude", "--workspace", "alpha"}},
+		{name: "send", args: []string{"agent", "send", "claude", "--workspace", "alpha", "--input", "hello"}},
+		{name: "output", args: []string{"agent", "output", "claude", "--workspace", "alpha"}},
+		{name: "stop", args: []string{"agent", "stop", "claude", "--workspace", "alpha"}},
 	}
 
 	for _, tc := range tests {
@@ -869,12 +869,12 @@ func TestAgentSubcommandsUseSessionFlagOverride(t *testing.T) {
 			gotLookup := ""
 			commandResolveSessionTarget = func(_ context.Context, _ string, idOrName string) (resolvedSessionTarget, error) {
 				gotLookup = idOrName
-				return resolvedSessionTarget{SessionID: "sess-override", Session: &daemon.SessionGetResponse{SessionID: "sess-override", OriginRoot: t.TempDir()}}, nil
+				return resolvedSessionTarget{WorkspaceID: "sess-override", Session: &daemon.WorkspaceGetResponse{WorkspaceID: "sess-override", OriginRoot: t.TempDir()}}, nil
 			}
 
 			_, err := executeRootCommand(tc.args...)
 			if err != nil {
-				t.Fatalf("execute agent %s with --session: %v", tc.name, err)
+				t.Fatalf("execute agent %s with --workspace: %v", tc.name, err)
 			}
 			if gotLookup != "alpha" {
 				t.Fatalf("session lookup argument = %q, want %q", gotLookup, "alpha")
@@ -898,10 +898,10 @@ func executeRootCommandWithInput(stdin string, args ...string) (string, error) {
 		if err != nil {
 			return resolvedSessionTarget{}, err
 		}
-		return resolvedSessionTarget{SessionID: sessionID, Session: &daemon.SessionGetResponse{SessionID: sessionID}}, nil
+		return resolvedSessionTarget{WorkspaceID: sessionID, Session: &daemon.WorkspaceGetResponse{WorkspaceID: sessionID}}, nil
 	}
-	commandEnsureWorkspaceScope = func(*daemon.SessionGetResponse, string) error { return nil }
-	agentEnsureWorkspaceScope = func(*daemon.SessionGetResponse, string) error { return nil }
+	commandEnsureWorkspaceScope = func(*daemon.WorkspaceGetResponse, string) error { return nil }
+	agentEnsureWorkspaceScope = func(*daemon.WorkspaceGetResponse, string) error { return nil }
 	defer func() {
 		commandEnsureDaemonRunning = originalCommandEnsure
 		agentEnsureDaemonRunning = originalAgentEnsure

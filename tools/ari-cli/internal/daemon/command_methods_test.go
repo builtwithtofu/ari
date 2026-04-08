@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -29,9 +30,9 @@ func TestCommandRunOutputAndWaiterPersistence(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	runResp := callMethod[CommandRunResponse](t, registry, "command.run", CommandRunRequest{
-		SessionID: "sess-1",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "printf 'hello-output'; exit 7"},
+		WorkspaceID: "sess-1",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "printf 'hello-output'; exit 7"},
 	})
 
 	if runResp.CommandID == "" {
@@ -40,7 +41,7 @@ func TestCommandRunOutputAndWaiterPersistence(t *testing.T) {
 
 	waitForCommandStatus(t, registry, "sess-1", runResp.CommandID, "exited")
 
-	getResp := callMethod[CommandGetResponse](t, registry, "command.get", CommandGetRequest{SessionID: "sess-1", CommandID: runResp.CommandID})
+	getResp := callMethod[CommandGetResponse](t, registry, "command.get", CommandGetRequest{WorkspaceID: "sess-1", CommandID: runResp.CommandID})
 	if getResp.Status != "exited" {
 		t.Fatalf("command.get status = %q, want %q", getResp.Status, "exited")
 	}
@@ -48,7 +49,7 @@ func TestCommandRunOutputAndWaiterPersistence(t *testing.T) {
 		t.Fatalf("command.get exit_code = %v, want 7", getResp.ExitCode)
 	}
 
-	outputResp := callMethod[CommandOutputResponse](t, registry, "command.output", CommandOutputRequest{SessionID: "sess-1", CommandID: runResp.CommandID})
+	outputResp := callMethod[CommandOutputResponse](t, registry, "command.output", CommandOutputRequest{WorkspaceID: "sess-1", CommandID: runResp.CommandID})
 	if !strings.Contains(outputResp.Output, "hello-output") {
 		t.Fatalf("command.output output = %q, want contains %q", outputResp.Output, "hello-output")
 	}
@@ -67,12 +68,12 @@ func TestCommandOutputPrefersRetainedSnapshotForExitedCommand(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	if err := store.CreateCommand(context.Background(), globaldb.CreateCommandParams{
-		CommandID: "cmd-1",
-		SessionID: "sess-1",
-		Command:   "echo hi",
-		Args:      `[]`,
-		Status:    "exited",
-		StartedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		CommandID:   "cmd-1",
+		WorkspaceID: "sess-1",
+		Command:     "echo hi",
+		Args:        `[]`,
+		Status:      "exited",
+		StartedAt:   time.Now().UTC().Format(time.RFC3339Nano),
 	}); err != nil {
 		t.Fatalf("CreateCommand returned error: %v", err)
 	}
@@ -80,7 +81,7 @@ func TestCommandOutputPrefersRetainedSnapshotForExitedCommand(t *testing.T) {
 	d.setCommandOutput("cmd-1", "retained-output")
 	d.setCommandProcess("cmd-1", &process.Process{})
 
-	resp := callMethod[CommandOutputResponse](t, registry, "command.output", CommandOutputRequest{SessionID: "sess-1", CommandID: "cmd-1"})
+	resp := callMethod[CommandOutputResponse](t, registry, "command.output", CommandOutputRequest{WorkspaceID: "sess-1", CommandID: "cmd-1"})
 	if resp.Output != "retained-output" {
 		t.Fatalf("command.output = %q, want %q", resp.Output, "retained-output")
 	}
@@ -99,14 +100,14 @@ func TestCommandRunUsesSessionPrimaryFolderAsCWD(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	runResp := callMethod[CommandRunResponse](t, registry, "command.run", CommandRunRequest{
-		SessionID: "sess-1",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "pwd"},
+		WorkspaceID: "sess-1",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "pwd"},
 	})
 
 	waitForCommandStatus(t, registry, "sess-1", runResp.CommandID, "exited")
 
-	outputResp := callMethod[CommandOutputResponse](t, registry, "command.output", CommandOutputRequest{SessionID: "sess-1", CommandID: runResp.CommandID})
+	outputResp := callMethod[CommandOutputResponse](t, registry, "command.output", CommandOutputRequest{WorkspaceID: "sess-1", CommandID: runResp.CommandID})
 	if !strings.Contains(outputResp.Output, workspace) {
 		t.Fatalf("command.output output = %q, want contains workspace %q", outputResp.Output, workspace)
 	}
@@ -156,7 +157,7 @@ func TestCommandRunInvalidSessionStateAndFolderGuards(t *testing.T) {
 				t.Fatal("command.run method not registered")
 			}
 
-			raw, err := json.Marshal(CommandRunRequest{SessionID: "sess-1", Command: "/bin/sh", Args: []string{"-c", "echo hi"}})
+			raw, err := json.Marshal(CommandRunRequest{WorkspaceID: "sess-1", Command: "/bin/sh", Args: []string{"-c", "echo hi"}})
 			if err != nil {
 				t.Fatalf("marshal params: %v", err)
 			}
@@ -190,14 +191,14 @@ func TestCommandListReturnsCommandsForSession(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 	seedSessionWithPrimaryFolder(t, store, "sess-2", workspace)
 
-	if err := store.CreateCommand(context.Background(), globaldb.CreateCommandParams{CommandID: "cmd-1", SessionID: "sess-1", Command: "echo one", Args: "[]", Status: "running", StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}); err != nil {
+	if err := store.CreateCommand(context.Background(), globaldb.CreateCommandParams{CommandID: "cmd-1", WorkspaceID: "sess-1", Command: "echo one", Args: "[]", Status: "running", StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}); err != nil {
 		t.Fatalf("CreateCommand cmd-1 returned error: %v", err)
 	}
-	if err := store.CreateCommand(context.Background(), globaldb.CreateCommandParams{CommandID: "cmd-2", SessionID: "sess-2", Command: "echo two", Args: "[]", Status: "running", StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}); err != nil {
+	if err := store.CreateCommand(context.Background(), globaldb.CreateCommandParams{CommandID: "cmd-2", WorkspaceID: "sess-2", Command: "echo two", Args: "[]", Status: "running", StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}); err != nil {
 		t.Fatalf("CreateCommand cmd-2 returned error: %v", err)
 	}
 
-	resp := callMethod[CommandListResponse](t, registry, "command.list", CommandListRequest{SessionID: "sess-1"})
+	resp := callMethod[CommandListResponse](t, registry, "command.list", CommandListRequest{WorkspaceID: "sess-1"})
 	if len(resp.Commands) != 1 {
 		t.Fatalf("command.list len = %d, want 1", len(resp.Commands))
 	}
@@ -219,14 +220,14 @@ func TestCommandStopReturnsStoredStatusForExitedCommand(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	runResp := callMethod[CommandRunResponse](t, registry, "command.run", CommandRunRequest{
-		SessionID: "sess-1",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "exit 0"},
+		WorkspaceID: "sess-1",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "exit 0"},
 	})
 
 	waitForCommandStatus(t, registry, "sess-1", runResp.CommandID, "exited")
 
-	stopResp := callMethod[CommandStopResponse](t, registry, "command.stop", CommandStopRequest{SessionID: "sess-1", CommandID: runResp.CommandID})
+	stopResp := callMethod[CommandStopResponse](t, registry, "command.stop", CommandStopRequest{WorkspaceID: "sess-1", CommandID: runResp.CommandID})
 	if stopResp.Status != "exited" {
 		t.Fatalf("command.stop status = %q, want %q", stopResp.Status, "exited")
 	}
@@ -245,9 +246,9 @@ func TestCommandStopReturnsWithoutWaitingForStopPath(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	runResp := callMethod[CommandRunResponse](t, registry, "command.run", CommandRunRequest{
-		SessionID: "sess-1",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "while true; do sleep 1; done"},
+		WorkspaceID: "sess-1",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "while true; do sleep 1; done"},
 	})
 
 	originalStop := stopCommandProcess
@@ -260,7 +261,7 @@ func TestCommandStopReturnsWithoutWaitingForStopPath(t *testing.T) {
 	})
 
 	start := time.Now()
-	stopResp := callMethod[CommandStopResponse](t, registry, "command.stop", CommandStopRequest{SessionID: "sess-1", CommandID: runResp.CommandID})
+	stopResp := callMethod[CommandStopResponse](t, registry, "command.stop", CommandStopRequest{WorkspaceID: "sess-1", CommandID: runResp.CommandID})
 	if stopResp.Status != "stopping" {
 		t.Fatalf("command.stop status = %q, want %q", stopResp.Status, "stopping")
 	}
@@ -295,9 +296,9 @@ func TestCommandWaiterRetriesPersistingExitStatus(t *testing.T) {
 	})
 
 	runResp := callMethod[CommandRunResponse](t, registry, "command.run", CommandRunRequest{
-		SessionID: "sess-1",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "exit 9"},
+		WorkspaceID: "sess-1",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "exit 9"},
 	})
 
 	waitForCommandStatus(t, registry, "sess-1", runResp.CommandID, "exited")
@@ -306,7 +307,7 @@ func TestCommandWaiterRetriesPersistingExitStatus(t *testing.T) {
 		t.Fatalf("updateCommandStatus attempts = %d, want >= 9", attempts)
 	}
 
-	getResp := callMethod[CommandGetResponse](t, registry, "command.get", CommandGetRequest{SessionID: "sess-1", CommandID: runResp.CommandID})
+	getResp := callMethod[CommandGetResponse](t, registry, "command.get", CommandGetRequest{WorkspaceID: "sess-1", CommandID: runResp.CommandID})
 	if getResp.ExitCode == nil || *getResp.ExitCode != 9 {
 		t.Fatalf("command.get exit_code = %v, want 9", getResp.ExitCode)
 	}
@@ -333,7 +334,7 @@ func waitForCommandStatus(t *testing.T, registry *rpc.MethodRegistry, sessionID,
 
 	deadline := time.Now().Add(4 * time.Second)
 	for time.Now().Before(deadline) {
-		resp := callMethod[CommandGetResponse](t, registry, "command.get", CommandGetRequest{SessionID: sessionID, CommandID: commandID})
+		resp := callMethod[CommandGetResponse](t, registry, "command.get", CommandGetRequest{WorkspaceID: sessionID, CommandID: commandID})
 		if resp.Status == want {
 			return
 		}
@@ -357,49 +358,23 @@ func seedSessionWithPrimaryFolder(t *testing.T, store *globaldb.Store, sessionID
 func newCommandMethodTestStore(t *testing.T) *globaldb.Store {
 	t.Helper()
 
-	dbName := fmt.Sprintf("file:command-method-%d?mode=memory&cache=shared", time.Now().UnixNano())
-	db, err := sql.Open("sqlite", dbName)
+	dbPath := filepath.Join(t.TempDir(), fmt.Sprintf("command-method-%d.db", time.Now().UnixNano()))
+	if err := applyMigrationSQLFiles(dbPath); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatalf("open sqlite db: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
+		t.Fatalf("set busy timeout: %v", err)
 	}
 	t.Cleanup(func() {
 		_ = db.Close()
 	})
-
-	if _, err := db.Exec(`
-CREATE TABLE sessions (
-	session_id TEXT PRIMARY KEY,
-	name TEXT NOT NULL UNIQUE,
-	status TEXT NOT NULL DEFAULT 'active',
-	vcs_preference TEXT NOT NULL DEFAULT 'auto',
-	origin_root TEXT NOT NULL,
-	cleanup_policy TEXT NOT NULL DEFAULT 'manual',
-	created_at TEXT NOT NULL,
-	updated_at TEXT NOT NULL
-);
-CREATE TABLE session_folders (
-	session_id TEXT NOT NULL,
-	folder_path TEXT NOT NULL,
-	vcs_type TEXT NOT NULL DEFAULT 'unknown',
-	is_primary INTEGER NOT NULL DEFAULT 0,
-	added_at TEXT NOT NULL,
-	PRIMARY KEY (session_id, folder_path),
-	FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
-);
-CREATE TABLE commands (
-	command_id TEXT PRIMARY KEY,
-	session_id TEXT NOT NULL,
-	command TEXT NOT NULL,
-	args TEXT NOT NULL DEFAULT '[]',
-	status TEXT NOT NULL DEFAULT 'running',
-	exit_code INTEGER,
-	started_at TEXT NOT NULL,
-	finished_at TEXT,
-	FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
-);
-`); err != nil {
-		t.Fatalf("create schema: %v", err)
-	}
 
 	store, err := globaldb.NewSQLStore(db)
 	if err != nil {

@@ -5,11 +5,11 @@ import (
 	"testing"
 )
 
-func TestResolveWorkspaceSessionReferencePanicsOnNilReader(t *testing.T) {
+func TestResolveWorkspaceReferencePanicsOnNilReader(t *testing.T) {
 	defer func() {
 		recovered := recover()
 		if recovered == nil {
-			t.Fatal("resolveWorkspaceSessionReference did not panic")
+			t.Fatal("resolveWorkspaceReference did not panic")
 		}
 		message, ok := recovered.(string)
 		if !ok {
@@ -20,5 +20,5 @@ func TestResolveWorkspaceSessionReferencePanicsOnNilReader(t *testing.T) {
 		}
 	}()
 
-	_, _ = resolveWorkspaceSessionReference("", nil)
+	_, _ = resolveWorkspaceReference("", nil)
 }

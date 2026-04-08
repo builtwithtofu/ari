@@ -13,8 +13,8 @@ import (
 var (
 	ErrInvalidInput  = errors.New("invalid globaldb input")
 	ErrNotFound      = errors.New("globaldb record not found")
-	ErrSessionClosed = errors.New("session is closed")
-	ErrLastFolder    = errors.New("cannot remove last session folder")
+	ErrSessionClosed = errors.New("workspace is closed")
+	ErrLastFolder    = errors.New("cannot remove last workspace folder")
 )
 
 const (
@@ -25,24 +25,24 @@ ON CONFLICT(key) DO UPDATE SET
 
 	metaByKeyQuery = `SELECT value FROM daemon_meta WHERE key = ?`
 
-	insertSessionQuery = `INSERT INTO sessions (
-	session_id, name, status, vcs_preference, origin_root, cleanup_policy, created_at, updated_at
+	insertSessionQuery = `INSERT INTO workspaces (
+		workspace_id, name, status, vcs_preference, origin_root, cleanup_policy, created_at, updated_at
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 
 	sessionByIDQuery = `SELECT
-	session_id,
-	name,
+		workspace_id,
+		name,
 	status,
 	vcs_preference,
 	origin_root,
 	cleanup_policy,
 	created_at,
 	updated_at
-FROM sessions
-WHERE session_id = ?`
+FROM workspaces
+WHERE workspace_id = ?`
 
 	sessionByNameQuery = `SELECT
-	session_id,
+		workspace_id,
 	name,
 	status,
 	vcs_preference,
@@ -50,11 +50,11 @@ WHERE session_id = ?`
 	cleanup_policy,
 	created_at,
 	updated_at
-FROM sessions
+FROM workspaces
 WHERE name = ?`
 
 	listSessionsQuery = `SELECT
-	session_id,
+		workspace_id,
 	name,
 	status,
 	vcs_preference,
@@ -62,44 +62,44 @@ WHERE name = ?`
 	cleanup_policy,
 	created_at,
 	updated_at
-FROM sessions
-ORDER BY created_at DESC, session_id ASC`
+FROM workspaces
+ORDER BY created_at DESC, workspace_id ASC`
 
-	updateSessionStatusQuery = `UPDATE sessions
+	updateSessionStatusQuery = `UPDATE workspaces
 SET status = ?, updated_at = ?
-WHERE session_id = ?`
+WHERE workspace_id = ?`
 
-	deleteSessionQuery = `DELETE FROM sessions WHERE session_id = ?`
+	deleteSessionQuery = `DELETE FROM workspaces WHERE workspace_id = ?`
 
-	insertSessionFolderQuery = `INSERT INTO session_folders (
-	session_id, folder_path, vcs_type, is_primary, added_at
+	insertSessionFolderQuery = `INSERT INTO workspace_folders (
+		workspace_id, folder_path, vcs_type, is_primary, added_at
 ) VALUES (?, ?, ?, ?, ?)`
 
-	deleteSessionFolderQuery = `DELETE FROM session_folders
-WHERE session_id = ?
+	deleteSessionFolderQuery = `DELETE FROM workspace_folders
+WHERE workspace_id = ?
   AND folder_path = ?
-  AND (SELECT COUNT(*) FROM session_folders WHERE session_id = ?) > 1`
+  AND (SELECT COUNT(*) FROM workspace_folders WHERE workspace_id = ?) > 1`
 
-	promotePrimaryFolderQuery = `UPDATE session_folders
+	promotePrimaryFolderQuery = `UPDATE workspace_folders
 SET is_primary = CASE
 	WHEN folder_path = ? THEN 1
 	ELSE 0
 END
-WHERE session_id = ?`
+WHERE workspace_id = ?`
 
 	listSessionFoldersQuery = `SELECT
-	session_id,
-	folder_path,
+		workspace_id,
+		folder_path,
 	vcs_type,
 	is_primary,
 	added_at
-FROM session_folders
-WHERE session_id = ?
+FROM workspace_folders
+WHERE workspace_id = ?
 ORDER BY added_at ASC, folder_path ASC`
 
 	insertCommandQuery = `INSERT INTO commands (
-	command_id,
-	session_id,
+		command_id,
+		workspace_id,
 	command,
 	args,
 	status,
@@ -109,8 +109,8 @@ ORDER BY added_at ASC, folder_path ASC`
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 
 	commandByIDQuery = `SELECT
-	command_id,
-	session_id,
+		command_id,
+		workspace_id,
 	command,
 	args,
 	status,
@@ -118,11 +118,11 @@ ORDER BY added_at ASC, folder_path ASC`
 	started_at,
 	finished_at
 FROM commands
-WHERE session_id = ? AND command_id = ?`
+WHERE workspace_id = ? AND command_id = ?`
 
 	listCommandsBySessionQuery = `SELECT
-	command_id,
-	session_id,
+		command_id,
+		workspace_id,
 	command,
 	args,
 	status,
@@ -130,22 +130,22 @@ WHERE session_id = ? AND command_id = ?`
 	started_at,
 	finished_at
 FROM commands
-WHERE session_id = ?
+WHERE workspace_id = ?
 ORDER BY started_at DESC, command_id ASC`
 
 	updateCommandStatusQuery = `UPDATE commands
 SET status = ?,
 	exit_code = ?,
 	finished_at = ?
-WHERE session_id = ? AND command_id = ?`
+WHERE workspace_id = ? AND command_id = ?`
 
 	markRunningCommandsLostQuery = `UPDATE commands
 SET status = 'lost'
 WHERE status = 'running'`
 
 	insertAgentQuery = `INSERT INTO agents (
-	agent_id,
-	session_id,
+		agent_id,
+		workspace_id,
 	name,
 	command,
 	args,
@@ -159,8 +159,8 @@ WHERE status = 'running'`
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	agentByIDQuery = `SELECT
-	agent_id,
-	session_id,
+		agent_id,
+		workspace_id,
 	name,
 	command,
 	args,
@@ -172,11 +172,11 @@ WHERE status = 'running'`
 	harness_resumable_id,
 	harness_metadata
 FROM agents
-WHERE session_id = ? AND agent_id = ?`
+WHERE workspace_id = ? AND agent_id = ?`
 
 	agentByNameQuery = `SELECT
-	agent_id,
-	session_id,
+		agent_id,
+		workspace_id,
 	name,
 	command,
 	args,
@@ -188,11 +188,11 @@ WHERE session_id = ? AND agent_id = ?`
 	harness_resumable_id,
 	harness_metadata
 FROM agents
-WHERE session_id = ? AND name = ?`
+WHERE workspace_id = ? AND name = ?`
 
 	listAgentsBySessionQuery = `SELECT
-	agent_id,
-	session_id,
+		agent_id,
+		workspace_id,
 	name,
 	command,
 	args,
@@ -204,14 +204,14 @@ WHERE session_id = ? AND name = ?`
 	harness_resumable_id,
 	harness_metadata
 FROM agents
-WHERE session_id = ?
+WHERE workspace_id = ?
 ORDER BY started_at DESC, agent_id ASC`
 
 	updateAgentStatusQuery = `UPDATE agents
 SET status = ?,
 	exit_code = ?,
 	stopped_at = ?
-WHERE session_id = ? AND agent_id = ?`
+WHERE workspace_id = ? AND agent_id = ?`
 
 	markRunningAgentsLostQuery = `UPDATE agents
 SET status = 'lost'
@@ -252,46 +252,46 @@ type Session struct {
 }
 
 type SessionFolder struct {
-	SessionID  string
-	FolderPath string
-	VCSType    string
-	IsPrimary  bool
-	AddedAt    string
+	WorkspaceID string
+	FolderPath  string
+	VCSType     string
+	IsPrimary   bool
+	AddedAt     string
 }
 
 type Command struct {
-	CommandID  string
-	SessionID  string
-	Command    string
-	Args       string
-	Status     string
-	ExitCode   *int
-	StartedAt  string
-	FinishedAt *string
+	CommandID   string
+	WorkspaceID string
+	Command     string
+	Args        string
+	Status      string
+	ExitCode    *int
+	StartedAt   string
+	FinishedAt  *string
 }
 
 type CreateCommandParams struct {
-	CommandID  string
-	SessionID  string
-	Command    string
-	Args       string
-	Status     string
-	StartedAt  string
-	ExitCode   *int
-	FinishedAt *string
+	CommandID   string
+	WorkspaceID string
+	Command     string
+	Args        string
+	Status      string
+	StartedAt   string
+	ExitCode    *int
+	FinishedAt  *string
 }
 
 type UpdateCommandStatusParams struct {
-	SessionID  string
-	CommandID  string
-	Status     string
-	ExitCode   *int
-	FinishedAt *string
+	WorkspaceID string
+	CommandID   string
+	Status      string
+	ExitCode    *int
+	FinishedAt  *string
 }
 
 type Agent struct {
 	AgentID            string
-	SessionID          string
+	WorkspaceID        string
 	Name               *string
 	Command            string
 	Args               string
@@ -306,7 +306,7 @@ type Agent struct {
 
 type CreateAgentParams struct {
 	AgentID            string
-	SessionID          string
+	WorkspaceID        string
 	Name               *string
 	Command            string
 	Args               string
@@ -320,11 +320,11 @@ type CreateAgentParams struct {
 }
 
 type UpdateAgentStatusParams struct {
-	SessionID string
-	AgentID   string
-	Status    string
-	ExitCode  *int
-	StoppedAt *string
+	WorkspaceID string
+	AgentID     string
+	Status      string
+	ExitCode    *int
+	StoppedAt   *string
 }
 
 type Rows interface {
@@ -647,7 +647,7 @@ func (s *Store) ListFolders(ctx context.Context, sessionID string) ([]SessionFol
 	for rows.Next() {
 		var item SessionFolder
 		var isPrimary int
-		if err := rows.Scan(&item.SessionID, &item.FolderPath, &item.VCSType, &isPrimary, &item.AddedAt); err != nil {
+		if err := rows.Scan(&item.WorkspaceID, &item.FolderPath, &item.VCSType, &isPrimary, &item.AddedAt); err != nil {
 			return nil, err
 		}
 		item.IsPrimary = isPrimary != 0
@@ -664,7 +664,7 @@ func (s *Store) CreateCommand(ctx context.Context, params CreateCommandParams) e
 	if params.CommandID = strings.TrimSpace(params.CommandID); params.CommandID == "" {
 		return fmt.Errorf("%w: command id is required", ErrInvalidInput)
 	}
-	if params.SessionID = strings.TrimSpace(params.SessionID); params.SessionID == "" {
+	if params.WorkspaceID = strings.TrimSpace(params.WorkspaceID); params.WorkspaceID == "" {
 		return fmt.Errorf("%w: session id is required", ErrInvalidInput)
 	}
 	if params.Command = strings.TrimSpace(params.Command); params.Command == "" {
@@ -687,7 +687,7 @@ func (s *Store) CreateCommand(ctx context.Context, params CreateCommandParams) e
 		ctx,
 		insertCommandQuery,
 		params.CommandID,
-		params.SessionID,
+		params.WorkspaceID,
 		params.Command,
 		params.Args,
 		params.Status,
@@ -729,7 +729,7 @@ func (s *Store) ListCommands(ctx context.Context, sessionID string) ([]Command, 
 }
 
 func (s *Store) UpdateCommandStatus(ctx context.Context, params UpdateCommandStatusParams) error {
-	if params.SessionID = strings.TrimSpace(params.SessionID); params.SessionID == "" {
+	if params.WorkspaceID = strings.TrimSpace(params.WorkspaceID); params.WorkspaceID == "" {
 		return fmt.Errorf("%w: session id is required", ErrInvalidInput)
 	}
 	if params.CommandID = strings.TrimSpace(params.CommandID); params.CommandID == "" {
@@ -742,7 +742,7 @@ func (s *Store) UpdateCommandStatus(ctx context.Context, params UpdateCommandSta
 		return fmt.Errorf("%w: invalid command status %q", ErrInvalidInput, params.Status)
 	}
 
-	result, err := s.db.ExecContext(ctx, updateCommandStatusQuery, params.Status, params.ExitCode, params.FinishedAt, params.SessionID, params.CommandID)
+	result, err := s.db.ExecContext(ctx, updateCommandStatusQuery, params.Status, params.ExitCode, params.FinishedAt, params.WorkspaceID, params.CommandID)
 	if err != nil {
 		return fmt.Errorf("update command status %q: %w", params.CommandID, err)
 	}
@@ -752,7 +752,7 @@ func (s *Store) UpdateCommandStatus(ctx context.Context, params UpdateCommandSta
 		return fmt.Errorf("update command status %q rows affected: %w", params.CommandID, err)
 	}
 	if rowsAffected == 0 {
-		return fmt.Errorf("%w: command id %q for session %q", ErrNotFound, params.CommandID, params.SessionID)
+		return fmt.Errorf("%w: command id %q for session %q", ErrNotFound, params.CommandID, params.WorkspaceID)
 	}
 
 	return nil
@@ -770,7 +770,7 @@ func (s *Store) CreateAgent(ctx context.Context, params CreateAgentParams) error
 	if params.AgentID = strings.TrimSpace(params.AgentID); params.AgentID == "" {
 		return fmt.Errorf("%w: agent id is required", ErrInvalidInput)
 	}
-	if params.SessionID = strings.TrimSpace(params.SessionID); params.SessionID == "" {
+	if params.WorkspaceID = strings.TrimSpace(params.WorkspaceID); params.WorkspaceID == "" {
 		return fmt.Errorf("%w: session id is required", ErrInvalidInput)
 	}
 	if params.Name != nil {
@@ -823,7 +823,7 @@ func (s *Store) CreateAgent(ctx context.Context, params CreateAgentParams) error
 		ctx,
 		insertAgentQuery,
 		params.AgentID,
-		params.SessionID,
+		params.WorkspaceID,
 		params.Name,
 		params.Command,
 		params.Args,
@@ -888,7 +888,7 @@ func (s *Store) ListAgents(ctx context.Context, sessionID string) ([]Agent, erro
 }
 
 func (s *Store) UpdateAgentStatus(ctx context.Context, params UpdateAgentStatusParams) error {
-	if params.SessionID = strings.TrimSpace(params.SessionID); params.SessionID == "" {
+	if params.WorkspaceID = strings.TrimSpace(params.WorkspaceID); params.WorkspaceID == "" {
 		return fmt.Errorf("%w: session id is required", ErrInvalidInput)
 	}
 	if params.AgentID = strings.TrimSpace(params.AgentID); params.AgentID == "" {
@@ -901,7 +901,7 @@ func (s *Store) UpdateAgentStatus(ctx context.Context, params UpdateAgentStatusP
 		return fmt.Errorf("%w: invalid agent status %q", ErrInvalidInput, params.Status)
 	}
 
-	result, err := s.db.ExecContext(ctx, updateAgentStatusQuery, params.Status, params.ExitCode, params.StoppedAt, params.SessionID, params.AgentID)
+	result, err := s.db.ExecContext(ctx, updateAgentStatusQuery, params.Status, params.ExitCode, params.StoppedAt, params.WorkspaceID, params.AgentID)
 	if err != nil {
 		return fmt.Errorf("update agent status %q: %w", params.AgentID, err)
 	}
@@ -911,7 +911,7 @@ func (s *Store) UpdateAgentStatus(ctx context.Context, params UpdateAgentStatusP
 		return fmt.Errorf("update agent status %q rows affected: %w", params.AgentID, err)
 	}
 	if rowsAffected == 0 {
-		return fmt.Errorf("%w: agent id %q for session %q", ErrNotFound, params.AgentID, params.SessionID)
+		return fmt.Errorf("%w: agent id %q for session %q", ErrNotFound, params.AgentID, params.WorkspaceID)
 	}
 
 	return nil
@@ -996,7 +996,7 @@ func queryCommands(ctx context.Context, db DB, query string, args ...any) ([]Com
 		var item Command
 		if err := rows.Scan(
 			&item.CommandID,
-			&item.SessionID,
+			&item.WorkspaceID,
 			&item.Command,
 			&item.Args,
 			&item.Status,
@@ -1029,7 +1029,7 @@ func queryAgents(ctx context.Context, db DB, query string, args ...any) ([]Agent
 		var item Agent
 		if err := rows.Scan(
 			&item.AgentID,
-			&item.SessionID,
+			&item.WorkspaceID,
 			&item.Name,
 			&item.Command,
 			&item.Args,
