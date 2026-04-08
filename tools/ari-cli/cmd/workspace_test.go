@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/config"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
@@ -462,6 +463,105 @@ func TestWorkspaceSetWithoutResumableHistoryDoesNotSpawn(t *testing.T) {
 	}
 	if !strings.Contains(out, "No resumable agent history found") {
 		t.Fatalf("workspace set output = %q, want no-history message", out)
+	}
+}
+
+func TestWorkspaceSetSkipsRunningAgentsDuringAutoResume(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalGet := sessionGetRPC
+	originalList := sessionListRPC
+	originalAgentList := agentListRPC
+	originalAgentGet := agentGetRPC
+	originalAgentSpawn := agentSpawnRPC
+
+	sessionGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
+		return daemon.WorkspaceGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "session not found"}
+	}
+	sessionListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{{WorkspaceID: "sess-12345678", Name: "alpha", Status: "active"}}}, nil
+	}
+	agentListRPC = func(context.Context, string, string) (daemon.AgentListResponse, error) {
+		return daemon.AgentListResponse{Agents: []daemon.AgentSummary{{AgentID: "agt-running"}, {AgentID: "agt-stopped"}}}, nil
+	}
+	agentGetRPC = func(_ context.Context, _ string, _ string, agentID string) (daemon.AgentGetResponse, error) {
+		if agentID == "agt-running" {
+			return daemon.AgentGetResponse{AgentID: agentID, Status: "running", Harness: "opencode", HarnessResumableID: "resume-running"}, nil
+		}
+		return daemon.AgentGetResponse{AgentID: agentID, Status: "stopped", Harness: "opencode", HarnessResumableID: "resume-stopped"}, nil
+	}
+	var gotSpawn daemon.AgentSpawnRequest
+	agentSpawnRPC = func(_ context.Context, _ string, req daemon.AgentSpawnRequest) (daemon.AgentSpawnResponse, error) {
+		gotSpawn = req
+		return daemon.AgentSpawnResponse{AgentID: "agt-new", Status: "running"}, nil
+	}
+	t.Cleanup(func() {
+		sessionGetRPC = originalGet
+		sessionListRPC = originalList
+		agentListRPC = originalAgentList
+		agentGetRPC = originalAgentGet
+		agentSpawnRPC = originalAgentSpawn
+	})
+
+	_, err := executeRootCommand("workspace", "set", "alpha")
+	if err != nil {
+		t.Fatalf("execute workspace set: %v", err)
+	}
+	if len(gotSpawn.Args) != 2 || gotSpawn.Args[1] != "resume-stopped" {
+		t.Fatalf("spawn args = %#v, want resumable id from stopped agent", gotSpawn.Args)
+	}
+}
+
+func TestWorkspaceSetUsesFreshContextForAgentDetailLookup(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalGet := sessionGetRPC
+	originalList := sessionListRPC
+	originalAgentList := agentListRPC
+	originalAgentGet := agentGetRPC
+	originalAgentSpawn := agentSpawnRPC
+
+	sessionGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
+		return daemon.WorkspaceGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "session not found"}
+	}
+	sessionListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{{WorkspaceID: "sess-12345678", Name: "alpha", Status: "active"}}}, nil
+	}
+	agentListRPC = func(context.Context, string, string) (daemon.AgentListResponse, error) {
+		time.Sleep(4 * time.Second)
+		return daemon.AgentListResponse{Agents: []daemon.AgentSummary{{AgentID: "agt-1"}}}, nil
+	}
+	agentGetRPC = func(ctx context.Context, _ string, _ string, _ string) (daemon.AgentGetResponse, error) {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			return daemon.AgentGetResponse{}, userFacingError{message: "deadline missing"}
+		}
+		if time.Until(deadline) < 4*time.Second {
+			return daemon.AgentGetResponse{}, userFacingError{message: "deadline budget too small"}
+		}
+		return daemon.AgentGetResponse{AgentID: "agt-1", Status: "stopped", Harness: "opencode", HarnessResumableID: "resume-42"}, nil
+	}
+	spawnCalled := false
+	agentSpawnRPC = func(_ context.Context, _ string, _ daemon.AgentSpawnRequest) (daemon.AgentSpawnResponse, error) {
+		spawnCalled = true
+		return daemon.AgentSpawnResponse{AgentID: "agt-new", Status: "running"}, nil
+	}
+	t.Cleanup(func() {
+		sessionGetRPC = originalGet
+		sessionListRPC = originalList
+		agentListRPC = originalAgentList
+		agentGetRPC = originalAgentGet
+		agentSpawnRPC = originalAgentSpawn
+	})
+
+	_, err := executeRootCommand("workspace", "set", "alpha")
+	if err != nil {
+		t.Fatalf("execute workspace set: %v", err)
+	}
+	if !spawnCalled {
+		t.Fatal("agent spawn was not called")
 	}
 }
 

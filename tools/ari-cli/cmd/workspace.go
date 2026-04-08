@@ -287,8 +287,13 @@ func resumeWorkspaceAgentConversation(cmd *cobra.Command, cfg *config.Config, se
 	}
 
 	for _, summary := range agents.Agents {
-		details, err := agentGetRPC(lookupCtx, cfg.Daemon.SocketPath, sessionID, summary.AgentID)
+		getCtx, getCancel := context.WithTimeout(cmd.Context(), 5*time.Second)
+		details, err := agentGetRPC(getCtx, cfg.Daemon.SocketPath, sessionID, summary.AgentID)
+		getCancel()
 		if err != nil {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(details.Status), "running") {
 			continue
 		}
 		harness := strings.TrimSpace(details.Harness)
