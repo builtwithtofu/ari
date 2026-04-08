@@ -14,14 +14,14 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func TestSessionMethodsCreateAndGet(t *testing.T) {
+func TestWorkspaceMethodsCreateAndGet(t *testing.T) {
 	store := newSessionMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 
-	err := d.registerSessionMethods(registry, store)
+	err := d.registerWorkspaceMethods(registry, store)
 	if err != nil {
-		t.Fatalf("registerSessionMethods returned error: %v", err)
+		t.Fatalf("registerWorkspaceMethods returned error: %v", err)
 	}
 
 	repoRoot := t.TempDir()
@@ -29,71 +29,71 @@ func TestSessionMethodsCreateAndGet(t *testing.T) {
 		t.Fatalf("makeGitRoot returned error: %v", err)
 	}
 
-	createResp := callMethod[SessionCreateResponse](t, registry, "session.create", SessionCreateRequest{
+	createResp := callMethod[WorkspaceCreateResponse](t, registry, "workspace.create", WorkspaceCreateRequest{
 		Name:          "alpha",
 		Folder:        repoRoot,
 		OriginRoot:    t.TempDir(),
 		CleanupPolicy: "manual",
 	})
 
-	if createResp.SessionID == "" {
-		t.Fatal("SessionCreateResponse.SessionID is empty")
+	if createResp.WorkspaceID == "" {
+		t.Fatal("WorkspaceCreateResponse.WorkspaceID is empty")
 	}
 	if createResp.VCSType != "git" {
-		t.Fatalf("SessionCreateResponse.VCSType = %q, want %q", createResp.VCSType, "git")
+		t.Fatalf("WorkspaceCreateResponse.VCSType = %q, want %q", createResp.VCSType, "git")
 	}
 
-	getResp := callMethod[SessionGetResponse](t, registry, "session.get", SessionGetRequest{SessionID: createResp.SessionID})
+	getResp := callMethod[WorkspaceGetResponse](t, registry, "workspace.get", WorkspaceGetRequest{WorkspaceID: createResp.WorkspaceID})
 	if getResp.Name != "alpha" {
-		t.Fatalf("SessionGetResponse.Name = %q, want %q", getResp.Name, "alpha")
+		t.Fatalf("WorkspaceGetResponse.Name = %q, want %q", getResp.Name, "alpha")
 	}
 	if len(getResp.Folders) != 1 {
-		t.Fatalf("SessionGetResponse folders len = %d, want 1", len(getResp.Folders))
+		t.Fatalf("WorkspaceGetResponse folders len = %d, want 1", len(getResp.Folders))
 	}
 }
 
-func TestSessionGetMissingReturnsSessionNotFound(t *testing.T) {
+func TestWorkspaceGetMissingReturnsWorkspaceNotFound(t *testing.T) {
 	store := newSessionMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 
-	err := d.registerSessionMethods(registry, store)
+	err := d.registerWorkspaceMethods(registry, store)
 	if err != nil {
-		t.Fatalf("registerSessionMethods returned error: %v", err)
+		t.Fatalf("registerWorkspaceMethods returned error: %v", err)
 	}
 
-	spec, ok := registry.Get("session.get")
+	spec, ok := registry.Get("workspace.get")
 	if !ok {
-		t.Fatal("session.get method not registered")
+		t.Fatal("workspace.get method not registered")
 	}
 
-	raw, err := json.Marshal(SessionGetRequest{SessionID: "missing"})
+	raw, err := json.Marshal(WorkspaceGetRequest{WorkspaceID: "missing"})
 	if err != nil {
 		t.Fatalf("marshal params: %v", err)
 	}
 
 	_, err = spec.Call(context.Background(), raw)
 	if err == nil {
-		t.Fatal("session.get returned nil error for missing session")
+		t.Fatal("workspace.get returned nil error for missing workspace")
 	}
 
 	var rpcErr *rpc.HandlerError
 	if !errors.As(err, &rpcErr) {
-		t.Fatalf("session.get error type = %T, want *rpc.HandlerError", err)
+		t.Fatalf("workspace.get error type = %T, want *rpc.HandlerError", err)
 	}
 	if rpcErr.Code != rpc.SessionNotFound {
-		t.Fatalf("session.get error code = %d, want %d", rpcErr.Code, rpc.SessionNotFound)
+		t.Fatalf("workspace.get error code = %d, want %d", rpcErr.Code, rpc.SessionNotFound)
 	}
 }
 
-func TestSessionAddFolderRejectsSubdirectoryOfVCSRoot(t *testing.T) {
+func TestWorkspaceAddFolderRejectsSubdirectoryOfVCSRoot(t *testing.T) {
 	store := newSessionMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 
-	err := d.registerSessionMethods(registry, store)
+	err := d.registerWorkspaceMethods(registry, store)
 	if err != nil {
-		t.Fatalf("registerSessionMethods returned error: %v", err)
+		t.Fatalf("registerWorkspaceMethods returned error: %v", err)
 	}
 
 	repoRoot := t.TempDir()
@@ -101,7 +101,7 @@ func TestSessionAddFolderRejectsSubdirectoryOfVCSRoot(t *testing.T) {
 		t.Fatalf("makeGitRoot returned error: %v", err)
 	}
 
-	createResp := callMethod[SessionCreateResponse](t, registry, "session.create", SessionCreateRequest{
+	createResp := callMethod[WorkspaceCreateResponse](t, registry, "workspace.create", WorkspaceCreateRequest{
 		Name:          "alpha",
 		Folder:        repoRoot,
 		OriginRoot:    t.TempDir(),
@@ -113,19 +113,19 @@ func TestSessionAddFolderRejectsSubdirectoryOfVCSRoot(t *testing.T) {
 		t.Fatalf("create subdir: %v", err)
 	}
 
-	spec, ok := registry.Get("session.add_folder")
+	spec, ok := registry.Get("workspace.add_folder")
 	if !ok {
-		t.Fatal("session.add_folder method not registered")
+		t.Fatal("workspace.add_folder method not registered")
 	}
 
-	raw, err := json.Marshal(SessionAddFolderRequest{SessionID: createResp.SessionID, FolderPath: subdir})
+	raw, err := json.Marshal(WorkspaceAddFolderRequest{WorkspaceID: createResp.WorkspaceID, FolderPath: subdir})
 	if err != nil {
 		t.Fatalf("marshal params: %v", err)
 	}
 
 	_, err = spec.Call(context.Background(), raw)
 	if err == nil {
-		t.Fatal("session.add_folder returned nil error for subdirectory input")
+		t.Fatal("workspace.add_folder returned nil error for subdirectory input")
 	}
 }
 
@@ -134,9 +134,9 @@ func TestSessionGetResolvesByName(t *testing.T) {
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 
-	err := d.registerSessionMethods(registry, store)
+	err := d.registerWorkspaceMethods(registry, store)
 	if err != nil {
-		t.Fatalf("registerSessionMethods returned error: %v", err)
+		t.Fatalf("registerWorkspaceMethods returned error: %v", err)
 	}
 
 	repoRoot := t.TempDir()
@@ -144,16 +144,16 @@ func TestSessionGetResolvesByName(t *testing.T) {
 		t.Fatalf("makeGitRoot returned error: %v", err)
 	}
 
-	createResp := callMethod[SessionCreateResponse](t, registry, "session.create", SessionCreateRequest{
+	createResp := callMethod[WorkspaceCreateResponse](t, registry, "workspace.create", WorkspaceCreateRequest{
 		Name:          "alpha",
 		Folder:        repoRoot,
 		OriginRoot:    t.TempDir(),
 		CleanupPolicy: "manual",
 	})
 
-	getResp := callMethod[SessionGetResponse](t, registry, "session.get", SessionGetRequest{SessionID: "alpha"})
-	if getResp.SessionID != createResp.SessionID {
-		t.Fatalf("session.get by name id = %q, want %q", getResp.SessionID, createResp.SessionID)
+	getResp := callMethod[WorkspaceGetResponse](t, registry, "workspace.get", WorkspaceGetRequest{WorkspaceID: "alpha"})
+	if getResp.WorkspaceID != createResp.WorkspaceID {
+		t.Fatalf("workspace.get by name id = %q, want %q", getResp.WorkspaceID, createResp.WorkspaceID)
 	}
 }
 
@@ -162,9 +162,9 @@ func TestSessionRemoveFolderMissingReturnsInvalidParams(t *testing.T) {
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 
-	err := d.registerSessionMethods(registry, store)
+	err := d.registerWorkspaceMethods(registry, store)
 	if err != nil {
-		t.Fatalf("registerSessionMethods returned error: %v", err)
+		t.Fatalf("registerWorkspaceMethods returned error: %v", err)
 	}
 
 	repoRoot := t.TempDir()
@@ -172,34 +172,34 @@ func TestSessionRemoveFolderMissingReturnsInvalidParams(t *testing.T) {
 		t.Fatalf("makeGitRoot returned error: %v", err)
 	}
 
-	createResp := callMethod[SessionCreateResponse](t, registry, "session.create", SessionCreateRequest{
+	createResp := callMethod[WorkspaceCreateResponse](t, registry, "workspace.create", WorkspaceCreateRequest{
 		Name:          "alpha",
 		Folder:        repoRoot,
 		OriginRoot:    t.TempDir(),
 		CleanupPolicy: "manual",
 	})
 
-	spec, ok := registry.Get("session.remove_folder")
+	spec, ok := registry.Get("workspace.remove_folder")
 	if !ok {
-		t.Fatal("session.remove_folder method not registered")
+		t.Fatal("workspace.remove_folder method not registered")
 	}
 
-	raw, err := json.Marshal(SessionRemoveFolderRequest{SessionID: createResp.SessionID, FolderPath: filepath.Join(repoRoot, "missing")})
+	raw, err := json.Marshal(WorkspaceRemoveFolderRequest{WorkspaceID: createResp.WorkspaceID, FolderPath: filepath.Join(repoRoot, "missing")})
 	if err != nil {
 		t.Fatalf("marshal params: %v", err)
 	}
 
 	_, err = spec.Call(context.Background(), raw)
 	if err == nil {
-		t.Fatal("session.remove_folder returned nil error for missing folder")
+		t.Fatal("workspace.remove_folder returned nil error for missing folder")
 	}
 
 	var rpcErr *rpc.HandlerError
 	if !errors.As(err, &rpcErr) {
-		t.Fatalf("session.remove_folder error type = %T, want *rpc.HandlerError", err)
+		t.Fatalf("workspace.remove_folder error type = %T, want *rpc.HandlerError", err)
 	}
 	if rpcErr.Code != rpc.InvalidParams {
-		t.Fatalf("session.remove_folder error code = %d, want %d", rpcErr.Code, rpc.InvalidParams)
+		t.Fatalf("workspace.remove_folder error code = %d, want %d", rpcErr.Code, rpc.InvalidParams)
 	}
 }
 
@@ -208,32 +208,32 @@ func TestSessionRemoveFolderMissingSessionReturnsSessionNotFound(t *testing.T) {
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 
-	err := d.registerSessionMethods(registry, store)
+	err := d.registerWorkspaceMethods(registry, store)
 	if err != nil {
-		t.Fatalf("registerSessionMethods returned error: %v", err)
+		t.Fatalf("registerWorkspaceMethods returned error: %v", err)
 	}
 
-	spec, ok := registry.Get("session.remove_folder")
+	spec, ok := registry.Get("workspace.remove_folder")
 	if !ok {
-		t.Fatal("session.remove_folder method not registered")
+		t.Fatal("workspace.remove_folder method not registered")
 	}
 
-	raw, err := json.Marshal(SessionRemoveFolderRequest{SessionID: "missing", FolderPath: "/tmp/repo"})
+	raw, err := json.Marshal(WorkspaceRemoveFolderRequest{WorkspaceID: "missing", FolderPath: "/tmp/repo"})
 	if err != nil {
 		t.Fatalf("marshal params: %v", err)
 	}
 
 	_, err = spec.Call(context.Background(), raw)
 	if err == nil {
-		t.Fatal("session.remove_folder returned nil error for missing session")
+		t.Fatal("workspace.remove_folder returned nil error for missing workspace")
 	}
 
 	var rpcErr *rpc.HandlerError
 	if !errors.As(err, &rpcErr) {
-		t.Fatalf("session.remove_folder error type = %T, want *rpc.HandlerError", err)
+		t.Fatalf("workspace.remove_folder error type = %T, want *rpc.HandlerError", err)
 	}
 	if rpcErr.Code != rpc.SessionNotFound {
-		t.Fatalf("session.remove_folder error code = %d, want %d", rpcErr.Code, rpc.SessionNotFound)
+		t.Fatalf("workspace.remove_folder error code = %d, want %d", rpcErr.Code, rpc.SessionNotFound)
 	}
 }
 
@@ -276,9 +276,9 @@ func TestSessionCreateRejectsInvalidVCSPreference(t *testing.T) {
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 
-	err := d.registerSessionMethods(registry, store)
+	err := d.registerWorkspaceMethods(registry, store)
 	if err != nil {
-		t.Fatalf("registerSessionMethods returned error: %v", err)
+		t.Fatalf("registerWorkspaceMethods returned error: %v", err)
 	}
 
 	repoRoot := t.TempDir()
@@ -286,12 +286,12 @@ func TestSessionCreateRejectsInvalidVCSPreference(t *testing.T) {
 		t.Fatalf("makeGitRoot returned error: %v", err)
 	}
 
-	spec, ok := registry.Get("session.create")
+	spec, ok := registry.Get("workspace.create")
 	if !ok {
-		t.Fatal("session.create method not registered")
+		t.Fatal("workspace.create method not registered")
 	}
 
-	raw, err := json.Marshal(SessionCreateRequest{
+	raw, err := json.Marshal(WorkspaceCreateRequest{
 		Name:          "alpha",
 		Folder:        repoRoot,
 		OriginRoot:    t.TempDir(),
@@ -304,15 +304,15 @@ func TestSessionCreateRejectsInvalidVCSPreference(t *testing.T) {
 
 	_, err = spec.Call(context.Background(), raw)
 	if err == nil {
-		t.Fatal("session.create returned nil error for invalid vcs preference")
+		t.Fatal("workspace.create returned nil error for invalid vcs preference")
 	}
 
 	var rpcErr *rpc.HandlerError
 	if !errors.As(err, &rpcErr) {
-		t.Fatalf("session.create error type = %T, want *rpc.HandlerError", err)
+		t.Fatalf("workspace.create error type = %T, want *rpc.HandlerError", err)
 	}
 	if rpcErr.Code != rpc.InvalidParams {
-		t.Fatalf("session.create error code = %d, want %d", rpcErr.Code, rpc.InvalidParams)
+		t.Fatalf("workspace.create error code = %d, want %d", rpcErr.Code, rpc.InvalidParams)
 	}
 }
 
@@ -321,9 +321,9 @@ func TestSessionCreateRollsBackWhenFolderInsertFails(t *testing.T) {
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 
-	err := d.registerSessionMethods(registry, store)
+	err := d.registerWorkspaceMethods(registry, store)
 	if err != nil {
-		t.Fatalf("registerSessionMethods returned error: %v", err)
+		t.Fatalf("registerWorkspaceMethods returned error: %v", err)
 	}
 
 	repoRoot := t.TempDir()
@@ -331,12 +331,12 @@ func TestSessionCreateRollsBackWhenFolderInsertFails(t *testing.T) {
 		t.Fatalf("makeGitRoot returned error: %v", err)
 	}
 
-	spec, ok := registry.Get("session.create")
+	spec, ok := registry.Get("workspace.create")
 	if !ok {
-		t.Fatal("session.create method not registered")
+		t.Fatal("workspace.create method not registered")
 	}
 
-	raw, err := json.Marshal(SessionCreateRequest{
+	raw, err := json.Marshal(WorkspaceCreateRequest{
 		Name:          "alpha",
 		Folder:        repoRoot,
 		OriginRoot:    t.TempDir(),
@@ -349,7 +349,7 @@ func TestSessionCreateRollsBackWhenFolderInsertFails(t *testing.T) {
 
 	_, err = spec.Call(context.Background(), raw)
 	if err == nil {
-		t.Fatal("session.create returned nil error when folder insert fails")
+		t.Fatal("workspace.create returned nil error when folder insert fails")
 	}
 
 	_, lookupErr := store.GetSessionByName(context.Background(), "alpha")
@@ -396,8 +396,8 @@ func newSessionMethodTestStore(t *testing.T) *globaldb.Store {
 	})
 
 	if _, err := db.Exec(`
-CREATE TABLE sessions (
-	session_id TEXT PRIMARY KEY,
+CREATE TABLE workspaces (
+	workspace_id TEXT PRIMARY KEY,
 	name TEXT NOT NULL UNIQUE,
 	status TEXT NOT NULL DEFAULT 'active',
 	vcs_preference TEXT NOT NULL DEFAULT 'auto',
@@ -406,14 +406,14 @@ CREATE TABLE sessions (
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL
 );
-CREATE TABLE session_folders (
-	session_id TEXT NOT NULL,
+CREATE TABLE workspace_folders (
+	workspace_id TEXT NOT NULL,
 	folder_path TEXT NOT NULL,
 	vcs_type TEXT NOT NULL DEFAULT 'unknown',
 	is_primary INTEGER NOT NULL DEFAULT 0,
 	added_at TEXT NOT NULL,
-	PRIMARY KEY (session_id, folder_path),
-	FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+	PRIMARY KEY (workspace_id, folder_path),
+	FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
 );
 `); err != nil {
 		t.Fatalf("create schema: %v", err)
@@ -439,8 +439,8 @@ func newSessionMethodStoreWithoutFolders(t *testing.T) *globaldb.Store {
 	})
 
 	if _, err := db.Exec(`
-CREATE TABLE sessions (
-	session_id TEXT PRIMARY KEY,
+CREATE TABLE workspaces (
+	workspace_id TEXT PRIMARY KEY,
 	name TEXT NOT NULL UNIQUE,
 	status TEXT NOT NULL DEFAULT 'active',
 	vcs_preference TEXT NOT NULL DEFAULT 'auto',

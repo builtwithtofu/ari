@@ -105,3 +105,8 @@ This repository is pre-alpha. Keep changes small, typed, and easy to verify.
 
 - Before finishing a change, run at least:
   - `nix develop -c just verify`
+- Run project tooling through Nix instead of calling tools directly from the host shell.
+- Preferred validation commands:
+  - `nix develop -c go test ./...`
+  - `nix develop -c just verify`
+- If migration checks are needed, run them from the Nix shell so Atlas and SQLite toolchain versions match CI.

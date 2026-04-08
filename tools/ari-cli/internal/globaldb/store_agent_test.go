@@ -2,16 +2,8 @@ package globaldb
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"fmt"
-	"path/filepath"
 	"testing"
-	"time"
-
-	"github.com/builtwithtofu/ari/tools/ari-cli/internal/testutil"
-
-	_ "modernc.org/sqlite"
 )
 
 func TestAgentStoreLifecycleAndReconciliation(t *testing.T) {
@@ -24,7 +16,7 @@ func TestAgentStoreLifecycleAndReconciliation(t *testing.T) {
 
 	createReq := CreateAgentParams{
 		AgentID:            "agt-1",
-		SessionID:          "sess-1",
+		WorkspaceID:        "sess-1",
 		Name:               stringPtr("claude"),
 		Command:            "claude-code",
 		Args:               `["--resume"]`,
@@ -78,11 +70,11 @@ func TestAgentStoreLifecycleAndReconciliation(t *testing.T) {
 	}
 
 	updateReq := UpdateAgentStatusParams{
-		SessionID: "sess-1",
-		AgentID:   "agt-1",
-		Status:    "stopped",
-		ExitCode:  intPtr(0),
-		StoppedAt: stringPtr("2026-04-04T00:00:10Z"),
+		WorkspaceID: "sess-1",
+		AgentID:     "agt-1",
+		Status:      "stopped",
+		ExitCode:    intPtr(0),
+		StoppedAt:   stringPtr("2026-04-04T00:00:10Z"),
 	}
 	if err := store.UpdateAgentStatus(ctx, updateReq); err != nil {
 		t.Fatalf("UpdateAgentStatus returned error: %v", err)
@@ -100,12 +92,12 @@ func TestAgentStoreLifecycleAndReconciliation(t *testing.T) {
 	}
 
 	if err := store.CreateAgent(ctx, CreateAgentParams{
-		AgentID:   "agt-2",
-		SessionID: "sess-1",
-		Command:   "codex",
-		Args:      `[]`,
-		Status:    "running",
-		StartedAt: "2026-04-04T00:01:00Z",
+		AgentID:     "agt-2",
+		WorkspaceID: "sess-1",
+		Command:     "codex",
+		Args:        `[]`,
+		Status:      "running",
+		StartedAt:   "2026-04-04T00:01:00Z",
 	}); err != nil {
 		t.Fatalf("CreateAgent agt-2 returned error: %v", err)
 	}
@@ -160,25 +152,25 @@ func TestCreateAgentAllowsSameNameAcrossSessions(t *testing.T) {
 	}
 
 	if err := store.CreateAgent(ctx, CreateAgentParams{
-		AgentID:   "agt-1",
-		SessionID: "sess-1",
-		Name:      stringPtr("claude"),
-		Command:   "claude-code",
-		Args:      `[]`,
-		Status:    "running",
-		StartedAt: "2026-04-04T00:00:00Z",
+		AgentID:     "agt-1",
+		WorkspaceID: "sess-1",
+		Name:        stringPtr("claude"),
+		Command:     "claude-code",
+		Args:        `[]`,
+		Status:      "running",
+		StartedAt:   "2026-04-04T00:00:00Z",
 	}); err != nil {
 		t.Fatalf("CreateAgent sess-1 returned error: %v", err)
 	}
 
 	if err := store.CreateAgent(ctx, CreateAgentParams{
-		AgentID:   "agt-2",
-		SessionID: "sess-2",
-		Name:      stringPtr("claude"),
-		Command:   "claude-code",
-		Args:      `[]`,
-		Status:    "running",
-		StartedAt: "2026-04-04T00:00:10Z",
+		AgentID:     "agt-2",
+		WorkspaceID: "sess-2",
+		Name:        stringPtr("claude"),
+		Command:     "claude-code",
+		Args:        `[]`,
+		Status:      "running",
+		StartedAt:   "2026-04-04T00:00:10Z",
 	}); err != nil {
 		t.Fatalf("CreateAgent sess-2 returned error: %v", err)
 	}
@@ -211,25 +203,25 @@ func TestCreateAgentRejectsDuplicateNameInSameSession(t *testing.T) {
 	}
 
 	if err := store.CreateAgent(ctx, CreateAgentParams{
-		AgentID:   "agt-1",
-		SessionID: "sess-1",
-		Name:      stringPtr("claude"),
-		Command:   "claude-code",
-		Args:      `[]`,
-		Status:    "running",
-		StartedAt: "2026-04-04T00:00:00Z",
+		AgentID:     "agt-1",
+		WorkspaceID: "sess-1",
+		Name:        stringPtr("claude"),
+		Command:     "claude-code",
+		Args:        `[]`,
+		Status:      "running",
+		StartedAt:   "2026-04-04T00:00:00Z",
 	}); err != nil {
 		t.Fatalf("CreateAgent first insert returned error: %v", err)
 	}
 
 	err := store.CreateAgent(ctx, CreateAgentParams{
-		AgentID:   "agt-2",
-		SessionID: "sess-1",
-		Name:      stringPtr("claude"),
-		Command:   "claude-code",
-		Args:      `[]`,
-		Status:    "running",
-		StartedAt: "2026-04-04T00:00:10Z",
+		AgentID:     "agt-2",
+		WorkspaceID: "sess-1",
+		Name:        stringPtr("claude"),
+		Command:     "claude-code",
+		Args:        `[]`,
+		Status:      "running",
+		StartedAt:   "2026-04-04T00:00:10Z",
 	})
 	if err == nil {
 		t.Fatal("CreateAgent returned nil error for duplicate same-session name")
@@ -237,38 +229,5 @@ func TestCreateAgentRejectsDuplicateNameInSameSession(t *testing.T) {
 }
 
 func newAgentTestStore(t *testing.T) *Store {
-	t.Helper()
-
-	dbPath := filepath.Join(t.TempDir(), fmt.Sprintf("agent-store-%d.db", time.Now().UnixNano()))
-	if err := applyGlobalDBTestMigrations(dbPath); err != nil {
-		t.Fatalf("apply migrations: %v", err)
-	}
-
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatalf("open sqlite db: %v", err)
-	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
-		t.Fatalf("set busy timeout: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = db.Close()
-	})
-
-	store, err := NewSQLStore(db)
-	if err != nil {
-		t.Fatalf("NewSQLStore returned error: %v", err)
-	}
-
-	return store
-}
-
-func applyGlobalDBTestMigrations(dbPath string) error {
-	migrationsDir, err := atlasMigrationsDir()
-	if err != nil {
-		return err
-	}
-	return testutil.ApplySQLMigrations(dbPath, migrationsDir)
+	return newMigratedGlobalDBStore(t, "agent-store")
 }

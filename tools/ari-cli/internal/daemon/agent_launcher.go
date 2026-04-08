@@ -93,3 +93,7 @@ func SupportedHarnesses() []string {
 	sort.Strings(names)
 	return names
 }
+
+func ResumableFlagForHarness(harness string) string {
+	return resumableFlagForHarness(harness)
+}

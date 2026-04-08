@@ -844,12 +844,12 @@ func executeRootCommand(args ...string) (string, error) {
 func executeRootCommandWithContext(ctx context.Context, args ...string) (string, error) {
 	originalCommandEnsure := commandEnsureDaemonRunning
 	originalAgentEnsure := agentEnsureDaemonRunning
-	originalSessionEnsure := sessionEnsureDaemonRunning
-	originalSessionGet := sessionGetRPC
-	originalSessionList := sessionListRPC
+	originalSessionEnsure := workspaceEnsureDaemonRunning
+	originalSessionGet := workspaceGetRPC
+	originalSessionList := workspaceListRPC
 	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	agentEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
-	sessionEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	workspaceEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 
 	cwd := "."
 	if wd, err := os.Getwd(); err == nil {
@@ -857,28 +857,28 @@ func executeRootCommandWithContext(ctx context.Context, args ...string) (string,
 	}
 
 	if len(args) > 0 && (args[0] == "command" || args[0] == "agent") {
-		sessionGetRPC = func(_ context.Context, _ string, idOrName string) (daemon.SessionGetResponse, error) {
+		workspaceGetRPC = func(_ context.Context, _ string, idOrName string) (daemon.WorkspaceGetResponse, error) {
 			resolved := strings.TrimSpace(idOrName)
 			if resolved == "" {
-				return daemon.SessionGetResponse{}, userFacingError{message: "Session identifier is required"}
+				return daemon.WorkspaceGetResponse{}, userFacingError{message: "Workspace identifier is required"}
 			}
-			return daemon.SessionGetResponse{
-				SessionID:  resolved,
-				Name:       resolved,
-				OriginRoot: cwd,
-				Folders:    []daemon.SessionFolderInfo{{Path: cwd, VCSType: "none", IsPrimary: true}},
+			return daemon.WorkspaceGetResponse{
+				WorkspaceID: resolved,
+				Name:        resolved,
+				OriginRoot:  cwd,
+				Folders:     []daemon.WorkspaceFolderInfo{{Path: cwd, VCSType: "none", IsPrimary: true}},
 			}, nil
 		}
-		sessionListRPC = func(context.Context, string) (daemon.SessionListResponse, error) {
-			return daemon.SessionListResponse{Sessions: []daemon.SessionSummary{{SessionID: "sess-1", Name: "alpha", Status: "active", FolderCount: 1}}}, nil
+		workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+			return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{{WorkspaceID: "sess-1", Name: "alpha", Status: "active", FolderCount: 1}}}, nil
 		}
 	}
 	defer func() {
 		commandEnsureDaemonRunning = originalCommandEnsure
 		agentEnsureDaemonRunning = originalAgentEnsure
-		sessionEnsureDaemonRunning = originalSessionEnsure
-		sessionGetRPC = originalSessionGet
-		sessionListRPC = originalSessionList
+		workspaceEnsureDaemonRunning = originalSessionEnsure
+		workspaceGetRPC = originalSessionGet
+		workspaceListRPC = originalSessionList
 	}()
 
 	root := NewRootCmd()
@@ -912,7 +912,7 @@ func TestCommandListReturnsEnsureDaemonError(t *testing.T) {
 		commandEnsureDaemonRunning = originalEnsure
 	})
 
-	_, err := executeRootCommandRaw("command", "list", "--session", "alpha")
+	_, err := executeRootCommandRaw("command", "list", "--workspace", "alpha")
 	if err == nil {
 		t.Fatal("command list returned nil error")
 	}
@@ -931,7 +931,7 @@ func TestAgentListReturnsEnsureDaemonError(t *testing.T) {
 		agentEnsureDaemonRunning = originalEnsure
 	})
 
-	_, err := executeRootCommandRaw("agent", "list", "--session", "alpha")
+	_, err := executeRootCommandRaw("agent", "list", "--workspace", "alpha")
 	if err == nil {
 		t.Fatal("agent list returned nil error")
 	}
@@ -940,21 +940,21 @@ func TestAgentListReturnsEnsureDaemonError(t *testing.T) {
 	}
 }
 
-func TestSessionListReturnsEnsureDaemonError(t *testing.T) {
+func TestWorkspaceListReturnsEnsureDaemonError(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	originalEnsure := sessionEnsureDaemonRunning
-	sessionEnsureDaemonRunning = func(context.Context, *config.Config) error {
+	originalEnsure := workspaceEnsureDaemonRunning
+	workspaceEnsureDaemonRunning = func(context.Context, *config.Config) error {
 		return userFacingError{message: "daemon ensure failed"}
 	}
 	t.Cleanup(func() {
-		sessionEnsureDaemonRunning = originalEnsure
+		workspaceEnsureDaemonRunning = originalEnsure
 	})
 
-	_, err := executeRootCommandRaw("session", "list")
+	_, err := executeRootCommandRaw("workspace", "list")
 	if err == nil {
-		t.Fatal("session list returned nil error")
+		t.Fatal("workspace list returned nil error")
 	}
 	if err.Error() != "daemon ensure failed" {
-		t.Fatalf("session list error = %q, want %q", err.Error(), "daemon ensure failed")
+		t.Fatalf("workspace list error = %q, want %q", err.Error(), "daemon ensure failed")
 	}
 }

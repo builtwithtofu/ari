@@ -15,9 +15,9 @@ import (
 )
 
 type CommandRunRequest struct {
-	SessionID string   `json:"session_id"`
-	Command   string   `json:"command"`
-	Args      []string `json:"args"`
+	WorkspaceID string   `json:"workspace_id"`
+	Command     string   `json:"command"`
+	Args        []string `json:"args"`
 }
 
 type CommandRunResponse struct {
@@ -26,7 +26,7 @@ type CommandRunResponse struct {
 }
 
 type CommandListRequest struct {
-	SessionID string `json:"session_id"`
+	WorkspaceID string `json:"workspace_id"`
 }
 
 type CommandSummary struct {
@@ -41,24 +41,24 @@ type CommandListResponse struct {
 }
 
 type CommandGetRequest struct {
-	SessionID string `json:"session_id"`
-	CommandID string `json:"command_id"`
+	WorkspaceID string `json:"workspace_id"`
+	CommandID   string `json:"command_id"`
 }
 
 type CommandGetResponse struct {
-	CommandID  string `json:"command_id"`
-	SessionID  string `json:"session_id"`
-	Command    string `json:"command"`
-	Args       string `json:"args"`
-	Status     string `json:"status"`
-	ExitCode   *int   `json:"exit_code"`
-	StartedAt  string `json:"started_at"`
-	FinishedAt string `json:"finished_at,omitempty"`
+	CommandID   string `json:"command_id"`
+	WorkspaceID string `json:"workspace_id"`
+	Command     string `json:"command"`
+	Args        string `json:"args"`
+	Status      string `json:"status"`
+	ExitCode    *int   `json:"exit_code"`
+	StartedAt   string `json:"started_at"`
+	FinishedAt  string `json:"finished_at,omitempty"`
 }
 
 type CommandOutputRequest struct {
-	SessionID string `json:"session_id"`
-	CommandID string `json:"command_id"`
+	WorkspaceID string `json:"workspace_id"`
+	CommandID   string `json:"command_id"`
 }
 
 type CommandOutputResponse struct {
@@ -66,8 +66,8 @@ type CommandOutputResponse struct {
 }
 
 type CommandStopRequest struct {
-	SessionID string `json:"session_id"`
-	CommandID string `json:"command_id"`
+	WorkspaceID string `json:"workspace_id"`
+	CommandID   string `json:"command_id"`
 }
 
 type CommandStopResponse struct {
@@ -94,18 +94,18 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 
 	if err := rpc.RegisterMethod(registry, rpc.Method[CommandRunRequest, CommandRunResponse]{
 		Name:        "command.run",
-		Description: "Run a command in a session",
+		Description: "Run a command in a workspace",
 		Handler: func(ctx context.Context, req CommandRunRequest) (CommandRunResponse, error) {
-			sessionID := strings.TrimSpace(req.SessionID)
+			sessionID := strings.TrimSpace(req.WorkspaceID)
 			if sessionID == "" {
-				return CommandRunResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "session_id is required", nil)
+				return CommandRunResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
 			}
 			session, err := store.GetSession(ctx, sessionID)
 			if err != nil {
-				return CommandRunResponse{}, mapSessionStoreError(err, sessionID)
+				return CommandRunResponse{}, mapWorkspaceStoreError(err, sessionID)
 			}
 			if session.Status == "closed" {
-				return CommandRunResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "session is closed", sessionID)
+				return CommandRunResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace is closed", sessionID)
 			}
 			command := strings.TrimSpace(req.Command)
 			if command == "" {
@@ -115,7 +115,7 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 			primaryFolder, err := lookupPrimaryFolder(ctx, store, sessionID)
 			if err != nil {
 				if errors.Is(err, errNoPrimaryFolder) {
-					return CommandRunResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "session has no primary folder", sessionID)
+					return CommandRunResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace has no primary folder", sessionID)
 				}
 				return CommandRunResponse{}, mapCommandStoreError(err, sessionID)
 			}
@@ -137,12 +137,12 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 
 			startedAt := time.Now().UTC().Format(time.RFC3339Nano)
 			if err := store.CreateCommand(ctx, globaldb.CreateCommandParams{
-				CommandID: commandID,
-				SessionID: sessionID,
-				Command:   command,
-				Args:      encodeArgs(req.Args),
-				Status:    "running",
-				StartedAt: startedAt,
+				CommandID:   commandID,
+				WorkspaceID: sessionID,
+				Command:     command,
+				Args:        encodeArgs(req.Args),
+				Status:      "running",
+				StartedAt:   startedAt,
 			}); err != nil {
 				_ = proc.Stop()
 				_, _ = proc.Wait()
@@ -161,14 +161,14 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 
 	if err := rpc.RegisterMethod(registry, rpc.Method[CommandListRequest, CommandListResponse]{
 		Name:        "command.list",
-		Description: "List commands for a session",
+		Description: "List commands for a workspace",
 		Handler: func(ctx context.Context, req CommandListRequest) (CommandListResponse, error) {
-			sessionID := strings.TrimSpace(req.SessionID)
+			sessionID := strings.TrimSpace(req.WorkspaceID)
 			if sessionID == "" {
-				return CommandListResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "session_id is required", nil)
+				return CommandListResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
 			}
 			if _, err := store.GetSession(ctx, sessionID); err != nil {
-				return CommandListResponse{}, mapSessionStoreError(err, sessionID)
+				return CommandListResponse{}, mapWorkspaceStoreError(err, sessionID)
 			}
 
 			commands, err := store.ListCommands(ctx, sessionID)
@@ -196,16 +196,16 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 		Name:        "command.get",
 		Description: "Get command details",
 		Handler: func(ctx context.Context, req CommandGetRequest) (CommandGetResponse, error) {
-			sessionID := strings.TrimSpace(req.SessionID)
+			sessionID := strings.TrimSpace(req.WorkspaceID)
 			if sessionID == "" {
-				return CommandGetResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "session_id is required", nil)
+				return CommandGetResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
 			}
 			commandID := strings.TrimSpace(req.CommandID)
 			if commandID == "" {
 				return CommandGetResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "command_id is required", sessionID)
 			}
 			if _, err := store.GetSession(ctx, sessionID); err != nil {
-				return CommandGetResponse{}, mapSessionStoreError(err, sessionID)
+				return CommandGetResponse{}, mapWorkspaceStoreError(err, sessionID)
 			}
 
 			command, err := store.GetCommand(ctx, sessionID, commandID)
@@ -214,13 +214,13 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 			}
 
 			resp := CommandGetResponse{
-				CommandID: command.CommandID,
-				SessionID: command.SessionID,
-				Command:   command.Command,
-				Args:      command.Args,
-				Status:    command.Status,
-				ExitCode:  command.ExitCode,
-				StartedAt: command.StartedAt,
+				CommandID:   command.CommandID,
+				WorkspaceID: command.WorkspaceID,
+				Command:     command.Command,
+				Args:        command.Args,
+				Status:      command.Status,
+				ExitCode:    command.ExitCode,
+				StartedAt:   command.StartedAt,
 			}
 			if command.FinishedAt != nil {
 				resp.FinishedAt = *command.FinishedAt
@@ -236,16 +236,16 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 		Name:        "command.output",
 		Description: "Get command output snapshot",
 		Handler: func(ctx context.Context, req CommandOutputRequest) (CommandOutputResponse, error) {
-			sessionID := strings.TrimSpace(req.SessionID)
+			sessionID := strings.TrimSpace(req.WorkspaceID)
 			if sessionID == "" {
-				return CommandOutputResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "session_id is required", nil)
+				return CommandOutputResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
 			}
 			commandID := strings.TrimSpace(req.CommandID)
 			if commandID == "" {
 				return CommandOutputResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "command_id is required", sessionID)
 			}
 			if _, err := store.GetSession(ctx, sessionID); err != nil {
-				return CommandOutputResponse{}, mapSessionStoreError(err, sessionID)
+				return CommandOutputResponse{}, mapWorkspaceStoreError(err, sessionID)
 			}
 
 			commandRecord, err := store.GetCommand(ctx, sessionID, commandID)
@@ -276,16 +276,16 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 		Name:        "command.stop",
 		Description: "Stop command process",
 		Handler: func(ctx context.Context, req CommandStopRequest) (CommandStopResponse, error) {
-			sessionID := strings.TrimSpace(req.SessionID)
+			sessionID := strings.TrimSpace(req.WorkspaceID)
 			if sessionID == "" {
-				return CommandStopResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "session_id is required", nil)
+				return CommandStopResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
 			}
 			commandID := strings.TrimSpace(req.CommandID)
 			if commandID == "" {
 				return CommandStopResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "command_id is required", sessionID)
 			}
 			if _, err := store.GetSession(ctx, sessionID); err != nil {
-				return CommandStopResponse{}, mapSessionStoreError(err, sessionID)
+				return CommandStopResponse{}, mapWorkspaceStoreError(err, sessionID)
 			}
 
 			commandRecord, err := store.GetCommand(ctx, sessionID, commandID)
@@ -328,10 +328,10 @@ func (d *Daemon) waitForCommandExit(commandID, sessionID string, store *globaldb
 	}
 
 	update := globaldb.UpdateCommandStatusParams{
-		SessionID:  sessionID,
-		CommandID:  commandID,
-		Status:     status,
-		FinishedAt: &finishedAt,
+		WorkspaceID: sessionID,
+		CommandID:   commandID,
+		Status:      status,
+		FinishedAt:  &finishedAt,
 	}
 	if err == nil {
 		update.ExitCode = &result.ExitCode
@@ -339,10 +339,10 @@ func (d *Daemon) waitForCommandExit(commandID, sessionID string, store *globaldb
 
 	if err := persistCommandStatusWithRetry(context.Background(), store, update, 5*time.Second); err != nil {
 		fallback := globaldb.UpdateCommandStatusParams{
-			SessionID:  sessionID,
-			CommandID:  commandID,
-			Status:     "lost",
-			FinishedAt: &finishedAt,
+			WorkspaceID: sessionID,
+			CommandID:   commandID,
+			Status:      "lost",
+			FinishedAt:  &finishedAt,
 		}
 		_ = persistCommandStatusWithRetry(context.Background(), store, fallback, 5*time.Second)
 	}
@@ -401,7 +401,7 @@ func (d *Daemon) stopAllCommands() {
 	}
 }
 
-var errNoPrimaryFolder = errors.New("session has no primary folder")
+var errNoPrimaryFolder = errors.New("workspace has no primary folder")
 
 func lookupPrimaryFolder(ctx context.Context, store *globaldb.Store, sessionID string) (string, error) {
 	folders, err := store.ListFolders(ctx, sessionID)

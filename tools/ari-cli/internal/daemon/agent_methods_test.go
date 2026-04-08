@@ -30,10 +30,10 @@ func TestAgentSpawnSendOutputStopLifecycle(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
-		SessionID: "sess-1",
-		Name:      "harness-1",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "while read line; do printf 'ack:%s\\n' \"$line\"; done"},
+		WorkspaceID: "sess-1",
+		Name:        "harness-1",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "while read line; do printf 'ack:%s\\n' \"$line\"; done"},
 	})
 
 	if spawnResp.AgentID == "" {
@@ -44,9 +44,9 @@ func TestAgentSpawnSendOutputStopLifecycle(t *testing.T) {
 	}
 
 	sendResp := callMethod[AgentSendResponse](t, registry, "agent.send", AgentSendRequest{
-		SessionID: "sess-1",
-		AgentID:   spawnResp.AgentID,
-		Input:     "ping\n",
+		WorkspaceID: "sess-1",
+		AgentID:     spawnResp.AgentID,
+		Input:       "ping\n",
 	})
 	if sendResp.Status != "sent" {
 		t.Fatalf("agent.send status = %q, want %q", sendResp.Status, "sent")
@@ -54,12 +54,12 @@ func TestAgentSpawnSendOutputStopLifecycle(t *testing.T) {
 
 	waitForAgentOutput(t, registry, "sess-1", spawnResp.AgentID, "ack:ping")
 
-	outputResp := callMethod[AgentOutputResponse](t, registry, "agent.output", AgentOutputRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+	outputResp := callMethod[AgentOutputResponse](t, registry, "agent.output", AgentOutputRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 	if !strings.Contains(outputResp.Output, "ack:ping") {
 		t.Fatalf("agent.output = %q, want contains %q", outputResp.Output, "ack:ping")
 	}
 
-	stopResp := callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+	stopResp := callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 	if stopResp.Status != "stopping" {
 		t.Fatalf("agent.stop status = %q, want %q", stopResp.Status, "stopping")
 	}
@@ -80,19 +80,19 @@ func TestAgentSpawnUsesSessionPrimaryFolderAsCWD(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
-		SessionID: "sess-1",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "pwd"},
+		WorkspaceID: "sess-1",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "pwd"},
 	})
 
 	waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "exited")
 
-	outputResp := callMethod[AgentOutputResponse](t, registry, "agent.output", AgentOutputRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+	outputResp := callMethod[AgentOutputResponse](t, registry, "agent.output", AgentOutputRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 	if !strings.Contains(outputResp.Output, workspace) {
 		t.Fatalf("agent.output = %q, want contains workspace %q", outputResp.Output, workspace)
 	}
 
-	_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+	_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 }
 
 func TestAgentListAndGetIncludeSpawnedAgent(t *testing.T) {
@@ -108,13 +108,13 @@ func TestAgentListAndGetIncludeSpawnedAgent(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
-		SessionID: "sess-1",
-		Name:      "opencode",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "while true; do sleep 1; done"},
+		WorkspaceID: "sess-1",
+		Name:        "opencode",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "while true; do sleep 1; done"},
 	})
 
-	listResp := callMethod[AgentListResponse](t, registry, "agent.list", AgentListRequest{SessionID: "sess-1"})
+	listResp := callMethod[AgentListResponse](t, registry, "agent.list", AgentListRequest{WorkspaceID: "sess-1"})
 	if len(listResp.Agents) != 1 {
 		t.Fatalf("agent.list len = %d, want 1", len(listResp.Agents))
 	}
@@ -122,12 +122,12 @@ func TestAgentListAndGetIncludeSpawnedAgent(t *testing.T) {
 		t.Fatalf("agent.list[0].agent_id = %q, want %q", listResp.Agents[0].AgentID, spawnResp.AgentID)
 	}
 
-	getResp := callMethod[AgentGetResponse](t, registry, "agent.get", AgentGetRequest{SessionID: "sess-1", AgentID: "opencode"})
+	getResp := callMethod[AgentGetResponse](t, registry, "agent.get", AgentGetRequest{WorkspaceID: "sess-1", AgentID: "opencode"})
 	if getResp.AgentID != spawnResp.AgentID {
 		t.Fatalf("agent.get agent_id = %q, want %q", getResp.AgentID, spawnResp.AgentID)
 	}
 
-	_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+	_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 	waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "stopped")
 }
 
@@ -144,9 +144,9 @@ func TestAgentSendReturnsAgentNotRunningAfterSelfExit(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
 	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
-		SessionID: "sess-1",
-		Command:   "/bin/sh",
-		Args:      []string{"-c", "printf done; exit 0"},
+		WorkspaceID: "sess-1",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "printf done; exit 0"},
 	})
 
 	waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "exited")
@@ -155,7 +155,7 @@ func TestAgentSendReturnsAgentNotRunningAfterSelfExit(t *testing.T) {
 	if !ok {
 		t.Fatal("agent.send method not registered")
 	}
-	raw, err := json.Marshal(AgentSendRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID, Input: "late input"})
+	raw, err := json.Marshal(AgentSendRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID, Input: "late input"})
 	if err != nil {
 		t.Fatalf("marshal params: %v", err)
 	}
@@ -206,13 +206,13 @@ func TestAgentSpawnPersistsHarnessSessionIdentityFromResumeArgs(t *testing.T) {
 	shim := writeNoopCommandShim(t)
 
 	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
-		SessionID: "sess-1",
-		Harness:   "opencode",
-		Command:   shim,
-		Args:      []string{"--session", "resume-xyz"},
+		WorkspaceID: "sess-1",
+		Harness:     "opencode",
+		Command:     shim,
+		Args:        []string{"--session", "resume-xyz"},
 	})
 
-	getResp := callMethod[AgentGetResponse](t, registry, "agent.get", AgentGetRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+	getResp := callMethod[AgentGetResponse](t, registry, "agent.get", AgentGetRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 	if getResp.Harness != "opencode" {
 		t.Fatalf("agent.get harness = %q, want %q", getResp.Harness, "opencode")
 	}
@@ -223,7 +223,7 @@ func TestAgentSpawnPersistsHarnessSessionIdentityFromResumeArgs(t *testing.T) {
 		t.Fatalf("agent.get harness_metadata = %q, want %q", string(getResp.HarnessMetadata), `{"resume_source":"argv"}`)
 	}
 
-	_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+	_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 }
 
 func TestAgentSpawnLeavesResumableIdentityEmptyWhenHarnessDoesNotExposeOne(t *testing.T) {
@@ -240,13 +240,13 @@ func TestAgentSpawnLeavesResumableIdentityEmptyWhenHarnessDoesNotExposeOne(t *te
 	shim := writeNoopCommandShim(t)
 
 	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
-		SessionID: "sess-1",
-		Harness:   "codex",
-		Command:   shim,
-		Args:      []string{"--model", "gpt-5-codex"},
+		WorkspaceID: "sess-1",
+		Harness:     "codex",
+		Command:     shim,
+		Args:        []string{"--model", "gpt-5-codex"},
 	})
 
-	getResp := callMethod[AgentGetResponse](t, registry, "agent.get", AgentGetRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+	getResp := callMethod[AgentGetResponse](t, registry, "agent.get", AgentGetRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 	if getResp.Harness != "codex" {
 		t.Fatalf("agent.get harness = %q, want %q", getResp.Harness, "codex")
 	}
@@ -257,7 +257,7 @@ func TestAgentSpawnLeavesResumableIdentityEmptyWhenHarnessDoesNotExposeOne(t *te
 		t.Fatalf("agent.get harness_metadata = %q, want %q", string(getResp.HarnessMetadata), "{}")
 	}
 
-	_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+	_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 }
 
 func TestAgentSpawnInfersHarnessFromExplicitCommand(t *testing.T) {
@@ -274,12 +274,12 @@ func TestAgentSpawnInfersHarnessFromExplicitCommand(t *testing.T) {
 	shim := writeNamedNoopCommandShim(t, "claude-code")
 
 	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
-		SessionID: "sess-1",
-		Command:   shim,
-		Args:      []string{"--resume=cl-abc"},
+		WorkspaceID: "sess-1",
+		Command:     shim,
+		Args:        []string{"--resume=cl-abc"},
 	})
 
-	getResp := callMethod[AgentGetResponse](t, registry, "agent.get", AgentGetRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+	getResp := callMethod[AgentGetResponse](t, registry, "agent.get", AgentGetRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 	if getResp.Harness != "claude-code" {
 		t.Fatalf("agent.get harness = %q, want %q", getResp.Harness, "claude-code")
 	}
@@ -287,7 +287,7 @@ func TestAgentSpawnInfersHarnessFromExplicitCommand(t *testing.T) {
 		t.Fatalf("agent.get harness_resumable_id = %q, want %q", getResp.HarnessResumableID, "cl-abc")
 	}
 
-	_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{SessionID: "sess-1", AgentID: spawnResp.AgentID})
+	_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 }
 
 func TestParseHarnessResumableID(t *testing.T) {
@@ -333,7 +333,7 @@ func TestAgentSpawnRejectsUnknownHarness(t *testing.T) {
 		t.Fatal("agent.spawn method not registered")
 	}
 
-	raw, err := json.Marshal(AgentSpawnRequest{SessionID: "sess-1", Harness: "unknown-harness", Args: []string{"--resume"}})
+	raw, err := json.Marshal(AgentSpawnRequest{WorkspaceID: "sess-1", Harness: "unknown-harness", Args: []string{"--resume"}})
 	if err != nil {
 		t.Fatalf("marshal params: %v", err)
 	}
@@ -369,7 +369,7 @@ func TestPersistAgentStatusWithRetryHonorsContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := persistAgentStatusWithRetry(ctx, nil, globaldb.UpdateAgentStatusParams{SessionID: "sess-1", AgentID: "agt-1", Status: "running"}, 60*time.Millisecond)
+	err := persistAgentStatusWithRetry(ctx, nil, globaldb.UpdateAgentStatusParams{WorkspaceID: "sess-1", AgentID: "agt-1", Status: "running"}, 60*time.Millisecond)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("persistAgentStatusWithRetry error = %v, want context.Canceled", err)
 	}
@@ -428,7 +428,7 @@ func waitForAgentStatus(t *testing.T, registry *rpc.MethodRegistry, sessionID, a
 
 	deadline := time.Now().Add(4 * time.Second)
 	for time.Now().Before(deadline) {
-		resp := callMethod[AgentGetResponse](t, registry, "agent.get", AgentGetRequest{SessionID: sessionID, AgentID: agentID})
+		resp := callMethod[AgentGetResponse](t, registry, "agent.get", AgentGetRequest{WorkspaceID: sessionID, AgentID: agentID})
 		if resp.Status == want {
 			return
 		}
@@ -443,7 +443,7 @@ func waitForAgentOutput(t *testing.T, registry *rpc.MethodRegistry, sessionID, a
 
 	deadline := time.Now().Add(4 * time.Second)
 	for time.Now().Before(deadline) {
-		resp := callMethod[AgentOutputResponse](t, registry, "agent.output", AgentOutputRequest{SessionID: sessionID, AgentID: agentID})
+		resp := callMethod[AgentOutputResponse](t, registry, "agent.output", AgentOutputRequest{WorkspaceID: sessionID, AgentID: agentID})
 		if strings.Contains(resp.Output, wantSubstring) {
 			return
 		}
