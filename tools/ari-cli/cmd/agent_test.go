@@ -49,7 +49,7 @@ func TestAgentListRejectsActiveSessionOutsideWorkspace(t *testing.T) {
 	originalResolve := commandResolveSessionIdentifier
 	originalReadActive := agentReadActiveSession
 	originalEnsure := agentEnsureDaemonRunning
-	originalSessionGet := sessionGetRPC
+	originalSessionGet := workspaceGetRPC
 	originalList := agentListRPC
 
 	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
@@ -59,7 +59,7 @@ func TestAgentListRejectsActiveSessionOutsideWorkspace(t *testing.T) {
 		return "sess-1", nil
 	}
 	agentEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
-	sessionGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
+	workspaceGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
 		return daemon.WorkspaceGetResponse{WorkspaceID: "sess-1", OriginRoot: t.TempDir()}, nil
 	}
 	agentListRPC = func(context.Context, string, string) (daemon.AgentListResponse, error) {
@@ -69,7 +69,7 @@ func TestAgentListRejectsActiveSessionOutsideWorkspace(t *testing.T) {
 		commandResolveSessionIdentifier = originalResolve
 		agentReadActiveSession = originalReadActive
 		agentEnsureDaemonRunning = originalEnsure
-		sessionGetRPC = originalSessionGet
+		workspaceGetRPC = originalSessionGet
 		agentListRPC = originalList
 	})
 
@@ -90,7 +90,7 @@ func TestAgentListEnvActiveSessionBypassesWorkspaceSafety(t *testing.T) {
 	originalResolve := commandResolveSessionIdentifier
 	originalReadActive := agentReadActiveSession
 	originalEnsure := agentEnsureDaemonRunning
-	originalSessionGet := sessionGetRPC
+	originalSessionGet := workspaceGetRPC
 	originalList := agentListRPC
 
 	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
@@ -100,7 +100,7 @@ func TestAgentListEnvActiveSessionBypassesWorkspaceSafety(t *testing.T) {
 		return "sess-env", nil
 	}
 	agentEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
-	sessionGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
+	workspaceGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
 		return daemon.WorkspaceGetResponse{WorkspaceID: "sess-env", OriginRoot: t.TempDir()}, nil
 	}
 	called := false
@@ -112,7 +112,7 @@ func TestAgentListEnvActiveSessionBypassesWorkspaceSafety(t *testing.T) {
 		commandResolveSessionIdentifier = originalResolve
 		agentReadActiveSession = originalReadActive
 		agentEnsureDaemonRunning = originalEnsure
-		sessionGetRPC = originalSessionGet
+		workspaceGetRPC = originalSessionGet
 		agentListRPC = originalList
 	})
 
@@ -144,7 +144,7 @@ func TestAgentSubcommandsRejectActiveSessionOutsideWorkspace(t *testing.T) {
 	originalResolve := commandResolveSessionIdentifier
 	originalReadActive := agentReadActiveSession
 	originalEnsure := agentEnsureDaemonRunning
-	originalSessionGet := sessionGetRPC
+	originalSessionGet := workspaceGetRPC
 	originalSpawn := agentSpawnRPC
 	originalList := agentListRPC
 	originalGet := agentGetRPC
@@ -161,7 +161,7 @@ func TestAgentSubcommandsRejectActiveSessionOutsideWorkspace(t *testing.T) {
 		return "sess-1", nil
 	}
 	agentEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
-	sessionGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
+	workspaceGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
 		return daemon.WorkspaceGetResponse{WorkspaceID: "sess-1", OriginRoot: t.TempDir()}, nil
 	}
 	agentSpawnRPC = func(context.Context, string, daemon.AgentSpawnRequest) (daemon.AgentSpawnResponse, error) {
@@ -192,7 +192,7 @@ func TestAgentSubcommandsRejectActiveSessionOutsideWorkspace(t *testing.T) {
 		commandResolveSessionIdentifier = originalResolve
 		agentReadActiveSession = originalReadActive
 		agentEnsureDaemonRunning = originalEnsure
-		sessionGetRPC = originalSessionGet
+		workspaceGetRPC = originalSessionGet
 		agentSpawnRPC = originalSpawn
 		agentListRPC = originalList
 		agentGetRPC = originalGet
@@ -249,7 +249,7 @@ func TestAgentListUsesSingleSessionGetForActiveWorkspace(t *testing.T) {
 
 	originalReadActive := agentReadActiveSession
 	originalEnsure := agentEnsureDaemonRunning
-	originalSessionGet := sessionGetRPC
+	originalSessionGet := workspaceGetRPC
 	originalList := agentListRPC
 
 	agentReadActiveSession = func() (string, error) {
@@ -257,7 +257,7 @@ func TestAgentListUsesSingleSessionGetForActiveWorkspace(t *testing.T) {
 	}
 	agentEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	sessionGetCalls := 0
-	sessionGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
+	workspaceGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
 		sessionGetCalls++
 		return daemon.WorkspaceGetResponse{WorkspaceID: "sess-1", OriginRoot: workspaceRoot}, nil
 	}
@@ -267,7 +267,7 @@ func TestAgentListUsesSingleSessionGetForActiveWorkspace(t *testing.T) {
 	t.Cleanup(func() {
 		agentReadActiveSession = originalReadActive
 		agentEnsureDaemonRunning = originalEnsure
-		sessionGetRPC = originalSessionGet
+		workspaceGetRPC = originalSessionGet
 		agentListRPC = originalList
 	})
 
@@ -275,7 +275,7 @@ func TestAgentListUsesSingleSessionGetForActiveWorkspace(t *testing.T) {
 		t.Fatalf("agent list returned error: %v", err)
 	}
 	if sessionGetCalls != 1 {
-		t.Fatalf("sessionGetRPC calls = %d, want 1", sessionGetCalls)
+		t.Fatalf("workspaceGetRPC calls = %d, want 1", sessionGetCalls)
 	}
 }
 
@@ -886,13 +886,13 @@ func TestAgentSubcommandsUseSessionFlagOverride(t *testing.T) {
 func executeRootCommandWithInput(stdin string, args ...string) (string, error) {
 	originalCommandEnsure := commandEnsureDaemonRunning
 	originalAgentEnsure := agentEnsureDaemonRunning
-	originalSessionEnsure := sessionEnsureDaemonRunning
+	originalSessionEnsure := workspaceEnsureDaemonRunning
 	originalResolveTarget := commandResolveSessionTarget
 	originalCommandScope := commandEnsureWorkspaceScope
 	originalAgentScope := agentEnsureWorkspaceScope
 	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	agentEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
-	sessionEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	workspaceEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	commandResolveSessionTarget = func(ctx context.Context, socketPath, idOrName string) (resolvedSessionTarget, error) {
 		sessionID, err := commandResolveSessionIdentifier(ctx, socketPath, idOrName)
 		if err != nil {
@@ -905,7 +905,7 @@ func executeRootCommandWithInput(stdin string, args ...string) (string, error) {
 	defer func() {
 		commandEnsureDaemonRunning = originalCommandEnsure
 		agentEnsureDaemonRunning = originalAgentEnsure
-		sessionEnsureDaemonRunning = originalSessionEnsure
+		workspaceEnsureDaemonRunning = originalSessionEnsure
 		commandResolveSessionTarget = originalResolveTarget
 		commandEnsureWorkspaceScope = originalCommandScope
 		agentEnsureWorkspaceScope = originalAgentScope

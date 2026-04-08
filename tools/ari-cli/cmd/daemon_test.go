@@ -844,12 +844,12 @@ func executeRootCommand(args ...string) (string, error) {
 func executeRootCommandWithContext(ctx context.Context, args ...string) (string, error) {
 	originalCommandEnsure := commandEnsureDaemonRunning
 	originalAgentEnsure := agentEnsureDaemonRunning
-	originalSessionEnsure := sessionEnsureDaemonRunning
-	originalSessionGet := sessionGetRPC
-	originalSessionList := sessionListRPC
+	originalSessionEnsure := workspaceEnsureDaemonRunning
+	originalSessionGet := workspaceGetRPC
+	originalSessionList := workspaceListRPC
 	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	agentEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
-	sessionEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	workspaceEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 
 	cwd := "."
 	if wd, err := os.Getwd(); err == nil {
@@ -857,7 +857,7 @@ func executeRootCommandWithContext(ctx context.Context, args ...string) (string,
 	}
 
 	if len(args) > 0 && (args[0] == "command" || args[0] == "agent") {
-		sessionGetRPC = func(_ context.Context, _ string, idOrName string) (daemon.WorkspaceGetResponse, error) {
+		workspaceGetRPC = func(_ context.Context, _ string, idOrName string) (daemon.WorkspaceGetResponse, error) {
 			resolved := strings.TrimSpace(idOrName)
 			if resolved == "" {
 				return daemon.WorkspaceGetResponse{}, userFacingError{message: "Workspace identifier is required"}
@@ -869,16 +869,16 @@ func executeRootCommandWithContext(ctx context.Context, args ...string) (string,
 				Folders:     []daemon.WorkspaceFolderInfo{{Path: cwd, VCSType: "none", IsPrimary: true}},
 			}, nil
 		}
-		sessionListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+		workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
 			return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{{WorkspaceID: "sess-1", Name: "alpha", Status: "active", FolderCount: 1}}}, nil
 		}
 	}
 	defer func() {
 		commandEnsureDaemonRunning = originalCommandEnsure
 		agentEnsureDaemonRunning = originalAgentEnsure
-		sessionEnsureDaemonRunning = originalSessionEnsure
-		sessionGetRPC = originalSessionGet
-		sessionListRPC = originalSessionList
+		workspaceEnsureDaemonRunning = originalSessionEnsure
+		workspaceGetRPC = originalSessionGet
+		workspaceListRPC = originalSessionList
 	}()
 
 	root := NewRootCmd()
@@ -942,12 +942,12 @@ func TestAgentListReturnsEnsureDaemonError(t *testing.T) {
 
 func TestWorkspaceListReturnsEnsureDaemonError(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	originalEnsure := sessionEnsureDaemonRunning
-	sessionEnsureDaemonRunning = func(context.Context, *config.Config) error {
+	originalEnsure := workspaceEnsureDaemonRunning
+	workspaceEnsureDaemonRunning = func(context.Context, *config.Config) error {
 		return userFacingError{message: "daemon ensure failed"}
 	}
 	t.Cleanup(func() {
-		sessionEnsureDaemonRunning = originalEnsure
+		workspaceEnsureDaemonRunning = originalEnsure
 	})
 
 	_, err := executeRootCommandRaw("workspace", "list")

@@ -22,8 +22,8 @@ import (
 )
 
 var (
-	sessionEnsureDaemonRunning         = ensureDaemonRunning
-	sessionSwitchIsInteractiveTerminal = func(cmd *cobra.Command) bool {
+	workspaceEnsureDaemonRunning         = ensureDaemonRunning
+	workspaceSwitchIsInteractiveTerminal = func(cmd *cobra.Command) bool {
 		if cmd == nil {
 			return false
 		}
@@ -33,7 +33,7 @@ var (
 		}
 		return term.IsTerminal(int(inputFile.Fd()))
 	}
-	sessionCreateRPC = func(ctx context.Context, socketPath string, req daemon.WorkspaceCreateRequest) (daemon.WorkspaceCreateResponse, error) {
+	workspaceCreateRPC = func(ctx context.Context, socketPath string, req daemon.WorkspaceCreateRequest) (daemon.WorkspaceCreateResponse, error) {
 		rpcClient := client.New(socketPath)
 		var response daemon.WorkspaceCreateResponse
 		if err := rpcClient.Call(ctx, "workspace.create", req, &response); err != nil {
@@ -41,7 +41,7 @@ var (
 		}
 		return response, nil
 	}
-	sessionListRPC = func(ctx context.Context, socketPath string) (daemon.WorkspaceListResponse, error) {
+	workspaceListRPC = func(ctx context.Context, socketPath string) (daemon.WorkspaceListResponse, error) {
 		rpcClient := client.New(socketPath)
 		var response daemon.WorkspaceListResponse
 		if err := rpcClient.Call(ctx, "workspace.list", daemon.WorkspaceListRequest{}, &response); err != nil {
@@ -49,7 +49,7 @@ var (
 		}
 		return response, nil
 	}
-	sessionGetRPC = func(ctx context.Context, socketPath, sessionID string) (daemon.WorkspaceGetResponse, error) {
+	workspaceGetRPC = func(ctx context.Context, socketPath, sessionID string) (daemon.WorkspaceGetResponse, error) {
 		rpcClient := client.New(socketPath)
 		var response daemon.WorkspaceGetResponse
 		if err := rpcClient.Call(ctx, "workspace.get", daemon.WorkspaceGetRequest{WorkspaceID: sessionID}, &response); err != nil {
@@ -57,7 +57,7 @@ var (
 		}
 		return response, nil
 	}
-	sessionCloseRPC = func(ctx context.Context, socketPath, sessionID string) (daemon.WorkspaceCloseResponse, error) {
+	workspaceCloseRPC = func(ctx context.Context, socketPath, sessionID string) (daemon.WorkspaceCloseResponse, error) {
 		rpcClient := client.New(socketPath)
 		var response daemon.WorkspaceCloseResponse
 		if err := rpcClient.Call(ctx, "workspace.close", daemon.WorkspaceCloseRequest{WorkspaceID: sessionID}, &response); err != nil {
@@ -65,7 +65,7 @@ var (
 		}
 		return response, nil
 	}
-	sessionSuspendRPC = func(ctx context.Context, socketPath, sessionID string) (daemon.WorkspaceSuspendResponse, error) {
+	workspaceSuspendRPC = func(ctx context.Context, socketPath, sessionID string) (daemon.WorkspaceSuspendResponse, error) {
 		rpcClient := client.New(socketPath)
 		var response daemon.WorkspaceSuspendResponse
 		if err := rpcClient.Call(ctx, "workspace.suspend", daemon.WorkspaceSuspendRequest{WorkspaceID: sessionID}, &response); err != nil {
@@ -73,7 +73,7 @@ var (
 		}
 		return response, nil
 	}
-	sessionResumeRPC = func(ctx context.Context, socketPath, sessionID string) (daemon.WorkspaceResumeResponse, error) {
+	workspaceResumeRPC = func(ctx context.Context, socketPath, sessionID string) (daemon.WorkspaceResumeResponse, error) {
 		rpcClient := client.New(socketPath)
 		var response daemon.WorkspaceResumeResponse
 		if err := rpcClient.Call(ctx, "workspace.resume", daemon.WorkspaceResumeRequest{WorkspaceID: sessionID}, &response); err != nil {
@@ -81,7 +81,7 @@ var (
 		}
 		return response, nil
 	}
-	sessionAddFolderRPC = func(ctx context.Context, socketPath string, req daemon.WorkspaceAddFolderRequest) (daemon.WorkspaceAddFolderResponse, error) {
+	workspaceAddFolderRPC = func(ctx context.Context, socketPath string, req daemon.WorkspaceAddFolderRequest) (daemon.WorkspaceAddFolderResponse, error) {
 		rpcClient := client.New(socketPath)
 		var response daemon.WorkspaceAddFolderResponse
 		if err := rpcClient.Call(ctx, "workspace.add_folder", req, &response); err != nil {
@@ -89,7 +89,7 @@ var (
 		}
 		return response, nil
 	}
-	sessionRemoveFolderRPC = func(ctx context.Context, socketPath string, req daemon.WorkspaceRemoveFolderRequest) error {
+	workspaceRemoveFolderRPC = func(ctx context.Context, socketPath string, req daemon.WorkspaceRemoveFolderRequest) error {
 		rpcClient := client.New(socketPath)
 		var response daemon.WorkspaceRemoveFolderResponse
 		return rpcClient.Call(ctx, "workspace.remove_folder", req, &response)
@@ -98,21 +98,21 @@ var (
 
 func NewWorkspaceCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "workspace", Short: "Manage Ari workspaces"}
-	cmd.AddCommand(newSessionCreateCmd())
-	cmd.AddCommand(newSessionListCmd())
-	cmd.AddCommand(newSessionShowCmd())
-	cmd.AddCommand(newSessionCloseCmd())
-	cmd.AddCommand(newSessionSuspendCmd())
-	cmd.AddCommand(newSessionResumeCmd())
-	cmd.AddCommand(newSessionSetCmd())
-	cmd.AddCommand(newSessionCurrentCmd())
-	cmd.AddCommand(newSessionSwitchCmd())
-	cmd.AddCommand(newSessionClearCmd())
-	cmd.AddCommand(newSessionFolderCmd())
+	cmd.AddCommand(newWorkspaceCreateCmd())
+	cmd.AddCommand(newWorkspaceListCmd())
+	cmd.AddCommand(newWorkspaceShowCmd())
+	cmd.AddCommand(newWorkspaceCloseCmd())
+	cmd.AddCommand(newWorkspaceSuspendCmd())
+	cmd.AddCommand(newWorkspaceResumeCmd())
+	cmd.AddCommand(newWorkspaceSetCmd())
+	cmd.AddCommand(newWorkspaceCurrentCmd())
+	cmd.AddCommand(newWorkspaceSwitchCmd())
+	cmd.AddCommand(newWorkspaceClearCmd())
+	cmd.AddCommand(newWorkspaceFolderCmd())
 	return cmd
 }
 
-func newSessionSetCmd() *cobra.Command {
+func newWorkspaceSetCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "set <id-or-name>",
 		Short: "Set active workspace",
@@ -122,7 +122,7 @@ func newSessionSetCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := sessionEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
+			if err := workspaceEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
 
@@ -141,7 +141,7 @@ func newSessionSetCmd() *cobra.Command {
 	}
 }
 
-func newSessionCurrentCmd() *cobra.Command {
+func newWorkspaceCurrentCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "current",
 		Short: "Show active workspace",
@@ -159,7 +159,7 @@ func newSessionCurrentCmd() *cobra.Command {
 	}
 }
 
-func newSessionClearCmd() *cobra.Command {
+func newWorkspaceClearCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "clear",
 		Short: "Clear active workspace",
@@ -177,7 +177,7 @@ func newSessionClearCmd() *cobra.Command {
 	}
 }
 
-func newSessionSwitchCmd() *cobra.Command {
+func newWorkspaceSwitchCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "switch",
 		Short: "Switch active workspace",
@@ -186,17 +186,17 @@ func newSessionSwitchCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := sessionEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
+			if err := workspaceEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
-			if !sessionSwitchIsInteractiveTerminal(cmd) {
+			if !workspaceSwitchIsInteractiveTerminal(cmd) {
 				return userFacingError{message: "workspace switch requires an interactive terminal; use workspace set <id-or-name>"}
 			}
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			response, err := sessionListRPC(ctx, cfg.Daemon.SocketPath)
+			response, err := workspaceListRPC(ctx, cfg.Daemon.SocketPath)
 			if err != nil {
 				return mapSessionRPCError(err)
 			}
@@ -323,7 +323,7 @@ func resumeWorkspaceAgentConversation(cmd *cobra.Command, cfg *config.Config, se
 	return err
 }
 
-func newSessionCreateCmd() *cobra.Command {
+func newWorkspaceCreateCmd() *cobra.Command {
 	var folder string
 	var cleanup string
 	var vcsPreference string
@@ -338,7 +338,7 @@ func newSessionCreateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := sessionEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
+			if err := workspaceEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
 
@@ -363,7 +363,7 @@ func newSessionCreateCmd() *cobra.Command {
 			createCtx, createCancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer createCancel()
 
-			response, err := sessionCreateRPC(createCtx, cfg.Daemon.SocketPath, daemon.WorkspaceCreateRequest{
+			response, err := workspaceCreateRPC(createCtx, cfg.Daemon.SocketPath, daemon.WorkspaceCreateRequest{
 				Name:          args[0],
 				Folder:        folderPath,
 				OriginRoot:    cwd,
@@ -424,7 +424,7 @@ func newSessionCreateCmd() *cobra.Command {
 	return cmd
 }
 
-func newSessionListCmd() *cobra.Command {
+func newWorkspaceListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
 		Short: "List workspaces",
@@ -433,14 +433,14 @@ func newSessionListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := sessionEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
+			if err := workspaceEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			response, err := sessionListRPC(ctx, cfg.Daemon.SocketPath)
+			response, err := workspaceListRPC(ctx, cfg.Daemon.SocketPath)
 			if err != nil {
 				return mapSessionRPCError(err)
 			}
@@ -463,7 +463,7 @@ func newSessionListCmd() *cobra.Command {
 	}
 }
 
-func newSessionShowCmd() *cobra.Command {
+func newWorkspaceShowCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "show <id-or-name>",
 		Short: "Show workspace details",
@@ -473,7 +473,7 @@ func newSessionShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := sessionEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
+			if err := workspaceEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
 
@@ -485,7 +485,7 @@ func newSessionShowCmd() *cobra.Command {
 				return err
 			}
 
-			response, err := sessionGetRPC(ctx, cfg.Daemon.SocketPath, sessionID)
+			response, err := workspaceGetRPC(ctx, cfg.Daemon.SocketPath, sessionID)
 			if err != nil {
 				return mapSessionRPCError(err)
 			}
@@ -520,7 +520,7 @@ func newSessionShowCmd() *cobra.Command {
 	}
 }
 
-func newSessionCloseCmd() *cobra.Command {
+func newWorkspaceCloseCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "close <id-or-name>",
 		Short: "Close workspace",
@@ -530,7 +530,7 @@ func newSessionCloseCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := sessionEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
+			if err := workspaceEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
 
@@ -542,7 +542,7 @@ func newSessionCloseCmd() *cobra.Command {
 				return err
 			}
 
-			resp, err := sessionCloseRPC(ctx, cfg.Daemon.SocketPath, sessionID)
+			resp, err := workspaceCloseRPC(ctx, cfg.Daemon.SocketPath, sessionID)
 			if err != nil {
 				return mapSessionRPCError(err)
 			}
@@ -563,9 +563,9 @@ func newSessionCloseCmd() *cobra.Command {
 	}
 }
 
-func newSessionSuspendCmd() *cobra.Command {
-	return newSessionStatusCommand("suspend", "Suspend workspace", func(ctx context.Context, socketPath, sessionID string) (string, error) {
-		resp, err := sessionSuspendRPC(ctx, socketPath, sessionID)
+func newWorkspaceSuspendCmd() *cobra.Command {
+	return newWorkspaceStatusCommand("suspend", "Suspend workspace", func(ctx context.Context, socketPath, sessionID string) (string, error) {
+		resp, err := workspaceSuspendRPC(ctx, socketPath, sessionID)
 		if err != nil {
 			return "", err
 		}
@@ -573,9 +573,9 @@ func newSessionSuspendCmd() *cobra.Command {
 	})
 }
 
-func newSessionResumeCmd() *cobra.Command {
-	return newSessionStatusCommand("resume", "Resume workspace", func(ctx context.Context, socketPath, sessionID string) (string, error) {
-		resp, err := sessionResumeRPC(ctx, socketPath, sessionID)
+func newWorkspaceResumeCmd() *cobra.Command {
+	return newWorkspaceStatusCommand("resume", "Resume workspace", func(ctx context.Context, socketPath, sessionID string) (string, error) {
+		resp, err := workspaceResumeRPC(ctx, socketPath, sessionID)
 		if err != nil {
 			return "", err
 		}
@@ -583,7 +583,7 @@ func newSessionResumeCmd() *cobra.Command {
 	})
 }
 
-func newSessionStatusCommand(use, short string, call func(context.Context, string, string) (string, error)) *cobra.Command {
+func newWorkspaceStatusCommand(use, short string, call func(context.Context, string, string) (string, error)) *cobra.Command {
 	return &cobra.Command{
 		Use:   use + " <id-or-name>",
 		Short: short,
@@ -593,7 +593,7 @@ func newSessionStatusCommand(use, short string, call func(context.Context, strin
 			if err != nil {
 				return err
 			}
-			if err := sessionEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
+			if err := workspaceEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
 
@@ -616,7 +616,7 @@ func newSessionStatusCommand(use, short string, call func(context.Context, strin
 	}
 }
 
-func newSessionFolderCmd() *cobra.Command {
+func newWorkspaceFolderCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "folder", Short: "Manage workspace folders"}
 
 	cmd.AddCommand(&cobra.Command{
@@ -628,7 +628,7 @@ func newSessionFolderCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := sessionEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
+			if err := workspaceEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
 
@@ -649,7 +649,7 @@ func newSessionFolderCmd() *cobra.Command {
 				return err
 			}
 
-			response, err := sessionAddFolderRPC(ctx, cfg.Daemon.SocketPath, daemon.WorkspaceAddFolderRequest{WorkspaceID: sessionID, FolderPath: folderPath})
+			response, err := workspaceAddFolderRPC(ctx, cfg.Daemon.SocketPath, daemon.WorkspaceAddFolderRequest{WorkspaceID: sessionID, FolderPath: folderPath})
 			if err != nil {
 				return mapSessionRPCError(err)
 			}
@@ -668,7 +668,7 @@ func newSessionFolderCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := sessionEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
+			if err := workspaceEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
 
@@ -689,7 +689,7 @@ func newSessionFolderCmd() *cobra.Command {
 				return err
 			}
 
-			if err := sessionRemoveFolderRPC(ctx, cfg.Daemon.SocketPath, daemon.WorkspaceRemoveFolderRequest{WorkspaceID: sessionID, FolderPath: folderPath}); err != nil {
+			if err := workspaceRemoveFolderRPC(ctx, cfg.Daemon.SocketPath, daemon.WorkspaceRemoveFolderRequest{WorkspaceID: sessionID, FolderPath: folderPath}); err != nil {
 				return mapSessionRPCError(err)
 			}
 
@@ -720,14 +720,14 @@ func resolveSessionTarget(ctx context.Context, socketPath, idOrName string) (res
 		return resolvedSessionTarget{}, userFacingError{message: "Workspace identifier is required"}
 	}
 
-	if session, err := sessionGetRPC(ctx, socketPath, idOrName); err == nil {
+	if session, err := workspaceGetRPC(ctx, socketPath, idOrName); err == nil {
 		resolved := session
 		return resolvedSessionTarget{WorkspaceID: session.WorkspaceID, Session: &resolved}, nil
 	} else if !isSessionNotFoundError(err) {
 		return resolvedSessionTarget{}, mapSessionRPCError(err)
 	}
 
-	list, err := sessionListRPC(ctx, socketPath)
+	list, err := workspaceListRPC(ctx, socketPath)
 	if err != nil {
 		return resolvedSessionTarget{}, mapSessionRPCError(err)
 	}

@@ -92,10 +92,10 @@ func TestWorkspaceSwitchRequiresInteractiveTerminal(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	originalTTY := sessionSwitchIsInteractiveTerminal
-	sessionSwitchIsInteractiveTerminal = func(*cobra.Command) bool { return false }
+	originalTTY := workspaceSwitchIsInteractiveTerminal
+	workspaceSwitchIsInteractiveTerminal = func(*cobra.Command) bool { return false }
 	t.Cleanup(func() {
-		sessionSwitchIsInteractiveTerminal = originalTTY
+		workspaceSwitchIsInteractiveTerminal = originalTTY
 	})
 
 	_, err := executeRootCommand("workspace", "switch")
@@ -111,15 +111,15 @@ func TestWorkspaceSwitchSelectsOnlyAvailableWorkspace(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	originalTTY := sessionSwitchIsInteractiveTerminal
-	originalList := sessionListRPC
-	sessionSwitchIsInteractiveTerminal = func(*cobra.Command) bool { return true }
-	sessionListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+	originalTTY := workspaceSwitchIsInteractiveTerminal
+	originalList := workspaceListRPC
+	workspaceSwitchIsInteractiveTerminal = func(*cobra.Command) bool { return true }
+	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
 		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{{WorkspaceID: "sess-11111111", Name: "alpha", Status: "active"}}}, nil
 	}
 	t.Cleanup(func() {
-		sessionSwitchIsInteractiveTerminal = originalTTY
-		sessionListRPC = originalList
+		workspaceSwitchIsInteractiveTerminal = originalTTY
+		workspaceListRPC = originalList
 	})
 
 	out, err := executeRootCommand("workspace", "switch")
@@ -143,15 +143,15 @@ func TestWorkspaceSwitchSkipsClosedWorkspaces(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	originalTTY := sessionSwitchIsInteractiveTerminal
-	originalList := sessionListRPC
-	sessionSwitchIsInteractiveTerminal = func(*cobra.Command) bool { return true }
-	sessionListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+	originalTTY := workspaceSwitchIsInteractiveTerminal
+	originalList := workspaceListRPC
+	workspaceSwitchIsInteractiveTerminal = func(*cobra.Command) bool { return true }
+	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
 		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{{WorkspaceID: "sess-closed", Name: "old", Status: "closed"}}}, nil
 	}
 	t.Cleanup(func() {
-		sessionSwitchIsInteractiveTerminal = originalTTY
-		sessionListRPC = originalList
+		workspaceSwitchIsInteractiveTerminal = originalTTY
+		workspaceListRPC = originalList
 	})
 
 	_, err := executeRootCommand("workspace", "switch")
@@ -167,18 +167,18 @@ func TestWorkspaceSwitchInteractiveSelectionForMultipleWorkspaces(t *testing.T) 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	originalTTY := sessionSwitchIsInteractiveTerminal
-	originalList := sessionListRPC
-	sessionSwitchIsInteractiveTerminal = func(*cobra.Command) bool { return true }
-	sessionListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+	originalTTY := workspaceSwitchIsInteractiveTerminal
+	originalList := workspaceListRPC
+	workspaceSwitchIsInteractiveTerminal = func(*cobra.Command) bool { return true }
+	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
 		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{
 			{WorkspaceID: "sess-11111111", Name: "alpha", Status: "active"},
 			{WorkspaceID: "sess-22222222", Name: "beta", Status: "suspended"},
 		}}, nil
 	}
 	t.Cleanup(func() {
-		sessionSwitchIsInteractiveTerminal = originalTTY
-		sessionListRPC = originalList
+		workspaceSwitchIsInteractiveTerminal = originalTTY
+		workspaceListRPC = originalList
 	})
 
 	out, err := executeRootCommandWithInput("2\n", "workspace", "switch")
@@ -206,15 +206,15 @@ func TestWorkspaceSwitchWithEnvOverrideMentionsPersistedValue(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("ARI_ACTIVE_WORKSPACE", "sess-env")
 
-	originalTTY := sessionSwitchIsInteractiveTerminal
-	originalList := sessionListRPC
-	sessionSwitchIsInteractiveTerminal = func(*cobra.Command) bool { return true }
-	sessionListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+	originalTTY := workspaceSwitchIsInteractiveTerminal
+	originalList := workspaceListRPC
+	workspaceSwitchIsInteractiveTerminal = func(*cobra.Command) bool { return true }
+	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
 		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{{WorkspaceID: "sess-11111111", Name: "alpha", Status: "active"}}}, nil
 	}
 	t.Cleanup(func() {
-		sessionSwitchIsInteractiveTerminal = originalTTY
-		sessionListRPC = originalList
+		workspaceSwitchIsInteractiveTerminal = originalTTY
+		workspaceListRPC = originalList
 	})
 
 	out, err := executeRootCommand("workspace", "switch")
@@ -230,17 +230,17 @@ func TestWorkspaceSetCurrentAndClear(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	originalGet := sessionGetRPC
-	originalList := sessionListRPC
-	sessionGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
+	originalGet := workspaceGetRPC
+	originalList := workspaceListRPC
+	workspaceGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
 		return daemon.WorkspaceGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "session not found"}
 	}
-	sessionListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
 		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{{WorkspaceID: "sess-12345678", Name: "alpha", Status: "active"}}}, nil
 	}
 	t.Cleanup(func() {
-		sessionGetRPC = originalGet
-		sessionListRPC = originalList
+		workspaceGetRPC = originalGet
+		workspaceListRPC = originalList
 	})
 
 	setOut, err := executeRootCommand("workspace", "set", "alpha")
@@ -280,17 +280,17 @@ func TestWorkspaceCloseClearsMatchingActiveWorkspace(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	originalGet := sessionGetRPC
-	originalClose := sessionCloseRPC
-	sessionGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
+	originalGet := workspaceGetRPC
+	originalClose := workspaceCloseRPC
+	workspaceGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
 		return daemon.WorkspaceGetResponse{WorkspaceID: "sess-1", Name: "alpha"}, nil
 	}
-	sessionCloseRPC = func(context.Context, string, string) (daemon.WorkspaceCloseResponse, error) {
+	workspaceCloseRPC = func(context.Context, string, string) (daemon.WorkspaceCloseResponse, error) {
 		return daemon.WorkspaceCloseResponse{Status: "closed"}, nil
 	}
 	t.Cleanup(func() {
-		sessionGetRPC = originalGet
-		sessionCloseRPC = originalClose
+		workspaceGetRPC = originalGet
+		workspaceCloseRPC = originalClose
 	})
 
 	if err := config.WriteActiveWorkspace("sess-1"); err != nil {
@@ -341,17 +341,17 @@ func TestWorkspaceSetWithEnvOverrideMentionsOverride(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("ARI_ACTIVE_WORKSPACE", "sess-env")
 
-	originalGet := sessionGetRPC
-	originalList := sessionListRPC
-	sessionGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
+	originalGet := workspaceGetRPC
+	originalList := workspaceListRPC
+	workspaceGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
 		return daemon.WorkspaceGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "session not found"}
 	}
-	sessionListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
 		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{{WorkspaceID: "sess-12345678", Name: "alpha", Status: "active"}}}, nil
 	}
 	t.Cleanup(func() {
-		sessionGetRPC = originalGet
-		sessionListRPC = originalList
+		workspaceGetRPC = originalGet
+		workspaceListRPC = originalList
 	})
 
 	out, err := executeRootCommand("workspace", "set", "alpha")
@@ -367,16 +367,16 @@ func TestWorkspaceSetResumesLatestResumableAgentHistory(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	originalGet := sessionGetRPC
-	originalList := sessionListRPC
+	originalGet := workspaceGetRPC
+	originalList := workspaceListRPC
 	originalAgentList := agentListRPC
 	originalAgentGet := agentGetRPC
 	originalAgentSpawn := agentSpawnRPC
 
-	sessionGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
+	workspaceGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
 		return daemon.WorkspaceGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "session not found"}
 	}
-	sessionListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
 		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{{WorkspaceID: "sess-12345678", Name: "alpha", Status: "active"}}}, nil
 	}
 	agentListRPC = func(context.Context, string, string) (daemon.AgentListResponse, error) {
@@ -394,8 +394,8 @@ func TestWorkspaceSetResumesLatestResumableAgentHistory(t *testing.T) {
 		return daemon.AgentSpawnResponse{AgentID: "agt-new", Status: "running"}, nil
 	}
 	t.Cleanup(func() {
-		sessionGetRPC = originalGet
-		sessionListRPC = originalList
+		workspaceGetRPC = originalGet
+		workspaceListRPC = originalList
 		agentListRPC = originalAgentList
 		agentGetRPC = originalAgentGet
 		agentSpawnRPC = originalAgentSpawn
@@ -423,16 +423,16 @@ func TestWorkspaceSetWithoutResumableHistoryDoesNotSpawn(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	originalGet := sessionGetRPC
-	originalList := sessionListRPC
+	originalGet := workspaceGetRPC
+	originalList := workspaceListRPC
 	originalAgentList := agentListRPC
 	originalAgentGet := agentGetRPC
 	originalAgentSpawn := agentSpawnRPC
 
-	sessionGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
+	workspaceGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
 		return daemon.WorkspaceGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "session not found"}
 	}
-	sessionListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
 		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{{WorkspaceID: "sess-12345678", Name: "alpha", Status: "active"}}}, nil
 	}
 	agentListRPC = func(context.Context, string, string) (daemon.AgentListResponse, error) {
@@ -447,8 +447,8 @@ func TestWorkspaceSetWithoutResumableHistoryDoesNotSpawn(t *testing.T) {
 		return daemon.AgentSpawnResponse{AgentID: "agt-new", Status: "running"}, nil
 	}
 	t.Cleanup(func() {
-		sessionGetRPC = originalGet
-		sessionListRPC = originalList
+		workspaceGetRPC = originalGet
+		workspaceListRPC = originalList
 		agentListRPC = originalAgentList
 		agentGetRPC = originalAgentGet
 		agentSpawnRPC = originalAgentSpawn
@@ -470,16 +470,16 @@ func TestWorkspaceSetSkipsRunningAgentsDuringAutoResume(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	originalGet := sessionGetRPC
-	originalList := sessionListRPC
+	originalGet := workspaceGetRPC
+	originalList := workspaceListRPC
 	originalAgentList := agentListRPC
 	originalAgentGet := agentGetRPC
 	originalAgentSpawn := agentSpawnRPC
 
-	sessionGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
+	workspaceGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
 		return daemon.WorkspaceGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "session not found"}
 	}
-	sessionListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
 		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{{WorkspaceID: "sess-12345678", Name: "alpha", Status: "active"}}}, nil
 	}
 	agentListRPC = func(context.Context, string, string) (daemon.AgentListResponse, error) {
@@ -497,8 +497,8 @@ func TestWorkspaceSetSkipsRunningAgentsDuringAutoResume(t *testing.T) {
 		return daemon.AgentSpawnResponse{AgentID: "agt-new", Status: "running"}, nil
 	}
 	t.Cleanup(func() {
-		sessionGetRPC = originalGet
-		sessionListRPC = originalList
+		workspaceGetRPC = originalGet
+		workspaceListRPC = originalList
 		agentListRPC = originalAgentList
 		agentGetRPC = originalAgentGet
 		agentSpawnRPC = originalAgentSpawn
@@ -517,16 +517,16 @@ func TestWorkspaceSetUsesFreshContextForAgentDetailLookup(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	originalGet := sessionGetRPC
-	originalList := sessionListRPC
+	originalGet := workspaceGetRPC
+	originalList := workspaceListRPC
 	originalAgentList := agentListRPC
 	originalAgentGet := agentGetRPC
 	originalAgentSpawn := agentSpawnRPC
 
-	sessionGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
+	workspaceGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
 		return daemon.WorkspaceGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "session not found"}
 	}
-	sessionListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
 		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{{WorkspaceID: "sess-12345678", Name: "alpha", Status: "active"}}}, nil
 	}
 	agentListRPC = func(context.Context, string, string) (daemon.AgentListResponse, error) {
@@ -549,8 +549,8 @@ func TestWorkspaceSetUsesFreshContextForAgentDetailLookup(t *testing.T) {
 		return daemon.AgentSpawnResponse{AgentID: "agt-new", Status: "running"}, nil
 	}
 	t.Cleanup(func() {
-		sessionGetRPC = originalGet
-		sessionListRPC = originalList
+		workspaceGetRPC = originalGet
+		workspaceListRPC = originalList
 		agentListRPC = originalAgentList
 		agentGetRPC = originalAgentGet
 		agentSpawnRPC = originalAgentSpawn
@@ -570,17 +570,17 @@ func TestWorkspaceCloseDoesNotUseEnvOverrideToClearPersistedActive(t *testing.T)
 	t.Setenv("HOME", home)
 	t.Setenv("ARI_ACTIVE_WORKSPACE", "sess-env")
 
-	originalGet := sessionGetRPC
-	originalClose := sessionCloseRPC
-	sessionGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
+	originalGet := workspaceGetRPC
+	originalClose := workspaceCloseRPC
+	workspaceGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
 		return daemon.WorkspaceGetResponse{WorkspaceID: "sess-env", Name: "alpha"}, nil
 	}
-	sessionCloseRPC = func(context.Context, string, string) (daemon.WorkspaceCloseResponse, error) {
+	workspaceCloseRPC = func(context.Context, string, string) (daemon.WorkspaceCloseResponse, error) {
 		return daemon.WorkspaceCloseResponse{Status: "closed"}, nil
 	}
 	t.Cleanup(func() {
-		sessionGetRPC = originalGet
-		sessionCloseRPC = originalClose
+		workspaceGetRPC = originalGet
+		workspaceCloseRPC = originalClose
 	})
 
 	if err := config.WriteActiveWorkspace("sess-stored"); err != nil {
@@ -618,14 +618,14 @@ func TestWorkspaceCreateUsesCWDDefaults(t *testing.T) {
 		t.Fatalf("chdir: %v", err)
 	}
 
-	originalCreate := sessionCreateRPC
+	originalCreate := workspaceCreateRPC
 	var gotReq daemon.WorkspaceCreateRequest
-	sessionCreateRPC = func(_ context.Context, _ string, req daemon.WorkspaceCreateRequest) (daemon.WorkspaceCreateResponse, error) {
+	workspaceCreateRPC = func(_ context.Context, _ string, req daemon.WorkspaceCreateRequest) (daemon.WorkspaceCreateResponse, error) {
 		gotReq = req
 		return daemon.WorkspaceCreateResponse{WorkspaceID: "sess-1", Name: req.Name, Status: "active", Folder: req.Folder, VCSType: "git", IsPrimary: true, OriginRoot: req.OriginRoot}, nil
 	}
 	t.Cleanup(func() {
-		sessionCreateRPC = originalCreate
+		workspaceCreateRPC = originalCreate
 	})
 
 	if err := os.MkdirAll(filepath.Join(cwd, ".git"), 0o755); err != nil {
@@ -672,10 +672,10 @@ func TestWorkspaceCreateAutoSpawnsDefaultHarnessAgent(t *testing.T) {
 		t.Fatalf("chdir: %v", err)
 	}
 
-	originalCreate := sessionCreateRPC
+	originalCreate := workspaceCreateRPC
 	originalSpawn := agentSpawnRPC
 	var gotSpawn daemon.AgentSpawnRequest
-	sessionCreateRPC = func(_ context.Context, _ string, req daemon.WorkspaceCreateRequest) (daemon.WorkspaceCreateResponse, error) {
+	workspaceCreateRPC = func(_ context.Context, _ string, req daemon.WorkspaceCreateRequest) (daemon.WorkspaceCreateResponse, error) {
 		return daemon.WorkspaceCreateResponse{WorkspaceID: "sess-1", Name: req.Name, Status: "active", Folder: req.Folder, VCSType: "none", IsPrimary: true, OriginRoot: req.OriginRoot}, nil
 	}
 	agentSpawnRPC = func(_ context.Context, _ string, req daemon.AgentSpawnRequest) (daemon.AgentSpawnResponse, error) {
@@ -683,7 +683,7 @@ func TestWorkspaceCreateAutoSpawnsDefaultHarnessAgent(t *testing.T) {
 		return daemon.AgentSpawnResponse{AgentID: "agt-1", Status: "running"}, nil
 	}
 	t.Cleanup(func() {
-		sessionCreateRPC = originalCreate
+		workspaceCreateRPC = originalCreate
 		agentSpawnRPC = originalSpawn
 	})
 
@@ -711,10 +711,10 @@ func TestWorkspaceCreateHarnessFlagOverridesConfiguredDefault(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("ARI_DEFAULT_HARNESS", "codex")
 
-	originalCreate := sessionCreateRPC
+	originalCreate := workspaceCreateRPC
 	originalSpawn := agentSpawnRPC
 	var gotSpawn daemon.AgentSpawnRequest
-	sessionCreateRPC = func(_ context.Context, _ string, req daemon.WorkspaceCreateRequest) (daemon.WorkspaceCreateResponse, error) {
+	workspaceCreateRPC = func(_ context.Context, _ string, req daemon.WorkspaceCreateRequest) (daemon.WorkspaceCreateResponse, error) {
 		return daemon.WorkspaceCreateResponse{WorkspaceID: "sess-1", Name: req.Name, Status: "active", Folder: req.Folder, VCSType: "none", IsPrimary: true, OriginRoot: req.OriginRoot}, nil
 	}
 	agentSpawnRPC = func(_ context.Context, _ string, req daemon.AgentSpawnRequest) (daemon.AgentSpawnResponse, error) {
@@ -722,7 +722,7 @@ func TestWorkspaceCreateHarnessFlagOverridesConfiguredDefault(t *testing.T) {
 		return daemon.AgentSpawnResponse{AgentID: "agt-1", Status: "running"}, nil
 	}
 	t.Cleanup(func() {
-		sessionCreateRPC = originalCreate
+		workspaceCreateRPC = originalCreate
 		agentSpawnRPC = originalSpawn
 	})
 
@@ -741,16 +741,16 @@ func TestWorkspaceCreateWarnsWhenAgentAutoSpawnFails(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("ARI_DEFAULT_HARNESS", "codex")
 
-	originalCreate := sessionCreateRPC
+	originalCreate := workspaceCreateRPC
 	originalSpawn := agentSpawnRPC
-	sessionCreateRPC = func(_ context.Context, _ string, req daemon.WorkspaceCreateRequest) (daemon.WorkspaceCreateResponse, error) {
+	workspaceCreateRPC = func(_ context.Context, _ string, req daemon.WorkspaceCreateRequest) (daemon.WorkspaceCreateResponse, error) {
 		return daemon.WorkspaceCreateResponse{WorkspaceID: "sess-1", Name: req.Name, Status: "active", Folder: req.Folder, VCSType: "none", IsPrimary: true, OriginRoot: req.OriginRoot}, nil
 	}
 	agentSpawnRPC = func(_ context.Context, _ string, _ daemon.AgentSpawnRequest) (daemon.AgentSpawnResponse, error) {
 		return daemon.AgentSpawnResponse{}, userFacingError{message: "spawn failed"}
 	}
 	t.Cleanup(func() {
-		sessionCreateRPC = originalCreate
+		workspaceCreateRPC = originalCreate
 		agentSpawnRPC = originalSpawn
 	})
 
@@ -790,14 +790,14 @@ func TestWorkspaceCreateUsesDetectedVCSRootForDefaultFolder(t *testing.T) {
 		t.Fatalf("chdir: %v", err)
 	}
 
-	originalCreate := sessionCreateRPC
+	originalCreate := workspaceCreateRPC
 	var gotReq daemon.WorkspaceCreateRequest
-	sessionCreateRPC = func(_ context.Context, _ string, req daemon.WorkspaceCreateRequest) (daemon.WorkspaceCreateResponse, error) {
+	workspaceCreateRPC = func(_ context.Context, _ string, req daemon.WorkspaceCreateRequest) (daemon.WorkspaceCreateResponse, error) {
 		gotReq = req
 		return daemon.WorkspaceCreateResponse{WorkspaceID: "sess-1", Name: req.Name, Status: "active", Folder: req.Folder, VCSType: "git", IsPrimary: true, OriginRoot: req.OriginRoot}, nil
 	}
 	t.Cleanup(func() {
-		sessionCreateRPC = originalCreate
+		workspaceCreateRPC = originalCreate
 	})
 
 	_, err = executeRootCommand("workspace", "create", "alpha")
@@ -832,32 +832,32 @@ func TestWorkspaceFolderCommandsNormalizeRelativePaths(t *testing.T) {
 		t.Fatalf("chdir: %v", err)
 	}
 
-	originalGet := sessionGetRPC
-	originalList := sessionListRPC
-	originalAdd := sessionAddFolderRPC
-	originalRemove := sessionRemoveFolderRPC
+	originalGet := workspaceGetRPC
+	originalList := workspaceListRPC
+	originalAdd := workspaceAddFolderRPC
+	originalRemove := workspaceRemoveFolderRPC
 
-	sessionGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
+	workspaceGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
 		return daemon.WorkspaceGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "session not found"}
 	}
-	sessionListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
 		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{{WorkspaceID: "sess-1", Name: "alpha"}}}, nil
 	}
 	var addPath string
-	sessionAddFolderRPC = func(_ context.Context, _ string, req daemon.WorkspaceAddFolderRequest) (daemon.WorkspaceAddFolderResponse, error) {
+	workspaceAddFolderRPC = func(_ context.Context, _ string, req daemon.WorkspaceAddFolderRequest) (daemon.WorkspaceAddFolderResponse, error) {
 		addPath = req.FolderPath
 		return daemon.WorkspaceAddFolderResponse{FolderPath: req.FolderPath, VCSType: "git"}, nil
 	}
 	var removePath string
-	sessionRemoveFolderRPC = func(_ context.Context, _ string, req daemon.WorkspaceRemoveFolderRequest) error {
+	workspaceRemoveFolderRPC = func(_ context.Context, _ string, req daemon.WorkspaceRemoveFolderRequest) error {
 		removePath = req.FolderPath
 		return nil
 	}
 	t.Cleanup(func() {
-		sessionGetRPC = originalGet
-		sessionListRPC = originalList
-		sessionAddFolderRPC = originalAdd
-		sessionRemoveFolderRPC = originalRemove
+		workspaceGetRPC = originalGet
+		workspaceListRPC = originalList
+		workspaceAddFolderRPC = originalAdd
+		workspaceRemoveFolderRPC = originalRemove
 	})
 
 	_, err = executeRootCommand("workspace", "folder", "add", "alpha", "relative/repo")
@@ -881,15 +881,15 @@ func TestWorkspaceListPrintsEntries(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	originalList := sessionListRPC
-	sessionListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+	originalList := workspaceListRPC
+	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
 		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{
 			{WorkspaceID: "11111111-1111-1111-1111-111111111111", Name: "alpha", Status: "active", FolderCount: 2, CreatedAt: "now"},
 			{WorkspaceID: "22222222-2222-2222-2222-222222222222", Name: "beta", Status: "suspended", FolderCount: 1, CreatedAt: "later"},
 		}}, nil
 	}
 	t.Cleanup(func() {
-		sessionListRPC = originalList
+		workspaceListRPC = originalList
 	})
 
 	out, err := executeRootCommand("workspace", "list")
@@ -906,21 +906,21 @@ func TestWorkspaceListPrintsEntries(t *testing.T) {
 }
 
 func TestResolveSessionIdentifierByNameAndPrefix(t *testing.T) {
-	originalGet := sessionGetRPC
-	originalList := sessionListRPC
+	originalGet := workspaceGetRPC
+	originalList := workspaceListRPC
 
-	sessionGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
+	workspaceGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
 		return daemon.WorkspaceGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "session not found"}
 	}
-	sessionListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
 		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{
 			{WorkspaceID: "aaaaaaaa-1111-1111-1111-111111111111", Name: "alpha"},
 			{WorkspaceID: "bbbbbbbb-2222-2222-2222-222222222222", Name: "beta"},
 		}}, nil
 	}
 	t.Cleanup(func() {
-		sessionGetRPC = originalGet
-		sessionListRPC = originalList
+		workspaceGetRPC = originalGet
+		workspaceListRPC = originalList
 	})
 
 	byName, err := resolveSessionIdentifier(context.Background(), "/tmp/daemon.sock", "alpha")
@@ -941,21 +941,21 @@ func TestResolveSessionIdentifierByNameAndPrefix(t *testing.T) {
 }
 
 func TestResolveSessionIdentifierRejectsAmbiguousPrefix(t *testing.T) {
-	originalGet := sessionGetRPC
-	originalList := sessionListRPC
+	originalGet := workspaceGetRPC
+	originalList := workspaceListRPC
 
-	sessionGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
+	workspaceGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
 		return daemon.WorkspaceGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "session not found"}
 	}
-	sessionListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
 		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{
 			{WorkspaceID: "abc11111-1111-1111-1111-111111111111", Name: "alpha"},
 			{WorkspaceID: "abc22222-2222-2222-2222-222222222222", Name: "beta"},
 		}}, nil
 	}
 	t.Cleanup(func() {
-		sessionGetRPC = originalGet
-		sessionListRPC = originalList
+		workspaceGetRPC = originalGet
+		workspaceListRPC = originalList
 	})
 
 	_, err := resolveSessionIdentifier(context.Background(), "/tmp/daemon.sock", "abc")
@@ -986,14 +986,14 @@ func TestWorkspaceCreateAllowsVCSPreferenceOverride(t *testing.T) {
 		t.Fatalf("create .git dir: %v", err)
 	}
 
-	originalCreate := sessionCreateRPC
+	originalCreate := workspaceCreateRPC
 	var gotReq daemon.WorkspaceCreateRequest
-	sessionCreateRPC = func(_ context.Context, _ string, req daemon.WorkspaceCreateRequest) (daemon.WorkspaceCreateResponse, error) {
+	workspaceCreateRPC = func(_ context.Context, _ string, req daemon.WorkspaceCreateRequest) (daemon.WorkspaceCreateResponse, error) {
 		gotReq = req
 		return daemon.WorkspaceCreateResponse{WorkspaceID: "sess-1", Name: req.Name, Status: "active", Folder: req.Folder, VCSType: "git", IsPrimary: true, OriginRoot: req.OriginRoot}, nil
 	}
 	t.Cleanup(func() {
-		sessionCreateRPC = originalCreate
+		workspaceCreateRPC = originalCreate
 	})
 
 	_, err = executeRootCommand("workspace", "create", "alpha", "--vcs-preference", "jj")
