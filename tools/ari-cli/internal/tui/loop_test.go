@@ -113,6 +113,25 @@ func TestLoopResizeUsesFullRowsWhenStatusBarMissing(t *testing.T) {
 	}
 }
 
+func TestLoopResizeAllowsSingleRowWithoutStatusBar(t *testing.T) {
+	t.Parallel()
+
+	screen := newSimulationScreen(t, 20, 1)
+	vt := &fakeVTSource{}
+	loop, err := NewLoop(screen, vt, &DefaultTheme, nil)
+	if err != nil {
+		t.Fatalf("NewLoop returned error: %v", err)
+	}
+
+	if err := loop.Resize(20, 1); err != nil {
+		t.Fatalf("Resize returned error: %v", err)
+	}
+
+	if vt.resizeRows != 1 {
+		t.Fatalf("resize rows = %d, want 1 when status bar is nil and rows=1", vt.resizeRows)
+	}
+}
+
 func TestLoopConcurrentAccessIsRaceFree(t *testing.T) {
 	screen := newSimulationScreen(t, 40, 10)
 	vt := &fakeVTSource{dirty: true}

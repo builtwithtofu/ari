@@ -155,11 +155,12 @@ func (l *Loop) Resize(cols int, rows int) error {
 		return fmt.Errorf("cols must be greater than zero")
 	}
 
-	if rows <= 1 {
-		return fmt.Errorf("rows must be greater than one")
+	statusBarHeight := l.statusBarHeight()
+	minimumRows := statusBarHeight + 1
+	if rows < minimumRows {
+		return fmt.Errorf("rows must be at least %d", minimumRows)
 	}
 
-	statusBarHeight := l.statusBarHeight()
 	if err := l.vt.Resize(cols, rows-statusBarHeight); err != nil {
 		return err
 	}
