@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/gdamore/tcell/v3"
 	xterm "github.com/gitpod-io/xterm-go"
@@ -13,6 +14,7 @@ import (
 // attach loops: write PTY bytes, resize the viewport, and copy visible cells
 // into tcell's screen with SetContent.
 type VTRenderer struct {
+	mu             sync.Mutex
 	term           *xterm.Terminal
 	cols           int
 	rows           int
@@ -49,7 +51,14 @@ func NewVTRenderer(cols int, rows int) (*VTRenderer, error) {
 }
 
 func (r *VTRenderer) Close() {
-	if r == nil || r.term == nil {
+	if r == nil {
+		return
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.term == nil {
 		return
 	}
 
@@ -60,6 +69,9 @@ func (r *VTRenderer) Write(data []byte) (int, error) {
 	if r == nil {
 		return 0, fmt.Errorf("renderer is required")
 	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
 	if r.term == nil {
 		return 0, fmt.Errorf("renderer terminal is required")
@@ -81,6 +93,9 @@ func (r *VTRenderer) Resize(cols int, rows int) error {
 	if r == nil {
 		return fmt.Errorf("renderer is required")
 	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
 	if cols <= 0 {
 		return fmt.Errorf("cols must be greater than zero")
@@ -107,6 +122,9 @@ func (r *VTRenderer) SetOverlayActive(active bool) {
 		return
 	}
 
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	if r.overlay == active {
 		return
 	}
@@ -122,6 +140,9 @@ func (r *VTRenderer) Dirty() bool {
 		return false
 	}
 
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	return r.dirty
 }
 
@@ -130,6 +151,9 @@ func (r *VTRenderer) MarkClean() {
 		return
 	}
 
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	r.dirty = false
 }
 
@@ -137,6 +161,9 @@ func (r *VTRenderer) CopyTo(screen Screen, x int, y int, width int, height int) 
 	if r == nil {
 		return fmt.Errorf("renderer is required")
 	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
 	if screen == nil {
 		return fmt.Errorf("screen is required")

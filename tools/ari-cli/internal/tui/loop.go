@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/gdamore/tcell/v3"
 )
@@ -74,6 +75,7 @@ type VTSource interface {
 // This keeps no-op frames effectively free while still allowing immediate input
 // handling through the screen event channel.
 type Loop struct {
+	mu        sync.Mutex
 	screen    Screen
 	vt        VTSource
 	theme     *Theme
@@ -121,6 +123,9 @@ func (l *Loop) MarkDirty() {
 		return
 	}
 
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
 	l.dirty = true
 }
 
@@ -128,6 +133,9 @@ func (l *Loop) SetOverlayActive(active bool) {
 	if l == nil {
 		return
 	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
 
 	if l.overlay == active {
 		return
@@ -151,9 +159,13 @@ func (l *Loop) Resize(cols int, rows int) error {
 		return fmt.Errorf("rows must be greater than one")
 	}
 
-	if err := l.vt.Resize(cols, rows-1); err != nil {
+	statusBarHeight := l.statusBarHeight()
+	if err := l.vt.Resize(cols, rows-statusBarHeight); err != nil {
 		return err
 	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
 
 	l.dirty = true
 	return nil
@@ -171,6 +183,9 @@ func (l *Loop) Frame() (bool, error) {
 		return false, fmt.Errorf("screen is required")
 	}
 
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
 	shouldRender := l.dirty || l.vt.Dirty()
 	if !shouldRender {
 		return false, nil
@@ -185,7 +200,8 @@ func (l *Loop) Frame() (bool, error) {
 		return false, fmt.Errorf("screen height must be greater than zero")
 	}
 
-	viewportHeight := height - 1
+	statusBarHeight := l.statusBarHeight()
+	viewportHeight := height - statusBarHeight
 	if viewportHeight < 0 {
 		viewportHeight = 0
 	}
@@ -196,7 +212,7 @@ func (l *Loop) Frame() (bool, error) {
 		}
 	}
 
-	if l.statusBar != nil {
+	if l.statusBar != nil && statusBarHeight > 0 {
 		l.statusBar.Paint(l.screen, Rect{X: 0, Y: height - 1, Width: width, Height: 1}, l.theme)
 	}
 
@@ -205,4 +221,12 @@ func (l *Loop) Frame() (bool, error) {
 	l.dirty = false
 
 	return true, nil
+}
+
+func (l *Loop) statusBarHeight() int {
+	if l.statusBar == nil {
+		return 0
+	}
+
+	return 1
 }

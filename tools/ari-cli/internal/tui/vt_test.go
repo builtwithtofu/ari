@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/gdamore/tcell/v3"
@@ -217,6 +218,37 @@ func TestVTRendererCopyToClearsRightSideAfterNarrowResize(t *testing.T) {
 			t.Fatalf("stale rune at (%d,0) = %q, want space", x, string(got))
 		}
 	}
+}
+
+func TestVTRendererConcurrentWriteAndCopyIsRaceFree(t *testing.T) {
+	renderer, err := NewVTRenderer(80, 20)
+	if err != nil {
+		t.Fatalf("NewVTRenderer returned error: %v", err)
+	}
+	t.Cleanup(renderer.Close)
+
+	screen := newSimulationScreen(t, 80, 20)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 1000; i++ {
+			_, _ = renderer.Write([]byte("line\n"))
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 1000; i++ {
+			_ = renderer.CopyTo(screen, 0, 0, 80, 20)
+			_ = renderer.Dirty()
+			renderer.MarkClean()
+		}
+	}()
+
+	wg.Wait()
 }
 
 func newSimulationScreen(t *testing.T, width int, height int) *testScreen {

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"sync"
 	"testing"
 )
 
@@ -71,7 +72,7 @@ func TestLoopResizeMarksDirtyAndResizesVT(t *testing.T) {
 
 	screen := newSimulationScreen(t, 20, 8)
 	vt := &fakeVTSource{}
-	loop, err := NewLoop(screen, vt, &DefaultTheme, nil)
+	loop, err := NewLoop(screen, vt, &DefaultTheme, &markerWidget{r: 'S'})
 	if err != nil {
 		t.Fatalf("NewLoop returned error: %v", err)
 	}
@@ -91,6 +92,54 @@ func TestLoopResizeMarksDirtyAndResizesVT(t *testing.T) {
 	if !loop.dirty {
 		t.Fatal("loop dirty = false, want true after Resize")
 	}
+}
+
+func TestLoopResizeUsesFullRowsWhenStatusBarMissing(t *testing.T) {
+	t.Parallel()
+
+	screen := newSimulationScreen(t, 20, 8)
+	vt := &fakeVTSource{}
+	loop, err := NewLoop(screen, vt, &DefaultTheme, nil)
+	if err != nil {
+		t.Fatalf("NewLoop returned error: %v", err)
+	}
+
+	if err := loop.Resize(20, 8); err != nil {
+		t.Fatalf("Resize returned error: %v", err)
+	}
+
+	if vt.resizeRows != 8 {
+		t.Fatalf("resize rows = %d, want 8 when status bar is nil", vt.resizeRows)
+	}
+}
+
+func TestLoopConcurrentAccessIsRaceFree(t *testing.T) {
+	screen := newSimulationScreen(t, 40, 10)
+	vt := &fakeVTSource{dirty: true}
+	loop, err := NewLoop(screen, vt, &DefaultTheme, nil)
+	if err != nil {
+		t.Fatalf("NewLoop returned error: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 1000; i++ {
+			loop.MarkDirty()
+			loop.SetOverlayActive(i%2 == 0)
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 1000; i++ {
+			_, _ = loop.Frame()
+		}
+	}()
+
+	wg.Wait()
 }
 
 type fakeVTSource struct {

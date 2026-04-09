@@ -2,6 +2,7 @@ package tui
 
 import (
 	"sync"
+	"testing"
 
 	"github.com/gdamore/tcell/v3"
 )
@@ -14,6 +15,7 @@ type screenCell struct {
 
 type testScreen struct {
 	mu     sync.RWMutex
+	once   sync.Once
 	width  int
 	height int
 	cells  map[[2]int]screenCell
@@ -31,7 +33,23 @@ func newTestScreen(width int, height int) *testScreen {
 
 func (s *testScreen) Init() error { return nil }
 
-func (s *testScreen) Fini() { close(s.events) }
+func (s *testScreen) Fini() {
+	s.once.Do(func() {
+		close(s.events)
+	})
+}
+
+func TestTestScreenFiniIsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	screen := newTestScreen(2, 2)
+	if err := screen.Init(); err != nil {
+		t.Fatalf("Init returned error: %v", err)
+	}
+
+	screen.Fini()
+	screen.Fini()
+}
 
 func (s *testScreen) SetContent(x int, y int, primary rune, combining []rune, style tcell.Style) {
 	if x < 0 || y < 0 || x >= s.width || y >= s.height {
