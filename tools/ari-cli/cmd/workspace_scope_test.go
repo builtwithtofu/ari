@@ -136,3 +136,65 @@ func TestWorkspaceMatchesSessionIgnoresBlankFolderEntries(t *testing.T) {
 		t.Fatal("workspaceMatchesSession = false, want true when one non-blank folder matches")
 	}
 }
+
+func TestResolveWorkspaceByCWDSelectsMostSpecificMatch(t *testing.T) {
+	root := t.TempDir()
+	parent := filepath.Join(root, "projects")
+	child := filepath.Join(parent, "app")
+	if err := os.MkdirAll(child, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll returned error: %v", err)
+	}
+
+	workspaceID, err := resolveWorkspaceByCWD(child, []daemon.WorkspaceGetResponse{
+		{WorkspaceID: "ws-parent", Name: "clay", OriginRoot: parent},
+		{WorkspaceID: "ws-child", Name: "clay", OriginRoot: child},
+	})
+	if err != nil {
+		t.Fatalf("resolveWorkspaceByCWD returned error: %v", err)
+	}
+	if workspaceID != "ws-child" {
+		t.Fatalf("workspaceID = %q, want %q", workspaceID, "ws-child")
+	}
+}
+
+func TestResolveWorkspaceByCWDHandlesBasenameCollisionsByPath(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "src", "clay")
+	right := filepath.Join(root, "work", "clay")
+	if err := os.MkdirAll(left, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll left returned error: %v", err)
+	}
+	if err := os.MkdirAll(right, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll right returned error: %v", err)
+	}
+
+	workspaceID, err := resolveWorkspaceByCWD(right, []daemon.WorkspaceGetResponse{
+		{WorkspaceID: "ws-left", Name: "clay", OriginRoot: left},
+		{WorkspaceID: "ws-right", Name: "clay", OriginRoot: right},
+	})
+	if err != nil {
+		t.Fatalf("resolveWorkspaceByCWD returned error: %v", err)
+	}
+	if workspaceID != "ws-right" {
+		t.Fatalf("workspaceID = %q, want %q", workspaceID, "ws-right")
+	}
+}
+
+func TestResolveWorkspaceByCWDErrorsWhenAmbiguous(t *testing.T) {
+	root := t.TempDir()
+	cwd := filepath.Join(root, "repo")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll returned error: %v", err)
+	}
+
+	_, err := resolveWorkspaceByCWD(cwd, []daemon.WorkspaceGetResponse{
+		{WorkspaceID: "ws-a", Name: "alpha", OriginRoot: cwd},
+		{WorkspaceID: "ws-b", Name: "beta", OriginRoot: cwd},
+	})
+	if err == nil {
+		t.Fatal("resolveWorkspaceByCWD returned nil error")
+	}
+	if err.Error() != "current directory matches multiple workspaces; use --workspace <id-or-name>" {
+		t.Fatalf("resolveWorkspaceByCWD error = %q, want %q", err.Error(), "current directory matches multiple workspaces; use --workspace <id-or-name>")
+	}
+}

@@ -732,14 +732,25 @@ func resolveSessionTarget(ctx context.Context, socketPath, idOrName string) (res
 		return resolvedSessionTarget{}, mapSessionRPCError(err)
 	}
 
+	nameMatches := make([]daemon.WorkspaceSummary, 0)
 	prefixMatches := make([]string, 0)
 	for _, session := range list.Workspaces {
 		if session.Name == idOrName {
-			return resolvedSessionTarget{WorkspaceID: session.WorkspaceID}, nil
+			nameMatches = append(nameMatches, session)
 		}
 		if strings.HasPrefix(session.WorkspaceID, idOrName) {
 			prefixMatches = append(prefixMatches, session.WorkspaceID)
 		}
+	}
+	if len(nameMatches) == 1 {
+		return resolvedSessionTarget{WorkspaceID: nameMatches[0].WorkspaceID}, nil
+	}
+	if len(nameMatches) > 1 {
+		workspaceID, err := resolveNameCollisionByCWD(ctx, socketPath, nameMatches)
+		if err != nil {
+			return resolvedSessionTarget{}, err
+		}
+		return resolvedSessionTarget{WorkspaceID: workspaceID}, nil
 	}
 	if len(prefixMatches) == 1 {
 		return resolvedSessionTarget{WorkspaceID: prefixMatches[0]}, nil
@@ -749,6 +760,49 @@ func resolveSessionTarget(ctx context.Context, socketPath, idOrName string) (res
 	}
 
 	return resolvedSessionTarget{}, userFacingError{message: "Workspace not found"}
+}
+
+func resolveNameCollisionByCWD(ctx context.Context, socketPath string, nameMatches []daemon.WorkspaceSummary) (string, error) {
+	if len(nameMatches) < 2 {
+		return "", fmt.Errorf("name collision requires at least two matches")
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+
+	candidates := make([]daemon.WorkspaceGetResponse, 0, len(nameMatches))
+	for _, match := range nameMatches {
+		workspaceID := strings.TrimSpace(match.WorkspaceID)
+		if workspaceID == "" {
+			continue
+		}
+
+		session, getErr := workspaceGetRPC(ctx, socketPath, workspaceID)
+		if getErr != nil {
+			if isSessionNotFoundError(getErr) {
+				continue
+			}
+			return "", mapSessionRPCError(getErr)
+		}
+		candidates = append(candidates, session)
+	}
+
+	if len(candidates) == 0 {
+		return "", userFacingError{message: "Workspace name is ambiguous; use --workspace <id-or-name>"}
+	}
+
+	workspaceID, resolveErr := resolveWorkspaceByCWD(cwd, candidates)
+	if resolveErr == nil {
+		return workspaceID, nil
+	}
+
+	if isWorkspaceCWDNoMatch(resolveErr) {
+		return "", userFacingError{message: "Workspace name is ambiguous; use --workspace <id-or-name>"}
+	}
+
+	return "", resolveErr
 }
 
 func mapSessionRPCError(err error) error {
