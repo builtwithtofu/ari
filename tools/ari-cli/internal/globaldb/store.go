@@ -143,6 +143,53 @@ WHERE workspace_id = ? AND command_id = ?`
 SET status = 'lost'
 WHERE status = 'running'`
 
+	insertWorkspaceCommandDefinitionQuery = `INSERT INTO workspace_command_definitions (
+		command_id,
+		workspace_id,
+		name,
+		command,
+		args,
+		created_at,
+		updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?)`
+
+	workspaceCommandDefinitionByIDQuery = `SELECT
+		command_id,
+		workspace_id,
+		name,
+		command,
+		args,
+		created_at,
+		updated_at
+FROM workspace_command_definitions
+WHERE workspace_id = ? AND command_id = ?`
+
+	workspaceCommandDefinitionByNameQuery = `SELECT
+		command_id,
+		workspace_id,
+		name,
+		command,
+		args,
+		created_at,
+		updated_at
+FROM workspace_command_definitions
+WHERE workspace_id = ? AND name = ?`
+
+	listWorkspaceCommandDefinitionsBySessionQuery = `SELECT
+		command_id,
+		workspace_id,
+		name,
+		command,
+		args,
+		created_at,
+		updated_at
+FROM workspace_command_definitions
+WHERE workspace_id = ?
+ORDER BY created_at DESC, command_id ASC`
+
+	deleteWorkspaceCommandDefinitionByIDQuery = `DELETE FROM workspace_command_definitions
+WHERE workspace_id = ? AND command_id = ?`
+
 	insertAgentQuery = `INSERT INTO agents (
 		agent_id,
 		workspace_id,
@@ -270,6 +317,16 @@ type Command struct {
 	FinishedAt  *string
 }
 
+type WorkspaceCommandDefinition struct {
+	CommandID   string
+	WorkspaceID string
+	Name        string
+	Command     string
+	Args        string
+	CreatedAt   string
+	UpdatedAt   string
+}
+
 type CreateCommandParams struct {
 	CommandID   string
 	WorkspaceID string
@@ -287,6 +344,14 @@ type UpdateCommandStatusParams struct {
 	Status      string
 	ExitCode    *int
 	FinishedAt  *string
+}
+
+type CreateWorkspaceCommandDefinitionParams struct {
+	CommandID   string
+	WorkspaceID string
+	Name        string
+	Command     string
+	Args        string
 }
 
 type Agent struct {
@@ -766,6 +831,132 @@ func (s *Store) MarkRunningCommandsLost(ctx context.Context) error {
 	return nil
 }
 
+func (s *Store) CreateWorkspaceCommandDefinition(ctx context.Context, params CreateWorkspaceCommandDefinitionParams) error {
+	if params.CommandID = strings.TrimSpace(params.CommandID); params.CommandID == "" {
+		return fmt.Errorf("%w: command id is required", ErrInvalidInput)
+	}
+	if params.WorkspaceID = strings.TrimSpace(params.WorkspaceID); params.WorkspaceID == "" {
+		return fmt.Errorf("%w: session id is required", ErrInvalidInput)
+	}
+	if params.Name = strings.TrimSpace(params.Name); params.Name == "" {
+		return fmt.Errorf("%w: command name is required", ErrInvalidInput)
+	}
+	if params.Command = strings.TrimSpace(params.Command); params.Command == "" {
+		return fmt.Errorf("%w: command is required", ErrInvalidInput)
+	}
+	if params.Args = strings.TrimSpace(params.Args); params.Args == "" {
+		params.Args = "[]"
+	}
+	if existingByID, err := s.GetWorkspaceCommandDefinition(ctx, params.WorkspaceID, params.Name); err == nil && existingByID != nil {
+		return fmt.Errorf("%w: command name %q collides with existing command id", ErrInvalidInput, params.Name)
+	} else if err != nil && !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	if existingByName, err := s.GetWorkspaceCommandDefinitionByName(ctx, params.WorkspaceID, params.CommandID); err == nil && existingByName != nil {
+		return fmt.Errorf("%w: command id %q collides with existing command name", ErrInvalidInput, params.CommandID)
+	} else if err != nil && !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	if !json.Valid([]byte(params.Args)) {
+		return fmt.Errorf("%w: command args must be valid json", ErrInvalidInput)
+	}
+	trimmedArgs := strings.TrimSpace(params.Args)
+	if !strings.HasPrefix(trimmedArgs, "[") || !strings.HasSuffix(trimmedArgs, "]") {
+		return fmt.Errorf("%w: command args must be a json string array", ErrInvalidInput)
+	}
+	decodedArgs := make([]string, 0)
+	if err := json.Unmarshal([]byte(params.Args), &decodedArgs); err != nil {
+		return fmt.Errorf("%w: command args must be a json string array", ErrInvalidInput)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := s.db.ExecContext(
+		ctx,
+		insertWorkspaceCommandDefinitionQuery,
+		params.CommandID,
+		params.WorkspaceID,
+		params.Name,
+		params.Command,
+		params.Args,
+		now,
+		now,
+	); err != nil {
+		return fmt.Errorf("create workspace command definition %q: %w", params.CommandID, err)
+	}
+
+	return nil
+}
+
+func (s *Store) GetWorkspaceCommandDefinition(ctx context.Context, sessionID, commandID string) (*WorkspaceCommandDefinition, error) {
+	if sessionID = strings.TrimSpace(sessionID); sessionID == "" {
+		return nil, fmt.Errorf("%w: session id is required", ErrInvalidInput)
+	}
+	if commandID = strings.TrimSpace(commandID); commandID == "" {
+		return nil, fmt.Errorf("%w: command id is required", ErrInvalidInput)
+	}
+
+	defs, err := queryWorkspaceCommandDefinitions(ctx, s.db, workspaceCommandDefinitionByIDQuery, sessionID, commandID)
+	if err != nil {
+		return nil, err
+	}
+	if len(defs) == 0 {
+		return nil, fmt.Errorf("%w: command id %q for session %q", ErrNotFound, commandID, sessionID)
+	}
+
+	return &defs[0], nil
+}
+
+func (s *Store) GetWorkspaceCommandDefinitionByName(ctx context.Context, sessionID, name string) (*WorkspaceCommandDefinition, error) {
+	if sessionID = strings.TrimSpace(sessionID); sessionID == "" {
+		return nil, fmt.Errorf("%w: session id is required", ErrInvalidInput)
+	}
+	if name = strings.TrimSpace(name); name == "" {
+		return nil, fmt.Errorf("%w: command name is required", ErrInvalidInput)
+	}
+
+	defs, err := queryWorkspaceCommandDefinitions(ctx, s.db, workspaceCommandDefinitionByNameQuery, sessionID, name)
+	if err != nil {
+		return nil, err
+	}
+	if len(defs) == 0 {
+		return nil, fmt.Errorf("%w: command name %q for session %q", ErrNotFound, name, sessionID)
+	}
+
+	return &defs[0], nil
+}
+
+func (s *Store) ListWorkspaceCommandDefinitions(ctx context.Context, sessionID string) ([]WorkspaceCommandDefinition, error) {
+	if sessionID = strings.TrimSpace(sessionID); sessionID == "" {
+		return nil, fmt.Errorf("%w: session id is required", ErrInvalidInput)
+	}
+
+	return queryWorkspaceCommandDefinitions(ctx, s.db, listWorkspaceCommandDefinitionsBySessionQuery, sessionID)
+}
+
+func (s *Store) DeleteWorkspaceCommandDefinition(ctx context.Context, sessionID, commandID string) error {
+	if sessionID = strings.TrimSpace(sessionID); sessionID == "" {
+		return fmt.Errorf("%w: session id is required", ErrInvalidInput)
+	}
+	if commandID = strings.TrimSpace(commandID); commandID == "" {
+		return fmt.Errorf("%w: command id is required", ErrInvalidInput)
+	}
+
+	result, err := s.db.ExecContext(ctx, deleteWorkspaceCommandDefinitionByIDQuery, sessionID, commandID)
+	if err != nil {
+		return fmt.Errorf("delete workspace command definition %q: %w", commandID, err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("delete workspace command definition %q rows affected: %w", commandID, err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("%w: command id %q for session %q", ErrNotFound, commandID, sessionID)
+	}
+
+	return nil
+}
+
 func (s *Store) CreateAgent(ctx context.Context, params CreateAgentParams) error {
 	if params.AgentID = strings.TrimSpace(params.AgentID); params.AgentID == "" {
 		return fmt.Errorf("%w: agent id is required", ErrInvalidInput)
@@ -1040,6 +1231,38 @@ func queryAgents(ctx context.Context, db DB, query string, args ...any) ([]Agent
 			&item.Harness,
 			&item.HarnessResumableID,
 			&item.HarnessMetadata,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return out, nil
+}
+
+func queryWorkspaceCommandDefinitions(ctx context.Context, db DB, query string, args ...any) ([]WorkspaceCommandDefinition, error) {
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	out := make([]WorkspaceCommandDefinition, 0)
+	for rows.Next() {
+		var item WorkspaceCommandDefinition
+		if err := rows.Scan(
+			&item.CommandID,
+			&item.WorkspaceID,
+			&item.Name,
+			&item.Command,
+			&item.Args,
+			&item.CreatedAt,
+			&item.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
