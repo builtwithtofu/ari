@@ -51,11 +51,12 @@ var (
 	}
 )
 
-func newWorkspaceCommandCmd() *cobra.Command {
+func NewCommandCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "command", Short: "Manage workspace command definitions"}
 	cmd.AddCommand(newWorkspaceCommandCreateCmd())
 	cmd.AddCommand(newWorkspaceCommandListCmd())
 	cmd.AddCommand(newWorkspaceCommandShowCmd())
+	cmd.AddCommand(newWorkspaceCommandRunCmd())
 	cmd.AddCommand(newWorkspaceCommandRemoveCmd())
 	return cmd
 }
@@ -93,14 +94,15 @@ func newWorkspaceCommandCreateCmd() *cobra.Command {
 				return mapCommandRPCError(err)
 			}
 
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Workspace command created: %s (%s)\n", resp.CommandID, resp.Name); err != nil {
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Command created: %s (%s)\n", resp.CommandID, resp.Name); err != nil {
 				return err
 			}
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Command: %s %s\n", resp.Command, strings.Join(resp.Args, " "))
 			return err
 		},
 	}
-	cmd.Flags().StringVar(&workspaceRef, "workspace", "", "Workspace id or name override (defaults to active workspace)")
+	cmd.Flags().SetInterspersed(false)
+	cmd.Flags().StringVar(&workspaceRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
 	return cmd
 }
 
@@ -133,7 +135,7 @@ func newWorkspaceCommandListCmd() *cobra.Command {
 			}
 
 			if len(resp.Commands) == 0 {
-				_, err := fmt.Fprintln(cmd.OutOrStdout(), "No workspace commands found")
+				_, err := fmt.Fprintln(cmd.OutOrStdout(), "No commands found")
 				return err
 			}
 
@@ -149,7 +151,7 @@ func newWorkspaceCommandListCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&workspaceRef, "workspace", "", "Workspace id or name override (defaults to active workspace)")
+	cmd.Flags().StringVar(&workspaceRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
 	return cmd
 }
 
@@ -199,7 +201,7 @@ func newWorkspaceCommandShowCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&workspaceRef, "workspace", "", "Workspace id or name override (defaults to active workspace)")
+	cmd.Flags().StringVar(&workspaceRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
 	return cmd
 }
 
@@ -234,11 +236,51 @@ func newWorkspaceCommandRemoveCmd() *cobra.Command {
 				return mapCommandRPCError(err)
 			}
 
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Workspace command remove: %s\n", resp.Status)
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Command remove: %s\n", resp.Status)
 			return err
 		},
 	}
-	cmd.Flags().StringVar(&workspaceRef, "workspace", "", "Workspace id or name override (defaults to active workspace)")
+	cmd.Flags().StringVar(&workspaceRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
+	return cmd
+}
+
+func newWorkspaceCommandRunCmd() *cobra.Command {
+	var workspaceRef string
+	var agentSelector string
+	cmd := &cobra.Command{
+		Use:   "run <id-or-name>",
+		Short: "Run a workspace command definition",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := configuredDaemonConfig()
+			if err != nil {
+				return err
+			}
+			if err := workspaceEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
+				return err
+			}
+
+			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
+			defer cancel()
+
+			target, err := resolveWorkspaceCommandTarget(ctx, cfg, workspaceRef)
+			if err != nil {
+				return err
+			}
+
+			definition, err := workspaceCommandGetRPC(ctx, cfg.Daemon.SocketPath, daemon.WorkspaceCommandGetRequest{
+				WorkspaceID:     target.WorkspaceID,
+				CommandIDOrName: strings.TrimSpace(args[0]),
+			})
+			if err != nil {
+				return mapCommandRPCError(err)
+			}
+
+			return runOneOffCommandAndForwardOutput(cmd, cfg, target.WorkspaceID, definition.Command, definition.Args, agentSelector)
+		},
+	}
+	cmd.Flags().StringVar(&workspaceRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
+	cmd.Flags().StringVar(&agentSelector, "agent", "0", "Target agent id/name/index for output forwarding (defaults to 0)")
 	return cmd
 }
 

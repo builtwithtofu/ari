@@ -1,0 +1,116 @@
+package daemon
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
+)
+
+func TestStartExecutorRunProjectsPacketIntoAgentRunAndTimeline(t *testing.T) {
+	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
+	executor := NewFakeExecutor("fake", []TimelineItem{{Kind: "agent_text", Text: "done"}})
+
+	run, items, err := StartExecutorRun(context.Background(), executor, packet)
+	if err != nil {
+		t.Fatalf("StartExecutorRun returned error: %v", err)
+	}
+	if run.WorkspaceID != "ws-1" || run.TaskID != "task-1" || run.ContextPacketID != "ctx_123" {
+		t.Fatalf("agent run ids = %#v, want workspace/task/context packet ids", run)
+	}
+	if run.Executor != "fake" || run.Status != "running" {
+		t.Fatalf("agent run executor/status = %q/%q, want fake/running", run.Executor, run.Status)
+	}
+	if run.ProviderRunID == "" {
+		t.Fatal("provider run id is empty")
+	}
+	if len(items) != 1 {
+		t.Fatalf("items len = %d, want 1", len(items))
+	}
+	if executor.lastContextPacket == "" || !strings.Contains(executor.lastContextPacket, "ctx_123") {
+		t.Fatalf("executor context packet = %q, want serialized packet", executor.lastContextPacket)
+	}
+	if items[0].RunID != run.AgentRunID || items[0].Kind != "agent_text" || items[0].SourceKind != "executor" {
+		t.Fatalf("timeline item = %#v, want executor agent_text linked to run", items[0])
+	}
+}
+
+func TestStartExecutorRunRejectsMissingPacketIdentity(t *testing.T) {
+	executor := NewFakeExecutor("fake", nil)
+	_, _, err := StartExecutorRun(context.Background(), executor, ContextPacket{WorkspaceID: "ws-1", TaskID: "task-1"})
+	if err == nil {
+		t.Fatal("StartExecutorRun returned nil error for missing context packet id")
+	}
+}
+
+func TestAgentRunMethodStartsFakeExecutorFromContextPacket(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+
+	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
+	resp := callMethod[AgentRunStartResponse](t, registry, "agent.run", AgentRunStartRequest{
+		Executor:  "fake",
+		Packet:    packet,
+		FakeItems: []TimelineItem{{Kind: "agent_text", Text: "done"}},
+	})
+	if resp.Run.Executor != "fake" || resp.Run.ContextPacketID != "ctx_123" {
+		t.Fatalf("agent run = %#v, want fake run linked to context packet", resp.Run)
+	}
+	if len(resp.Items) != 1 || resp.Items[0].Kind != "agent_text" || resp.Items[0].RunID != resp.Run.AgentRunID {
+		t.Fatalf("items = %#v, want one agent_text linked to run", resp.Items)
+	}
+	timeline := callMethod[WorkspaceTimelineResponse](t, registry, "workspace.timeline", WorkspaceTimelineRequest{WorkspaceID: "ws-1"})
+	if len(timeline.Items) != 1 || timeline.Items[0].RunID != resp.Run.AgentRunID {
+		t.Fatalf("timeline items = %#v, want persisted executor item", timeline.Items)
+	}
+	activity := callMethod[WorkspaceActivityResponse](t, registry, "workspace.activity", WorkspaceActivityRequest{WorkspaceID: "ws-1"})
+	if len(activity.Agents) != 1 || activity.Agents[0].ID != resp.Run.AgentRunID {
+		t.Fatalf("activity agents = %#v, want executor run agent activity", activity.Agents)
+	}
+}
+
+func TestAgentRunMethodStartsPTYExecutorFromContextPacket(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+
+	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
+	start := time.Now()
+	resp := callMethod[AgentRunStartResponse](t, registry, "agent.run", AgentRunStartRequest{
+		Executor: "pty",
+		Packet:   packet,
+		Command:  "/bin/sh",
+		Args:     []string{"-c", "sleep 1; printf done"},
+	})
+	if time.Since(start) > 500*time.Millisecond {
+		t.Fatalf("agent.run pty took %s, want prompt return", time.Since(start))
+	}
+	if resp.Run.Executor != "pty" || resp.Run.ContextPacketID != "ctx_123" {
+		t.Fatalf("agent run = %#v, want pty run linked to context packet", resp.Run)
+	}
+	if len(resp.Items) != 1 || resp.Items[0].Kind != "lifecycle" || resp.Items[0].Status != "running" {
+		t.Fatalf("items = %#v, want one running lifecycle item", resp.Items)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		timeline := callMethod[WorkspaceTimelineResponse](t, registry, "workspace.timeline", WorkspaceTimelineRequest{WorkspaceID: "ws-1"})
+		for _, item := range timeline.Items {
+			if item.RunID == resp.Run.AgentRunID && item.Kind == "terminal_output" && item.Text == "done" {
+				return
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("workspace.timeline did not persist pty output for run %s", resp.Run.AgentRunID)
+}

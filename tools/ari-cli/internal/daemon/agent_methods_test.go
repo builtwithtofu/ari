@@ -95,6 +95,111 @@ func TestAgentSpawnUsesSessionPrimaryFolderAsCWD(t *testing.T) {
 	_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 }
 
+func TestAgentSpawnUsesExecutionRootPathWhenProvided(t *testing.T) {
+	store := newAgentMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerAgentMethods(registry, store); err != nil {
+		t.Fatalf("registerAgentMethods returned error: %v", err)
+	}
+
+	primaryFolder := t.TempDir()
+	secondaryFolder := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "sess-1", primaryFolder)
+	if err := store.AddFolder(context.Background(), "sess-1", secondaryFolder, "git", false); err != nil {
+		t.Fatalf("AddFolder secondary returned error: %v", err)
+	}
+
+	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
+		WorkspaceID:       "sess-1",
+		Command:           "/bin/sh",
+		Args:              []string{"-c", "pwd"},
+		ExecutionRootPath: secondaryFolder,
+	})
+
+	waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "exited")
+
+	outputResp := callMethod[AgentOutputResponse](t, registry, "agent.output", AgentOutputRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
+	if !strings.Contains(outputResp.Output, secondaryFolder) {
+		t.Fatalf("agent.output = %q, want execution root %q", outputResp.Output, secondaryFolder)
+	}
+	if strings.Contains(outputResp.Output, primaryFolder) {
+		t.Fatalf("agent.output = %q, did not expect primary folder %q", outputResp.Output, primaryFolder)
+	}
+
+	_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
+}
+
+func TestAgentSpawnRejectsExecutionRootPathOutsideWorkspace(t *testing.T) {
+	store := newAgentMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerAgentMethods(registry, store); err != nil {
+		t.Fatalf("registerAgentMethods returned error: %v", err)
+	}
+
+	primaryFolder := t.TempDir()
+	outsideFolder := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "sess-1", primaryFolder)
+
+	spec, ok := registry.Get("agent.spawn")
+	if !ok {
+		t.Fatal("agent.spawn method not registered")
+	}
+	raw, err := json.Marshal(AgentSpawnRequest{WorkspaceID: "sess-1", Command: "/bin/sh", Args: []string{"-c", "pwd"}, ExecutionRootPath: outsideFolder})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+
+	_, err = spec.Call(context.Background(), raw)
+	if err == nil {
+		t.Fatal("agent.spawn returned nil error for execution root outside workspace")
+	}
+	var rpcErr *rpc.HandlerError
+	if !errors.As(err, &rpcErr) {
+		t.Fatalf("agent.spawn error type = %T, want *rpc.HandlerError", err)
+	}
+	if rpcErr.Code != rpc.InvalidParams {
+		t.Fatalf("agent.spawn error code = %d, want %d", rpcErr.Code, rpc.InvalidParams)
+	}
+}
+
+func TestAgentSpawnRejectsRelativeExecutionRootPath(t *testing.T) {
+	store := newAgentMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerAgentMethods(registry, store); err != nil {
+		t.Fatalf("registerAgentMethods returned error: %v", err)
+	}
+
+	primaryFolder := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "sess-1", primaryFolder)
+
+	spec, ok := registry.Get("agent.spawn")
+	if !ok {
+		t.Fatal("agent.spawn method not registered")
+	}
+	raw, err := json.Marshal(AgentSpawnRequest{WorkspaceID: "sess-1", Command: "/bin/sh", Args: []string{"-c", "pwd"}, ExecutionRootPath: "relative/path"})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+
+	_, err = spec.Call(context.Background(), raw)
+	if err == nil {
+		t.Fatal("agent.spawn returned nil error for relative execution root")
+	}
+	var rpcErr *rpc.HandlerError
+	if !errors.As(err, &rpcErr) {
+		t.Fatalf("agent.spawn error type = %T, want *rpc.HandlerError", err)
+	}
+	if rpcErr.Code != rpc.InvalidParams {
+		t.Fatalf("agent.spawn error code = %d, want %d", rpcErr.Code, rpc.InvalidParams)
+	}
+}
+
 func TestAgentListAndGetIncludeSpawnedAgent(t *testing.T) {
 	store := newAgentMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()

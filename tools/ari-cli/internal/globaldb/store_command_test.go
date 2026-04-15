@@ -111,6 +111,45 @@ func TestGetCommandMissingReturnsNotFound(t *testing.T) {
 	}
 }
 
+func TestCreateCommandRejectsMissingWorkspace(t *testing.T) {
+	store := newCommandTestStore(t)
+	ctx := context.Background()
+
+	err := store.CreateCommand(ctx, CreateCommandParams{
+		CommandID:   "cmd-1",
+		WorkspaceID: "missing-workspace",
+		Command:     "go test ./...",
+		Args:        `[]`,
+		Status:      "running",
+		StartedAt:   "2026-04-03T00:00:00Z",
+	})
+	if err == nil {
+		t.Fatal("CreateCommand returned nil error for missing workspace")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("CreateCommand missing workspace error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestWorkspaceCommandDefinitionRejectsMissingWorkspace(t *testing.T) {
+	store := newCommandTestStore(t)
+	ctx := context.Background()
+
+	err := store.CreateWorkspaceCommandDefinition(ctx, CreateWorkspaceCommandDefinitionParams{
+		CommandID:   "cmd-def-1",
+		WorkspaceID: "missing-workspace",
+		Name:        "test",
+		Command:     "go",
+		Args:        `[]`,
+	})
+	if err == nil {
+		t.Fatal("CreateWorkspaceCommandDefinition returned nil error for missing workspace")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("CreateWorkspaceCommandDefinition missing workspace error = %v, want ErrNotFound", err)
+	}
+}
+
 func TestWorkspaceCommandDefinitionLifecycle(t *testing.T) {
 	store := newCommandTestStore(t)
 	ctx := context.Background()

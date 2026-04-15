@@ -1,12 +1,12 @@
-# Ari Tool Projection Contract
+# Ari Projection Contract
 
-This document defines source-of-truth and sync behavior for Ari-owned tools and harness-facing projections.
+This document defines source-of-truth and sync behavior for Ari-owned control-plane, tool, proof, timeline, context, and executor projections.
 
 ## Scope
 
-- Ari owns one canonical tool model (`internal/tool`).
-- Workspace command definitions are the first projected tool type.
-- The first projection target is daemon runtime responses for `workspace.command.*`.
+- Ari owns daemon-side projection contracts for workspace activity, diff summaries, proof summaries, structured timelines, context packets, executor runs, and workspace command tools.
+- Workspace command definitions are one canonical input to the projection spine, not a separate source of truth.
+- Projection targets are daemon JSON-RPC responses consumed by CLI and future clients.
 
 This slice does **not** define file-based harness artifact generation yet.
 
@@ -32,12 +32,22 @@ Projection is read-time adaptation, not duplicated persistence.
 - Store layer persists canonical definition data only.
 - Daemon layer projects canonical data into API response shapes.
 - CLI renders daemon responses; it does not maintain a separate command-definition source.
+- Terminal attachment remains a framed IO transport only; agent timelines, context packets, proofs, and activity summaries are JSON-RPC projections.
 
 Current command-definition projection path:
 
 - `workspace.command.create` -> store canonical definition -> project for response
 - `workspace.command.list` -> list canonical definitions -> project each for response
 - `workspace.command.get` -> load canonical definition -> project for response
+
+Current workspace-control projection path:
+
+- `workspace.activity` -> aggregate workspace, command, agent, process-output, proof, and VCS facts for dashboards/control planes
+- `workspace.diff` -> detect JJ first, then Git, and project changed-file summary
+- `workspace.proofs` -> derive harness-agnostic proof summaries from command records and retained output
+- `workspace.timeline` -> map command/agent/proof output into stable timeline items with explicit `source_kind` and `kind`
+- `context.project` -> build an inspectable context packet from task-like request fields, command definitions, diff summary, proof summaries, and omissions
+- `agent.run` -> start an executor-backed run from a context packet through Ari's adapter seam; provider-specific IDs remain metadata, not the client contract
 
 ## Sync Behavior
 

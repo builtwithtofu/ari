@@ -17,9 +17,10 @@ import (
 )
 
 type CommandRunRequest struct {
-	WorkspaceID string   `json:"workspace_id"`
-	Command     string   `json:"command"`
-	Args        []string `json:"args"`
+	WorkspaceID       string   `json:"workspace_id"`
+	Command           string   `json:"command"`
+	Args              []string `json:"args"`
+	ExecutionRootPath string   `json:"execution_root_path,omitempty"`
 }
 
 type CommandRunResponse struct {
@@ -177,8 +178,15 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 				}
 				return CommandRunResponse{}, mapCommandStoreError(err, sessionID)
 			}
+			executionRootPath, err := validateWorkspaceExecutionRootPath(ctx, store, sessionID, req.ExecutionRootPath)
+			if err != nil {
+				return CommandRunResponse{}, err
+			}
+			if executionRootPath == "" {
+				executionRootPath = primaryFolder
+			}
 
-			proc, err := process.New(command, req.Args, process.Options{Dir: primaryFolder})
+			proc, err := process.New(command, req.Args, process.Options{Dir: executionRootPath})
 			if err != nil {
 				return CommandRunResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), sessionID)
 			}

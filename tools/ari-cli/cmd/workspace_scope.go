@@ -20,7 +20,7 @@ func enforceActiveWorkspaceScope(session *daemon.WorkspaceGetResponse, sessionOv
 		return nil
 	}
 	if session == nil {
-		return userFacingError{message: "Active workspace details are unavailable; use --workspace <id-or-name> to override"}
+		return userFacingError{message: "Active workspace details are unavailable; use --workspace <id-or-name> to target a workspace explicitly"}
 	}
 
 	cwd, err := os.Getwd()
@@ -32,7 +32,7 @@ func enforceActiveWorkspaceScope(session *daemon.WorkspaceGetResponse, sessionOv
 		return err
 	}
 	if !matches {
-		return userFacingError{message: "Active workspace belongs to a different workspace; use --workspace <id-or-name> to override"}
+		return userFacingError{message: "Active workspace belongs to a different workspace; use --workspace <id-or-name> to target a workspace explicitly"}
 	}
 	return nil
 }

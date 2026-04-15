@@ -18,11 +18,12 @@ import (
 )
 
 type AgentSpawnRequest struct {
-	WorkspaceID string   `json:"workspace_id"`
-	Name        string   `json:"name,omitempty"`
-	Harness     string   `json:"harness,omitempty"`
-	Command     string   `json:"command"`
-	Args        []string `json:"args"`
+	WorkspaceID       string   `json:"workspace_id"`
+	Name              string   `json:"name,omitempty"`
+	Harness           string   `json:"harness,omitempty"`
+	Command           string   `json:"command"`
+	Args              []string `json:"args"`
+	ExecutionRootPath string   `json:"execution_root_path,omitempty"`
 }
 
 type AgentSpawnResponse struct {
@@ -138,6 +139,13 @@ func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globa
 				}
 				return AgentSpawnResponse{}, mapAgentStoreError(err, sessionID)
 			}
+			executionRootPath, err := validateWorkspaceExecutionRootPath(ctx, store, sessionID, req.ExecutionRootPath)
+			if err != nil {
+				return AgentSpawnResponse{}, err
+			}
+			if executionRootPath == "" {
+				executionRootPath = primaryFolder
+			}
 
 			launcher, err := resolveAgentLauncher(req.Harness)
 			if err != nil {
@@ -160,7 +168,7 @@ func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globa
 			}
 			harnessIdentity := projector.Project(harnessName, launchSpec.Args)
 
-			proc, err := process.New(launchSpec.Command, launchSpec.Args, process.Options{Dir: primaryFolder})
+			proc, err := process.New(launchSpec.Command, launchSpec.Args, process.Options{Dir: executionRootPath})
 			if err != nil {
 				return AgentSpawnResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), sessionID)
 			}

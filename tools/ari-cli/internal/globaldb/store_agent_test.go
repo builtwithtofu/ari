@@ -140,6 +140,26 @@ func TestGetAgentMissingReturnsNotFound(t *testing.T) {
 	}
 }
 
+func TestCreateAgentRejectsMissingWorkspace(t *testing.T) {
+	store := newAgentTestStore(t)
+	ctx := context.Background()
+
+	err := store.CreateAgent(ctx, CreateAgentParams{
+		AgentID:     "agt-1",
+		WorkspaceID: "missing-workspace",
+		Command:     "claude-code",
+		Args:        `[]`,
+		Status:      "running",
+		StartedAt:   "2026-04-04T00:00:00Z",
+	})
+	if err == nil {
+		t.Fatal("CreateAgent returned nil error for missing workspace")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("CreateAgent missing workspace error = %v, want ErrNotFound", err)
+	}
+}
+
 func TestCreateAgentAllowsSameNameAcrossSessions(t *testing.T) {
 	store := newAgentTestStore(t)
 	ctx := context.Background()

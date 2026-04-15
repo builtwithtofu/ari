@@ -97,6 +97,11 @@ FROM workspace_folders
 WHERE workspace_id = ?
 ORDER BY added_at ASC, folder_path ASC`
 
+	workspaceIDByFolderPathQuery = `SELECT workspace_id
+FROM workspace_folders
+WHERE folder_path = ?
+LIMIT 1`
+
 	insertCommandQuery = `INSERT INTO commands (
 		command_id,
 		workspace_id,
@@ -605,6 +610,13 @@ func (s *Store) AddFolder(ctx context.Context, sessionID, folderPath, vcsType st
 	if session.Status == statusClosed {
 		return fmt.Errorf("%w: session id %q", ErrSessionClosed, sessionID)
 	}
+	existingWorkspaceID, err := s.workspaceIDByFolderPath(ctx, folderPath)
+	if err != nil {
+		return err
+	}
+	if existingWorkspaceID != "" && existingWorkspaceID != sessionID {
+		return fmt.Errorf("%w: folder %q already belongs to workspace %q", ErrInvalidInput, folderPath, existingWorkspaceID)
+	}
 
 	primary := 0
 	if isPrimary {
@@ -725,12 +737,50 @@ func (s *Store) ListFolders(ctx context.Context, sessionID string) ([]SessionFol
 	return out, nil
 }
 
+func (s *Store) workspaceIDByFolderPath(ctx context.Context, folderPath string) (string, error) {
+	folderPath = strings.TrimSpace(folderPath)
+	if folderPath == "" {
+		return "", fmt.Errorf("%w: folder path is required", ErrInvalidInput)
+	}
+
+	rows, err := s.db.QueryContext(ctx, workspaceIDByFolderPathQuery, folderPath)
+	if err != nil {
+		return "", fmt.Errorf("lookup workspace by folder path %q: %w", folderPath, err)
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return "", fmt.Errorf("lookup workspace by folder path %q rows: %w", folderPath, err)
+		}
+		return "", nil
+	}
+
+	var workspaceID string
+	if err := rows.Scan(&workspaceID); err != nil {
+		return "", fmt.Errorf("scan workspace by folder path %q: %w", folderPath, err)
+	}
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("lookup workspace by folder path %q rows: %w", folderPath, err)
+	}
+
+	if workspaceID = strings.TrimSpace(workspaceID); workspaceID == "" {
+		return "", fmt.Errorf("%w: folder %q has empty workspace id", ErrInvalidInput, folderPath)
+	}
+	return workspaceID, nil
+}
+
 func (s *Store) CreateCommand(ctx context.Context, params CreateCommandParams) error {
 	if params.CommandID = strings.TrimSpace(params.CommandID); params.CommandID == "" {
 		return fmt.Errorf("%w: command id is required", ErrInvalidInput)
 	}
 	if params.WorkspaceID = strings.TrimSpace(params.WorkspaceID); params.WorkspaceID == "" {
 		return fmt.Errorf("%w: session id is required", ErrInvalidInput)
+	}
+	if _, err := s.GetSession(ctx, params.WorkspaceID); err != nil {
+		return err
 	}
 	if params.Command = strings.TrimSpace(params.Command); params.Command == "" {
 		return fmt.Errorf("%w: command is required", ErrInvalidInput)
@@ -837,6 +887,9 @@ func (s *Store) CreateWorkspaceCommandDefinition(ctx context.Context, params Cre
 	}
 	if params.WorkspaceID = strings.TrimSpace(params.WorkspaceID); params.WorkspaceID == "" {
 		return fmt.Errorf("%w: session id is required", ErrInvalidInput)
+	}
+	if _, err := s.GetSession(ctx, params.WorkspaceID); err != nil {
+		return err
 	}
 	if params.Name = strings.TrimSpace(params.Name); params.Name == "" {
 		return fmt.Errorf("%w: command name is required", ErrInvalidInput)
@@ -973,6 +1026,9 @@ func (s *Store) CreateAgent(ctx context.Context, params CreateAgentParams) error
 	}
 	if params.WorkspaceID = strings.TrimSpace(params.WorkspaceID); params.WorkspaceID == "" {
 		return fmt.Errorf("%w: session id is required", ErrInvalidInput)
+	}
+	if _, err := s.GetSession(ctx, params.WorkspaceID); err != nil {
+		return err
 	}
 	if params.Name != nil {
 		trimmedName := strings.TrimSpace(*params.Name)

@@ -384,7 +384,7 @@ func newAgentAttachCmd() *cobra.Command {
 			return runAgentAttachFlow(cmd, cfg, runCtx, restoreTerminal, target.WorkspaceID, strings.TrimSpace(args[0]))
 		},
 	}
-	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Workspace id or name override (defaults to active workspace)")
+	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
 	return cmd
 }
 
@@ -502,7 +502,7 @@ func newAgentDetachCmd() *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Workspace id or name override (defaults to active workspace)")
+	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
 	return cmd
 }
 
@@ -574,7 +574,7 @@ func newAgentSpawnCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&name, "name", "", "Optional agent name")
 	cmd.Flags().StringVar(&harness, "harness", "", fmt.Sprintf("Harness identity (%s)", strings.Join(daemon.SupportedHarnesses(), "|")))
-	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Workspace id or name override (defaults to active workspace)")
+	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
 	return cmd
 }
 
@@ -629,7 +629,7 @@ func newAgentListCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Workspace id or name override (defaults to active workspace)")
+	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
 	return cmd
 }
 
@@ -711,7 +711,7 @@ func newAgentShowCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Workspace id or name override (defaults to active workspace)")
+	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
 	return cmd
 }
 
@@ -779,7 +779,7 @@ func newAgentSendCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&inputFlag, "input", "", "Input text to send")
-	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Workspace id or name override (defaults to active workspace)")
+	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
 	return cmd
 }
 
@@ -822,7 +822,7 @@ func newAgentOutputCmd() *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Workspace id or name override (defaults to active workspace)")
+	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
 	return cmd
 }
 
@@ -865,7 +865,7 @@ func newAgentStopCmd() *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Workspace id or name override (defaults to active workspace)")
+	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
 	return cmd
 }
 

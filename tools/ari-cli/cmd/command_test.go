@@ -21,6 +21,7 @@ func TestRootRegistersCommandCommand(t *testing.T) {
 		want string
 	}{
 		{name: "command root registered", path: []string{"command"}, want: "command"},
+		{name: "exec root registered", path: []string{"exec"}, want: "exec"},
 		{name: "daemon root still registered", path: []string{"daemon"}, want: "daemon"},
 		{name: "workspace root still registered", path: []string{"workspace"}, want: "workspace"},
 	}
@@ -37,6 +38,88 @@ func TestRootRegistersCommandCommand(t *testing.T) {
 			}
 			if cmd.Name() != tc.want {
 				t.Fatalf("command name = %q, want %q", cmd.Name(), tc.want)
+			}
+		})
+	}
+}
+
+func TestTopLevelCommandSubcommandsExist(t *testing.T) {
+	root := NewRootCmd()
+
+	create, _, err := root.Find([]string{"command", "create"})
+	if err != nil {
+		t.Fatalf("find command create: %v", err)
+	}
+	list, _, err := root.Find([]string{"command", "list"})
+	if err != nil {
+		t.Fatalf("find command list: %v", err)
+	}
+	show, _, err := root.Find([]string{"command", "show"})
+	if err != nil {
+		t.Fatalf("find command show: %v", err)
+	}
+	run, _, err := root.Find([]string{"command", "run"})
+	if err != nil {
+		t.Fatalf("find command run: %v", err)
+	}
+	remove, _, err := root.Find([]string{"command", "remove"})
+	if err != nil {
+		t.Fatalf("find command remove: %v", err)
+	}
+	if create == nil || list == nil || show == nil || run == nil || remove == nil {
+		t.Fatal("expected command definition subcommands to be registered")
+	}
+}
+
+func TestTopLevelExecSubcommandsExist(t *testing.T) {
+	root := NewRootCmd()
+
+	run, _, err := root.Find([]string{"exec", "run"})
+	if err != nil {
+		t.Fatalf("find exec run: %v", err)
+	}
+	list, _, err := root.Find([]string{"exec", "list"})
+	if err != nil {
+		t.Fatalf("find exec list: %v", err)
+	}
+	show, _, err := root.Find([]string{"exec", "show"})
+	if err != nil {
+		t.Fatalf("find exec show: %v", err)
+	}
+	output, _, err := root.Find([]string{"exec", "output"})
+	if err != nil {
+		t.Fatalf("find exec output: %v", err)
+	}
+	stop, _, err := root.Find([]string{"exec", "stop"})
+	if err != nil {
+		t.Fatalf("find exec stop: %v", err)
+	}
+	if run == nil || list == nil || show == nil || output == nil || stop == nil {
+		t.Fatal("expected exec subcommands to be registered")
+	}
+}
+
+func TestWorkspaceTargetingHelpDoesNotExposeExecutionRootPath(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "exec run", args: []string{"exec", "run", "--help"}},
+		{name: "agent spawn", args: []string{"agent", "spawn", "--help"}},
+		{name: "workspace command create", args: []string{"command", "create", "--help"}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := executeRootCommand(tc.args...)
+			if err != nil {
+				t.Fatalf("help returned error: %v", err)
+			}
+			if !strings.Contains(out, "Target workspace id or name (defaults to active workspace)") {
+				t.Fatalf("help output = %q, want target workspace wording", out)
+			}
+			if strings.Contains(out, "execution_root") || strings.Contains(out, "execution-root") {
+				t.Fatalf("help output = %q, did not expect execution root flag", out)
 			}
 		})
 	}
@@ -85,12 +168,12 @@ func TestCommandListRejectsActiveSessionOutsideWorkspace(t *testing.T) {
 		commandListRPC = originalList
 	})
 
-	_, err = executeRootCommandRaw("command", "list")
+	_, err = executeRootCommandRaw("exec", "list")
 	if err == nil {
 		t.Fatal("command list returned nil error for cross-workspace active session")
 	}
-	if err.Error() != "Active workspace belongs to a different workspace; use --workspace <id-or-name> to override" {
-		t.Fatalf("command list error = %q, want %q", err.Error(), "Active workspace belongs to a different workspace; use --workspace <id-or-name> to override")
+	if err.Error() != "Active workspace belongs to a different workspace; use --workspace <id-or-name> to target a workspace explicitly" {
+		t.Fatalf("command list error = %q, want %q", err.Error(), "Active workspace belongs to a different workspace; use --workspace <id-or-name> to target a workspace explicitly")
 	}
 }
 
@@ -127,7 +210,7 @@ func TestCommandListSessionOverrideBypassesWorkspaceSafety(t *testing.T) {
 		commandListRPC = originalList
 	})
 
-	_, err := executeRootCommand("command", "list", "--workspace", "alpha")
+	_, err := executeRootCommand("exec", "list", "--workspace", "alpha")
 	if err != nil {
 		t.Fatalf("command list with --workspace returned error: %v", err)
 	}
@@ -192,7 +275,7 @@ func TestCommandListAllowsOriginRootWhenBroaderThanFolder(t *testing.T) {
 		commandListRPC = originalList
 	})
 
-	_, err = executeRootCommand("command", "list")
+	_, err = executeRootCommand("exec", "list")
 	if err != nil {
 		t.Fatalf("command list returned error: %v", err)
 	}
@@ -235,7 +318,7 @@ func TestCommandListEnvActiveSessionBypassesWorkspaceSafety(t *testing.T) {
 		commandListRPC = originalList
 	})
 
-	_, err := executeRootCommandRaw("command", "list")
+	_, err := executeRootCommandRaw("exec", "list")
 	if err != nil {
 		t.Fatalf("command list with env override returned error: %v", err)
 	}
@@ -311,11 +394,11 @@ func TestCommandSubcommandsRejectActiveSessionOutsideWorkspace(t *testing.T) {
 		name string
 		args []string
 	}{
-		{name: "run", args: []string{"command", "run", "--", "echo", "hi"}},
-		{name: "list", args: []string{"command", "list"}},
-		{name: "show", args: []string{"command", "show", "cmd-1"}},
-		{name: "output", args: []string{"command", "output", "cmd-1"}},
-		{name: "stop", args: []string{"command", "stop", "cmd-1"}},
+		{name: "run", args: []string{"exec", "run", "--", "echo", "hi"}},
+		{name: "list", args: []string{"exec", "list"}},
+		{name: "show", args: []string{"exec", "show", "cmd-1"}},
+		{name: "output", args: []string{"exec", "output", "cmd-1"}},
+		{name: "stop", args: []string{"exec", "stop", "cmd-1"}},
 	}
 
 	for _, tc := range tests {
@@ -324,7 +407,7 @@ func TestCommandSubcommandsRejectActiveSessionOutsideWorkspace(t *testing.T) {
 			if err == nil {
 				t.Fatalf("%s returned nil error", tc.name)
 			}
-			if err.Error() != "Active workspace belongs to a different workspace; use --workspace <id-or-name> to override" {
+			if err.Error() != "Active workspace belongs to a different workspace; use --workspace <id-or-name> to target a workspace explicitly" {
 				t.Fatalf("%s error = %q, want workspace mismatch error", tc.name, err.Error())
 			}
 		})
@@ -372,7 +455,7 @@ func TestCommandListUsesSingleSessionGetForActiveWorkspace(t *testing.T) {
 		commandListRPC = originalList
 	})
 
-	if _, err := executeRootCommandRaw("command", "list"); err != nil {
+	if _, err := executeRootCommandRaw("exec", "list"); err != nil {
 		t.Fatalf("command list returned error: %v", err)
 	}
 	if sessionGetCalls != 1 {
@@ -380,8 +463,8 @@ func TestCommandListUsesSingleSessionGetForActiveWorkspace(t *testing.T) {
 	}
 }
 
-func TestCommandSubcommandsExist(t *testing.T) {
-	command := NewCommandCmd()
+func TestExecSubcommandsExist(t *testing.T) {
+	execCmd := NewExecCmd()
 
 	tests := []struct {
 		name string
@@ -397,7 +480,7 @@ func TestCommandSubcommandsExist(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			cmd, _, err := command.Find(tc.path)
+			cmd, _, err := execCmd.Find(tc.path)
 			if err != nil {
 				t.Fatalf("find command %s: %v", tc.want, err)
 			}
@@ -415,27 +498,58 @@ func TestCommandRunUsesSeparatorArguments(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	originalResolve := commandResolveSessionIdentifier
+	originalResolveTarget := commandResolveSessionTarget
 	originalReadActive := commandReadActiveSession
+	originalEnsure := commandEnsureDaemonRunning
+	originalEnsureScope := commandEnsureWorkspaceScope
 	originalRun := commandRunRPC
-	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
-		return "sess-1", nil
+	originalGet := commandGetRPC
+	originalOutput := commandOutputRPC
+	originalResolveAgent := commandResolveAgentSelector
+	originalSend := commandAgentSendRPC
+
+	commandResolveSessionTarget = func(context.Context, string, string) (resolvedSessionTarget, error) {
+		return resolvedSessionTarget{WorkspaceID: "sess-1", Session: &daemon.WorkspaceGetResponse{WorkspaceID: "sess-1", OriginRoot: t.TempDir()}}, nil
 	}
 	commandReadActiveSession = func() (string, error) {
 		return "sess-1", nil
 	}
+	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	commandEnsureWorkspaceScope = func(*daemon.WorkspaceGetResponse, string) error { return nil }
 	var gotReq daemon.CommandRunRequest
 	commandRunRPC = func(_ context.Context, _ string, req daemon.CommandRunRequest) (daemon.CommandRunResponse, error) {
 		gotReq = req
 		return daemon.CommandRunResponse{CommandID: "cmd-1", Status: "running"}, nil
 	}
+	commandGetRPC = func(context.Context, string, string, string) (daemon.CommandGetResponse, error) {
+		return daemon.CommandGetResponse{CommandID: "cmd-1", Status: "exited"}, nil
+	}
+	commandOutputRPC = func(context.Context, string, string, string) (daemon.CommandOutputResponse, error) {
+		return daemon.CommandOutputResponse{Output: "ok\n"}, nil
+	}
+	gotSelector := ""
+	commandResolveAgentSelector = func(_ context.Context, _ string, _ string, selector string) (string, error) {
+		gotSelector = selector
+		return "agt-0", nil
+	}
+	gotSend := daemon.AgentSendRequest{}
+	commandAgentSendRPC = func(_ context.Context, _ string, req daemon.AgentSendRequest) (daemon.AgentSendResponse, error) {
+		gotSend = req
+		return daemon.AgentSendResponse{Status: "sent"}, nil
+	}
 	t.Cleanup(func() {
-		commandResolveSessionIdentifier = originalResolve
+		commandResolveSessionTarget = originalResolveTarget
 		commandReadActiveSession = originalReadActive
+		commandEnsureDaemonRunning = originalEnsure
+		commandEnsureWorkspaceScope = originalEnsureScope
 		commandRunRPC = originalRun
+		commandGetRPC = originalGet
+		commandOutputRPC = originalOutput
+		commandResolveAgentSelector = originalResolveAgent
+		commandAgentSendRPC = originalSend
 	})
 
-	out, err := executeRootCommand("command", "run", "--", "go", "test", "./...")
+	out, err := executeRootCommand("exec", "run", "--", "go", "test", "./...")
 	if err != nil {
 		t.Fatalf("execute command run: %v", err)
 	}
@@ -446,8 +560,240 @@ func TestCommandRunUsesSeparatorArguments(t *testing.T) {
 	if len(gotReq.Args) != 2 || gotReq.Args[0] != "test" || gotReq.Args[1] != "./..." {
 		t.Fatalf("command run args = %#v, want [test ./...]", gotReq.Args)
 	}
+	if gotSelector != "0" {
+		t.Fatalf("agent selector = %q, want %q", gotSelector, "0")
+	}
+	if gotSend.AgentID != "agt-0" {
+		t.Fatalf("agent send agent_id = %q, want %q", gotSend.AgentID, "agt-0")
+	}
+	if gotSend.Input != "ok\n" {
+		t.Fatalf("agent send input = %q, want %q", gotSend.Input, "ok\n")
+	}
 	if !strings.Contains(out, "Command started: cmd-1") {
 		t.Fatalf("command run output = %q, want command started line", out)
+	}
+	if !strings.Contains(out, "Forwarded command output to agent \"agt-0\".") {
+		t.Fatalf("command run output = %q, want forwarding confirmation", out)
+	}
+}
+
+func TestCommandRunUsesExplicitAgentSelector(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalResolveTarget := commandResolveSessionTarget
+	originalReadActive := commandReadActiveSession
+	originalEnsure := commandEnsureDaemonRunning
+	originalEnsureScope := commandEnsureWorkspaceScope
+	originalRun := commandRunRPC
+	originalGet := commandGetRPC
+	originalOutput := commandOutputRPC
+	originalResolveAgent := commandResolveAgentSelector
+	originalSend := commandAgentSendRPC
+
+	commandResolveSessionTarget = func(context.Context, string, string) (resolvedSessionTarget, error) {
+		return resolvedSessionTarget{WorkspaceID: "sess-1", Session: &daemon.WorkspaceGetResponse{WorkspaceID: "sess-1", OriginRoot: t.TempDir()}}, nil
+	}
+	commandReadActiveSession = func() (string, error) { return "sess-1", nil }
+	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	commandEnsureWorkspaceScope = func(*daemon.WorkspaceGetResponse, string) error { return nil }
+	commandRunRPC = func(_ context.Context, _ string, _ daemon.CommandRunRequest) (daemon.CommandRunResponse, error) {
+		return daemon.CommandRunResponse{CommandID: "cmd-1", Status: "running"}, nil
+	}
+	commandGetRPC = func(context.Context, string, string, string) (daemon.CommandGetResponse, error) {
+		return daemon.CommandGetResponse{CommandID: "cmd-1", Status: "exited"}, nil
+	}
+	commandOutputRPC = func(context.Context, string, string, string) (daemon.CommandOutputResponse, error) {
+		return daemon.CommandOutputResponse{Output: "ok\n"}, nil
+	}
+	gotSelector := ""
+	commandResolveAgentSelector = func(_ context.Context, _ string, _ string, selector string) (string, error) {
+		gotSelector = selector
+		return "agt-1", nil
+	}
+	commandAgentSendRPC = func(_ context.Context, _ string, _ daemon.AgentSendRequest) (daemon.AgentSendResponse, error) {
+		return daemon.AgentSendResponse{Status: "sent"}, nil
+	}
+	t.Cleanup(func() {
+		commandResolveSessionTarget = originalResolveTarget
+		commandReadActiveSession = originalReadActive
+		commandEnsureDaemonRunning = originalEnsure
+		commandEnsureWorkspaceScope = originalEnsureScope
+		commandRunRPC = originalRun
+		commandGetRPC = originalGet
+		commandOutputRPC = originalOutput
+		commandResolveAgentSelector = originalResolveAgent
+		commandAgentSendRPC = originalSend
+	})
+
+	_, err := executeRootCommand("exec", "run", "--agent", "1", "--", "go", "test", "./...")
+	if err != nil {
+		t.Fatalf("execute command run: %v", err)
+	}
+	if gotSelector != "1" {
+		t.Fatalf("agent selector = %q, want %q", gotSelector, "1")
+	}
+}
+
+func TestCommandRunDoesNotStartWhenAgentResolutionFails(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalResolveTarget := commandResolveSessionTarget
+	originalReadActive := commandReadActiveSession
+	originalEnsure := commandEnsureDaemonRunning
+	originalEnsureScope := commandEnsureWorkspaceScope
+	originalResolveAgent := commandResolveAgentSelector
+	originalRun := commandRunRPC
+
+	commandResolveSessionTarget = func(context.Context, string, string) (resolvedSessionTarget, error) {
+		return resolvedSessionTarget{WorkspaceID: "sess-1", Session: &daemon.WorkspaceGetResponse{WorkspaceID: "sess-1", OriginRoot: t.TempDir()}}, nil
+	}
+	commandReadActiveSession = func() (string, error) { return "sess-1", nil }
+	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	commandEnsureWorkspaceScope = func(*daemon.WorkspaceGetResponse, string) error { return nil }
+	commandResolveAgentSelector = func(context.Context, string, string, string) (string, error) {
+		return "", userFacingError{message: "Agent index 99 is out of range (0-0)"}
+	}
+	runCalled := false
+	commandRunRPC = func(context.Context, string, daemon.CommandRunRequest) (daemon.CommandRunResponse, error) {
+		runCalled = true
+		return daemon.CommandRunResponse{}, nil
+	}
+	t.Cleanup(func() {
+		commandResolveSessionTarget = originalResolveTarget
+		commandReadActiveSession = originalReadActive
+		commandEnsureDaemonRunning = originalEnsure
+		commandEnsureWorkspaceScope = originalEnsureScope
+		commandResolveAgentSelector = originalResolveAgent
+		commandRunRPC = originalRun
+	})
+
+	_, err := executeRootCommand("exec", "run", "--agent", "99", "--", "echo", "hi")
+	if err == nil {
+		t.Fatal("exec run returned nil error")
+	}
+	if runCalled {
+		t.Fatal("command run RPC called unexpectedly")
+	}
+}
+
+func TestCommandRunSkipsAgentSendWhenOutputIsEmpty(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalResolveTarget := commandResolveSessionTarget
+	originalReadActive := commandReadActiveSession
+	originalEnsure := commandEnsureDaemonRunning
+	originalEnsureScope := commandEnsureWorkspaceScope
+	originalResolveAgent := commandResolveAgentSelector
+	originalRun := commandRunRPC
+	originalGet := commandGetRPC
+	originalOutput := commandOutputRPC
+	originalSend := commandAgentSendRPC
+
+	commandResolveSessionTarget = func(context.Context, string, string) (resolvedSessionTarget, error) {
+		return resolvedSessionTarget{WorkspaceID: "sess-1", Session: &daemon.WorkspaceGetResponse{WorkspaceID: "sess-1", OriginRoot: t.TempDir()}}, nil
+	}
+	commandReadActiveSession = func() (string, error) { return "sess-1", nil }
+	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	commandEnsureWorkspaceScope = func(*daemon.WorkspaceGetResponse, string) error { return nil }
+	commandResolveAgentSelector = func(context.Context, string, string, string) (string, error) { return "agt-0", nil }
+	commandRunRPC = func(context.Context, string, daemon.CommandRunRequest) (daemon.CommandRunResponse, error) {
+		return daemon.CommandRunResponse{CommandID: "cmd-1", Status: "running"}, nil
+	}
+	commandGetRPC = func(context.Context, string, string, string) (daemon.CommandGetResponse, error) {
+		return daemon.CommandGetResponse{CommandID: "cmd-1", Status: "exited"}, nil
+	}
+	commandOutputRPC = func(context.Context, string, string, string) (daemon.CommandOutputResponse, error) {
+		return daemon.CommandOutputResponse{Output: ""}, nil
+	}
+	sendCalled := false
+	commandAgentSendRPC = func(context.Context, string, daemon.AgentSendRequest) (daemon.AgentSendResponse, error) {
+		sendCalled = true
+		return daemon.AgentSendResponse{Status: "sent"}, nil
+	}
+	t.Cleanup(func() {
+		commandResolveSessionTarget = originalResolveTarget
+		commandReadActiveSession = originalReadActive
+		commandEnsureDaemonRunning = originalEnsure
+		commandEnsureWorkspaceScope = originalEnsureScope
+		commandResolveAgentSelector = originalResolveAgent
+		commandRunRPC = originalRun
+		commandGetRPC = originalGet
+		commandOutputRPC = originalOutput
+		commandAgentSendRPC = originalSend
+	})
+
+	out, err := executeRootCommand("exec", "run", "--", "echo", "hi")
+	if err != nil {
+		t.Fatalf("exec run returned error: %v", err)
+	}
+	if sendCalled {
+		t.Fatal("agent send called unexpectedly")
+	}
+	if !strings.Contains(out, "Command produced no output; nothing forwarded to agent \"agt-0\".") {
+		t.Fatalf("exec run output = %q, want no-output forwarding note", out)
+	}
+}
+
+func TestCommandRunReturnsErrorOnNonZeroExitAfterForward(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalResolveTarget := commandResolveSessionTarget
+	originalReadActive := commandReadActiveSession
+	originalEnsure := commandEnsureDaemonRunning
+	originalEnsureScope := commandEnsureWorkspaceScope
+	originalResolveAgent := commandResolveAgentSelector
+	originalRun := commandRunRPC
+	originalGet := commandGetRPC
+	originalOutput := commandOutputRPC
+	originalSend := commandAgentSendRPC
+
+	commandResolveSessionTarget = func(context.Context, string, string) (resolvedSessionTarget, error) {
+		return resolvedSessionTarget{WorkspaceID: "sess-1", Session: &daemon.WorkspaceGetResponse{WorkspaceID: "sess-1", OriginRoot: t.TempDir()}}, nil
+	}
+	commandReadActiveSession = func() (string, error) { return "sess-1", nil }
+	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	commandEnsureWorkspaceScope = func(*daemon.WorkspaceGetResponse, string) error { return nil }
+	commandResolveAgentSelector = func(context.Context, string, string, string) (string, error) { return "agt-0", nil }
+	commandRunRPC = func(context.Context, string, daemon.CommandRunRequest) (daemon.CommandRunResponse, error) {
+		return daemon.CommandRunResponse{CommandID: "cmd-1", Status: "running"}, nil
+	}
+	commandGetRPC = func(context.Context, string, string, string) (daemon.CommandGetResponse, error) {
+		exitCode := 7
+		return daemon.CommandGetResponse{CommandID: "cmd-1", Status: "exited", ExitCode: &exitCode}, nil
+	}
+	commandOutputRPC = func(context.Context, string, string, string) (daemon.CommandOutputResponse, error) {
+		return daemon.CommandOutputResponse{Output: "failed\n"}, nil
+	}
+	sendCalled := false
+	commandAgentSendRPC = func(context.Context, string, daemon.AgentSendRequest) (daemon.AgentSendResponse, error) {
+		sendCalled = true
+		return daemon.AgentSendResponse{Status: "sent"}, nil
+	}
+	t.Cleanup(func() {
+		commandResolveSessionTarget = originalResolveTarget
+		commandReadActiveSession = originalReadActive
+		commandEnsureDaemonRunning = originalEnsure
+		commandEnsureWorkspaceScope = originalEnsureScope
+		commandResolveAgentSelector = originalResolveAgent
+		commandRunRPC = originalRun
+		commandGetRPC = originalGet
+		commandOutputRPC = originalOutput
+		commandAgentSendRPC = originalSend
+	})
+
+	_, err := executeRootCommand("exec", "run", "--", "echo", "hi")
+	if err == nil {
+		t.Fatal("exec run returned nil error")
+	}
+	if err.Error() != "Command exited with code 7" {
+		t.Fatalf("exec run error = %q, want %q", err.Error(), "Command exited with code 7")
+	}
+	if !sendCalled {
+		t.Fatal("agent send was not called")
 	}
 }
 
@@ -489,7 +835,7 @@ func TestCommandListShowOutputStop(t *testing.T) {
 		commandStopRPC = originalStop
 	})
 
-	listOut, err := executeRootCommand("command", "list")
+	listOut, err := executeRootCommand("exec", "list")
 	if err != nil {
 		t.Fatalf("execute command list: %v", err)
 	}
@@ -497,7 +843,7 @@ func TestCommandListShowOutputStop(t *testing.T) {
 		t.Fatalf("command list output = %q, want command id", listOut)
 	}
 
-	showOut, err := executeRootCommand("command", "show", "cmd-1")
+	showOut, err := executeRootCommand("exec", "show", "cmd-1")
 	if err != nil {
 		t.Fatalf("execute command show: %v", err)
 	}
@@ -505,7 +851,7 @@ func TestCommandListShowOutputStop(t *testing.T) {
 		t.Fatalf("command show output = %q, want status", showOut)
 	}
 
-	outputOut, err := executeRootCommand("command", "output", "cmd-1")
+	outputOut, err := executeRootCommand("exec", "output", "cmd-1")
 	if err != nil {
 		t.Fatalf("execute command output: %v", err)
 	}
@@ -513,7 +859,7 @@ func TestCommandListShowOutputStop(t *testing.T) {
 		t.Fatalf("command output output = %q, want output content", outputOut)
 	}
 
-	stopOut, err := executeRootCommand("command", "stop", "cmd-1")
+	stopOut, err := executeRootCommand("exec", "stop", "cmd-1")
 	if err != nil {
 		t.Fatalf("execute command stop: %v", err)
 	}
@@ -544,7 +890,7 @@ func TestCommandShowNotFoundMapsError(t *testing.T) {
 		commandGetRPC = originalShow
 	})
 
-	_, err := executeRootCommand("command", "show", "missing")
+	_, err := executeRootCommand("exec", "show", "missing")
 	if err == nil {
 		t.Fatal("command show returned nil error for missing command")
 	}
@@ -575,7 +921,7 @@ func TestCommandShowSessionNotFoundMapsError(t *testing.T) {
 		commandGetRPC = originalShow
 	})
 
-	_, err := executeRootCommand("command", "show", "cmd-1")
+	_, err := executeRootCommand("exec", "show", "cmd-1")
 	if err == nil {
 		t.Fatal("command show returned nil error for missing session")
 	}
@@ -609,7 +955,7 @@ func TestCommandListUsesSessionFlagOverride(t *testing.T) {
 		commandListRPC = originalList
 	})
 
-	_, err := executeRootCommand("command", "list", "--workspace", "alpha")
+	_, err := executeRootCommand("exec", "list", "--workspace", "alpha")
 	if err != nil {
 		t.Fatalf("execute command list with --workspace: %v", err)
 	}
@@ -630,7 +976,7 @@ func TestCommandListRequiresActiveWorkspaceWhenSessionNotProvided(t *testing.T) 
 		commandReadActiveSession = originalReadActive
 	})
 
-	_, err := executeRootCommand("command", "list")
+	_, err := executeRootCommand("exec", "list")
 	if err == nil {
 		t.Fatal("command list returned nil error without active session")
 	}
@@ -656,7 +1002,7 @@ func TestCommandListMissingActiveSessionDoesNotCallEnsure(t *testing.T) {
 		commandEnsureDaemonRunning = originalEnsure
 	})
 
-	_, err := executeRootCommandRaw("command", "list")
+	_, err := executeRootCommandRaw("exec", "list")
 	if err == nil {
 		t.Fatal("command list returned nil error without active session")
 	}
@@ -671,6 +1017,9 @@ func TestCommandSubcommandsUseSessionFlagOverride(t *testing.T) {
 
 	originalResolveTarget := commandResolveSessionTarget
 	originalReadActive := commandReadActiveSession
+	originalEnsure := commandEnsureDaemonRunning
+	originalResolveAgent := commandResolveAgentSelector
+	originalSend := commandAgentSendRPC
 	originalRun := commandRunRPC
 	originalList := commandListRPC
 	originalShow := commandGetRPC
@@ -680,6 +1029,11 @@ func TestCommandSubcommandsUseSessionFlagOverride(t *testing.T) {
 	commandReadActiveSession = func() (string, error) {
 		return "", errors.New("active workspace should not be read when --workspace is provided")
 	}
+	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	commandResolveAgentSelector = func(context.Context, string, string, string) (string, error) { return "agt-0", nil }
+	commandAgentSendRPC = func(context.Context, string, daemon.AgentSendRequest) (daemon.AgentSendResponse, error) {
+		return daemon.AgentSendResponse{Status: "sent"}, nil
+	}
 	commandRunRPC = func(context.Context, string, daemon.CommandRunRequest) (daemon.CommandRunResponse, error) {
 		return daemon.CommandRunResponse{CommandID: "cmd-1", Status: "running"}, nil
 	}
@@ -687,7 +1041,7 @@ func TestCommandSubcommandsUseSessionFlagOverride(t *testing.T) {
 		return daemon.CommandListResponse{}, nil
 	}
 	commandGetRPC = func(context.Context, string, string, string) (daemon.CommandGetResponse, error) {
-		return daemon.CommandGetResponse{CommandID: "cmd-1", WorkspaceID: "sess-1", Command: "echo", Status: "running", StartedAt: "now"}, nil
+		return daemon.CommandGetResponse{CommandID: "cmd-1", WorkspaceID: "sess-1", Command: "echo", Status: "exited", StartedAt: "now"}, nil
 	}
 	commandOutputRPC = func(context.Context, string, string, string) (daemon.CommandOutputResponse, error) {
 		return daemon.CommandOutputResponse{Output: "ok\n"}, nil
@@ -698,6 +1052,9 @@ func TestCommandSubcommandsUseSessionFlagOverride(t *testing.T) {
 	t.Cleanup(func() {
 		commandResolveSessionTarget = originalResolveTarget
 		commandReadActiveSession = originalReadActive
+		commandEnsureDaemonRunning = originalEnsure
+		commandResolveAgentSelector = originalResolveAgent
+		commandAgentSendRPC = originalSend
 		commandRunRPC = originalRun
 		commandListRPC = originalList
 		commandGetRPC = originalShow
@@ -709,11 +1066,11 @@ func TestCommandSubcommandsUseSessionFlagOverride(t *testing.T) {
 		name string
 		args []string
 	}{
-		{name: "run", args: []string{"command", "run", "--workspace", "alpha", "--", "echo", "hi"}},
-		{name: "list", args: []string{"command", "list", "--workspace", "alpha"}},
-		{name: "show", args: []string{"command", "show", "cmd-1", "--workspace", "alpha"}},
-		{name: "output", args: []string{"command", "output", "cmd-1", "--workspace", "alpha"}},
-		{name: "stop", args: []string{"command", "stop", "cmd-1", "--workspace", "alpha"}},
+		{name: "run", args: []string{"exec", "run", "--workspace", "alpha", "--", "echo", "hi"}},
+		{name: "list", args: []string{"exec", "list", "--workspace", "alpha"}},
+		{name: "show", args: []string{"exec", "show", "cmd-1", "--workspace", "alpha"}},
+		{name: "output", args: []string{"exec", "output", "cmd-1", "--workspace", "alpha"}},
+		{name: "stop", args: []string{"exec", "stop", "cmd-1", "--workspace", "alpha"}},
 	}
 
 	for _, tc := range tests {

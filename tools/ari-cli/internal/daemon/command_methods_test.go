@@ -113,6 +113,109 @@ func TestCommandRunUsesSessionPrimaryFolderAsCWD(t *testing.T) {
 	}
 }
 
+func TestCommandRunUsesExecutionRootPathWhenProvided(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerCommandMethods(registry, store); err != nil {
+		t.Fatalf("registerCommandMethods returned error: %v", err)
+	}
+
+	primaryFolder := t.TempDir()
+	secondaryFolder := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "sess-1", primaryFolder)
+	if err := store.AddFolder(context.Background(), "sess-1", secondaryFolder, "git", false); err != nil {
+		t.Fatalf("AddFolder secondary returned error: %v", err)
+	}
+
+	runResp := callMethod[CommandRunResponse](t, registry, "command.run", CommandRunRequest{
+		WorkspaceID:       "sess-1",
+		Command:           "/bin/sh",
+		Args:              []string{"-c", "pwd"},
+		ExecutionRootPath: secondaryFolder,
+	})
+
+	waitForCommandStatus(t, registry, "sess-1", runResp.CommandID, "exited")
+
+	outputResp := callMethod[CommandOutputResponse](t, registry, "command.output", CommandOutputRequest{WorkspaceID: "sess-1", CommandID: runResp.CommandID})
+	if !strings.Contains(outputResp.Output, secondaryFolder) {
+		t.Fatalf("command.output output = %q, want execution root %q", outputResp.Output, secondaryFolder)
+	}
+	if strings.Contains(outputResp.Output, primaryFolder) {
+		t.Fatalf("command.output output = %q, did not expect primary folder %q", outputResp.Output, primaryFolder)
+	}
+}
+
+func TestCommandRunRejectsExecutionRootPathOutsideWorkspace(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerCommandMethods(registry, store); err != nil {
+		t.Fatalf("registerCommandMethods returned error: %v", err)
+	}
+
+	primaryFolder := t.TempDir()
+	outsideFolder := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "sess-1", primaryFolder)
+
+	spec, ok := registry.Get("command.run")
+	if !ok {
+		t.Fatal("command.run method not registered")
+	}
+	raw, err := json.Marshal(CommandRunRequest{WorkspaceID: "sess-1", Command: "/bin/sh", Args: []string{"-c", "pwd"}, ExecutionRootPath: outsideFolder})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+
+	_, err = spec.Call(context.Background(), raw)
+	if err == nil {
+		t.Fatal("command.run returned nil error for execution root outside workspace")
+	}
+	var rpcErr *rpc.HandlerError
+	if !errors.As(err, &rpcErr) {
+		t.Fatalf("command.run error type = %T, want *rpc.HandlerError", err)
+	}
+	if rpcErr.Code != rpc.InvalidParams {
+		t.Fatalf("command.run error code = %d, want %d", rpcErr.Code, rpc.InvalidParams)
+	}
+}
+
+func TestCommandRunRejectsRelativeExecutionRootPath(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerCommandMethods(registry, store); err != nil {
+		t.Fatalf("registerCommandMethods returned error: %v", err)
+	}
+
+	primaryFolder := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "sess-1", primaryFolder)
+
+	spec, ok := registry.Get("command.run")
+	if !ok {
+		t.Fatal("command.run method not registered")
+	}
+	raw, err := json.Marshal(CommandRunRequest{WorkspaceID: "sess-1", Command: "/bin/sh", Args: []string{"-c", "pwd"}, ExecutionRootPath: "relative/path"})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+
+	_, err = spec.Call(context.Background(), raw)
+	if err == nil {
+		t.Fatal("command.run returned nil error for relative execution root")
+	}
+	var rpcErr *rpc.HandlerError
+	if !errors.As(err, &rpcErr) {
+		t.Fatalf("command.run error type = %T, want *rpc.HandlerError", err)
+	}
+	if rpcErr.Code != rpc.InvalidParams {
+		t.Fatalf("command.run error code = %d, want %d", rpcErr.Code, rpc.InvalidParams)
+	}
+}
+
 func TestCommandRunInvalidSessionStateAndFolderGuards(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -189,7 +292,7 @@ func TestCommandListReturnsCommandsForSession(t *testing.T) {
 
 	workspace := t.TempDir()
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
-	seedSessionWithPrimaryFolder(t, store, "sess-2", workspace)
+	seedSessionWithPrimaryFolder(t, store, "sess-2", t.TempDir())
 
 	if err := store.CreateCommand(context.Background(), globaldb.CreateCommandParams{CommandID: "cmd-1", WorkspaceID: "sess-1", Command: "echo one", Args: "[]", Status: "running", StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}); err != nil {
 		t.Fatalf("CreateCommand cmd-1 returned error: %v", err)

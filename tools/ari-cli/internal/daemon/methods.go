@@ -64,11 +64,27 @@ func (d *Daemon) registerMethods(registry *rpc.MethodRegistry, store *globaldb.S
 		return err
 	}
 
+	if err := d.registerWorkspaceProjectionMethods(registry, store); err != nil {
+		return err
+	}
+
+	if err := d.registerWorkspaceTimelineMethods(registry, store); err != nil {
+		return err
+	}
+
+	if err := d.registerContextMethods(registry, store); err != nil {
+		return err
+	}
+
 	if err := d.registerCommandMethods(registry, store); err != nil {
 		return err
 	}
 
 	if err := d.registerAgentMethods(registry, store); err != nil {
+		return err
+	}
+
+	if err := d.registerExecutorMethods(registry, store); err != nil {
 		return err
 	}
 

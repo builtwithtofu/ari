@@ -199,6 +199,49 @@ func TestSessionFolderOperationsAndGuards(t *testing.T) {
 	}
 }
 
+func TestAddFolderRejectsFolderAlreadyOwnedByAnotherWorkspace(t *testing.T) {
+	store := newSessionTestStore(t)
+	ctx := context.Background()
+
+	if err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin-a", "manual", "auto"); err != nil {
+		t.Fatalf("CreateSession sess-1 returned error: %v", err)
+	}
+	if err := store.CreateSession(ctx, "sess-2", "beta", "/tmp/origin-b", "manual", "auto"); err != nil {
+		t.Fatalf("CreateSession sess-2 returned error: %v", err)
+	}
+	if err := store.AddFolder(ctx, "sess-1", "/tmp/repo-a", "git", true); err != nil {
+		t.Fatalf("AddFolder sess-1 returned error: %v", err)
+	}
+
+	err := store.AddFolder(ctx, "sess-2", "/tmp/repo-a", "git", true)
+	if err == nil {
+		t.Fatal("AddFolder returned nil error for folder owned by another workspace")
+	}
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("AddFolder duplicate folder error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestWorkspaceFolderPathMigrationAllowsHistoricalDuplicates(t *testing.T) {
+	store := newSessionTestStore(t)
+	ctx := context.Background()
+
+	if err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin-a", "manual", "auto"); err != nil {
+		t.Fatalf("CreateSession sess-1 returned error: %v", err)
+	}
+	if err := store.CreateSession(ctx, "sess-2", "beta", "/tmp/origin-b", "manual", "auto"); err != nil {
+		t.Fatalf("CreateSession sess-2 returned error: %v", err)
+	}
+	if err := store.AddFolder(ctx, "sess-1", "/tmp/repo-a", "git", true); err != nil {
+		t.Fatalf("AddFolder sess-1 returned error: %v", err)
+	}
+
+	_, err := store.db.ExecContext(ctx, insertSessionFolderQuery, "sess-2", "/tmp/repo-a", "git", 1, time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		t.Fatalf("direct workspace_folders insert returned error for historical duplicate folder path: %v", err)
+	}
+}
+
 func TestListSessionsNewestFirst(t *testing.T) {
 	store := newSessionTestStore(t)
 	ctx := context.Background()

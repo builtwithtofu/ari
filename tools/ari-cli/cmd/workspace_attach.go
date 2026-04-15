@@ -29,7 +29,7 @@ func newWorkspaceAttachCmd() *cobra.Command {
 		Args:  cobra.MaximumNArgs(1),
 		RunE:  runWorkspaceAttachEntrypoint,
 	}
-	cmd.Flags().StringVar(&workspaceRef, "workspace", "", "Workspace id or name override (defaults to CWD match)")
+	cmd.Flags().StringVar(&workspaceRef, "workspace", "", "Target workspace id or name (defaults to CWD match)")
 	return cmd
 }
 

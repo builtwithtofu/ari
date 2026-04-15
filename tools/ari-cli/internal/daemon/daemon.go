@@ -47,6 +47,9 @@ type Daemon struct {
 	agentLogOrder     []string
 	agentStops        map[string]bool
 	agentWG           sync.WaitGroup
+	executorMu        sync.RWMutex
+	executorRuns      map[string]AgentRun
+	executorItems     map[string][]TimelineItem
 	attachMu          sync.Mutex
 	attachByToken     map[string]attachSession
 	attachByAgent     map[string]string
@@ -102,6 +105,8 @@ func NewWithSignalChannel(socketPath, dbPath, pidPath, configPath, configSource,
 		agentLogs:         make(map[string]string),
 		agentLogOrder:     make([]string, 0),
 		agentStops:        make(map[string]bool),
+		executorRuns:      make(map[string]AgentRun),
+		executorItems:     make(map[string][]TimelineItem),
 		attachByToken:     make(map[string]attachSession),
 		attachByAgent:     make(map[string]string),
 		attachConnByAgent: make(map[string]net.Conn),

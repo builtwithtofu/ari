@@ -6,6 +6,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/client"
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
 	"github.com/spf13/cobra"
 )
 
@@ -20,6 +22,15 @@ var rootEnsureDaemonRunning = ensureDaemonRunning
 var rootResolveWorkspaceFromCWD = resolveWorkspaceFromCWD
 
 var rootAgentListRPC = agentListRPC
+
+var rootWorkspaceActivityRPC = func(ctx context.Context, socketPath, workspaceID string) (daemon.WorkspaceActivityResponse, error) {
+	rpcClient := client.New(socketPath)
+	var response daemon.WorkspaceActivityResponse
+	if err := rpcClient.Call(ctx, "workspace.activity", daemon.WorkspaceActivityRequest{WorkspaceID: workspaceID}, &response); err != nil {
+		return daemon.WorkspaceActivityResponse{}, err
+	}
+	return response, nil
+}
 
 var rootRunWorkspaceAttach = runWorkspaceAttachEntrypoint
 
@@ -61,12 +72,19 @@ var rootRunNonInteractive = func(cmd *cobra.Command, _ []string) error {
 				return writeErr
 			}
 			_, writeErr = fmt.Fprintln(cmd.OutOrStdout(), "Hint: Run `ari workspace create <name>` in this project.")
-			return writeErr
+			if writeErr != nil {
+				return writeErr
+			}
+			return userFacingError{message: "No workspace matches current directory"}
 		}
 		return err
 	}
 
 	agents, err := rootAgentListRPC(ctx, cfg.Daemon.SocketPath, workspace.WorkspaceID)
+	if err != nil {
+		return mapSessionRPCError(err)
+	}
+	activity, err := rootWorkspaceActivityRPC(ctx, cfg.Daemon.SocketPath, workspace.WorkspaceID)
 	if err != nil {
 		return mapSessionRPCError(err)
 	}
@@ -89,6 +107,21 @@ var rootRunNonInteractive = func(cmd *cobra.Command, _ []string) error {
 	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Agents: %d\n", len(agents.Agents)); err != nil {
 		return err
 	}
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "VCS: %s (%d changed files)\n", activity.VCS.Backend, activity.VCS.ChangedFiles); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Processes: %d\n", len(activity.Processes)); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Attention: %s (%d items)\n", activity.Attention.Level, len(activity.Attention.Items)); err != nil {
+		return err
+	}
+	if len(activity.Proofs) > 0 {
+		proof := activity.Proofs[0]
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Latest proof: %s %s\n", proof.Status, proof.Command); err != nil {
+			return err
+		}
+	}
 
 	return nil
 }
@@ -108,6 +141,7 @@ func NewRootCmd() *cobra.Command {
 	rootCmd.AddCommand(NewDaemonCmd())
 	rootCmd.AddCommand(NewWorkspaceCmd())
 	rootCmd.AddCommand(NewCommandCmd())
+	rootCmd.AddCommand(NewExecCmd())
 	rootCmd.AddCommand(NewAgentCmd())
 
 	return rootCmd

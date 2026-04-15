@@ -3,6 +3,7 @@ package vcs
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -202,6 +203,43 @@ D path/to/deleted.go`
 		if files[i] != f {
 			t.Errorf("files[%d] = %q, want %q", i, files[i], f)
 		}
+	}
+}
+
+func TestGitChangedFilesReturnsSortedFiles(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	if err := os.WriteFile(filepath.Join(repo, "z.txt"), []byte("z"), 0o644); err != nil {
+		t.Fatalf("write z.txt: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("a"), 0o644); err != nil {
+		t.Fatalf("write a.txt: %v", err)
+	}
+
+	files, err := (&gitBackend{root: repo}).ChangedFiles()
+	if err != nil {
+		t.Fatalf("ChangedFiles returned error: %v", err)
+	}
+	want := []string{"a.txt", "z.txt"}
+	if len(files) != len(want) {
+		t.Fatalf("files len = %d, want %d: %#v", len(files), len(want), files)
+	}
+	for i := range want {
+		if files[i] != want[i] {
+			t.Fatalf("files = %#v, want %#v", files, want)
+		}
+	}
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v failed: %v (%s)", args, err, string(out))
 	}
 }
 

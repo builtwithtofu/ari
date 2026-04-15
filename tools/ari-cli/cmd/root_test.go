@@ -146,6 +146,7 @@ func TestRootRunNonInteractiveRendersWorkspaceDashboard(t *testing.T) {
 	originalEnsure := rootEnsureDaemonRunning
 	originalResolve := rootResolveWorkspaceFromCWD
 	originalAgentList := rootAgentListRPC
+	originalActivity := rootWorkspaceActivityRPC
 	t.Cleanup(func() {
 		rootIsInteractiveTerminal = originalIsInteractive
 		rootRunInteractive = originalRunInteractive
@@ -153,6 +154,7 @@ func TestRootRunNonInteractiveRendersWorkspaceDashboard(t *testing.T) {
 		rootEnsureDaemonRunning = originalEnsure
 		rootResolveWorkspaceFromCWD = originalResolve
 		rootAgentListRPC = originalAgentList
+		rootWorkspaceActivityRPC = originalActivity
 	})
 
 	rootIsInteractiveTerminal = func(cmd *cobra.Command) bool {
@@ -185,6 +187,22 @@ func TestRootRunNonInteractiveRendersWorkspaceDashboard(t *testing.T) {
 		_ = sessionID
 		return daemon.AgentListResponse{Agents: []daemon.AgentSummary{{AgentID: "a1"}, {AgentID: "a2"}}}, nil
 	}
+	rootWorkspaceActivityRPC = func(ctx context.Context, socketPath, workspaceID string) (daemon.WorkspaceActivityResponse, error) {
+		_ = ctx
+		_ = socketPath
+		if workspaceID != "ws-1" {
+			t.Fatalf("workspace activity id = %q, want ws-1", workspaceID)
+		}
+		return daemon.WorkspaceActivityResponse{
+			WorkspaceID:   "ws-1",
+			WorkspaceName: "clay",
+			VCS:           daemon.DiffSummary{Backend: "jj", ChangedFiles: 3},
+			Attention:     daemon.AttentionSummary{Level: "action-required", Items: []daemon.AttentionItem{{Kind: "proof_failed", SourceID: "proof_cmd-1", Message: "just verify"}}},
+			Processes:     []daemon.ProcessActivity{{ID: "cmd-1", Kind: "command", Status: "running", Label: "just verify"}},
+			Agents:        []daemon.AgentActivity{{ID: "a1", Status: "running", Executor: "codex"}, {ID: "a2", Status: "exited", Executor: "opencode"}},
+			Proofs:        []daemon.ProofResultSummary{{ID: "proof_cmd-1", Status: "failed", Command: "just verify"}},
+		}, nil
+	}
 
 	out, err := executeRootCommandRaw()
 	if err != nil {
@@ -201,6 +219,18 @@ func TestRootRunNonInteractiveRendersWorkspaceDashboard(t *testing.T) {
 	}
 	if !strings.Contains(out, "Agents: 2") {
 		t.Fatalf("output = %q, want agents count", out)
+	}
+	if !strings.Contains(out, "VCS: jj (3 changed files)") {
+		t.Fatalf("output = %q, want vcs projection line", out)
+	}
+	if !strings.Contains(out, "Processes: 1") {
+		t.Fatalf("output = %q, want process count", out)
+	}
+	if !strings.Contains(out, "Latest proof: failed just verify") {
+		t.Fatalf("output = %q, want latest proof line", out)
+	}
+	if !strings.Contains(out, "Attention: action-required (1 items)") {
+		t.Fatalf("output = %q, want attention line", out)
 	}
 }
 
@@ -236,8 +266,11 @@ func TestRootRunNonInteractivePrintsNoWorkspaceMatchHint(t *testing.T) {
 	}
 
 	out, err := executeRootCommandRaw()
-	if err != nil {
-		t.Fatalf("executeRootCommandRaw returned error: %v", err)
+	if err == nil {
+		t.Fatal("executeRootCommandRaw returned nil error")
+	}
+	if err.Error() != "No workspace matches current directory" {
+		t.Fatalf("executeRootCommandRaw error = %q, want %q", err.Error(), "No workspace matches current directory")
 	}
 	if !strings.Contains(out, "No workspace matches current directory") {
 		t.Fatalf("output = %q, want no-match hint", out)

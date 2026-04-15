@@ -856,7 +856,7 @@ func executeRootCommandWithContext(ctx context.Context, args ...string) (string,
 		cwd = wd
 	}
 
-	if len(args) > 0 && (args[0] == "command" || args[0] == "agent") {
+	if len(args) > 0 && (args[0] == "command" || args[0] == "exec" || args[0] == "agent") {
 		workspaceGetRPC = func(_ context.Context, _ string, idOrName string) (daemon.WorkspaceGetResponse, error) {
 			resolved := strings.TrimSpace(idOrName)
 			if resolved == "" {
@@ -912,7 +912,7 @@ func TestCommandListReturnsEnsureDaemonError(t *testing.T) {
 		commandEnsureDaemonRunning = originalEnsure
 	})
 
-	_, err := executeRootCommandRaw("command", "list", "--workspace", "alpha")
+	_, err := executeRootCommandRaw("exec", "list", "--workspace", "alpha")
 	if err == nil {
 		t.Fatal("command list returned nil error")
 	}
