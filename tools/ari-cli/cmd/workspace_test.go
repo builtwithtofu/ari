@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -93,16 +94,391 @@ func TestWorkspaceSubcommandsExist(t *testing.T) {
 	}
 }
 
-func TestWorkspaceAttachPrintsGuidanceWithoutError(t *testing.T) {
+func TestWorkspaceAttachWithoutAgentUsesRunningDefaultHarnessAgent(t *testing.T) {
+	root := t.TempDir()
+	workspaceRoot := filepath.Join(root, "work", "clay")
+	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll returned error: %v", err)
+	}
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(originalWD)
+	})
+	if err := os.Chdir(workspaceRoot); err != nil {
+		t.Fatalf("os.Chdir returned error: %v", err)
+	}
+	t.Setenv("ARI_DEFAULT_HARNESS", "opencode")
+
+	originalEnsure := workspaceEnsureDaemonRunning
+	originalList := workspaceListRPC
+	originalGet := workspaceGetRPC
+	originalAgentList := agentListRPC
+	originalAgentGet := agentGetRPC
+	originalSpawn := agentSpawnRPC
+	originalPrepare := agentAttachPrepareTerminalFn
+	originalSize := agentAttachTerminalSize
+	originalAttachRPC := agentAttachRPC
+	originalRunSession := agentAttachRunSession
+
+	workspaceEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{{WorkspaceID: "ws-1", Name: "clay"}}}, nil
+	}
+	workspaceGetRPC = func(_ context.Context, _ string, workspaceID string) (daemon.WorkspaceGetResponse, error) {
+		switch workspaceID {
+		case "ws-1":
+			return daemon.WorkspaceGetResponse{WorkspaceID: "ws-1", Name: "clay", OriginRoot: workspaceRoot}, nil
+		default:
+			return daemon.WorkspaceGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "workspace not found"}
+		}
+	}
+	agentListRPC = func(context.Context, string, string) (daemon.AgentListResponse, error) {
+		return daemon.AgentListResponse{Agents: []daemon.AgentSummary{{AgentID: "agent-1", Status: "running"}}}, nil
+	}
+	agentGetRPC = func(context.Context, string, string, string) (daemon.AgentGetResponse, error) {
+		return daemon.AgentGetResponse{AgentID: "agent-1", WorkspaceID: "ws-1", Status: "running", Harness: "opencode"}, nil
+	}
+	agentSpawnRPC = func(context.Context, string, daemon.AgentSpawnRequest) (daemon.AgentSpawnResponse, error) {
+		return daemon.AgentSpawnResponse{}, errors.New("agent spawn should not be called when running default exists")
+	}
+	agentAttachPrepareTerminalFn = func(*cobra.Command, context.Context) (func(), error) {
+		return func() {}, nil
+	}
+	agentAttachTerminalSize = func(*cobra.Command) (uint16, uint16) { return 80, 24 }
+	gotReq := daemon.AgentAttachRequest{}
+	agentAttachRPC = func(_ context.Context, _ string, req daemon.AgentAttachRequest) (daemon.AgentAttachResponse, error) {
+		gotReq = req
+		return daemon.AgentAttachResponse{Token: "tok-1", Status: "pending"}, nil
+	}
+	agentAttachRunSession = func(context.Context, io.Reader, io.Writer, string, string, uint16, uint16, <-chan os.Signal, func() (uint16, uint16)) (attachSessionOutcome, error) {
+		return attachSessionOutcome{Detached: true}, nil
+	}
+	t.Cleanup(func() {
+		workspaceEnsureDaemonRunning = originalEnsure
+		workspaceListRPC = originalList
+		workspaceGetRPC = originalGet
+		agentListRPC = originalAgentList
+		agentGetRPC = originalAgentGet
+		agentSpawnRPC = originalSpawn
+		agentAttachPrepareTerminalFn = originalPrepare
+		agentAttachTerminalSize = originalSize
+		agentAttachRPC = originalAttachRPC
+		agentAttachRunSession = originalRunSession
+	})
+
 	out, err := executeRootCommand("workspace", "attach")
 	if err != nil {
 		t.Fatalf("execute workspace attach: %v", err)
 	}
-	if !strings.Contains(out, "Workspace attach needs an agent id") {
-		t.Fatalf("workspace attach output = %q, want agent-id guidance", out)
+	if gotReq.AgentID != "agent-1" {
+		t.Fatalf("workspace attach agent_id = %q, want %q", gotReq.AgentID, "agent-1")
 	}
-	if !strings.Contains(out, "--workspace <id-or-name>") {
-		t.Fatalf("workspace attach output = %q, want workspace override guidance", out)
+	if !strings.Contains(out, "Attaching to agent \"agent-1\" in workspace ws-1") {
+		t.Fatalf("workspace attach output = %q, want attach status line", out)
+	}
+}
+
+func TestWorkspaceAttachWithoutAgentSpawnsDefaultHarnessAgentWhenMissing(t *testing.T) {
+	root := t.TempDir()
+	workspaceRoot := filepath.Join(root, "work", "clay")
+	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll returned error: %v", err)
+	}
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(originalWD)
+	})
+	if err := os.Chdir(workspaceRoot); err != nil {
+		t.Fatalf("os.Chdir returned error: %v", err)
+	}
+	t.Setenv("ARI_DEFAULT_HARNESS", "opencode")
+
+	originalEnsure := workspaceEnsureDaemonRunning
+	originalList := workspaceListRPC
+	originalGet := workspaceGetRPC
+	originalAgentList := agentListRPC
+	originalSpawn := agentSpawnRPC
+	originalPrepare := agentAttachPrepareTerminalFn
+	originalSize := agentAttachTerminalSize
+	originalAttachRPC := agentAttachRPC
+	originalRunSession := agentAttachRunSession
+
+	workspaceEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{{WorkspaceID: "ws-1", Name: "clay"}}}, nil
+	}
+	workspaceGetRPC = func(_ context.Context, _ string, workspaceID string) (daemon.WorkspaceGetResponse, error) {
+		switch workspaceID {
+		case "ws-1":
+			return daemon.WorkspaceGetResponse{WorkspaceID: "ws-1", Name: "clay", OriginRoot: workspaceRoot}, nil
+		default:
+			return daemon.WorkspaceGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "workspace not found"}
+		}
+	}
+	agentListRPC = func(context.Context, string, string) (daemon.AgentListResponse, error) {
+		return daemon.AgentListResponse{Agents: []daemon.AgentSummary{}}, nil
+	}
+	spawnReq := daemon.AgentSpawnRequest{}
+	agentSpawnRPC = func(_ context.Context, _ string, req daemon.AgentSpawnRequest) (daemon.AgentSpawnResponse, error) {
+		spawnReq = req
+		return daemon.AgentSpawnResponse{AgentID: "agent-spawned", Status: "running"}, nil
+	}
+	agentAttachPrepareTerminalFn = func(*cobra.Command, context.Context) (func(), error) {
+		return func() {}, nil
+	}
+	agentAttachTerminalSize = func(*cobra.Command) (uint16, uint16) { return 80, 24 }
+	gotReq := daemon.AgentAttachRequest{}
+	agentAttachRPC = func(_ context.Context, _ string, req daemon.AgentAttachRequest) (daemon.AgentAttachResponse, error) {
+		gotReq = req
+		return daemon.AgentAttachResponse{Token: "tok-1", Status: "pending"}, nil
+	}
+	agentAttachRunSession = func(context.Context, io.Reader, io.Writer, string, string, uint16, uint16, <-chan os.Signal, func() (uint16, uint16)) (attachSessionOutcome, error) {
+		return attachSessionOutcome{Detached: true}, nil
+	}
+	t.Cleanup(func() {
+		workspaceEnsureDaemonRunning = originalEnsure
+		workspaceListRPC = originalList
+		workspaceGetRPC = originalGet
+		agentListRPC = originalAgentList
+		agentSpawnRPC = originalSpawn
+		agentAttachPrepareTerminalFn = originalPrepare
+		agentAttachTerminalSize = originalSize
+		agentAttachRPC = originalAttachRPC
+		agentAttachRunSession = originalRunSession
+	})
+
+	out, err := executeRootCommand("workspace", "attach")
+	if err != nil {
+		t.Fatalf("execute workspace attach: %v", err)
+	}
+	if spawnReq.WorkspaceID != "ws-1" {
+		t.Fatalf("agent spawn workspace_id = %q, want %q", spawnReq.WorkspaceID, "ws-1")
+	}
+	if spawnReq.Harness != "opencode" {
+		t.Fatalf("agent spawn harness = %q, want %q", spawnReq.Harness, "opencode")
+	}
+	if gotReq.AgentID != "agent-spawned" {
+		t.Fatalf("workspace attach agent_id = %q, want %q", gotReq.AgentID, "agent-spawned")
+	}
+	if !strings.Contains(out, "Attaching to agent \"agent-spawned\" in workspace ws-1") {
+		t.Fatalf("workspace attach output = %q, want attach status line", out)
+	}
+}
+
+func TestWorkspaceAttachWithoutAgentPrefersSoleRunningAgentOverSpawn(t *testing.T) {
+	root := t.TempDir()
+	workspaceRoot := filepath.Join(root, "work", "clay")
+	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll returned error: %v", err)
+	}
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(originalWD)
+	})
+	if err := os.Chdir(workspaceRoot); err != nil {
+		t.Fatalf("os.Chdir returned error: %v", err)
+	}
+	t.Setenv("ARI_DEFAULT_HARNESS", "opencode")
+
+	originalEnsure := workspaceEnsureDaemonRunning
+	originalList := workspaceListRPC
+	originalGet := workspaceGetRPC
+	originalAgentList := agentListRPC
+	originalAgentGet := agentGetRPC
+	originalSpawn := agentSpawnRPC
+	originalPrepare := agentAttachPrepareTerminalFn
+	originalSize := agentAttachTerminalSize
+	originalAttachRPC := agentAttachRPC
+	originalRunSession := agentAttachRunSession
+
+	workspaceEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{{WorkspaceID: "ws-1", Name: "clay"}}}, nil
+	}
+	workspaceGetRPC = func(_ context.Context, _ string, workspaceID string) (daemon.WorkspaceGetResponse, error) {
+		if workspaceID != "ws-1" {
+			return daemon.WorkspaceGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "workspace not found"}
+		}
+		return daemon.WorkspaceGetResponse{WorkspaceID: "ws-1", Name: "clay", OriginRoot: workspaceRoot}, nil
+	}
+	agentListRPC = func(context.Context, string, string) (daemon.AgentListResponse, error) {
+		return daemon.AgentListResponse{Agents: []daemon.AgentSummary{{AgentID: "agent-sole", Status: "running"}}}, nil
+	}
+	agentGetRPC = func(context.Context, string, string, string) (daemon.AgentGetResponse, error) {
+		return daemon.AgentGetResponse{AgentID: "agent-sole", WorkspaceID: "ws-1", Status: "running", Harness: "claude"}, nil
+	}
+	agentSpawnRPC = func(context.Context, string, daemon.AgentSpawnRequest) (daemon.AgentSpawnResponse, error) {
+		return daemon.AgentSpawnResponse{}, errors.New("agent spawn should not be called when exactly one running agent exists")
+	}
+	agentAttachPrepareTerminalFn = func(*cobra.Command, context.Context) (func(), error) {
+		return func() {}, nil
+	}
+	agentAttachTerminalSize = func(*cobra.Command) (uint16, uint16) { return 80, 24 }
+	gotReq := daemon.AgentAttachRequest{}
+	agentAttachRPC = func(_ context.Context, _ string, req daemon.AgentAttachRequest) (daemon.AgentAttachResponse, error) {
+		gotReq = req
+		return daemon.AgentAttachResponse{Token: "tok-1", Status: "pending"}, nil
+	}
+	agentAttachRunSession = func(context.Context, io.Reader, io.Writer, string, string, uint16, uint16, <-chan os.Signal, func() (uint16, uint16)) (attachSessionOutcome, error) {
+		return attachSessionOutcome{Detached: true}, nil
+	}
+	t.Cleanup(func() {
+		workspaceEnsureDaemonRunning = originalEnsure
+		workspaceListRPC = originalList
+		workspaceGetRPC = originalGet
+		agentListRPC = originalAgentList
+		agentGetRPC = originalAgentGet
+		agentSpawnRPC = originalSpawn
+		agentAttachPrepareTerminalFn = originalPrepare
+		agentAttachTerminalSize = originalSize
+		agentAttachRPC = originalAttachRPC
+		agentAttachRunSession = originalRunSession
+	})
+
+	_, err = executeRootCommand("workspace", "attach")
+	if err != nil {
+		t.Fatalf("execute workspace attach: %v", err)
+	}
+	if gotReq.AgentID != "agent-sole" {
+		t.Fatalf("workspace attach agent_id = %q, want %q", gotReq.AgentID, "agent-sole")
+	}
+}
+
+func TestWorkspaceAttachWithoutAgentFailsWhenAgentLookupFails(t *testing.T) {
+	root := t.TempDir()
+	workspaceRoot := filepath.Join(root, "work", "clay")
+	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll returned error: %v", err)
+	}
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(originalWD)
+	})
+	if err := os.Chdir(workspaceRoot); err != nil {
+		t.Fatalf("os.Chdir returned error: %v", err)
+	}
+	t.Setenv("ARI_DEFAULT_HARNESS", "opencode")
+
+	originalEnsure := workspaceEnsureDaemonRunning
+	originalList := workspaceListRPC
+	originalGet := workspaceGetRPC
+	originalAgentList := agentListRPC
+	originalAgentGet := agentGetRPC
+	originalSpawn := agentSpawnRPC
+
+	workspaceEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{{WorkspaceID: "ws-1", Name: "clay"}}}, nil
+	}
+	workspaceGetRPC = func(_ context.Context, _ string, workspaceID string) (daemon.WorkspaceGetResponse, error) {
+		if workspaceID != "ws-1" {
+			return daemon.WorkspaceGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "workspace not found"}
+		}
+		return daemon.WorkspaceGetResponse{WorkspaceID: "ws-1", Name: "clay", OriginRoot: workspaceRoot}, nil
+	}
+	agentListRPC = func(context.Context, string, string) (daemon.AgentListResponse, error) {
+		return daemon.AgentListResponse{Agents: []daemon.AgentSummary{{AgentID: "agent-1", Status: "running"}}}, nil
+	}
+	agentGetRPC = func(context.Context, string, string, string) (daemon.AgentGetResponse, error) {
+		return daemon.AgentGetResponse{}, errors.New("lookup failed")
+	}
+	agentSpawnRPC = func(context.Context, string, daemon.AgentSpawnRequest) (daemon.AgentSpawnResponse, error) {
+		return daemon.AgentSpawnResponse{}, errors.New("agent spawn should not be called when lookup fails")
+	}
+	t.Cleanup(func() {
+		workspaceEnsureDaemonRunning = originalEnsure
+		workspaceListRPC = originalList
+		workspaceGetRPC = originalGet
+		agentListRPC = originalAgentList
+		agentGetRPC = originalAgentGet
+		agentSpawnRPC = originalSpawn
+	})
+
+	_, err = executeRootCommand("workspace", "attach")
+	if err == nil {
+		t.Fatal("execute workspace attach returned nil error")
+	}
+	if err.Error() != "lookup failed" {
+		t.Fatalf("workspace attach error = %q, want %q", err.Error(), "lookup failed")
+	}
+}
+
+func TestWorkspaceAttachWithoutAgentRejectsMultipleDefaultHarnessMatches(t *testing.T) {
+	root := t.TempDir()
+	workspaceRoot := filepath.Join(root, "work", "clay")
+	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll returned error: %v", err)
+	}
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(originalWD)
+	})
+	if err := os.Chdir(workspaceRoot); err != nil {
+		t.Fatalf("os.Chdir returned error: %v", err)
+	}
+	t.Setenv("ARI_DEFAULT_HARNESS", "opencode")
+
+	originalEnsure := workspaceEnsureDaemonRunning
+	originalList := workspaceListRPC
+	originalGet := workspaceGetRPC
+	originalAgentList := agentListRPC
+	originalAgentGet := agentGetRPC
+	originalSpawn := agentSpawnRPC
+
+	workspaceEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{{WorkspaceID: "ws-1", Name: "clay"}}}, nil
+	}
+	workspaceGetRPC = func(_ context.Context, _ string, workspaceID string) (daemon.WorkspaceGetResponse, error) {
+		if workspaceID != "ws-1" {
+			return daemon.WorkspaceGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "workspace not found"}
+		}
+		return daemon.WorkspaceGetResponse{WorkspaceID: "ws-1", Name: "clay", OriginRoot: workspaceRoot}, nil
+	}
+	agentListRPC = func(context.Context, string, string) (daemon.AgentListResponse, error) {
+		return daemon.AgentListResponse{Agents: []daemon.AgentSummary{{AgentID: "agent-a", Status: "running"}, {AgentID: "agent-b", Status: "running"}}}, nil
+	}
+	agentGetRPC = func(_ context.Context, _ string, _ string, agentID string) (daemon.AgentGetResponse, error) {
+		return daemon.AgentGetResponse{AgentID: agentID, WorkspaceID: "ws-1", Status: "running", Harness: "opencode"}, nil
+	}
+	agentSpawnRPC = func(context.Context, string, daemon.AgentSpawnRequest) (daemon.AgentSpawnResponse, error) {
+		return daemon.AgentSpawnResponse{}, errors.New("agent spawn should not be called when default harness match is ambiguous")
+	}
+	t.Cleanup(func() {
+		workspaceEnsureDaemonRunning = originalEnsure
+		workspaceListRPC = originalList
+		workspaceGetRPC = originalGet
+		agentListRPC = originalAgentList
+		agentGetRPC = originalAgentGet
+		agentSpawnRPC = originalSpawn
+	})
+
+	_, err = executeRootCommand("workspace", "attach")
+	if err == nil {
+		t.Fatal("execute workspace attach returned nil error")
+	}
+	if err.Error() != "Multiple running agents match default_harness; run `ari workspace attach <agent-id>`" {
+		t.Fatalf("workspace attach error = %q, want %q", err.Error(), "Multiple running agents match default_harness; run `ari workspace attach <agent-id>`")
 	}
 }
 

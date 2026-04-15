@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/config"
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
 	"github.com/spf13/cobra"
 )
 
@@ -17,8 +19,8 @@ func newWorkspaceAttachCmd() *cobra.Command {
 	var workspaceRef string
 
 	cmd := &cobra.Command{
-		Use:   "attach <agent-id>",
-		Short: "Attach to a running agent in the workspace",
+		Use:   "attach [agent-id]",
+		Short: "Attach to an agent in the workspace",
 		Args:  cobra.MaximumNArgs(1),
 		RunE:  runWorkspaceAttachEntrypoint,
 	}
@@ -29,10 +31,6 @@ func newWorkspaceAttachCmd() *cobra.Command {
 func runWorkspaceAttachEntrypoint(cmd *cobra.Command, args []string) error {
 	if cmd == nil {
 		return fmt.Errorf("workspace attach: command is required")
-	}
-	if len(args) == 0 {
-		_, err := fmt.Fprintln(cmd.OutOrStdout(), "Workspace attach needs an agent id; run `ari workspace attach <agent-id>` from the workspace folder or pass `--workspace <id-or-name>`.")
-		return err
 	}
 	if len(args) > 1 {
 		return userFacingError{message: "workspace attach accepts at most one agent id"}
@@ -71,11 +69,20 @@ func runWorkspaceAttachEntrypoint(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Attaching to agent %q in workspace %s. Detach: Ctrl-\\.\n", strings.TrimSpace(args[0]), target.WorkspaceID); err != nil {
+
+	agentID := strings.TrimSpace(strings.Join(args, ""))
+	if agentID == "" {
+		agentID, err = resolveDefaultWorkspaceAttachAgent(runCtx, cfg, target.WorkspaceID)
+		if err != nil {
+			return err
+		}
+	}
+
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Attaching to agent %q in workspace %s. Detach: Ctrl-\\.\n", agentID, target.WorkspaceID); err != nil {
 		return err
 	}
 
-	return runAgentAttachFlow(cmd, cfg, runCtx, restoreTerminal, target.WorkspaceID, strings.TrimSpace(args[0]))
+	return runAgentAttachFlow(cmd, cfg, runCtx, restoreTerminal, target.WorkspaceID, agentID)
 }
 
 func resolveWorkspaceAttachTarget(runCtx context.Context, cfg *config.Config, cmd *cobra.Command) (resolvedSessionTarget, error) {
@@ -118,4 +125,80 @@ func resolveWorkspaceAttachTarget(runCtx context.Context, cfg *config.Config, cm
 	}
 	resolved := workspace
 	return resolvedSessionTarget{WorkspaceID: workspace.WorkspaceID, Session: &resolved}, nil
+}
+
+func resolveDefaultWorkspaceAttachAgent(runCtx context.Context, cfg *config.Config, workspaceID string) (string, error) {
+	if runCtx == nil {
+		return "", fmt.Errorf("workspace attach: run context is required")
+	}
+	if cfg == nil {
+		return "", fmt.Errorf("workspace attach: config is required")
+	}
+	if strings.TrimSpace(workspaceID) == "" {
+		return "", userFacingError{message: "Workspace not found"}
+	}
+
+	lookupCtx, cancel := context.WithTimeout(runCtx, 5*time.Second)
+	defer cancel()
+
+	list, err := agentListRPC(lookupCtx, cfg.Daemon.SocketPath, workspaceID)
+	if err != nil {
+		return "", mapAgentRPCError(err)
+	}
+
+	defaultHarness := strings.TrimSpace(cfg.DefaultHarness)
+	runningAgentIDs := make([]string, 0)
+	runningDefaultHarnessAgentIDs := make([]string, 0)
+	for _, summary := range list.Agents {
+		agentID := strings.TrimSpace(summary.AgentID)
+		if agentID == "" {
+			continue
+		}
+
+		details, getErr := agentGetRPC(lookupCtx, cfg.Daemon.SocketPath, workspaceID, agentID)
+		if getErr != nil {
+			return "", mapAgentRPCError(getErr)
+		}
+		if !strings.EqualFold(strings.TrimSpace(details.Status), "running") {
+			continue
+		}
+
+		runningAgentIDs = append(runningAgentIDs, agentID)
+		if defaultHarness != "" && strings.EqualFold(strings.TrimSpace(details.Harness), defaultHarness) {
+			runningDefaultHarnessAgentIDs = append(runningDefaultHarnessAgentIDs, agentID)
+		}
+	}
+
+	if len(runningAgentIDs) == 1 {
+		return runningAgentIDs[0], nil
+	}
+
+	if len(runningDefaultHarnessAgentIDs) > 0 {
+		if len(runningDefaultHarnessAgentIDs) > 1 {
+			sort.Strings(runningDefaultHarnessAgentIDs)
+			return "", userFacingError{message: "Multiple running agents match default_harness; run `ari workspace attach <agent-id>`"}
+		}
+		return runningDefaultHarnessAgentIDs[0], nil
+	}
+
+	if len(runningAgentIDs) > 1 {
+		sort.Strings(runningAgentIDs)
+		return "", userFacingError{message: "Multiple running agents found; run `ari workspace attach <agent-id>`"}
+	}
+
+	if defaultHarness != "" {
+		spawnResp, spawnErr := agentSpawnRPC(lookupCtx, cfg.Daemon.SocketPath, daemon.AgentSpawnRequest{
+			WorkspaceID: workspaceID,
+			Harness:     defaultHarness,
+		})
+		if spawnErr != nil {
+			return "", mapAgentRPCError(spawnErr)
+		}
+		if strings.TrimSpace(spawnResp.AgentID) == "" {
+			return "", userFacingError{message: "Default agent did not return an id"}
+		}
+		return strings.TrimSpace(spawnResp.AgentID), nil
+	}
+
+	return "", userFacingError{message: "No running agents found and no default_harness configured"}
 }
