@@ -1132,6 +1132,88 @@ func TestResolveSessionIdentifierIgnoresStaleDuplicateWhenCWDMatchesLiveWorkspac
 	}
 }
 
+func TestResolveSessionIdentifierReturnsLiveDuplicateWithoutCWDMatch(t *testing.T) {
+	root := t.TempDir()
+	right := filepath.Join(root, "work", "clay")
+	outside := filepath.Join(root, "outside")
+	if err := os.MkdirAll(right, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll right returned error: %v", err)
+	}
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll outside returned error: %v", err)
+	}
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(originalWD)
+	})
+	if err := os.Chdir(outside); err != nil {
+		t.Fatalf("os.Chdir returned error: %v", err)
+	}
+
+	originalGet := workspaceGetRPC
+	originalList := workspaceListRPC
+
+	workspaceGetRPC = func(_ context.Context, _ string, workspaceID string) (daemon.WorkspaceGetResponse, error) {
+		switch workspaceID {
+		case "ws-left":
+			return daemon.WorkspaceGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "session not found"}
+		case "ws-right":
+			return daemon.WorkspaceGetResponse{WorkspaceID: workspaceID, Name: "clay", OriginRoot: right}, nil
+		default:
+			return daemon.WorkspaceGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "session not found"}
+		}
+	}
+	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{
+			{WorkspaceID: "ws-left", Name: "clay"},
+			{WorkspaceID: "ws-right", Name: "clay"},
+		}}, nil
+	}
+	t.Cleanup(func() {
+		workspaceGetRPC = originalGet
+		workspaceListRPC = originalList
+	})
+
+	workspaceID, err := resolveSessionIdentifier(context.Background(), "/tmp/daemon.sock", "clay")
+	if err != nil {
+		t.Fatalf("resolveSessionIdentifier returned error: %v", err)
+	}
+	if workspaceID != "ws-right" {
+		t.Fatalf("workspaceID = %q, want %q", workspaceID, "ws-right")
+	}
+}
+
+func TestResolveSessionIdentifierReturnsNotFoundWhenAllDuplicateMatchesStale(t *testing.T) {
+	originalGet := workspaceGetRPC
+	originalList := workspaceListRPC
+
+	workspaceGetRPC = func(_ context.Context, _ string, _ string) (daemon.WorkspaceGetResponse, error) {
+		return daemon.WorkspaceGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "session not found"}
+	}
+	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{
+			{WorkspaceID: "ws-left", Name: "clay"},
+			{WorkspaceID: "ws-right", Name: "clay"},
+		}}, nil
+	}
+	t.Cleanup(func() {
+		workspaceGetRPC = originalGet
+		workspaceListRPC = originalList
+	})
+
+	_, err := resolveSessionIdentifier(context.Background(), "/tmp/daemon.sock", "clay")
+	if err == nil {
+		t.Fatal("resolveSessionIdentifier returned nil error")
+	}
+	if err.Error() != "Workspace not found" {
+		t.Fatalf("resolveSessionIdentifier error = %q, want %q", err.Error(), "Workspace not found")
+	}
+}
+
 func TestWorkspaceCreateAllowsVCSPreferenceOverride(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

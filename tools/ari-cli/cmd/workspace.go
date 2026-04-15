@@ -18,20 +18,12 @@ import (
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/vcs"
 	"github.com/sourcegraph/jsonrpc2"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 )
 
 var (
 	workspaceEnsureDaemonRunning         = ensureDaemonRunning
 	workspaceSwitchIsInteractiveTerminal = func(cmd *cobra.Command) bool {
-		if cmd == nil {
-			return false
-		}
-		inputFile, ok := cmd.InOrStdin().(*os.File)
-		if !ok {
-			return false
-		}
-		return term.IsTerminal(int(inputFile.Fd()))
+		return isInteractiveTerminal(cmd)
 	}
 	workspaceCreateRPC = func(ctx context.Context, socketPath string, req daemon.WorkspaceCreateRequest) (daemon.WorkspaceCreateResponse, error) {
 		rpcClient := client.New(socketPath)
@@ -790,7 +782,11 @@ func resolveNameCollisionByCWD(ctx context.Context, socketPath string, nameMatch
 	}
 
 	if len(candidates) == 0 {
-		return "", userFacingError{message: "Workspace name is ambiguous; use --workspace <id-or-name>"}
+		return "", userFacingError{message: "Workspace not found"}
+	}
+
+	if len(candidates) == 1 {
+		return candidates[0].WorkspaceID, nil
 	}
 
 	workspaceID, resolveErr := resolveWorkspaceByCWD(cwd, candidates)
