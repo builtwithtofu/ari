@@ -713,8 +713,11 @@ func resolveSessionTarget(ctx context.Context, socketPath, idOrName string) (res
 	}
 
 	if session, err := workspaceGetRPC(ctx, socketPath, idOrName); err == nil {
-		resolved := session
-		return resolvedSessionTarget{WorkspaceID: session.WorkspaceID, Session: &resolved}, nil
+		workspaceID := strings.TrimSpace(session.WorkspaceID)
+		if workspaceID == idOrName {
+			resolved := session
+			return resolvedSessionTarget{WorkspaceID: session.WorkspaceID, Session: &resolved}, nil
+		}
 	} else if !isSessionNotFoundError(err) {
 		return resolvedSessionTarget{}, mapSessionRPCError(err)
 	}
@@ -724,9 +727,13 @@ func resolveSessionTarget(ctx context.Context, socketPath, idOrName string) (res
 		return resolvedSessionTarget{}, mapSessionRPCError(err)
 	}
 
+	exactIDMatches := make([]daemon.WorkspaceSummary, 0)
 	nameMatches := make([]daemon.WorkspaceSummary, 0)
 	prefixMatches := make([]string, 0)
 	for _, session := range list.Workspaces {
+		if session.WorkspaceID == idOrName {
+			exactIDMatches = append(exactIDMatches, session)
+		}
 		if session.Name == idOrName {
 			nameMatches = append(nameMatches, session)
 		}
@@ -734,8 +741,27 @@ func resolveSessionTarget(ctx context.Context, socketPath, idOrName string) (res
 			prefixMatches = append(prefixMatches, session.WorkspaceID)
 		}
 	}
+	if len(exactIDMatches) == 1 {
+		session, err := workspaceGetRPC(ctx, socketPath, exactIDMatches[0].WorkspaceID)
+		if err != nil {
+			return resolvedSessionTarget{}, mapSessionRPCError(err)
+		}
+		resolved := session
+		return resolvedSessionTarget{WorkspaceID: session.WorkspaceID, Session: &resolved}, nil
+	}
+	if len(exactIDMatches) > 1 {
+		return resolvedSessionTarget{}, userFacingError{message: "Workspace ID prefix is ambiguous"}
+	}
 	if len(nameMatches) == 1 {
-		return resolvedSessionTarget{WorkspaceID: nameMatches[0].WorkspaceID}, nil
+		session, err := workspaceGetRPC(ctx, socketPath, nameMatches[0].WorkspaceID)
+		if err != nil {
+			if isSessionNotFoundError(err) {
+				return resolvedSessionTarget{}, userFacingError{message: "Workspace not found"}
+			}
+			return resolvedSessionTarget{}, mapSessionRPCError(err)
+		}
+		resolved := session
+		return resolvedSessionTarget{WorkspaceID: session.WorkspaceID, Session: &resolved}, nil
 	}
 	if len(nameMatches) > 1 {
 		workspaceID, err := resolveNameCollisionByCWD(ctx, socketPath, nameMatches)
@@ -764,21 +790,9 @@ func resolveNameCollisionByCWD(ctx context.Context, socketPath string, nameMatch
 		return "", err
 	}
 
-	candidates := make([]daemon.WorkspaceGetResponse, 0, len(nameMatches))
-	for _, match := range nameMatches {
-		workspaceID := strings.TrimSpace(match.WorkspaceID)
-		if workspaceID == "" {
-			continue
-		}
-
-		session, getErr := workspaceGetRPC(ctx, socketPath, workspaceID)
-		if getErr != nil {
-			if isSessionNotFoundError(getErr) {
-				continue
-			}
-			return "", mapSessionRPCError(getErr)
-		}
-		candidates = append(candidates, session)
+	candidates, err := loadLiveWorkspaceCandidates(ctx, socketPath, nameMatches)
+	if err != nil {
+		return "", err
 	}
 
 	if len(candidates) == 0 {
@@ -795,7 +809,7 @@ func resolveNameCollisionByCWD(ctx context.Context, socketPath string, nameMatch
 	}
 
 	if isWorkspaceCWDNoMatch(resolveErr) {
-		return "", userFacingError{message: "Workspace name is ambiguous; use --workspace <id-or-name>"}
+		return "", userFacingError{message: "Workspace name is ambiguous; run `ari workspace set <id-or-name>` to choose one"}
 	}
 
 	return "", resolveErr

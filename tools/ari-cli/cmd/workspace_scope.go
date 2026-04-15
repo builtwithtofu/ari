@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -75,6 +76,66 @@ func pathWithinRoot(path, root string) (bool, error) {
 	return true, nil
 }
 
+func resolveWorkspaceFromCWD(ctx context.Context, socketPath, cwd string) (daemon.WorkspaceGetResponse, error) {
+	if ctx == nil {
+		return daemon.WorkspaceGetResponse{}, fmt.Errorf("context is required")
+	}
+	if strings.TrimSpace(socketPath) == "" {
+		return daemon.WorkspaceGetResponse{}, fmt.Errorf("socket path is required")
+	}
+
+	listResponse, err := workspaceListRPC(ctx, socketPath)
+	if err != nil {
+		return daemon.WorkspaceGetResponse{}, mapSessionRPCError(err)
+	}
+
+	candidates, err := loadLiveWorkspaceCandidates(ctx, socketPath, listResponse.Workspaces)
+	if err != nil {
+		return daemon.WorkspaceGetResponse{}, err
+	}
+
+	workspaceID, err := resolveWorkspaceByCWD(cwd, candidates)
+	if err != nil {
+		return daemon.WorkspaceGetResponse{}, err
+	}
+
+	for _, candidate := range candidates {
+		if candidate.WorkspaceID == workspaceID {
+			return candidate, nil
+		}
+	}
+
+	return daemon.WorkspaceGetResponse{}, userFacingError{message: "Workspace not found"}
+}
+
+func loadLiveWorkspaceCandidates(ctx context.Context, socketPath string, summaries []daemon.WorkspaceSummary) ([]daemon.WorkspaceGetResponse, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("context is required")
+	}
+	if strings.TrimSpace(socketPath) == "" {
+		return nil, fmt.Errorf("socket path is required")
+	}
+
+	candidates := make([]daemon.WorkspaceGetResponse, 0, len(summaries))
+	for _, summary := range summaries {
+		workspaceID := strings.TrimSpace(summary.WorkspaceID)
+		if workspaceID == "" {
+			continue
+		}
+
+		workspace, getErr := workspaceGetRPC(ctx, socketPath, workspaceID)
+		if getErr != nil {
+			if isSessionNotFoundError(getErr) {
+				continue
+			}
+			return nil, mapSessionRPCError(getErr)
+		}
+		candidates = append(candidates, workspace)
+	}
+
+	return candidates, nil
+}
+
 func resolveWorkspaceByCWD(cwd string, workspaces []daemon.WorkspaceGetResponse) (string, error) {
 	if strings.TrimSpace(cwd) == "" {
 		return "", fmt.Errorf("cwd is required")
@@ -139,7 +200,7 @@ func (e workspaceCWDResolutionError) Error() string {
 	case workspaceCWDReasonNoMatch:
 		return "No workspace matches current directory"
 	case workspaceCWDReasonAmbiguous:
-		return "current directory matches multiple workspaces; use --workspace <id-or-name>"
+		return "current directory matches multiple workspaces; run `ari workspace set <id-or-name>` to choose one"
 	default:
 		return "workspace resolution from current directory failed"
 	}

@@ -20,3 +20,17 @@ func isInteractiveTerminal(cmd *cobra.Command) bool {
 
 	return term.IsTerminal(int(inputFile.Fd()))
 }
+
+func isInteractiveTerminalWithOutput(cmd *cobra.Command) bool {
+	if !isInteractiveTerminal(cmd) {
+		return false
+	}
+
+	output := cmd.OutOrStdout()
+	outputFile, ok := output.(*os.File)
+	if !ok {
+		return false
+	}
+
+	return term.IsTerminal(int(outputFile.Fd()))
+}

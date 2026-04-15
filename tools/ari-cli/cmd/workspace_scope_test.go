@@ -1,11 +1,14 @@
 package cmd
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
+	"github.com/sourcegraph/jsonrpc2"
 )
 
 func TestWorkspaceMatchesSession(t *testing.T) {
@@ -194,7 +197,107 @@ func TestResolveWorkspaceByCWDErrorsWhenAmbiguous(t *testing.T) {
 	if err == nil {
 		t.Fatal("resolveWorkspaceByCWD returned nil error")
 	}
-	if err.Error() != "current directory matches multiple workspaces; use --workspace <id-or-name>" {
-		t.Fatalf("resolveWorkspaceByCWD error = %q, want %q", err.Error(), "current directory matches multiple workspaces; use --workspace <id-or-name>")
+	if err.Error() != "current directory matches multiple workspaces; run `ari workspace set <id-or-name>` to choose one" {
+		t.Fatalf("resolveWorkspaceByCWD error = %q, want %q", err.Error(), "current directory matches multiple workspaces; run `ari workspace set <id-or-name>` to choose one")
+	}
+}
+
+func TestResolveWorkspaceFromCWDReturnsMatchingWorkspace(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "src", "clay")
+	right := filepath.Join(root, "work", "clay")
+	if err := os.MkdirAll(left, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll left returned error: %v", err)
+	}
+	if err := os.MkdirAll(right, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll right returned error: %v", err)
+	}
+
+	originalList := workspaceListRPC
+	originalGet := workspaceGetRPC
+	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{
+			{WorkspaceID: "ws-left", Name: "clay"},
+			{WorkspaceID: "ws-right", Name: "clay"},
+		}}, nil
+	}
+	workspaceGetRPC = func(_ context.Context, _ string, workspaceID string) (daemon.WorkspaceGetResponse, error) {
+		switch workspaceID {
+		case "ws-left":
+			return daemon.WorkspaceGetResponse{WorkspaceID: workspaceID, Name: "clay", OriginRoot: left}, nil
+		case "ws-right":
+			return daemon.WorkspaceGetResponse{WorkspaceID: workspaceID, Name: "clay", OriginRoot: right}, nil
+		default:
+			return daemon.WorkspaceGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "session not found"}
+		}
+	}
+	t.Cleanup(func() {
+		workspaceListRPC = originalList
+		workspaceGetRPC = originalGet
+	})
+
+	workspace, err := resolveWorkspaceFromCWD(context.Background(), "/tmp/daemon.sock", right)
+	if err != nil {
+		t.Fatalf("resolveWorkspaceFromCWD returned error: %v", err)
+	}
+	if workspace.WorkspaceID != "ws-right" {
+		t.Fatalf("workspaceID = %q, want %q", workspace.WorkspaceID, "ws-right")
+	}
+}
+
+func TestResolveWorkspaceFromCWDSkipsStaleWorkspaceEntries(t *testing.T) {
+	root := t.TempDir()
+	right := filepath.Join(root, "work", "clay")
+	if err := os.MkdirAll(right, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll right returned error: %v", err)
+	}
+
+	originalList := workspaceListRPC
+	originalGet := workspaceGetRPC
+	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{
+			{WorkspaceID: "ws-stale", Name: "clay"},
+			{WorkspaceID: "ws-right", Name: "clay"},
+		}}, nil
+	}
+	workspaceGetRPC = func(_ context.Context, _ string, workspaceID string) (daemon.WorkspaceGetResponse, error) {
+		switch workspaceID {
+		case "ws-stale":
+			return daemon.WorkspaceGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "session not found"}
+		case "ws-right":
+			return daemon.WorkspaceGetResponse{WorkspaceID: workspaceID, Name: "clay", OriginRoot: right}, nil
+		default:
+			return daemon.WorkspaceGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "session not found"}
+		}
+	}
+	t.Cleanup(func() {
+		workspaceListRPC = originalList
+		workspaceGetRPC = originalGet
+	})
+
+	workspace, err := resolveWorkspaceFromCWD(context.Background(), "/tmp/daemon.sock", right)
+	if err != nil {
+		t.Fatalf("resolveWorkspaceFromCWD returned error: %v", err)
+	}
+	if workspace.WorkspaceID != "ws-right" {
+		t.Fatalf("workspaceID = %q, want %q", workspace.WorkspaceID, "ws-right")
+	}
+}
+
+func TestResolveWorkspaceFromCWDMapsRPCInvalidParams(t *testing.T) {
+	originalList := workspaceListRPC
+	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+		return daemon.WorkspaceListResponse{}, &jsonrpc2.Error{Code: int64(rpc.InvalidParams), Message: "bad workspace list"}
+	}
+	t.Cleanup(func() {
+		workspaceListRPC = originalList
+	})
+
+	_, err := resolveWorkspaceFromCWD(context.Background(), "/tmp/daemon.sock", "/tmp")
+	if err == nil {
+		t.Fatal("resolveWorkspaceFromCWD returned nil error")
+	}
+	if err.Error() != "bad workspace list" {
+		t.Fatalf("resolveWorkspaceFromCWD error = %q, want %q", err.Error(), "bad workspace list")
 	}
 }
