@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/process"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/tool"
 )
 
 type CommandRunRequest struct {
@@ -178,11 +180,15 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 
 			out := make([]CommandSummary, 0, len(commands))
 			for _, command := range commands {
+				toolRecord, err := tool.FromCommandRecord(command)
+				if err != nil {
+					return CommandListResponse{}, fmt.Errorf("map command record to tool: %w", err)
+				}
 				out = append(out, CommandSummary{
-					CommandID: command.CommandID,
-					Command:   command.Command,
-					Status:    command.Status,
-					StartedAt: command.StartedAt,
+					CommandID: toolRecord.ToolID,
+					Command:   toolRecord.Command.Command,
+					Status:    toolRecord.Status,
+					StartedAt: toolRecord.StartedAt,
 				})
 			}
 
@@ -212,18 +218,22 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 			if err != nil {
 				return CommandGetResponse{}, mapCommandStoreError(err, sessionID)
 			}
+			toolRecord, err := tool.FromCommandRecord(*command)
+			if err != nil {
+				return CommandGetResponse{}, fmt.Errorf("map command record to tool: %w", err)
+			}
 
 			resp := CommandGetResponse{
-				CommandID:   command.CommandID,
-				WorkspaceID: command.WorkspaceID,
-				Command:     command.Command,
-				Args:        command.Args,
-				Status:      command.Status,
-				ExitCode:    command.ExitCode,
-				StartedAt:   command.StartedAt,
+				CommandID:   toolRecord.ToolID,
+				WorkspaceID: toolRecord.WorkspaceID,
+				Command:     toolRecord.Command.Command,
+				Args:        encodeArgs(toolRecord.Command.Args),
+				Status:      toolRecord.Status,
+				ExitCode:    toolRecord.ExitCode,
+				StartedAt:   toolRecord.StartedAt,
 			}
-			if command.FinishedAt != nil {
-				resp.FinishedAt = *command.FinishedAt
+			if toolRecord.FinishedAt != nil {
+				resp.FinishedAt = *toolRecord.FinishedAt
 			}
 
 			return resp, nil
@@ -429,21 +439,11 @@ func mapCommandStoreError(err error, sessionID string) error {
 }
 
 func encodeArgs(args []string) string {
-	if len(args) == 0 {
-		return "[]"
+	encoded, err := json.Marshal(args)
+	if err != nil {
+		panic(fmt.Sprintf("encode command args: %v", err))
 	}
-
-	b := strings.Builder{}
-	b.WriteString("[")
-	for i, arg := range args {
-		if i > 0 {
-			b.WriteString(",")
-		}
-		b.WriteString(fmt.Sprintf("%q", arg))
-	}
-	b.WriteString("]")
-
-	return b.String()
+	return string(encoded)
 }
 
 func newCommandID() (string, error) {

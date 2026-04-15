@@ -207,6 +207,72 @@ func TestCommandListReturnsCommandsForSession(t *testing.T) {
 	}
 }
 
+func TestCommandListRejectsMalformedStoredArgs(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerCommandMethods(registry, store); err != nil {
+		t.Fatalf("registerCommandMethods returned error: %v", err)
+	}
+
+	workspace := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
+
+	if err := store.CreateCommand(context.Background(), globaldb.CreateCommandParams{CommandID: "cmd-bad", WorkspaceID: "sess-1", Command: "echo one", Args: `{"bad":true}`, Status: "running", StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}); err != nil {
+		t.Fatalf("CreateCommand cmd-bad returned error: %v", err)
+	}
+
+	spec, ok := registry.Get("command.list")
+	if !ok {
+		t.Fatal("command.list method not registered")
+	}
+	raw, err := json.Marshal(CommandListRequest{WorkspaceID: "sess-1"})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	_, err = spec.Call(context.Background(), raw)
+	if err == nil {
+		t.Fatal("command.list returned nil error for malformed args")
+	}
+	if !strings.Contains(err.Error(), "map command record to tool: decode command args") {
+		t.Fatalf("command.list error = %q, want decode args mapping error", err.Error())
+	}
+}
+
+func TestCommandGetRejectsMalformedStoredArgs(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerCommandMethods(registry, store); err != nil {
+		t.Fatalf("registerCommandMethods returned error: %v", err)
+	}
+
+	workspace := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
+
+	if err := store.CreateCommand(context.Background(), globaldb.CreateCommandParams{CommandID: "cmd-bad", WorkspaceID: "sess-1", Command: "echo one", Args: `{"bad":true}`, Status: "running", StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}); err != nil {
+		t.Fatalf("CreateCommand cmd-bad returned error: %v", err)
+	}
+
+	spec, ok := registry.Get("command.get")
+	if !ok {
+		t.Fatal("command.get method not registered")
+	}
+	raw, err := json.Marshal(CommandGetRequest{WorkspaceID: "sess-1", CommandID: "cmd-bad"})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	_, err = spec.Call(context.Background(), raw)
+	if err == nil {
+		t.Fatal("command.get returned nil error for malformed args")
+	}
+	if !strings.Contains(err.Error(), "map command record to tool: decode command args") {
+		t.Fatalf("command.get error = %q, want decode args mapping error", err.Error())
+	}
+}
+
 func TestCommandStopReturnsStoredStatusForExitedCommand(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
