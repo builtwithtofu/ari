@@ -82,9 +82,26 @@ func TestWorkspaceSubcommandsExist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("find workspace folder remove: %v", err)
 	}
+	attach, _, err := workspace.Find([]string{"attach"})
+	if err != nil {
+		t.Fatalf("find workspace attach: %v", err)
+	}
 
-	if create == nil || list == nil || show == nil || closeCmd == nil || suspend == nil || resume == nil || set == nil || current == nil || clear == nil || switchCmd == nil || folderAdd == nil || folderRemove == nil {
+	if create == nil || list == nil || show == nil || closeCmd == nil || suspend == nil || resume == nil || set == nil || current == nil || clear == nil || switchCmd == nil || folderAdd == nil || folderRemove == nil || attach == nil {
 		t.Fatal("expected workspace subcommands to be registered")
+	}
+}
+
+func TestWorkspaceAttachPrintsGuidanceWithoutError(t *testing.T) {
+	out, err := executeRootCommand("workspace", "attach")
+	if err != nil {
+		t.Fatalf("execute workspace attach: %v", err)
+	}
+	if !strings.Contains(out, "Workspace attach is not implemented yet") {
+		t.Fatalf("workspace attach output = %q, want not-implemented guidance", out)
+	}
+	if !strings.Contains(out, "ari workspace set <id-or-name>") {
+		t.Fatalf("workspace attach output = %q, want workspace-set guidance", out)
 	}
 }
 

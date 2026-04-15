@@ -21,12 +21,14 @@ var rootResolveWorkspaceFromCWD = resolveWorkspaceFromCWD
 
 var rootAgentListRPC = agentListRPC
 
+var rootRunWorkspaceAttach = runWorkspaceAttachEntrypoint
+
 var rootRunInteractive = func(cmd *cobra.Command, _ []string) error {
 	if cmd == nil {
 		return fmt.Errorf("root command is required")
 	}
 
-	return cmd.Help()
+	return rootRunWorkspaceAttach(cmd, nil)
 }
 
 var rootRunNonInteractive = func(cmd *cobra.Command, _ []string) error {

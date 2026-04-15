@@ -56,10 +56,12 @@ func TestRootRunUsesInteractivePath(t *testing.T) {
 	originalIsInteractive := rootIsInteractiveTerminal
 	originalInteractiveRun := rootRunInteractive
 	originalNonInteractiveRun := rootRunNonInteractive
+	originalAttach := rootRunWorkspaceAttach
 	t.Cleanup(func() {
 		rootIsInteractiveTerminal = originalIsInteractive
 		rootRunInteractive = originalInteractiveRun
 		rootRunNonInteractive = originalNonInteractiveRun
+		rootRunWorkspaceAttach = originalAttach
 	})
 
 	interactiveCalled := false
@@ -69,7 +71,7 @@ func TestRootRunUsesInteractivePath(t *testing.T) {
 		_ = cmd
 		return true
 	}
-	rootRunInteractive = func(cmd *cobra.Command, args []string) error {
+	rootRunWorkspaceAttach = func(cmd *cobra.Command, args []string) error {
 		_ = cmd
 		_ = args
 		interactiveCalled = true
@@ -91,6 +93,49 @@ func TestRootRunUsesInteractivePath(t *testing.T) {
 	}
 	if nonInteractiveCalled {
 		t.Fatal("non-interactive path called, want false")
+	}
+}
+
+func TestRootRunInteractiveDelegatesToWorkspaceAttachPath(t *testing.T) {
+	originalInteractive := rootRunInteractive
+	originalAttach := rootRunWorkspaceAttach
+	t.Cleanup(func() {
+		rootRunInteractive = originalInteractive
+		rootRunWorkspaceAttach = originalAttach
+	})
+
+	called := false
+	rootRunWorkspaceAttach = func(cmd *cobra.Command, args []string) error {
+		_ = cmd
+		if len(args) != 0 {
+			t.Fatalf("args length = %d, want 0", len(args))
+		}
+		called = true
+		return nil
+	}
+
+	if err := rootRunInteractive(&cobra.Command{}, nil); err != nil {
+		t.Fatalf("rootRunInteractive returned error: %v", err)
+	}
+	if !called {
+		t.Fatal("rootRunWorkspaceAttach called = false, want true")
+	}
+}
+
+func TestRootRunInteractiveFallsBackWithoutErrorWhenAttachNotImplemented(t *testing.T) {
+	originalAttach := rootRunWorkspaceAttach
+	t.Cleanup(func() {
+		rootRunWorkspaceAttach = originalAttach
+	})
+
+	rootRunWorkspaceAttach = func(cmd *cobra.Command, args []string) error {
+		_ = cmd
+		_ = args
+		return nil
+	}
+
+	if err := rootRunInteractive(&cobra.Command{}, nil); err != nil {
+		t.Fatalf("rootRunInteractive returned error: %v", err)
 	}
 }
 
