@@ -408,17 +408,16 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 			if err != nil {
 				return WorkspaceCommandCreateResponse{}, mapCommandStoreError(err, workspaceID)
 			}
-
-			decodedArgs, err := decodeArgs(definition.Args)
+			projected, err := projectWorkspaceCommandDefinition(*definition, workspaceID)
 			if err != nil {
-				return WorkspaceCommandCreateResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), workspaceID)
+				return WorkspaceCommandCreateResponse{}, err
 			}
 
 			return WorkspaceCommandCreateResponse{
-				CommandID: definition.CommandID,
-				Name:      definition.Name,
-				Command:   definition.Command,
-				Args:      decodedArgs,
+				CommandID: projected.ToolID,
+				Name:      projected.Command.Name,
+				Command:   projected.Command.Command,
+				Args:      projected.Command.Args,
 				CreatedAt: definition.CreatedAt,
 				UpdatedAt: definition.UpdatedAt,
 			}, nil
@@ -446,15 +445,15 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 
 			out := make([]WorkspaceCommandSummary, 0, len(definitions))
 			for _, definition := range definitions {
-				decodedArgs, err := decodeArgs(definition.Args)
+				projected, err := projectWorkspaceCommandDefinition(definition, workspaceID)
 				if err != nil {
-					return WorkspaceCommandListResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), workspaceID)
+					return WorkspaceCommandListResponse{}, err
 				}
 				out = append(out, WorkspaceCommandSummary{
-					CommandID: definition.CommandID,
-					Name:      definition.Name,
-					Command:   definition.Command,
-					Args:      decodedArgs,
+					CommandID: projected.ToolID,
+					Name:      projected.Command.Name,
+					Command:   projected.Command.Command,
+					Args:      projected.Command.Args,
 					CreatedAt: definition.CreatedAt,
 					UpdatedAt: definition.UpdatedAt,
 				})
@@ -482,16 +481,16 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 			if err != nil {
 				return WorkspaceCommandGetResponse{}, mapCommandStoreError(err, workspaceID)
 			}
-			decodedArgs, err := decodeArgs(definition.Args)
+			projected, err := projectWorkspaceCommandDefinition(*definition, workspaceID)
 			if err != nil {
-				return WorkspaceCommandGetResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), workspaceID)
+				return WorkspaceCommandGetResponse{}, err
 			}
 
 			return WorkspaceCommandGetResponse{
-				CommandID: definition.CommandID,
-				Name:      definition.Name,
-				Command:   definition.Command,
-				Args:      decodedArgs,
+				CommandID: projected.ToolID,
+				Name:      projected.Command.Name,
+				Command:   projected.Command.Command,
+				Args:      projected.Command.Args,
 				CreatedAt: definition.CreatedAt,
 				UpdatedAt: definition.UpdatedAt,
 			}, nil
@@ -654,12 +653,15 @@ func encodeArgs(args []string) string {
 	return string(encoded)
 }
 
-func decodeArgs(rawArgs string) ([]string, error) {
-	decodedArgs := make([]string, 0)
-	if err := json.Unmarshal([]byte(rawArgs), &decodedArgs); err != nil {
-		return nil, fmt.Errorf("decode command args: %w", err)
+func projectWorkspaceCommandDefinition(definition globaldb.WorkspaceCommandDefinition, workspaceID string) (tool.Tool, error) {
+	projected, err := tool.FromWorkspaceCommandDefinition(definition)
+	if err != nil {
+		return tool.Tool{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), workspaceID)
 	}
-	return decodedArgs, nil
+	if projected.Command == nil {
+		return tool.Tool{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace command projection missing command payload", workspaceID)
+	}
+	return projected, nil
 }
 
 func lookupWorkspaceCommandDefinitionByIDOrName(ctx context.Context, store *globaldb.Store, workspaceID, commandIDOrName string) (*globaldb.WorkspaceCommandDefinition, error) {

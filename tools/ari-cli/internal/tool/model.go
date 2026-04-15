@@ -15,6 +15,7 @@ const (
 )
 
 type Command struct {
+	Name    string
 	Command string
 	Args    []string
 }
@@ -41,11 +42,9 @@ func FromCommandRecord(record globaldb.Command) (Tool, error) {
 		return Tool{}, fmt.Errorf("command is required")
 	}
 
-	args := make([]string, 0)
-	if strings.TrimSpace(record.Args) != "" {
-		if err := json.Unmarshal([]byte(record.Args), &args); err != nil {
-			return Tool{}, fmt.Errorf("decode command args: %w", err)
-		}
+	args, err := decodeCommandArgs(record.Args)
+	if err != nil {
+		return Tool{}, err
 	}
 
 	return Tool{
@@ -61,4 +60,47 @@ func FromCommandRecord(record globaldb.Command) (Tool, error) {
 			Args:    args,
 		},
 	}, nil
+}
+
+func FromWorkspaceCommandDefinition(record globaldb.WorkspaceCommandDefinition) (Tool, error) {
+	if strings.TrimSpace(record.CommandID) == "" {
+		return Tool{}, fmt.Errorf("command id is required")
+	}
+	if strings.TrimSpace(record.WorkspaceID) == "" {
+		return Tool{}, fmt.Errorf("workspace id is required")
+	}
+	if strings.TrimSpace(record.Name) == "" {
+		return Tool{}, fmt.Errorf("command name is required")
+	}
+	if strings.TrimSpace(record.Command) == "" {
+		return Tool{}, fmt.Errorf("command is required")
+	}
+
+	args, err := decodeCommandArgs(record.Args)
+	if err != nil {
+		return Tool{}, err
+	}
+
+	return Tool{
+		ToolID:      record.CommandID,
+		WorkspaceID: record.WorkspaceID,
+		Type:        TypeCommand,
+		StartedAt:   record.CreatedAt,
+		Command: &Command{
+			Name:    record.Name,
+			Command: record.Command,
+			Args:    args,
+		},
+	}, nil
+}
+
+func decodeCommandArgs(rawArgs string) ([]string, error) {
+	args := make([]string, 0)
+	if strings.TrimSpace(rawArgs) == "" {
+		return args, nil
+	}
+	if err := json.Unmarshal([]byte(rawArgs), &args); err != nil {
+		return nil, fmt.Errorf("decode command args: %w", err)
+	}
+	return args, nil
 }

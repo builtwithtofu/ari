@@ -305,13 +305,20 @@ func TestWorkspaceCommandDefinitionMethodsLifecycle(t *testing.T) {
 	if listResp.Commands[0].Name != "test" {
 		t.Fatalf("workspace.command.list[0].name = %q, want %q", listResp.Commands[0].Name, "test")
 	}
+	if len(listResp.Commands[0].Args) != 2 || listResp.Commands[0].Args[0] != "test" || listResp.Commands[0].Args[1] != "./..." {
+		t.Fatalf("workspace.command.list[0].args = %#v, want [test ./...]", listResp.Commands[0].Args)
+	}
 
-	getResp := callMethod[WorkspaceCommandGetResponse](t, registry, "workspace.command.get", WorkspaceCommandGetRequest{WorkspaceID: "sess-1", CommandIDOrName: "test"})
+	getResp := callMethod[WorkspaceCommandGetResponse](t, registry, "workspace.command.get", WorkspaceCommandGetRequest{WorkspaceID: "sess-1", CommandIDOrName: createResp.CommandID})
 	if getResp.CommandID != createResp.CommandID {
 		t.Fatalf("workspace.command.get command_id = %q, want %q", getResp.CommandID, createResp.CommandID)
 	}
+	getByNameResp := callMethod[WorkspaceCommandGetResponse](t, registry, "workspace.command.get", WorkspaceCommandGetRequest{WorkspaceID: "sess-1", CommandIDOrName: "test"})
+	if getByNameResp.CommandID != createResp.CommandID {
+		t.Fatalf("workspace.command.get by name command_id = %q, want %q", getByNameResp.CommandID, createResp.CommandID)
+	}
 
-	removeResp := callMethod[WorkspaceCommandRemoveResponse](t, registry, "workspace.command.remove", WorkspaceCommandRemoveRequest{WorkspaceID: "sess-1", CommandIDOrName: "test"})
+	removeResp := callMethod[WorkspaceCommandRemoveResponse](t, registry, "workspace.command.remove", WorkspaceCommandRemoveRequest{WorkspaceID: "sess-1", CommandIDOrName: createResp.CommandID})
 	if removeResp.Status != "removed" {
 		t.Fatalf("workspace.command.remove status = %q, want %q", removeResp.Status, "removed")
 	}

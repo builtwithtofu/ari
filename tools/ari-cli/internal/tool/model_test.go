@@ -55,3 +55,58 @@ func TestToolFromCommandRecordRejectsInvalidArgsJSON(t *testing.T) {
 		t.Fatalf("FromCommandRecord error = %q, want exact decode error", err.Error())
 	}
 }
+
+func TestToolFromWorkspaceCommandDefinitionBuildsCommandSubtype(t *testing.T) {
+	record := globaldb.WorkspaceCommandDefinition{
+		CommandID:   "cmd-def-1",
+		WorkspaceID: "ws-1",
+		Name:        "build",
+		Command:     "go",
+		Args:        `["test","./..."]`,
+		CreatedAt:   "2026-04-15T00:00:00Z",
+		UpdatedAt:   "2026-04-15T00:00:00Z",
+	}
+
+	tool, err := FromWorkspaceCommandDefinition(record)
+	if err != nil {
+		t.Fatalf("FromWorkspaceCommandDefinition returned error: %v", err)
+	}
+	if tool.ToolID != "cmd-def-1" {
+		t.Fatalf("tool id = %q, want %q", tool.ToolID, "cmd-def-1")
+	}
+	if tool.Type != TypeCommand {
+		t.Fatalf("tool type = %q, want %q", tool.Type, TypeCommand)
+	}
+	if tool.Command == nil {
+		t.Fatal("tool command payload = nil, want non-nil")
+	}
+	if tool.Command.Name != "build" {
+		t.Fatalf("tool command name = %q, want %q", tool.Command.Name, "build")
+	}
+	if tool.Command.Command != "go" {
+		t.Fatalf("tool command = %q, want %q", tool.Command.Command, "go")
+	}
+	if len(tool.Command.Args) != 2 || tool.Command.Args[0] != "test" || tool.Command.Args[1] != "./..." {
+		t.Fatalf("tool args = %#v, want [test ./...]", tool.Command.Args)
+	}
+}
+
+func TestToolFromWorkspaceCommandDefinitionRejectsInvalidArgsJSON(t *testing.T) {
+	record := globaldb.WorkspaceCommandDefinition{
+		CommandID:   "cmd-def-1",
+		WorkspaceID: "ws-1",
+		Name:        "build",
+		Command:     "go",
+		Args:        `{"bad":true}`,
+		CreatedAt:   "2026-04-15T00:00:00Z",
+		UpdatedAt:   "2026-04-15T00:00:00Z",
+	}
+
+	_, err := FromWorkspaceCommandDefinition(record)
+	if err == nil {
+		t.Fatal("FromWorkspaceCommandDefinition returned nil error")
+	}
+	if err.Error() != "decode command args: json: cannot unmarshal object into Go value of type []string" {
+		t.Fatalf("FromWorkspaceCommandDefinition error = %q, want exact decode error", err.Error())
+	}
+}
