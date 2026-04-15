@@ -259,6 +259,72 @@ func TestWorkspaceCommandDefinitionRejectsNullArgs(t *testing.T) {
 	}
 }
 
+func TestWorkspaceCommandDefinitionRejectsDuplicateNameInSameWorkspace(t *testing.T) {
+	store := newCommandTestStore(t)
+	ctx := context.Background()
+
+	if err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := store.CreateWorkspaceCommandDefinition(ctx, CreateWorkspaceCommandDefinitionParams{
+		CommandID:   "cmd-def-1",
+		WorkspaceID: "sess-1",
+		Name:        "test",
+		Command:     "go",
+		Args:        `[]`,
+	}); err != nil {
+		t.Fatalf("CreateWorkspaceCommandDefinition first returned error: %v", err)
+	}
+
+	err := store.CreateWorkspaceCommandDefinition(ctx, CreateWorkspaceCommandDefinitionParams{
+		CommandID:   "cmd-def-2",
+		WorkspaceID: "sess-1",
+		Name:        "test",
+		Command:     "go",
+		Args:        `[]`,
+	})
+	if err == nil {
+		t.Fatal("CreateWorkspaceCommandDefinition returned nil error for duplicate name")
+	}
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("CreateWorkspaceCommandDefinition duplicate name error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestWorkspaceCommandDefinitionRejectsDuplicateCommandIDInSameWorkspace(t *testing.T) {
+	store := newCommandTestStore(t)
+	ctx := context.Background()
+
+	if err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := store.CreateWorkspaceCommandDefinition(ctx, CreateWorkspaceCommandDefinitionParams{
+		CommandID:   "cmd-def-1",
+		WorkspaceID: "sess-1",
+		Name:        "test-1",
+		Command:     "go",
+		Args:        `[]`,
+	}); err != nil {
+		t.Fatalf("CreateWorkspaceCommandDefinition first returned error: %v", err)
+	}
+
+	err := store.CreateWorkspaceCommandDefinition(ctx, CreateWorkspaceCommandDefinitionParams{
+		CommandID:   "cmd-def-1",
+		WorkspaceID: "sess-1",
+		Name:        "test-2",
+		Command:     "go",
+		Args:        `[]`,
+	})
+	if err == nil {
+		t.Fatal("CreateWorkspaceCommandDefinition returned nil error for duplicate command id")
+	}
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("CreateWorkspaceCommandDefinition duplicate id error = %v, want ErrInvalidInput", err)
+	}
+}
+
 func intPtr(v int) *int { return &v }
 
 func stringPtr(v string) *string { return &v }

@@ -88,9 +88,144 @@ func TestWorkspaceSubcommandsExist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("find workspace attach: %v", err)
 	}
+	workspaceCommand, _, err := workspace.Find([]string{"command"})
+	if err != nil {
+		t.Fatalf("find workspace command: %v", err)
+	}
+	workspaceCommandCreate, _, err := workspace.Find([]string{"command", "create"})
+	if err != nil {
+		t.Fatalf("find workspace command create: %v", err)
+	}
+	workspaceCommandList, _, err := workspace.Find([]string{"command", "list"})
+	if err != nil {
+		t.Fatalf("find workspace command list: %v", err)
+	}
+	workspaceCommandShow, _, err := workspace.Find([]string{"command", "show"})
+	if err != nil {
+		t.Fatalf("find workspace command show: %v", err)
+	}
+	workspaceCommandRemove, _, err := workspace.Find([]string{"command", "remove"})
+	if err != nil {
+		t.Fatalf("find workspace command remove: %v", err)
+	}
 
-	if create == nil || list == nil || show == nil || closeCmd == nil || suspend == nil || resume == nil || set == nil || current == nil || clear == nil || switchCmd == nil || folderAdd == nil || folderRemove == nil || attach == nil {
+	if create == nil || list == nil || show == nil || closeCmd == nil || suspend == nil || resume == nil || set == nil || current == nil || clear == nil || switchCmd == nil || folderAdd == nil || folderRemove == nil || attach == nil || workspaceCommand == nil || workspaceCommandCreate == nil || workspaceCommandList == nil || workspaceCommandShow == nil || workspaceCommandRemove == nil {
 		t.Fatal("expected workspace subcommands to be registered")
+	}
+}
+
+func TestWorkspaceCommandCreateListShowRemoveLifecycle(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalReadActive := workspaceCommandReadActiveSession
+	originalCreateRPC := workspaceCommandCreateRPC
+	originalListRPC := workspaceCommandListRPC
+	originalGetRPC := workspaceCommandGetRPC
+	originalRemoveRPC := workspaceCommandRemoveRPC
+	originalEnsureScope := workspaceCommandEnsureScope
+	originalWorkspaceGet := workspaceGetRPC
+	originalWorkspaceList := workspaceListRPC
+
+	workspaceCommandReadActiveSession = func() (string, error) { return "ws-1", nil }
+	workspaceCommandEnsureScope = func(*daemon.WorkspaceGetResponse, string) error { return nil }
+	workspaceGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
+		return daemon.WorkspaceGetResponse{WorkspaceID: "ws-1", Name: "alpha", OriginRoot: t.TempDir()}, nil
+	}
+	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{{WorkspaceID: "ws-1", Name: "alpha", Status: "active"}}}, nil
+	}
+	created := daemon.WorkspaceCommandCreateResponse{}
+	workspaceCommandCreateRPC = func(_ context.Context, _ string, req daemon.WorkspaceCommandCreateRequest) (daemon.WorkspaceCommandCreateResponse, error) {
+		created = daemon.WorkspaceCommandCreateResponse{
+			CommandID: "cmd-1",
+			Name:      req.Name,
+			Command:   req.Command,
+			Args:      req.Args,
+			CreatedAt: "now",
+			UpdatedAt: "now",
+		}
+		return created, nil
+	}
+	workspaceCommandListRPC = func(context.Context, string, daemon.WorkspaceCommandListRequest) (daemon.WorkspaceCommandListResponse, error) {
+		return daemon.WorkspaceCommandListResponse{Commands: []daemon.WorkspaceCommandSummary{{CommandID: "cmd-1", Name: "test", Command: "go", Args: []string{"test", "./..."}}}}, nil
+	}
+	workspaceCommandGetRPC = func(context.Context, string, daemon.WorkspaceCommandGetRequest) (daemon.WorkspaceCommandGetResponse, error) {
+		return daemon.WorkspaceCommandGetResponse{CommandID: "cmd-1", Name: "test", Command: "go", Args: []string{"test", "./..."}}, nil
+	}
+	workspaceCommandRemoveRPC = func(context.Context, string, daemon.WorkspaceCommandRemoveRequest) (daemon.WorkspaceCommandRemoveResponse, error) {
+		return daemon.WorkspaceCommandRemoveResponse{Status: "removed"}, nil
+	}
+	t.Cleanup(func() {
+		workspaceCommandReadActiveSession = originalReadActive
+		workspaceCommandCreateRPC = originalCreateRPC
+		workspaceCommandListRPC = originalListRPC
+		workspaceCommandGetRPC = originalGetRPC
+		workspaceCommandRemoveRPC = originalRemoveRPC
+		workspaceCommandEnsureScope = originalEnsureScope
+		workspaceGetRPC = originalWorkspaceGet
+		workspaceListRPC = originalWorkspaceList
+	})
+
+	createOut, err := executeRootCommand("workspace", "command", "create", "test", "go", "test", "./...")
+	if err != nil {
+		t.Fatalf("workspace command create returned error: %v", err)
+	}
+	if !strings.Contains(createOut, "Workspace command created: cmd-1 (test)") {
+		t.Fatalf("workspace command create output = %q, want creation line", createOut)
+	}
+
+	listOut, err := executeRootCommand("workspace", "command", "list")
+	if err != nil {
+		t.Fatalf("workspace command list returned error: %v", err)
+	}
+	if !strings.Contains(listOut, "cmd-1") || !strings.Contains(listOut, "test") {
+		t.Fatalf("workspace command list output = %q, want command row", listOut)
+	}
+	if !strings.Contains(listOut, "go test ./...") {
+		t.Fatalf("workspace command list output = %q, want full command line", listOut)
+	}
+
+	showOut, err := executeRootCommand("workspace", "command", "show", "test")
+	if err != nil {
+		t.Fatalf("workspace command show returned error: %v", err)
+	}
+	if !strings.Contains(showOut, "Command: go") {
+		t.Fatalf("workspace command show output = %q, want command details", showOut)
+	}
+
+	removeOut, err := executeRootCommand("workspace", "command", "remove", "test")
+	if err != nil {
+		t.Fatalf("workspace command remove returned error: %v", err)
+	}
+	if !strings.Contains(removeOut, "Workspace command remove: removed") {
+		t.Fatalf("workspace command remove output = %q, want remove status", removeOut)
+	}
+}
+
+func TestWorkspaceCommandListRejectsUnexpectedArgs(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalReadActive := workspaceCommandReadActiveSession
+	originalListRPC := workspaceCommandListRPC
+	workspaceCommandReadActiveSession = func() (string, error) { return "ws-1", nil }
+	called := false
+	workspaceCommandListRPC = func(context.Context, string, daemon.WorkspaceCommandListRequest) (daemon.WorkspaceCommandListResponse, error) {
+		called = true
+		return daemon.WorkspaceCommandListResponse{}, nil
+	}
+	t.Cleanup(func() {
+		workspaceCommandReadActiveSession = originalReadActive
+		workspaceCommandListRPC = originalListRPC
+	})
+
+	_, err := executeRootCommand("workspace", "command", "list", "extra")
+	if err == nil {
+		t.Fatal("workspace command list returned nil error for unexpected args")
+	}
+	if called {
+		t.Fatal("workspace command list RPC called unexpectedly")
 	}
 }
 

@@ -844,6 +844,16 @@ func (s *Store) CreateWorkspaceCommandDefinition(ctx context.Context, params Cre
 	if params.Command = strings.TrimSpace(params.Command); params.Command == "" {
 		return fmt.Errorf("%w: command is required", ErrInvalidInput)
 	}
+	if existingByCommandID, err := s.GetWorkspaceCommandDefinition(ctx, params.WorkspaceID, params.CommandID); err == nil && existingByCommandID != nil {
+		return fmt.Errorf("%w: command id %q already exists in workspace", ErrInvalidInput, params.CommandID)
+	} else if err != nil && !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	if existingByName, err := s.GetWorkspaceCommandDefinitionByName(ctx, params.WorkspaceID, params.Name); err == nil && existingByName != nil {
+		return fmt.Errorf("%w: command name %q already exists in workspace", ErrInvalidInput, params.Name)
+	} else if err != nil && !errors.Is(err, ErrNotFound) {
+		return err
+	}
 	if params.Args = strings.TrimSpace(params.Args); params.Args == "" {
 		params.Args = "[]"
 	}

@@ -390,6 +390,51 @@ func TestWorkspaceCommandDefinitionCreateDefaultsMissingArgsToEmptyList(t *testi
 	}
 }
 
+func TestWorkspaceCommandDefinitionCreateRejectsDuplicateName(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerCommandMethods(registry, store); err != nil {
+		t.Fatalf("registerCommandMethods returned error: %v", err)
+	}
+
+	workspace := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
+
+	_ = callMethod[WorkspaceCommandCreateResponse](t, registry, "workspace.command.create", WorkspaceCommandCreateRequest{
+		WorkspaceID: "sess-1",
+		Name:        "test",
+		Command:     "go",
+		Args:        []string{"test", "./..."},
+	})
+
+	spec, ok := registry.Get("workspace.command.create")
+	if !ok {
+		t.Fatal("workspace.command.create method not registered")
+	}
+	raw, err := json.Marshal(WorkspaceCommandCreateRequest{
+		WorkspaceID: "sess-1",
+		Name:        "test",
+		Command:     "go",
+		Args:        []string{"test", "./..."},
+	})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	_, err = spec.Call(context.Background(), raw)
+	if err == nil {
+		t.Fatal("workspace.command.create returned nil error for duplicate name")
+	}
+	var rpcErr *rpc.HandlerError
+	if !errors.As(err, &rpcErr) {
+		t.Fatalf("workspace.command.create error type = %T, want *rpc.HandlerError", err)
+	}
+	if rpcErr.Code != rpc.InvalidParams {
+		t.Fatalf("workspace.command.create error code = %d, want %d", rpcErr.Code, rpc.InvalidParams)
+	}
+}
+
 func TestCommandStopReturnsStoredStatusForExitedCommand(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()

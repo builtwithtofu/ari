@@ -102,6 +102,7 @@ func NewWorkspaceCmd() *cobra.Command {
 	cmd.AddCommand(newWorkspaceClearCmd())
 	cmd.AddCommand(newWorkspaceFolderCmd())
 	cmd.AddCommand(newWorkspaceAttachCmd())
+	cmd.AddCommand(newWorkspaceCommandCmd())
 	return cmd
 }
 
