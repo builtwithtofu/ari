@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -97,11 +98,94 @@ func TestWorkspaceAttachPrintsGuidanceWithoutError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute workspace attach: %v", err)
 	}
-	if !strings.Contains(out, "Workspace attach is not implemented yet") {
-		t.Fatalf("workspace attach output = %q, want not-implemented guidance", out)
+	if !strings.Contains(out, "Workspace attach needs an agent id") {
+		t.Fatalf("workspace attach output = %q, want agent-id guidance", out)
 	}
-	if !strings.Contains(out, "ari workspace set <id-or-name>") {
-		t.Fatalf("workspace attach output = %q, want workspace-set guidance", out)
+	if !strings.Contains(out, "--workspace <id-or-name>") {
+		t.Fatalf("workspace attach output = %q, want workspace override guidance", out)
+	}
+}
+
+func TestWorkspaceAttachUsesCWDWorkspaceAndRunsAttachFlow(t *testing.T) {
+	root := t.TempDir()
+	workspaceRoot := filepath.Join(root, "work", "clay")
+	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll returned error: %v", err)
+	}
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(originalWD)
+	})
+	if err := os.Chdir(workspaceRoot); err != nil {
+		t.Fatalf("os.Chdir returned error: %v", err)
+	}
+
+	originalEnsure := workspaceEnsureDaemonRunning
+	originalCfg := rootConfiguredDaemonConfig
+	originalList := workspaceListRPC
+	originalGet := workspaceGetRPC
+	originalPrepare := agentAttachPrepareTerminalFn
+	originalSize := agentAttachTerminalSize
+	originalAttachRPC := agentAttachRPC
+	originalRunSession := agentAttachRunSession
+
+	workspaceEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	rootConfiguredDaemonConfig = func() (*config.Config, error) {
+		return &config.Config{Daemon: config.DaemonConfig{SocketPath: "/tmp/daemon.sock"}}, nil
+	}
+	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{{WorkspaceID: "ws-1", Name: "clay"}}}, nil
+	}
+	workspaceGetRPC = func(_ context.Context, _ string, workspaceID string) (daemon.WorkspaceGetResponse, error) {
+		switch workspaceID {
+		case "ws-1":
+			return daemon.WorkspaceGetResponse{WorkspaceID: "ws-1", Name: "clay", OriginRoot: workspaceRoot}, nil
+		default:
+			return daemon.WorkspaceGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "workspace not found"}
+		}
+	}
+	agentAttachPrepareTerminalFn = func(*cobra.Command, context.Context) (func(), error) {
+		return func() {}, nil
+	}
+	agentAttachTerminalSize = func(*cobra.Command) (uint16, uint16) { return 80, 24 }
+	gotReq := daemon.AgentAttachRequest{}
+	agentAttachRPC = func(_ context.Context, _ string, req daemon.AgentAttachRequest) (daemon.AgentAttachResponse, error) {
+		gotReq = req
+		return daemon.AgentAttachResponse{Token: "tok-1", Status: "pending"}, nil
+	}
+	agentAttachRunSession = func(context.Context, io.Reader, io.Writer, string, string, uint16, uint16, <-chan os.Signal, func() (uint16, uint16)) (attachSessionOutcome, error) {
+		return attachSessionOutcome{Detached: true}, nil
+	}
+	t.Cleanup(func() {
+		workspaceEnsureDaemonRunning = originalEnsure
+		rootConfiguredDaemonConfig = originalCfg
+		workspaceListRPC = originalList
+		workspaceGetRPC = originalGet
+		agentAttachPrepareTerminalFn = originalPrepare
+		agentAttachTerminalSize = originalSize
+		agentAttachRPC = originalAttachRPC
+		agentAttachRunSession = originalRunSession
+	})
+
+	out, err := executeRootCommand("workspace", "attach", "agent-1")
+	if err != nil {
+		t.Fatalf("execute workspace attach: %v", err)
+	}
+	if gotReq.WorkspaceID != "ws-1" {
+		t.Fatalf("workspace attach workspace_id = %q, want %q", gotReq.WorkspaceID, "ws-1")
+	}
+	if gotReq.AgentID != "agent-1" {
+		t.Fatalf("workspace attach agent_id = %q, want %q", gotReq.AgentID, "agent-1")
+	}
+	if !strings.Contains(out, "Attaching to agent \"agent-1\" in workspace ws-1") {
+		t.Fatalf("workspace attach output = %q, want attach status line", out)
+	}
+	if !strings.Contains(out, "Detached from agent \"agent-1\".") {
+		t.Fatalf("workspace attach output = %q, want detach line", out)
 	}
 }
 
