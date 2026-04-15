@@ -317,6 +317,25 @@ func TestWorkspaceAttachWithoutAgentUsesRunningDefaultHarnessAgent(t *testing.T)
 	}
 }
 
+func TestResolveWorkspaceAttachTargetWithoutWorkspaceFlagUsesCWDResolution(t *testing.T) {
+	originalResolve := workspaceAttachResolveWorkspaceFromCWD
+	workspaceAttachResolveWorkspaceFromCWD = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
+		return daemon.WorkspaceGetResponse{WorkspaceID: "ws-1", Name: "alpha", OriginRoot: "/tmp/work/alpha"}, nil
+	}
+	t.Cleanup(func() {
+		workspaceAttachResolveWorkspaceFromCWD = originalResolve
+	})
+
+	cmd := &cobra.Command{}
+	target, err := resolveWorkspaceAttachTarget(context.Background(), &config.Config{Daemon: config.DaemonConfig{SocketPath: "/tmp/daemon.sock"}}, cmd)
+	if err != nil {
+		t.Fatalf("resolveWorkspaceAttachTarget returned error: %v", err)
+	}
+	if target.WorkspaceID != "ws-1" {
+		t.Fatalf("target workspace_id = %q, want %q", target.WorkspaceID, "ws-1")
+	}
+}
+
 func TestWorkspaceAttachWithoutAgentSpawnsDefaultHarnessAgentWhenMissing(t *testing.T) {
 	root := t.TempDir()
 	workspaceRoot := filepath.Join(root, "work", "clay")
@@ -405,6 +424,87 @@ func TestWorkspaceAttachWithoutAgentSpawnsDefaultHarnessAgentWhenMissing(t *test
 	}
 	if !strings.Contains(out, "Attaching to agent \"agent-spawned\" in workspace ws-1") {
 		t.Fatalf("workspace attach output = %q, want attach status line", out)
+	}
+}
+
+func TestWorkspaceAttachWithoutAgentSkipsStaleAgentEntry(t *testing.T) {
+	root := t.TempDir()
+	workspaceRoot := filepath.Join(root, "work", "clay")
+	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll returned error: %v", err)
+	}
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(originalWD)
+	})
+	if err := os.Chdir(workspaceRoot); err != nil {
+		t.Fatalf("os.Chdir returned error: %v", err)
+	}
+	t.Setenv("ARI_DEFAULT_HARNESS", "opencode")
+
+	originalEnsure := workspaceEnsureDaemonRunning
+	originalList := workspaceListRPC
+	originalGet := workspaceGetRPC
+	originalAgentList := agentListRPC
+	originalAgentGet := agentGetRPC
+	originalPrepare := agentAttachPrepareTerminalFn
+	originalSize := agentAttachTerminalSize
+	originalAttachRPC := agentAttachRPC
+	originalRunSession := agentAttachRunSession
+
+	workspaceEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{{WorkspaceID: "ws-1", Name: "clay"}}}, nil
+	}
+	workspaceGetRPC = func(_ context.Context, _ string, workspaceID string) (daemon.WorkspaceGetResponse, error) {
+		if workspaceID != "ws-1" {
+			return daemon.WorkspaceGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "workspace not found"}
+		}
+		return daemon.WorkspaceGetResponse{WorkspaceID: "ws-1", Name: "clay", OriginRoot: workspaceRoot}, nil
+	}
+	agentListRPC = func(context.Context, string, string) (daemon.AgentListResponse, error) {
+		return daemon.AgentListResponse{Agents: []daemon.AgentSummary{{AgentID: "agent-stale", Status: "running"}, {AgentID: "agent-live", Status: "running"}}}, nil
+	}
+	agentGetRPC = func(_ context.Context, _ string, _ string, agentID string) (daemon.AgentGetResponse, error) {
+		if agentID == "agent-stale" {
+			return daemon.AgentGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.AgentNotFound), Message: "agent not found"}
+		}
+		return daemon.AgentGetResponse{AgentID: "agent-live", WorkspaceID: "ws-1", Status: "running", Harness: "opencode"}, nil
+	}
+	agentAttachPrepareTerminalFn = func(*cobra.Command, context.Context) (func(), error) {
+		return func() {}, nil
+	}
+	agentAttachTerminalSize = func(*cobra.Command) (uint16, uint16) { return 80, 24 }
+	gotReq := daemon.AgentAttachRequest{}
+	agentAttachRPC = func(_ context.Context, _ string, req daemon.AgentAttachRequest) (daemon.AgentAttachResponse, error) {
+		gotReq = req
+		return daemon.AgentAttachResponse{Token: "tok-1", Status: "pending"}, nil
+	}
+	agentAttachRunSession = func(context.Context, io.Reader, io.Writer, string, string, uint16, uint16, <-chan os.Signal, func() (uint16, uint16)) (attachSessionOutcome, error) {
+		return attachSessionOutcome{Detached: true}, nil
+	}
+	t.Cleanup(func() {
+		workspaceEnsureDaemonRunning = originalEnsure
+		workspaceListRPC = originalList
+		workspaceGetRPC = originalGet
+		agentListRPC = originalAgentList
+		agentGetRPC = originalAgentGet
+		agentAttachPrepareTerminalFn = originalPrepare
+		agentAttachTerminalSize = originalSize
+		agentAttachRPC = originalAttachRPC
+		agentAttachRunSession = originalRunSession
+	})
+
+	_, err = executeRootCommand("workspace", "attach")
+	if err != nil {
+		t.Fatalf("execute workspace attach: %v", err)
+	}
+	if gotReq.AgentID != "agent-live" {
+		t.Fatalf("workspace attach agent_id = %q, want %q", gotReq.AgentID, "agent-live")
 	}
 }
 
@@ -1757,7 +1857,7 @@ func TestResolveSessionIdentifierRejectsDuplicateNamesWithoutCWDMatch(t *testing
 	}
 }
 
-func TestResolveSessionIdentifierDoesNotUseDirectNameLookupWhenWorkspaceListFails(t *testing.T) {
+func TestResolveSessionIdentifierUsesDirectNameLookupWhenWorkspaceListFails(t *testing.T) {
 	originalGet := workspaceGetRPC
 	originalList := workspaceListRPC
 
@@ -1777,12 +1877,12 @@ func TestResolveSessionIdentifierDoesNotUseDirectNameLookupWhenWorkspaceListFail
 		workspaceListRPC = originalList
 	})
 
-	_, err := resolveSessionIdentifier(context.Background(), "/tmp/daemon.sock", "clay")
-	if err == nil {
-		t.Fatal("resolveSessionIdentifier returned nil error")
+	workspaceID, err := resolveSessionIdentifier(context.Background(), "/tmp/daemon.sock", "clay")
+	if err != nil {
+		t.Fatalf("resolveSessionIdentifier returned error: %v", err)
 	}
-	if err.Error() != "workspace list failed" {
-		t.Fatalf("resolveSessionIdentifier error = %q, want %q", err.Error(), "workspace list failed")
+	if workspaceID != "ws-stale" {
+		t.Fatalf("workspaceID = %q, want %q", workspaceID, "ws-stale")
 	}
 }
 
@@ -1892,7 +1992,7 @@ func TestResolveSessionIdentifierReturnsLiveDuplicateWithoutCWDMatch(t *testing.
 	}
 }
 
-func TestResolveSessionIdentifierDoesNotFallbackToDirectNameLookupAfterListMismatch(t *testing.T) {
+func TestResolveSessionIdentifierFallsBackToDirectNameLookupAfterListMismatch(t *testing.T) {
 	originalGet := workspaceGetRPC
 	originalList := workspaceListRPC
 
@@ -1914,16 +2014,16 @@ func TestResolveSessionIdentifierDoesNotFallbackToDirectNameLookupAfterListMisma
 		workspaceListRPC = originalList
 	})
 
-	_, err := resolveSessionIdentifier(context.Background(), "/tmp/daemon.sock", "clay")
-	if err == nil {
-		t.Fatal("resolveSessionIdentifier returned nil error")
+	workspaceID, err := resolveSessionIdentifier(context.Background(), "/tmp/daemon.sock", "clay")
+	if err != nil {
+		t.Fatalf("resolveSessionIdentifier returned error: %v", err)
 	}
-	if err.Error() != "Workspace not found" {
-		t.Fatalf("resolveSessionIdentifier error = %q, want %q", err.Error(), "Workspace not found")
+	if workspaceID != "ws-stale" {
+		t.Fatalf("workspaceID = %q, want %q", workspaceID, "ws-stale")
 	}
 }
 
-func TestResolveSessionIdentifierReturnsNotFoundForUniqueStaleNameMatch(t *testing.T) {
+func TestResolveSessionIdentifierReturnsUniqueNameMatchFromWorkspaceList(t *testing.T) {
 	originalGet := workspaceGetRPC
 	originalList := workspaceListRPC
 
@@ -1943,12 +2043,44 @@ func TestResolveSessionIdentifierReturnsNotFoundForUniqueStaleNameMatch(t *testi
 		workspaceListRPC = originalList
 	})
 
-	_, err := resolveSessionIdentifier(context.Background(), "/tmp/daemon.sock", "alpha")
-	if err == nil {
-		t.Fatal("resolveSessionIdentifier returned nil error")
+	workspaceID, err := resolveSessionIdentifier(context.Background(), "/tmp/daemon.sock", "alpha")
+	if err != nil {
+		t.Fatalf("resolveSessionIdentifier returned error: %v", err)
 	}
-	if err.Error() != "Workspace not found" {
-		t.Fatalf("resolveSessionIdentifier error = %q, want %q", err.Error(), "Workspace not found")
+	if workspaceID != "ws-stale" {
+		t.Fatalf("workspaceID = %q, want %q", workspaceID, "ws-stale")
+	}
+}
+
+func TestResolveSessionTargetUniqueNameKeepsSessionWhenDirectLookupSucceeds(t *testing.T) {
+	originalGet := workspaceGetRPC
+	originalList := workspaceListRPC
+
+	workspaceGetRPC = func(_ context.Context, _ string, workspaceID string) (daemon.WorkspaceGetResponse, error) {
+		switch workspaceID {
+		case "alpha":
+			return daemon.WorkspaceGetResponse{WorkspaceID: "ws-1", Name: "alpha", OriginRoot: t.TempDir()}, nil
+		default:
+			return daemon.WorkspaceGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "session not found"}
+		}
+	}
+	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{{WorkspaceID: "ws-1", Name: "alpha"}}}, nil
+	}
+	t.Cleanup(func() {
+		workspaceGetRPC = originalGet
+		workspaceListRPC = originalList
+	})
+
+	target, err := resolveSessionTarget(context.Background(), "/tmp/daemon.sock", "alpha")
+	if err != nil {
+		t.Fatalf("resolveSessionTarget returned error: %v", err)
+	}
+	if target.WorkspaceID != "ws-1" {
+		t.Fatalf("workspaceID = %q, want %q", target.WorkspaceID, "ws-1")
+	}
+	if target.Session == nil {
+		t.Fatal("target session = nil, want non-nil")
 	}
 }
 

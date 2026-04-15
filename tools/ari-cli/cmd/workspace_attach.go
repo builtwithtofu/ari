@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -12,8 +13,12 @@ import (
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/config"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
+	"github.com/sourcegraph/jsonrpc2"
 	"github.com/spf13/cobra"
 )
+
+var workspaceAttachResolveWorkspaceFromCWD = resolveWorkspaceFromCWD
 
 func newWorkspaceAttachCmd() *cobra.Command {
 	var workspaceRef string
@@ -99,9 +104,13 @@ func resolveWorkspaceAttachTarget(runCtx context.Context, cfg *config.Config, cm
 	rpcCtx, cancel := context.WithTimeout(runCtx, 5*time.Second)
 	defer cancel()
 
-	workspaceRef, err := cmd.Flags().GetString("workspace")
-	if err != nil {
-		return resolvedSessionTarget{}, err
+	workspaceRef := ""
+	if cmd.Flags().Lookup("workspace") != nil {
+		flagWorkspaceRef, flagErr := cmd.Flags().GetString("workspace")
+		if flagErr != nil {
+			return resolvedSessionTarget{}, flagErr
+		}
+		workspaceRef = flagWorkspaceRef
 	}
 	workspaceRef = strings.TrimSpace(workspaceRef)
 	if workspaceRef != "" {
@@ -119,7 +128,7 @@ func resolveWorkspaceAttachTarget(runCtx context.Context, cfg *config.Config, cm
 	if err != nil {
 		return resolvedSessionTarget{}, err
 	}
-	workspace, err := resolveWorkspaceFromCWD(rpcCtx, cfg.Daemon.SocketPath, cwd)
+	workspace, err := workspaceAttachResolveWorkspaceFromCWD(rpcCtx, cfg.Daemon.SocketPath, cwd)
 	if err != nil {
 		return resolvedSessionTarget{}, err
 	}
@@ -157,6 +166,9 @@ func resolveDefaultWorkspaceAttachAgent(runCtx context.Context, cfg *config.Conf
 
 		details, getErr := agentGetRPC(lookupCtx, cfg.Daemon.SocketPath, workspaceID, agentID)
 		if getErr != nil {
+			if isAgentNotFoundRPCError(getErr) {
+				continue
+			}
 			return "", mapAgentRPCError(getErr)
 		}
 		if !strings.EqualFold(strings.TrimSpace(details.Status), "running") {
@@ -201,4 +213,15 @@ func resolveDefaultWorkspaceAttachAgent(runCtx context.Context, cfg *config.Conf
 	}
 
 	return "", userFacingError{message: "No running agents found and no default_harness configured"}
+}
+
+func isAgentNotFoundRPCError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var rpcErr *jsonrpc2.Error
+	if !errors.As(err, &rpcErr) {
+		return false
+	}
+	return rpcErr.Code == int64(rpc.AgentNotFound)
 }

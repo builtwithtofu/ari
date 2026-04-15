@@ -290,6 +290,100 @@ func TestAgentSpawnInfersHarnessFromExplicitCommand(t *testing.T) {
 	_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 }
 
+func TestAgentSpawnUsesHarnessProjectionSeam(t *testing.T) {
+	store := newAgentMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	originalProjector := agentHarnessProjector
+	agentHarnessProjector = harnessProjectorFunc(func(harness string, args []string) HarnessProjection {
+		if harness != "opencode" {
+			t.Fatalf("projector harness = %q, want %q", harness, "opencode")
+		}
+		if len(args) != 2 || args[0] != "--session" || args[1] != "resume-xyz" {
+			t.Fatalf("projector args = %v, want [--session resume-xyz]", args)
+		}
+		projectedHarness := "projected-harness"
+		projectedResume := "projected-resume"
+		return HarnessProjection{
+			Harness:     &projectedHarness,
+			ResumableID: &projectedResume,
+			Metadata:    `{"resume_source":"projector"}`,
+		}
+	})
+	t.Cleanup(func() {
+		agentHarnessProjector = originalProjector
+	})
+
+	if err := d.registerAgentMethods(registry, store); err != nil {
+		t.Fatalf("registerAgentMethods returned error: %v", err)
+	}
+
+	workspace := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
+	shim := writeNoopCommandShim(t)
+
+	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
+		WorkspaceID: "sess-1",
+		Harness:     "opencode",
+		Command:     shim,
+		Args:        []string{"--session", "resume-xyz"},
+	})
+
+	getResp := callMethod[AgentGetResponse](t, registry, "agent.get", AgentGetRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
+	if getResp.Harness != "projected-harness" {
+		t.Fatalf("agent.get harness = %q, want %q", getResp.Harness, "projected-harness")
+	}
+	if getResp.HarnessResumableID != "projected-resume" {
+		t.Fatalf("agent.get harness_resumable_id = %q, want %q", getResp.HarnessResumableID, "projected-resume")
+	}
+	if string(getResp.HarnessMetadata) != `{"resume_source":"projector"}` {
+		t.Fatalf("agent.get harness_metadata = %q, want %q", string(getResp.HarnessMetadata), `{"resume_source":"projector"}`)
+	}
+
+	_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
+}
+
+func TestAgentSpawnUsesDefaultProjectorWhenSeamIsNil(t *testing.T) {
+	store := newAgentMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	originalProjector := agentHarnessProjector
+	agentHarnessProjector = nil
+	t.Cleanup(func() {
+		agentHarnessProjector = originalProjector
+	})
+
+	if err := d.registerAgentMethods(registry, store); err != nil {
+		t.Fatalf("registerAgentMethods returned error: %v", err)
+	}
+
+	workspace := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
+	shim := writeNoopCommandShim(t)
+
+	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
+		WorkspaceID: "sess-1",
+		Harness:     "opencode",
+		Command:     shim,
+		Args:        []string{"--session", "resume-xyz"},
+	})
+
+	getResp := callMethod[AgentGetResponse](t, registry, "agent.get", AgentGetRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
+	if getResp.Harness != "opencode" {
+		t.Fatalf("agent.get harness = %q, want %q", getResp.Harness, "opencode")
+	}
+	if getResp.HarnessResumableID != "resume-xyz" {
+		t.Fatalf("agent.get harness_resumable_id = %q, want %q", getResp.HarnessResumableID, "resume-xyz")
+	}
+	if string(getResp.HarnessMetadata) != `{"resume_source":"argv"}` {
+		t.Fatalf("agent.get harness_metadata = %q, want %q", string(getResp.HarnessMetadata), `{"resume_source":"argv"}`)
+	}
+
+	_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
+}
+
 func TestParseHarnessResumableID(t *testing.T) {
 	tests := []struct {
 		name    string

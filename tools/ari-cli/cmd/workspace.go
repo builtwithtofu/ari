@@ -714,18 +714,25 @@ func resolveSessionTarget(ctx context.Context, socketPath, idOrName string) (res
 		return resolvedSessionTarget{}, userFacingError{message: "Workspace identifier is required"}
 	}
 
+	var directNameLookup *daemon.WorkspaceGetResponse
+
 	if session, err := workspaceGetRPC(ctx, socketPath, idOrName); err == nil {
 		workspaceID := strings.TrimSpace(session.WorkspaceID)
 		if workspaceID == idOrName {
 			resolved := session
 			return resolvedSessionTarget{WorkspaceID: session.WorkspaceID, Session: &resolved}, nil
 		}
+		resolved := session
+		directNameLookup = &resolved
 	} else if !isSessionNotFoundError(err) {
 		return resolvedSessionTarget{}, mapSessionRPCError(err)
 	}
 
 	list, err := workspaceListRPC(ctx, socketPath)
 	if err != nil {
+		if directNameLookup != nil {
+			return resolvedSessionTarget{WorkspaceID: directNameLookup.WorkspaceID, Session: directNameLookup}, nil
+		}
 		return resolvedSessionTarget{}, mapSessionRPCError(err)
 	}
 
@@ -755,15 +762,11 @@ func resolveSessionTarget(ctx context.Context, socketPath, idOrName string) (res
 		return resolvedSessionTarget{}, userFacingError{message: "Workspace ID prefix is ambiguous"}
 	}
 	if len(nameMatches) == 1 {
-		session, err := workspaceGetRPC(ctx, socketPath, nameMatches[0].WorkspaceID)
-		if err != nil {
-			if isSessionNotFoundError(err) {
-				return resolvedSessionTarget{}, userFacingError{message: "Workspace not found"}
-			}
-			return resolvedSessionTarget{}, mapSessionRPCError(err)
+		resolved := resolvedSessionTarget{WorkspaceID: nameMatches[0].WorkspaceID}
+		if directNameLookup != nil && strings.TrimSpace(directNameLookup.WorkspaceID) == nameMatches[0].WorkspaceID {
+			resolved.Session = directNameLookup
 		}
-		resolved := session
-		return resolvedSessionTarget{WorkspaceID: session.WorkspaceID, Session: &resolved}, nil
+		return resolved, nil
 	}
 	if len(nameMatches) > 1 {
 		workspaceID, err := resolveNameCollisionByCWD(ctx, socketPath, nameMatches)
@@ -777,6 +780,10 @@ func resolveSessionTarget(ctx context.Context, socketPath, idOrName string) (res
 	}
 	if len(prefixMatches) > 1 {
 		return resolvedSessionTarget{}, userFacingError{message: "Workspace ID prefix is ambiguous"}
+	}
+
+	if directNameLookup != nil {
+		return resolvedSessionTarget{WorkspaceID: directNameLookup.WorkspaceID, Session: directNameLookup}, nil
 	}
 
 	return resolvedSessionTarget{}, userFacingError{message: "Workspace not found"}

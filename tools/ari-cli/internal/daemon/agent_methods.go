@@ -104,6 +104,8 @@ var updateAgentStatus = func(store *globaldb.Store, ctx context.Context, params 
 	return store.UpdateAgentStatus(ctx, params)
 }
 
+var agentHarnessProjector HarnessProjector = defaultHarnessProjector{}
+
 func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globaldb.Store) error {
 	if registry == nil {
 		return fmt.Errorf("method registry is required")
@@ -147,6 +149,17 @@ func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globa
 				return AgentSpawnResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), sessionID)
 			}
 
+			projector := agentHarnessProjector
+			if projector == nil {
+				projector = defaultHarnessProjector{}
+			}
+
+			harnessName := strings.TrimSpace(req.Harness)
+			if harnessName == "" {
+				harnessName = inferHarnessFromCommand(launchSpec.Command)
+			}
+			harnessIdentity := projector.Project(harnessName, launchSpec.Args)
+
 			proc, err := process.New(launchSpec.Command, launchSpec.Args, process.Options{Dir: primaryFolder})
 			if err != nil {
 				return AgentSpawnResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), sessionID)
@@ -163,11 +176,6 @@ func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globa
 			}
 
 			startedAt := time.Now().UTC().Format(time.RFC3339Nano)
-			harnessName := strings.TrimSpace(req.Harness)
-			if harnessName == "" {
-				harnessName = inferHarnessFromCommand(launchSpec.Command)
-			}
-			harnessIdentity := deriveHarnessIdentity(harnessName, launchSpec.Args)
 			createParams := globaldb.CreateAgentParams{
 				AgentID:            agentID,
 				WorkspaceID:        sessionID,
@@ -409,33 +417,6 @@ func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globa
 	}
 
 	return nil
-}
-
-type harnessIdentity struct {
-	Harness     *string
-	ResumableID *string
-	Metadata    string
-}
-
-func deriveHarnessIdentity(harness string, args []string) harnessIdentity {
-	identity := harnessIdentity{Metadata: "{}"}
-	harness = strings.TrimSpace(harness)
-	if harness != "" {
-		identity.Harness = &harness
-	}
-
-	resumableID := parseHarnessResumableID(harness, args)
-	if resumableID == "" {
-		return identity
-	}
-	identity.ResumableID = &resumableID
-	metadata := map[string]string{
-		"resume_source": "argv",
-	}
-	if encoded, err := json.Marshal(metadata); err == nil {
-		identity.Metadata = string(encoded)
-	}
-	return identity
 }
 
 func inferHarnessFromCommand(command string) string {
