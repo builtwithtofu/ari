@@ -42,8 +42,8 @@ func TestOpenCodeExecutorMapsJSONEvents(t *testing.T) {
 }
 
 func TestOpenCodeExecutorReportsMissingExecutableBeforeStart(t *testing.T) {
-	executor := NewOpenCodeExecutorForTest(opencodeExecutorOptions{Executable: "missing-opencode", Cwd: "/repo", RunCommand: func(ctx context.Context, opts opencodeExecutorOptions, prompt string) ([]byte, error) {
-		return nil, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "missing_executable", Executable: opts.Executable, Probe: opts.Executable + " --version", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
+	executor := NewOpenCodeExecutorForTest(opencodeExecutorOptions{Executable: "missing-opencode", Cwd: "/repo", RunCommand: func(ctx context.Context, opts opencodeExecutorOptions, prompt string) (commandRunResult, error) {
+		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "missing_executable", Executable: opts.Executable, Probe: opts.Executable + " --version", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
 	}})
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 
@@ -58,8 +58,8 @@ func TestOpenCodeExecutorReportsMissingExecutableBeforeStart(t *testing.T) {
 }
 
 func TestOpenCodeExecutorRejectsMissingSessionID(t *testing.T) {
-	executor := NewOpenCodeExecutorForTest(opencodeExecutorOptions{Executable: "opencode", Cwd: "/repo", RunCommand: func(ctx context.Context, opts opencodeExecutorOptions, prompt string) ([]byte, error) {
-		return []byte(`{"type":"message.part.updated","properties":{"part":{"type":"text","text":"orphan"}}}`), nil
+	executor := NewOpenCodeExecutorForTest(opencodeExecutorOptions{Executable: "opencode", Cwd: "/repo", RunCommand: func(ctx context.Context, opts opencodeExecutorOptions, prompt string) (commandRunResult, error) {
+		return commandRunResult{Output: []byte(`{"type":"message.part.updated","properties":{"part":{"type":"text","text":"orphan"}}}`)}, nil
 	}})
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 
@@ -75,9 +75,9 @@ type fakeOpenCodeRunner struct {
 	prompt string
 }
 
-func (r *fakeOpenCodeRunner) Run(ctx context.Context, opts opencodeExecutorOptions, prompt string) ([]byte, error) {
+func (r *fakeOpenCodeRunner) Run(ctx context.Context, opts opencodeExecutorOptions, prompt string) (commandRunResult, error) {
 	_ = ctx
 	r.args = opencodeArgs(opts, prompt)
 	r.prompt = prompt
-	return append([]byte(nil), r.output...), nil
+	return commandRunResult{Output: append([]byte(nil), r.output...)}, nil
 }

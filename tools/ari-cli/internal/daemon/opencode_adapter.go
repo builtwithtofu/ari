@@ -18,7 +18,7 @@ type opencodeExecutorOptions struct {
 	RunCommand opencodeCommandRunner
 }
 
-type opencodeCommandRunner func(context.Context, opencodeExecutorOptions, string) ([]byte, error)
+type opencodeCommandRunner func(context.Context, opencodeExecutorOptions, string) (commandRunResult, error)
 
 type OpenCodeExecutor struct {
 	options opencodeExecutorOptions
@@ -64,11 +64,11 @@ func (e *OpenCodeExecutor) Start(ctx context.Context, req ExecutorStartRequest) 
 		options.Model = strings.TrimSpace(req.Model)
 	}
 	prompt := opencodePromptFromRequest(req)
-	output, err := options.RunCommand(ctx, options, prompt)
+	commandResult, err := options.RunCommand(ctx, options, prompt)
 	if err != nil {
 		return ExecutorRun{}, err
 	}
-	parsed, err := parseOpenCodeEvents(output)
+	parsed, err := parseOpenCodeEvents(commandResult.Output)
 	if err != nil {
 		return ExecutorRun{}, err
 	}
@@ -79,7 +79,7 @@ func (e *OpenCodeExecutor) Start(ctx context.Context, req ExecutorStartRequest) 
 	e.mu.Lock()
 	e.runs[parsed.SessionID] = items
 	e.mu.Unlock()
-	return ExecutorRun{RunID: parsed.SessionID, Executor: HarnessNameOpenCode, ProviderRunID: parsed.SessionID, CapabilityNames: harnessCapabilitiesToStrings(e.Descriptor().Capabilities)}, nil
+	return ExecutorRun{RunID: parsed.SessionID, Executor: HarnessNameOpenCode, ProviderRunID: parsed.SessionID, ExitCode: commandResult.ExitCode, ProcessSample: commandResult.ProcessSample, CapabilityNames: harnessCapabilitiesToStrings(e.Descriptor().Capabilities)}, nil
 }
 
 func (e *OpenCodeExecutor) Items(ctx context.Context, runID string) ([]TimelineItem, error) {
@@ -212,20 +212,28 @@ func opencodeArgs(options opencodeExecutorOptions, prompt string) []string {
 	return args
 }
 
-func runOpenCodeCommand(ctx context.Context, options opencodeExecutorOptions, prompt string) ([]byte, error) {
+func runOpenCodeCommand(ctx context.Context, options opencodeExecutorOptions, prompt string) (commandRunResult, error) {
 	executable := strings.TrimSpace(options.Executable)
 	if executable == "" {
 		executable = "opencode"
 	}
 	path, err := exec.LookPath(executable)
 	if err != nil {
-		return nil, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
+		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
 	}
 	cmd := exec.CommandContext(ctx, path, opencodeArgs(options, prompt)...)
 	cmd.Dir = strings.TrimSpace(options.Cwd)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("run opencode json: %w: %s", err, strings.TrimSpace(string(output)))
+	var output strings.Builder
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	if err := cmd.Start(); err != nil {
+		return commandRunResult{}, err
 	}
-	return output, nil
+	sample := sampleLinuxProcessMetrics(ctx, AgentRun{PID: cmd.Process.Pid})
+	err = cmd.Wait()
+	exitCode := cmd.ProcessState.ExitCode()
+	if err != nil {
+		return commandRunResult{}, fmt.Errorf("run opencode json: %w: %s", err, strings.TrimSpace(output.String()))
+	}
+	return commandRunResult{Output: []byte(output.String()), ProcessSample: &sample, ExitCode: &exitCode}, nil
 }

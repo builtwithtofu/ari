@@ -562,6 +562,41 @@ func TestAgentProfileRunPersistsFinalResponseArtifact(t *testing.T) {
 	}
 }
 
+func TestAgentProfileRunPersistsMeasuredTelemetryAndProcessSample(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return newFakeHarness("test-harness", []TimelineItem{{Kind: "telemetry", Metadata: map[string]any{"input_tokens": "12", "output_tokens": "5"}}}), nil
+	})
+	originalSampler := agentRunProcessMetricsSampler
+	pid := int64(12345)
+	agentRunProcessMetricsSampler = func(context.Context, AgentRun) ProcessMetricsSample {
+		return ProcessMetricsSample{OwnedByAri: true, PID: ProcessMetricValue{Known: true, Value: &pid, Confidence: "sampled"}, CPUTimeMS: unknownProcessMetric("unsupported"), MemoryRSSBytesPeak: unknownProcessMetric("unsupported"), ChildProcessesPeak: unknownProcessMetric("unsupported"), OrphanState: "not_orphaned", ExitCode: unknownProcessMetric("unknown")}
+	}
+	t.Cleanup(func() { agentRunProcessMetricsSampler = originalSampler })
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	if err := store.UpsertAgentProfile(context.Background(), globaldb.AgentProfile{ProfileID: "ap_executor", Name: "executor", Harness: "test-harness", Model: "model-1", InvocationClass: string(HarnessInvocationAgent)}); err != nil {
+		t.Fatalf("UpsertAgentProfile returned error: %v", err)
+	}
+
+	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
+	_ = callMethod[AgentProfileRunResponse](t, registry, "agent.profile.run", AgentProfileRunRequest{Profile: "executor", Packet: packet})
+	rollups, err := store.RollupAgentRunTelemetry(context.Background(), "ws-1")
+	if err != nil {
+		t.Fatalf("RollupAgentRunTelemetry returned error: %v", err)
+	}
+	if len(rollups) != 1 || rollups[0].Group.ProfileID != "ap_executor" || !rollups[0].InputTokens.Known || *rollups[0].InputTokens.Value != 12 || !rollups[0].OutputTokens.Known || *rollups[0].OutputTokens.Value != 5 {
+		t.Fatalf("telemetry rollups = %#v, want measured token rollup", rollups)
+	}
+}
+
 func TestAgentProfileCreateAndGetPersistProfile(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()

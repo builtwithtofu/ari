@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -268,6 +269,7 @@ func StartHarnessCall(ctx context.Context, executor Executor, call HarnessCall) 
 }
 
 func StartHarnessCallResult(ctx context.Context, executor Executor, call HarnessCall) (HarnessCallResult, error) {
+	startedAt := time.Now().UTC()
 	if ctx == nil {
 		return HarnessCallResult{}, fmt.Errorf("context is required")
 	}
@@ -290,6 +292,9 @@ func StartHarnessCallResult(ctx context.Context, executor Executor, call Harness
 	if err != nil {
 		return HarnessCallResult{}, err
 	}
+	finishedAt := time.Now().UTC()
+	run.StartedAt = startedAt.Format(time.RFC3339Nano)
+	run.FinishedAt = finishedAt.Format(time.RFC3339Nano)
 	return HarnessCallResult{
 		CallID:   call.CallID,
 		Status:   harnessCallStatusFromAgentRun(run),
@@ -304,13 +309,51 @@ func StartHarnessCallResult(ctx context.Context, executor Executor, call Harness
 		Items:         items,
 		Events:        harnessRuntimeEventsFromItems(run, items),
 		FinalResponse: harnessFinalResponseFromItems(descriptor, items),
-		Telemetry: HarnessTelemetrySeed{
-			Model:                  "unknown",
-			InputTokens:            nil,
-			OutputTokens:           nil,
-			MeasuredTokenTelemetry: false,
-		},
+		Telemetry:     harnessTelemetryFromItems(call, items),
 	}, nil
+}
+
+func harnessTelemetryFromItems(call HarnessCall, items []TimelineItem) HarnessTelemetrySeed {
+	seed := HarnessTelemetrySeed{Model: strings.TrimSpace(call.Model), InputTokens: nil, OutputTokens: nil, MeasuredTokenTelemetry: false}
+	if seed.Model == "" {
+		seed.Model = "unknown"
+	}
+	for _, item := range items {
+		if strings.TrimSpace(item.Kind) != "telemetry" {
+			continue
+		}
+		if value, ok := metadataInt64(item.Metadata, "input_tokens"); ok {
+			seed.InputTokens = &value
+			seed.MeasuredTokenTelemetry = true
+		}
+		if value, ok := metadataInt64(item.Metadata, "output_tokens"); ok {
+			seed.OutputTokens = &value
+			seed.MeasuredTokenTelemetry = true
+		}
+	}
+	return seed
+}
+
+func metadataInt64(metadata map[string]any, key string) (int64, bool) {
+	if metadata == nil {
+		return 0, false
+	}
+	switch value := metadata[key].(type) {
+	case int64:
+		return value, true
+	case int:
+		return int64(value), true
+	case float64:
+		if value < 0 || value != float64(int64(value)) {
+			return 0, false
+		}
+		return int64(value), true
+	case string:
+		parsed, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+		return parsed, err == nil && parsed >= 0
+	default:
+		return 0, false
+	}
 }
 
 func harnessFinalResponseFromItems(descriptor HarnessAdapterDescriptor, items []TimelineItem) *HarnessFinalResponseSeed {
@@ -420,6 +463,9 @@ func startHarnessCallAfterCapabilityCheck(ctx context.Context, executor Executor
 		Status:          executorRunStatusFromItems(items),
 		ContextPacketID: call.ContextPacketID,
 		StartedAt:       time.Now().UTC().Format(time.RFC3339Nano),
+		PID:             providerRun.PID,
+		ExitCode:        providerRun.ExitCode,
+		ProcessSample:   providerRun.ProcessSample,
 		Capabilities:    harnessCapabilitiesToStrings(descriptor.Capabilities),
 	}
 	for i := range items {

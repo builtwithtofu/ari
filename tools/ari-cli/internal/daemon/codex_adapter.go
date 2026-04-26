@@ -26,6 +26,8 @@ type codexTransport interface {
 	Call(context.Context, string, any, any) error
 	Notify(context.Context, string, any) error
 	Notifications() <-chan codexNotification
+	PID() int
+	ProcessSample(context.Context) *ProcessMetricsSample
 	Close() error
 }
 
@@ -107,7 +109,7 @@ func (e *CodexExecutor) Start(ctx context.Context, req ExecutorStartRequest) (Ex
 	e.mu.Lock()
 	e.runs[threadID] = items
 	e.mu.Unlock()
-	return ExecutorRun{RunID: threadID, Executor: HarnessNameCodex, ProviderRunID: threadID, CapabilityNames: harnessCapabilitiesToStrings(e.Descriptor().Capabilities)}, nil
+	return ExecutorRun{RunID: threadID, Executor: HarnessNameCodex, ProviderRunID: threadID, PID: transport.PID(), ProcessSample: transport.ProcessSample(ctx), CapabilityNames: harnessCapabilitiesToStrings(e.Descriptor().Capabilities)}, nil
 }
 
 func (e *CodexExecutor) Items(ctx context.Context, runID string) ([]TimelineItem, error) {
@@ -274,6 +276,22 @@ func newCodexStdioTransport(cmd *exec.Cmd, stdin io.WriteCloser, stdout io.Reade
 	go transport.readMessages(stdout)
 	go func() { _, _ = io.Copy(io.Discard, stderr) }()
 	return transport
+}
+
+func (t *codexStdioTransport) PID() int {
+	if t == nil || t.cmd == nil || t.cmd.Process == nil {
+		return 0
+	}
+	return t.cmd.Process.Pid
+}
+
+func (t *codexStdioTransport) ProcessSample(ctx context.Context) *ProcessMetricsSample {
+	pid := t.PID()
+	if pid <= 0 {
+		return nil
+	}
+	sample := sampleLinuxProcessMetrics(ctx, AgentRun{PID: pid})
+	return &sample
 }
 
 func (t *codexStdioTransport) Call(ctx context.Context, method string, params any, result any) error {

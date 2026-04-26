@@ -37,8 +37,8 @@ func TestClaudeExecutorMapsJSONResult(t *testing.T) {
 }
 
 func TestClaudeExecutorReportsMissingExecutableBeforeStart(t *testing.T) {
-	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "missing-claude", Cwd: "/repo", RunCommand: func(ctx context.Context, opts claudeExecutorOptions, prompt string) ([]byte, error) {
-		return nil, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "missing_executable", Executable: opts.Executable, Probe: opts.Executable + " --version", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
+	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "missing-claude", Cwd: "/repo", RunCommand: func(ctx context.Context, opts claudeExecutorOptions, prompt string) (commandRunResult, error) {
+		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "missing_executable", Executable: opts.Executable, Probe: opts.Executable + " --version", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
 	}})
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 
@@ -53,8 +53,8 @@ func TestClaudeExecutorReportsMissingExecutableBeforeStart(t *testing.T) {
 }
 
 func TestClaudeExecutorRejectsMissingSessionID(t *testing.T) {
-	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunCommand: func(ctx context.Context, opts claudeExecutorOptions, prompt string) ([]byte, error) {
-		return []byte(`{"result":"Done"}`), nil
+	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunCommand: func(ctx context.Context, opts claudeExecutorOptions, prompt string) (commandRunResult, error) {
+		return commandRunResult{Output: []byte(`{"result":"Done"}`)}, nil
 	}})
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 
@@ -70,9 +70,9 @@ type fakeClaudeRunner struct {
 	prompt string
 }
 
-func (r *fakeClaudeRunner) Run(ctx context.Context, opts claudeExecutorOptions, prompt string) ([]byte, error) {
+func (r *fakeClaudeRunner) Run(ctx context.Context, opts claudeExecutorOptions, prompt string) (commandRunResult, error) {
 	_ = ctx
 	r.args = claudeArgs(opts)
 	r.prompt = prompt
-	return append([]byte(nil), r.output...), nil
+	return commandRunResult{Output: append([]byte(nil), r.output...)}, nil
 }

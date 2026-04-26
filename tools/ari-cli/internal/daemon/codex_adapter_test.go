@@ -170,6 +170,10 @@ func (t *fakeCodexTransport) Notifications() <-chan codexNotification {
 	return t.notifications
 }
 
+func (t *fakeCodexTransport) PID() int { return 0 }
+
+func (t *fakeCodexTransport) ProcessSample(context.Context) *ProcessMetricsSample { return nil }
+
 func (t *fakeCodexTransport) Close() error {
 	t.closed = true
 	return nil

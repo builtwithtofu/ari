@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
 	"sync"
@@ -17,7 +18,13 @@ type claudeExecutorOptions struct {
 	RunCommand claudeCommandRunner
 }
 
-type claudeCommandRunner func(context.Context, claudeExecutorOptions, string) ([]byte, error)
+type commandRunResult struct {
+	Output        []byte
+	ProcessSample *ProcessMetricsSample
+	ExitCode      *int
+}
+
+type claudeCommandRunner func(context.Context, claudeExecutorOptions, string) (commandRunResult, error)
 
 type ClaudeExecutor struct {
 	options claudeExecutorOptions
@@ -62,11 +69,11 @@ func (e *ClaudeExecutor) Start(ctx context.Context, req ExecutorStartRequest) (E
 	if strings.TrimSpace(req.Model) != "" {
 		options.Model = strings.TrimSpace(req.Model)
 	}
-	output, err := options.RunCommand(ctx, options, claudePromptFromRequest(req))
+	commandResult, err := options.RunCommand(ctx, options, claudePromptFromRequest(req))
 	if err != nil {
 		return ExecutorRun{}, err
 	}
-	result, err := parseClaudeJSONResult(output)
+	result, err := parseClaudeJSONResult(commandResult.Output)
 	if err != nil {
 		return ExecutorRun{}, err
 	}
@@ -78,7 +85,7 @@ func (e *ClaudeExecutor) Start(ctx context.Context, req ExecutorStartRequest) (E
 	e.mu.Lock()
 	e.runs[sessionID] = items
 	e.mu.Unlock()
-	return ExecutorRun{RunID: sessionID, Executor: HarnessNameClaude, ProviderRunID: sessionID, CapabilityNames: harnessCapabilitiesToStrings(e.Descriptor().Capabilities)}, nil
+	return ExecutorRun{RunID: sessionID, Executor: HarnessNameClaude, ProviderRunID: sessionID, ExitCode: commandResult.ExitCode, ProcessSample: commandResult.ProcessSample, CapabilityNames: harnessCapabilitiesToStrings(e.Descriptor().Capabilities)}, nil
 }
 
 func (e *ClaudeExecutor) Items(ctx context.Context, runID string) ([]TimelineItem, error) {
@@ -151,21 +158,34 @@ func claudeArgs(options claudeExecutorOptions) []string {
 	return args
 }
 
-func runClaudeCommand(ctx context.Context, options claudeExecutorOptions, prompt string) ([]byte, error) {
+func runClaudeCommand(ctx context.Context, options claudeExecutorOptions, prompt string) (commandRunResult, error) {
 	executable := strings.TrimSpace(options.Executable)
 	if executable == "" {
 		executable = "claude"
 	}
 	path, err := exec.LookPath(executable)
 	if err != nil {
-		return nil, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
+		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
 	}
 	cmd := exec.CommandContext(ctx, path, claudeArgs(options)...)
 	cmd.Dir = strings.TrimSpace(options.Cwd)
-	cmd.Stdin = strings.NewReader(prompt)
-	output, err := cmd.CombinedOutput()
+	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return nil, fmt.Errorf("run claude headless: %w: %s", err, strings.TrimSpace(string(output)))
+		return commandRunResult{}, err
 	}
-	return output, nil
+	var output strings.Builder
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	if err := cmd.Start(); err != nil {
+		return commandRunResult{}, err
+	}
+	_, _ = io.WriteString(stdin, prompt)
+	_ = stdin.Close()
+	sample := sampleLinuxProcessMetrics(ctx, AgentRun{PID: cmd.Process.Pid})
+	err = cmd.Wait()
+	exitCode := cmd.ProcessState.ExitCode()
+	if err != nil {
+		return commandRunResult{}, fmt.Errorf("run claude headless: %w: %s", err, strings.TrimSpace(output.String()))
+	}
+	return commandRunResult{Output: []byte(output.String()), ProcessSample: &sample, ExitCode: &exitCode}, nil
 }
