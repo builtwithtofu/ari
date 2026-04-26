@@ -253,6 +253,24 @@ func TestStartHarnessCallResultReturnsUnknownTelemetrySeed(t *testing.T) {
 	}
 }
 
+func TestStartHarnessCallResultExtractsFinalResponseFromCapableHarness(t *testing.T) {
+	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
+	executor := newFinalResponseHarness("fake", []TimelineItem{{ID: "ti_full_transcript", Kind: "agent_text", Text: "Detailed internal transcript"}, {ID: "ti_final", Kind: "agent_text", Text: "Concise answer"}})
+	call, err := NewAgentRunHarnessCall(packet, nil)
+	if err != nil {
+		t.Fatalf("NewAgentRunHarnessCall returned error: %v", err)
+	}
+	call.Input = []byte(renderContextPacket(packet))
+
+	result, err := StartHarnessCallResult(context.Background(), executor, call)
+	if err != nil {
+		t.Fatalf("StartHarnessCallResult returned error: %v", err)
+	}
+	if result.FinalResponse == nil || result.FinalResponse.Status != "completed" || result.FinalResponse.Text != "Concise answer" {
+		t.Fatalf("final response = %#v, want deterministic final agent text", result.FinalResponse)
+	}
+}
+
 func TestStartExecutorRunRejectsMissingPacketIdentity(t *testing.T) {
 	executor := newFakeHarness("fake", nil)
 	_, _, err := StartExecutorRun(context.Background(), executor, ContextPacket{WorkspaceID: "ws-1", TaskID: "task-1"})
@@ -295,6 +313,7 @@ type fakeHarness struct {
 	template          []TimelineItem
 	runs              map[string][]TimelineItem
 	lastContextPacket string
+	finalResponse     bool
 }
 
 func newFakeHarness(name string, items []TimelineItem) *fakeHarness {
@@ -305,8 +324,18 @@ func newFakeHarness(name string, items []TimelineItem) *fakeHarness {
 	return &fakeHarness{name: name, template: append([]TimelineItem(nil), items...), runs: map[string][]TimelineItem{}}
 }
 
+func newFinalResponseHarness(name string, items []TimelineItem) *fakeHarness {
+	harness := newFakeHarness(name, items)
+	harness.finalResponse = true
+	return harness
+}
+
 func (e *fakeHarness) Descriptor() HarnessAdapterDescriptor {
-	return HarnessAdapterDescriptor{Name: e.name, Capabilities: []HarnessCapability{HarnessCapabilityAgentRunFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems}}
+	capabilities := []HarnessCapability{HarnessCapabilityAgentRunFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems}
+	if e.finalResponse {
+		capabilities = append(capabilities, HarnessCapabilityFinalResponse)
+	}
+	return HarnessAdapterDescriptor{Name: e.name, Capabilities: capabilities}
 }
 
 func (e *fakeHarness) Start(ctx context.Context, req ExecutorStartRequest) (ExecutorRun, error) {
@@ -498,6 +527,38 @@ func TestAgentProfileRunUsesStoredProfile(t *testing.T) {
 	resp := callMethod[AgentProfileRunResponse](t, registry, "agent.profile.run", AgentProfileRunRequest{Profile: "executor", Packet: packet})
 	if resp.Profile != "executor" || resp.Harness != "test-harness" || resp.Run.Executor != "test-harness" {
 		t.Fatalf("profile run response = %#v, want stored profile routed to test-harness", resp)
+	}
+}
+
+func TestAgentProfileRunPersistsFinalResponseArtifact(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return newFinalResponseHarness("test-harness", []TimelineItem{{ID: "ti_transcript", Kind: "agent_text", Text: "Internal transcript text"}, {ID: "ti_final", Kind: "agent_text", Text: "Shareable answer"}}), nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	if err := store.UpsertAgentProfile(context.Background(), globaldb.AgentProfile{ProfileID: "ap_executor", Name: "executor", Harness: "test-harness", InvocationClass: string(HarnessInvocationAgent)}); err != nil {
+		t.Fatalf("UpsertAgentProfile returned error: %v", err)
+	}
+
+	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
+	runResp := callMethod[AgentProfileRunResponse](t, registry, "agent.profile.run", AgentProfileRunRequest{Profile: "executor", Packet: packet})
+	finalResp := callMethod[FinalResponseResponse](t, registry, "final_response.get", FinalResponseGetRequest{RunID: runResp.Run.AgentRunID})
+	if finalResp.ProfileID != "ap_executor" || finalResp.ContextPacketID != "ctx_123" || finalResp.Text != "Shareable answer" {
+		t.Fatalf("final response = %#v, want stored shareable artifact", finalResp)
+	}
+	if strings.Contains(finalResp.Text, "Internal transcript") {
+		t.Fatalf("final response text = %q, must not include transcript text", finalResp.Text)
+	}
+	if len(finalResp.EvidenceLinks) < 2 || finalResp.EvidenceLinks[0].Kind != "context_packet" {
+		t.Fatalf("evidence links = %#v, want context/run provenance", finalResp.EvidenceLinks)
 	}
 }
 

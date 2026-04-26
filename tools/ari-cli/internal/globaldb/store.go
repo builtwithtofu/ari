@@ -494,6 +494,20 @@ type AgentProfile struct {
 	UpdatedAt       time.Time
 }
 
+type FinalResponse struct {
+	FinalResponseID   string
+	RunID             string
+	WorkspaceID       string
+	TaskID            string
+	ContextPacketID   string
+	ProfileID         string
+	Status            string
+	Text              string
+	EvidenceLinksJSON string
+	CreatedAt         time.Time
+	UpdatedAt         *time.Time
+}
+
 func NewStore(db DB) (*Store, error) {
 	if db == nil {
 		return nil, fmt.Errorf("%w: db is required", ErrInvalidInput)
@@ -615,6 +629,108 @@ func (s *Store) ListAgentProfiles(ctx context.Context, workspaceID string) ([]Ag
 	return profiles, nil
 }
 
+func (s *Store) UpsertFinalResponse(ctx context.Context, response FinalResponse) error {
+	response.FinalResponseID = strings.TrimSpace(response.FinalResponseID)
+	response.RunID = strings.TrimSpace(response.RunID)
+	response.WorkspaceID = strings.TrimSpace(response.WorkspaceID)
+	response.TaskID = strings.TrimSpace(response.TaskID)
+	response.ContextPacketID = strings.TrimSpace(response.ContextPacketID)
+	response.ProfileID = strings.TrimSpace(response.ProfileID)
+	response.Status = strings.TrimSpace(response.Status)
+	response.Text = strings.TrimSpace(response.Text)
+	if response.FinalResponseID == "" {
+		return fmt.Errorf("%w: final response id is required", ErrInvalidInput)
+	}
+	if response.RunID == "" {
+		return fmt.Errorf("%w: run id is required", ErrInvalidInput)
+	}
+	if response.WorkspaceID == "" {
+		return fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
+	}
+	if response.TaskID == "" {
+		return fmt.Errorf("%w: task id is required", ErrInvalidInput)
+	}
+	if response.ContextPacketID == "" {
+		return fmt.Errorf("%w: context packet id is required", ErrInvalidInput)
+	}
+	if !validFinalResponseStatus(response.Status) {
+		return fmt.Errorf("%w: invalid final response status %q", ErrInvalidInput, response.Status)
+	}
+	if strings.TrimSpace(response.EvidenceLinksJSON) == "" {
+		response.EvidenceLinksJSON = "[]"
+	}
+	if !json.Valid([]byte(response.EvidenceLinksJSON)) {
+		return fmt.Errorf("%w: evidence links json is invalid", ErrInvalidInput)
+	}
+	now := time.Now().UTC()
+	if response.CreatedAt.IsZero() {
+		response.CreatedAt = now
+	}
+	updatedAt := sql.NullString{}
+	if response.UpdatedAt != nil {
+		updatedAt = sql.NullString{String: response.UpdatedAt.UTC().Format(time.RFC3339Nano), Valid: true}
+	}
+	if err := s.sqlcQueries().UpsertFinalResponse(ctx, dbsqlc.UpsertFinalResponseParams{FinalResponseID: response.FinalResponseID, RunID: response.RunID, WorkspaceID: response.WorkspaceID, TaskID: response.TaskID, ContextPacketID: response.ContextPacketID, ProfileID: sqlNullString(response.ProfileID), Status: response.Status, Text: response.Text, EvidenceLinks: response.EvidenceLinksJSON, CreatedAt: response.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: updatedAt}); err != nil {
+		return fmt.Errorf("upsert final response %q: %w", response.FinalResponseID, err)
+	}
+	return nil
+}
+
+func (s *Store) GetFinalResponseByRunID(ctx context.Context, runID string) (FinalResponse, error) {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return FinalResponse{}, fmt.Errorf("%w: run id is required", ErrInvalidInput)
+	}
+	row, err := s.sqlcQueries().GetFinalResponseByRunID(ctx, runID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return FinalResponse{}, ErrNotFound
+		}
+		return FinalResponse{}, fmt.Errorf("query final response by run id: %w", err)
+	}
+	return finalResponseFromSQLC(row), nil
+}
+
+func (s *Store) GetFinalResponseByID(ctx context.Context, finalResponseID string) (FinalResponse, error) {
+	finalResponseID = strings.TrimSpace(finalResponseID)
+	if finalResponseID == "" {
+		return FinalResponse{}, fmt.Errorf("%w: final response id is required", ErrInvalidInput)
+	}
+	row, err := s.sqlcQueries().GetFinalResponseByID(ctx, finalResponseID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return FinalResponse{}, ErrNotFound
+		}
+		return FinalResponse{}, fmt.Errorf("query final response by id: %w", err)
+	}
+	return finalResponseFromSQLC(row), nil
+}
+
+func (s *Store) ListFinalResponses(ctx context.Context, workspaceID string) ([]FinalResponse, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		return nil, fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
+	}
+	rows, err := s.sqlcQueries().ListFinalResponsesByWorkspace(ctx, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("list final responses: %w", err)
+	}
+	responses := make([]FinalResponse, 0, len(rows))
+	for _, row := range rows {
+		responses = append(responses, finalResponseFromSQLC(row))
+	}
+	return responses, nil
+}
+
+func validFinalResponseStatus(status string) bool {
+	switch status {
+	case "completed", "failed", "partial", "unavailable":
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Store) sqlcQueries() *dbsqlc.Queries {
 	if s.sqlc != nil {
 		return s.sqlc
@@ -636,6 +752,16 @@ func agentProfileFromSQLC(row dbsqlc.AgentProfile) AgentProfile {
 	createdAt, _ := time.Parse(time.RFC3339Nano, row.CreatedAt)
 	updatedAt, _ := time.Parse(time.RFC3339Nano, row.UpdatedAt)
 	return AgentProfile{ProfileID: row.ProfileID, WorkspaceID: row.WorkspaceID.String, Name: row.Name, Harness: row.Harness.String, Model: row.Model.String, Prompt: row.Prompt.String, InvocationClass: row.InvocationClass.String, DefaultsJSON: row.DefaultsJson, CreatedAt: createdAt, UpdatedAt: updatedAt}
+}
+
+func finalResponseFromSQLC(row dbsqlc.FinalResponse) FinalResponse {
+	createdAt, _ := time.Parse(time.RFC3339Nano, row.CreatedAt)
+	var updatedAt *time.Time
+	if row.UpdatedAt.Valid {
+		parsed, _ := time.Parse(time.RFC3339Nano, row.UpdatedAt.String)
+		updatedAt = &parsed
+	}
+	return FinalResponse{FinalResponseID: row.FinalResponseID, RunID: row.RunID, WorkspaceID: row.WorkspaceID, TaskID: row.TaskID, ContextPacketID: row.ContextPacketID, ProfileID: row.ProfileID.String, Status: row.Status, Text: row.Text, EvidenceLinksJSON: row.EvidenceLinks, CreatedAt: createdAt, UpdatedAt: updatedAt}
 }
 
 func (s *Store) CreateSession(ctx context.Context, id, name, originRoot, cleanupPolicy, vcsPreference string) error {

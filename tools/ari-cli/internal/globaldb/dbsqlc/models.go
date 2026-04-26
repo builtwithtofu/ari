@@ -21,6 +21,7 @@ type Agent struct {
 	Harness            sql.NullString `json:"harness"`
 	HarnessResumableID sql.NullString `json:"harness_resumable_id"`
 	HarnessMetadata    string         `json:"harness_metadata"`
+	InvocationClass    string         `json:"invocation_class"`
 }
 
 type AgentProfile struct {
@@ -50,6 +51,20 @@ type Command struct {
 type DaemonMetum struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
+}
+
+type FinalResponse struct {
+	FinalResponseID string         `json:"final_response_id"`
+	RunID           string         `json:"run_id"`
+	WorkspaceID     string         `json:"workspace_id"`
+	TaskID          string         `json:"task_id"`
+	ContextPacketID string         `json:"context_packet_id"`
+	ProfileID       sql.NullString `json:"profile_id"`
+	Status          string         `json:"status"`
+	Text            string         `json:"text"`
+	EvidenceLinks   string         `json:"evidence_links"`
+	CreatedAt       string         `json:"created_at"`
+	UpdatedAt       sql.NullString `json:"updated_at"`
 }
 
 type Workspace struct {

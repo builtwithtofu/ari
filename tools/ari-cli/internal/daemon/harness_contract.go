@@ -301,8 +301,9 @@ func StartHarnessCallResult(ctx context.Context, executor Executor, call Harness
 			Persistence:            HarnessSessionUnknown,
 			ResumeMode:             HarnessResumeNone,
 		},
-		Items:  items,
-		Events: harnessRuntimeEventsFromItems(run, items),
+		Items:         items,
+		Events:        harnessRuntimeEventsFromItems(run, items),
+		FinalResponse: harnessFinalResponseFromItems(descriptor, items),
 		Telemetry: HarnessTelemetrySeed{
 			Model:                  "unknown",
 			InputTokens:            nil,
@@ -310,6 +311,37 @@ func StartHarnessCallResult(ctx context.Context, executor Executor, call Harness
 			MeasuredTokenTelemetry: false,
 		},
 	}, nil
+}
+
+func harnessFinalResponseFromItems(descriptor HarnessAdapterDescriptor, items []TimelineItem) *HarnessFinalResponseSeed {
+	if !harnessCapabilitiesContain(descriptor.Capabilities, HarnessCapabilityFinalResponse) {
+		return nil
+	}
+	for i := len(items) - 1; i >= 0; i-- {
+		item := items[i]
+		if strings.TrimSpace(item.Kind) != "agent_text" {
+			continue
+		}
+		text := strings.TrimSpace(item.Text)
+		if text == "" {
+			continue
+		}
+		status := strings.TrimSpace(item.Status)
+		if status == "" {
+			status = "completed"
+		}
+		return &HarnessFinalResponseSeed{Status: status, Text: text}
+	}
+	return nil
+}
+
+func harnessCapabilitiesContain(capabilities []HarnessCapability, target HarnessCapability) bool {
+	for _, capability := range capabilities {
+		if capability == target {
+			return true
+		}
+	}
+	return false
 }
 
 func validateHarnessCallEnvelope(call HarnessCall) error {

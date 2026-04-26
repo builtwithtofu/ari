@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
@@ -45,6 +46,7 @@ const (
 type HarnessFactory func(AgentRunStartRequest, string, func(string, []TimelineItem)) (Executor, error)
 
 type AgentProfile struct {
+	ProfileID       string                 `json:"profile_id,omitempty"`
 	Name            string                 `json:"name"`
 	Harness         string                 `json:"harness"`
 	Model           string                 `json:"model,omitempty"`
@@ -94,6 +96,38 @@ type AgentProfileListRequest struct {
 
 type AgentProfileListResponse struct {
 	Profiles []AgentProfileResponse `json:"profiles"`
+}
+
+type FinalResponseEvidenceLink struct {
+	Kind string `json:"kind"`
+	ID   string `json:"id"`
+}
+
+type FinalResponseGetRequest struct {
+	FinalResponseID string `json:"final_response_id,omitempty"`
+	RunID           string `json:"run_id,omitempty"`
+}
+
+type FinalResponseListRequest struct {
+	WorkspaceID string `json:"workspace_id"`
+}
+
+type FinalResponseListResponse struct {
+	FinalResponses []FinalResponseResponse `json:"final_responses"`
+}
+
+type FinalResponseResponse struct {
+	FinalResponseID string                      `json:"final_response_id"`
+	RunID           string                      `json:"run_id"`
+	WorkspaceID     string                      `json:"workspace_id"`
+	TaskID          string                      `json:"task_id"`
+	ContextPacketID string                      `json:"context_packet_id"`
+	ProfileID       string                      `json:"profile_id,omitempty"`
+	Status          string                      `json:"status"`
+	Text            string                      `json:"text"`
+	EvidenceLinks   []FinalResponseEvidenceLink `json:"evidence_links"`
+	CreatedAt       string                      `json:"created_at"`
+	UpdatedAt       string                      `json:"updated_at,omitempty"`
 }
 
 type AgentProfileResponse struct {
@@ -208,6 +242,24 @@ func (d *Daemon) registerExecutorMethods(registry *rpc.MethodRegistry, store *gl
 	}); err != nil {
 		return fmt.Errorf("register agent.profile.list: %w", err)
 	}
+	if err := rpc.RegisterMethod(registry, rpc.Method[FinalResponseGetRequest, FinalResponseResponse]{
+		Name:        "final_response.get",
+		Description: "Get a final response artifact by id or run id",
+		Handler: func(ctx context.Context, req FinalResponseGetRequest) (FinalResponseResponse, error) {
+			return getFinalResponse(ctx, store, req)
+		},
+	}); err != nil {
+		return fmt.Errorf("register final_response.get: %w", err)
+	}
+	if err := rpc.RegisterMethod(registry, rpc.Method[FinalResponseListRequest, FinalResponseListResponse]{
+		Name:        "final_response.list",
+		Description: "List final response artifacts for a workspace",
+		Handler: func(ctx context.Context, req FinalResponseListRequest) (FinalResponseListResponse, error) {
+			return listFinalResponses(ctx, store, req)
+		},
+	}); err != nil {
+		return fmt.Errorf("register final_response.list: %w", err)
+	}
 	return nil
 }
 
@@ -275,6 +327,49 @@ func listStoredAgentProfiles(ctx context.Context, store *globaldb.Store, req Age
 
 func agentProfileResponseFromStore(profile globaldb.AgentProfile, defaults map[string]any) AgentProfileResponse {
 	return AgentProfileResponse{ProfileID: profile.ProfileID, WorkspaceID: profile.WorkspaceID, Name: profile.Name, Harness: profile.Harness, Model: profile.Model, Prompt: profile.Prompt, InvocationClass: HarnessInvocationClass(profile.InvocationClass), Defaults: defaults}
+}
+
+func getFinalResponse(ctx context.Context, store *globaldb.Store, req FinalResponseGetRequest) (FinalResponseResponse, error) {
+	var stored globaldb.FinalResponse
+	var err error
+	if strings.TrimSpace(req.FinalResponseID) != "" {
+		stored, err = store.GetFinalResponseByID(ctx, req.FinalResponseID)
+	} else if strings.TrimSpace(req.RunID) != "" {
+		stored, err = store.GetFinalResponseByRunID(ctx, req.RunID)
+	} else {
+		return FinalResponseResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "final_response_id or run_id is required", map[string]any{"reason": "missing_final_response_ref"})
+	}
+	if err != nil {
+		if errors.Is(err, globaldb.ErrNotFound) {
+			return FinalResponseResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "final response is not available", map[string]any{"reason": "unknown_final_response"})
+		}
+		return FinalResponseResponse{}, err
+	}
+	return finalResponseResponseFromStore(stored), nil
+}
+
+func listFinalResponses(ctx context.Context, store *globaldb.Store, req FinalResponseListRequest) (FinalResponseListResponse, error) {
+	stored, err := store.ListFinalResponses(ctx, req.WorkspaceID)
+	if err != nil {
+		return FinalResponseListResponse{}, err
+	}
+	responses := make([]FinalResponseResponse, 0, len(stored))
+	for _, response := range stored {
+		responses = append(responses, finalResponseResponseFromStore(response))
+	}
+	return FinalResponseListResponse{FinalResponses: responses}, nil
+}
+
+func finalResponseResponseFromStore(stored globaldb.FinalResponse) FinalResponseResponse {
+	links := []FinalResponseEvidenceLink{}
+	if strings.TrimSpace(stored.EvidenceLinksJSON) != "" {
+		_ = json.Unmarshal([]byte(stored.EvidenceLinksJSON), &links)
+	}
+	updatedAt := ""
+	if stored.UpdatedAt != nil {
+		updatedAt = stored.UpdatedAt.Format(time.RFC3339Nano)
+	}
+	return FinalResponseResponse{FinalResponseID: stored.FinalResponseID, RunID: stored.RunID, WorkspaceID: stored.WorkspaceID, TaskID: stored.TaskID, ContextPacketID: stored.ContextPacketID, ProfileID: stored.ProfileID, Status: stored.Status, Text: stored.Text, EvidenceLinks: links, CreatedAt: stored.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: updatedAt}
 }
 
 func (d *Daemon) resolveAgentProfileRunRequest(ctx context.Context, store *globaldb.Store, req AgentProfileRunRequest) (AgentProfile, error) {
@@ -347,7 +442,7 @@ func resolveStoredAgentProfile(ctx context.Context, store *globaldb.Store, works
 		}
 		return AgentProfile{}, err
 	}
-	return AgentProfile{Name: stored.Name, Harness: stored.Harness, Model: stored.Model, Prompt: stored.Prompt, InvocationClass: HarnessInvocationClass(stored.InvocationClass)}, nil
+	return AgentProfile{ProfileID: stored.ProfileID, Name: stored.Name, Harness: stored.Harness, Model: stored.Model, Prompt: stored.Prompt, InvocationClass: HarnessInvocationClass(stored.InvocationClass)}, nil
 }
 
 func (d *Daemon) startAgentRun(ctx context.Context, store *globaldb.Store, req AgentRunStartRequest, profile ...AgentProfile) (AgentRunStartResponse, error) {
@@ -366,11 +461,18 @@ func (d *Daemon) startAgentRun(ctx context.Context, store *globaldb.Store, req A
 	if _, err := store.GetSession(ctx, req.Packet.WorkspaceID); err != nil {
 		return AgentRunStartResponse{}, mapWorkspaceStoreError(err, req.Packet.WorkspaceID)
 	}
-	run, items, err := StartExecutorRun(ctx, executor, req.Packet, profile...)
+	result, err := StartExecutorRunResult(ctx, executor, req.Packet, profile...)
 	if err != nil {
 		return AgentRunStartResponse{}, mapHarnessRunError(err)
 	}
+	run := result.AgentRun
+	items := result.Items
 	d.recordExecutorRun(run, items)
+	if result.FinalResponse != nil {
+		if err := storeFinalResponse(ctx, store, result, profile...); err != nil {
+			return AgentRunStartResponse{}, err
+		}
+	}
 	return AgentRunStartResponse{Run: run, Items: items}, nil
 }
 
@@ -412,27 +514,38 @@ func (d *Daemon) appendExecutorItems(runID string, items []TimelineItem) {
 }
 
 func StartExecutorRun(ctx context.Context, executor Executor, packet ContextPacket, profile ...AgentProfile) (AgentRun, []TimelineItem, error) {
-	if ctx == nil {
-		return AgentRun{}, nil, fmt.Errorf("context is required")
-	}
-	if executor == nil {
-		return AgentRun{}, nil, fmt.Errorf("executor is required")
-	}
-	if strings.TrimSpace(packet.ID) == "" {
-		return AgentRun{}, nil, &HarnessValidationError{Message: "context packet id is required", Field: "packet.id"}
-	}
-	if strings.TrimSpace(packet.WorkspaceID) == "" {
-		return AgentRun{}, nil, &HarnessValidationError{Message: "workspace id is required", Field: "packet.workspace_id"}
-	}
-	if strings.TrimSpace(packet.TaskID) == "" {
-		return AgentRun{}, nil, &HarnessValidationError{Message: "task id is required", Field: "packet.task_id"}
-	}
-	call, err := NewAgentRunHarnessCall(packet, nil)
+	result, err := StartExecutorRunResult(ctx, executor, packet, profile...)
 	if err != nil {
 		return AgentRun{}, nil, err
 	}
+	return result.AgentRun, result.Items, nil
+}
+
+func StartExecutorRunResult(ctx context.Context, executor Executor, packet ContextPacket, profile ...AgentProfile) (HarnessCallResult, error) {
+	if ctx == nil {
+		return HarnessCallResult{}, fmt.Errorf("context is required")
+	}
+	if executor == nil {
+		return HarnessCallResult{}, fmt.Errorf("executor is required")
+	}
+	if strings.TrimSpace(packet.ID) == "" {
+		return HarnessCallResult{}, &HarnessValidationError{Message: "context packet id is required", Field: "packet.id"}
+	}
+	if strings.TrimSpace(packet.WorkspaceID) == "" {
+		return HarnessCallResult{}, &HarnessValidationError{Message: "workspace id is required", Field: "packet.workspace_id"}
+	}
+	if strings.TrimSpace(packet.TaskID) == "" {
+		return HarnessCallResult{}, &HarnessValidationError{Message: "task id is required", Field: "packet.task_id"}
+	}
+	call, err := NewAgentRunHarnessCall(packet, nil)
+	if err != nil {
+		return HarnessCallResult{}, err
+	}
 	if len(profile) > 0 {
-		call.SourceProfileID = strings.TrimSpace(profile[0].Name)
+		call.SourceProfileID = strings.TrimSpace(profile[0].ProfileID)
+		if call.SourceProfileID == "" {
+			call.SourceProfileID = strings.TrimSpace(profile[0].Name)
+		}
 		call.Model = strings.TrimSpace(profile[0].Model)
 		call.Prompt = strings.TrimSpace(profile[0].Prompt)
 		if profile[0].InvocationClass != "" {
@@ -440,7 +553,29 @@ func StartExecutorRun(ctx context.Context, executor Executor, packet ContextPack
 		}
 	}
 	call.Input = json.RawMessage(renderContextPacket(packet))
-	return StartHarnessCall(ctx, executor, call)
+	return StartHarnessCallResult(ctx, executor, call)
+}
+
+func storeFinalResponse(ctx context.Context, store *globaldb.Store, result HarnessCallResult, profile ...AgentProfile) error {
+	responseID, err := newAriULID()
+	if err != nil {
+		return err
+	}
+	profileID := ""
+	if len(profile) > 0 {
+		profileID = strings.TrimSpace(profile[0].ProfileID)
+	}
+	links := []FinalResponseEvidenceLink{{Kind: "context_packet", ID: result.AgentRun.ContextPacketID}, {Kind: "agent_run", ID: result.AgentRun.AgentRunID}}
+	for _, item := range result.Items {
+		if strings.TrimSpace(item.ID) != "" {
+			links = append(links, FinalResponseEvidenceLink{Kind: "timeline_item", ID: item.ID})
+		}
+	}
+	encodedLinks, err := json.Marshal(links)
+	if err != nil {
+		return err
+	}
+	return store.UpsertFinalResponse(ctx, globaldb.FinalResponse{FinalResponseID: "fr_" + responseID, RunID: result.AgentRun.AgentRunID, WorkspaceID: result.AgentRun.WorkspaceID, TaskID: result.AgentRun.TaskID, ContextPacketID: result.AgentRun.ContextPacketID, ProfileID: profileID, Status: result.FinalResponse.Status, Text: result.FinalResponse.Text, EvidenceLinksJSON: string(encodedLinks)})
 }
 
 func (d *Daemon) recordExecutorRun(run AgentRun, items []TimelineItem) {
