@@ -83,24 +83,3 @@ func TestWorkspaceTimelineOrdersExecutorItemsDeterministically(t *testing.T) {
 		t.Fatalf("second executor item = %#v, want z-run sequence 2", resp.Items[1])
 	}
 }
-
-func TestFakeExecutorProducesTimelineCompatibleAgentText(t *testing.T) {
-	executor := NewFakeExecutor("fake", []TimelineItem{{Kind: "agent_text", Text: "hello"}})
-	run, err := executor.Start(context.Background(), ExecutorStartRequest{WorkspaceID: "ws-1", ContextPacket: "packet"})
-	if err != nil {
-		t.Fatalf("Start returned error: %v", err)
-	}
-	if run.RunID == "" {
-		t.Fatal("executor run id is empty")
-	}
-	items, err := executor.Items(context.Background(), run.RunID)
-	if err != nil {
-		t.Fatalf("Items returned error: %v", err)
-	}
-	if len(items) != 1 {
-		t.Fatalf("items len = %d, want 1", len(items))
-	}
-	if items[0].SourceKind != "executor" || items[0].Kind != "agent_text" || items[0].Text != "hello" {
-		t.Fatalf("executor item = %#v, want executor agent_text hello", items[0])
-	}
-}
