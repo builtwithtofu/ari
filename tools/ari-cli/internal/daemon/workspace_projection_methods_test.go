@@ -121,6 +121,27 @@ func TestWorkspaceDiffUsesPrimaryFolderFirst(t *testing.T) {
 	}
 }
 
+func TestWorkspaceActivityOrdersExecutorRunsDeterministically(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	d.recordExecutorRun(AgentRun{AgentRunID: "z-run", WorkspaceID: "ws-1", Status: "running", Executor: "fake", StartedAt: "2026-04-25T00:00:02Z"}, nil)
+	d.recordExecutorRun(AgentRun{AgentRunID: "a-run", WorkspaceID: "ws-1", Status: "running", Executor: "fake", StartedAt: "2026-04-25T00:00:01Z"}, nil)
+
+	resp := callMethod[WorkspaceActivityResponse](t, registry, "workspace.activity", WorkspaceActivityRequest{WorkspaceID: "ws-1"})
+	if len(resp.Agents) != 2 {
+		t.Fatalf("agents len = %d, want 2", len(resp.Agents))
+	}
+	if resp.Agents[0].ID != "a-run" || resp.Agents[1].ID != "z-run" {
+		t.Fatalf("agents = %#v, want a-run then z-run", resp.Agents)
+	}
+}
+
 func TestWorkspaceProjectionMethodsRejectMissingWorkspaceID(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()

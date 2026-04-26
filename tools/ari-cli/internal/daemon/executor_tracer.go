@@ -179,13 +179,17 @@ func executorRunStatusFromItems(items []TimelineItem) string {
 	if len(items) == 0 {
 		return "running"
 	}
+	completed := false
 	for _, item := range items {
 		switch strings.TrimSpace(item.Status) {
 		case "failed":
 			return "failed"
 		case "completed":
-			return "completed"
+			completed = true
 		}
+	}
+	if completed {
+		return "completed"
 	}
 	return "running"
 }

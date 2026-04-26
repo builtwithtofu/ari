@@ -138,6 +138,16 @@ func TestRecordExecutorRunPreservesBufferedSinkItems(t *testing.T) {
 	}
 }
 
+func TestExecutorRunStatusFailureTakesPrecedence(t *testing.T) {
+	status := executorRunStatusFromItems([]TimelineItem{
+		{ID: "run-1:output", Status: "completed"},
+		{ID: "run-1:failure", Status: "failed"},
+	})
+	if status != "failed" {
+		t.Fatalf("executor status = %q, want failed", status)
+	}
+}
+
 func TestAgentRunMethodMarksPTYFailureFromExitCode(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()

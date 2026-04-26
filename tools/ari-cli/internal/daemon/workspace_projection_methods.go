@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
@@ -264,15 +265,30 @@ func (d *Daemon) workspaceAgentActivity(ctx context.Context, store *globaldb.Sto
 		}
 		out = append(out, item)
 	}
+	executorRuns := d.executorRunsForWorkspace(workspaceID)
+	for _, run := range executorRuns {
+		out = append(out, AgentActivity{ID: run.AgentRunID, Status: run.Status, Executor: run.Executor, WorkspaceID: run.WorkspaceID, ActiveTaskID: run.TaskID, StartedAt: run.StartedAt, LastActivityAt: run.StartedAt})
+	}
+	return out, nil
+}
+
+func (d *Daemon) executorRunsForWorkspace(workspaceID string) []AgentRun {
 	d.executorMu.RLock()
+	runs := make([]AgentRun, 0, len(d.executorRuns))
 	for _, run := range d.executorRuns {
 		if run.WorkspaceID != workspaceID {
 			continue
 		}
-		out = append(out, AgentActivity{ID: run.AgentRunID, Status: run.Status, Executor: run.Executor, WorkspaceID: run.WorkspaceID, ActiveTaskID: run.TaskID, StartedAt: run.StartedAt, LastActivityAt: run.StartedAt})
+		runs = append(runs, run)
 	}
 	d.executorMu.RUnlock()
-	return out, nil
+	sort.Slice(runs, func(i int, j int) bool {
+		if runs[i].StartedAt == runs[j].StartedAt {
+			return runs[i].AgentRunID < runs[j].AgentRunID
+		}
+		return runs[i].StartedAt < runs[j].StartedAt
+	})
+	return runs
 }
 
 func (d *Daemon) workspaceProofs(ctx context.Context, store *globaldb.Store, workspaceID string) ([]ProofResultSummary, error) {
