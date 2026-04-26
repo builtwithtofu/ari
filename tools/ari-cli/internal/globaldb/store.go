@@ -212,8 +212,9 @@ WHERE workspace_id = ? AND command_id = ?`
 	stopped_at,
 	harness,
 	harness_resumable_id,
-	harness_metadata
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	harness_metadata,
+	invocation_class
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	agentByIDQuery = `SELECT
 		agent_id,
@@ -227,7 +228,8 @@ WHERE workspace_id = ? AND command_id = ?`
 	stopped_at,
 	harness,
 	harness_resumable_id,
-	harness_metadata
+	harness_metadata,
+	invocation_class
 FROM agents
 WHERE workspace_id = ? AND agent_id = ?`
 
@@ -243,7 +245,8 @@ WHERE workspace_id = ? AND agent_id = ?`
 	stopped_at,
 	harness,
 	harness_resumable_id,
-	harness_metadata
+	harness_metadata,
+	invocation_class
 FROM agents
 WHERE workspace_id = ? AND name = ?`
 
@@ -259,7 +262,8 @@ WHERE workspace_id = ? AND name = ?`
 	stopped_at,
 	harness,
 	harness_resumable_id,
-	harness_metadata
+	harness_metadata,
+	invocation_class
 FROM agents
 WHERE workspace_id = ?
 ORDER BY started_at DESC, agent_id ASC`
@@ -377,6 +381,7 @@ type Agent struct {
 	Harness            *string
 	HarnessResumableID *string
 	HarnessMetadata    string
+	InvocationClass    string
 }
 
 type CreateAgentParams struct {
@@ -392,6 +397,7 @@ type CreateAgentParams struct {
 	Harness            *string
 	HarnessResumableID *string
 	HarnessMetadata    string
+	InvocationClass    string
 }
 
 type UpdateAgentStatusParams struct {
@@ -1281,6 +1287,12 @@ func (s *Store) CreateAgent(ctx context.Context, params CreateAgentParams) error
 	if !json.Valid([]byte(params.HarnessMetadata)) {
 		return fmt.Errorf("%w: harness metadata must be valid json", ErrInvalidInput)
 	}
+	if params.InvocationClass = strings.TrimSpace(params.InvocationClass); params.InvocationClass == "" {
+		params.InvocationClass = "agent"
+	}
+	if params.InvocationClass != "agent" && params.InvocationClass != "temporary" {
+		return fmt.Errorf("%w: invalid invocation class %q", ErrInvalidInput, params.InvocationClass)
+	}
 
 	if _, err := s.db.ExecContext(
 		ctx,
@@ -1297,6 +1309,7 @@ func (s *Store) CreateAgent(ctx context.Context, params CreateAgentParams) error
 		params.Harness,
 		params.HarnessResumableID,
 		params.HarnessMetadata,
+		params.InvocationClass,
 	); err != nil {
 		return fmt.Errorf("create agent %q: %w", params.AgentID, err)
 	}
@@ -1503,6 +1516,7 @@ func queryAgents(ctx context.Context, db DB, query string, args ...any) ([]Agent
 			&item.Harness,
 			&item.HarnessResumableID,
 			&item.HarnessMetadata,
+			&item.InvocationClass,
 		); err != nil {
 			return nil, err
 		}

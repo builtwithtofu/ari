@@ -25,6 +25,7 @@ func TestAgentStoreLifecycleAndReconciliation(t *testing.T) {
 		Harness:            stringPtr("claude-code"),
 		HarnessResumableID: stringPtr("sess-resume-1"),
 		HarnessMetadata:    `{"resume_source":"argv"}`,
+		InvocationClass:    "temporary",
 	}
 	if err := store.CreateAgent(ctx, createReq); err != nil {
 		t.Fatalf("CreateAgent returned error: %v", err)
@@ -49,6 +50,9 @@ func TestAgentStoreLifecycleAndReconciliation(t *testing.T) {
 	if gotByID.HarnessMetadata != `{"resume_source":"argv"}` {
 		t.Fatalf("GetAgent HarnessMetadata = %q, want %q", gotByID.HarnessMetadata, `{"resume_source":"argv"}`)
 	}
+	if gotByID.InvocationClass != "temporary" {
+		t.Fatalf("GetAgent InvocationClass = %q, want temporary", gotByID.InvocationClass)
+	}
 
 	gotByName, err := store.GetAgentByName(ctx, "sess-1", "claude")
 	if err != nil {
@@ -67,6 +71,9 @@ func TestAgentStoreLifecycleAndReconciliation(t *testing.T) {
 	}
 	if list[0].Name == nil || *list[0].Name != "claude" {
 		t.Fatalf("ListAgents[0].Name = %v, want %q", list[0].Name, "claude")
+	}
+	if list[0].InvocationClass != "temporary" {
+		t.Fatalf("ListAgents[0].InvocationClass = %q, want temporary", list[0].InvocationClass)
 	}
 
 	updateReq := UpdateAgentStatusParams{
