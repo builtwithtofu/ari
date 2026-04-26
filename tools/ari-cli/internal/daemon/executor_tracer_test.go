@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -11,6 +12,21 @@ import (
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
 )
+
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) {
+	return 0, errors.New("entropy unavailable")
+}
+
+func mustNewAriULID(t *testing.T) string {
+	t.Helper()
+	id, err := newAriULID()
+	if err != nil {
+		t.Fatalf("newAriULID returned error: %v", err)
+	}
+	return id
+}
 
 func TestStartExecutorRunProjectsPacketIntoAgentRunAndTimeline(t *testing.T) {
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
@@ -49,9 +65,12 @@ func TestStartExecutorRunProjectsPacketIntoAgentRunAndTimeline(t *testing.T) {
 func TestStartExecutorRunRejectsMissingRequiredCapabilityBeforeStart(t *testing.T) {
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 	executor := &spyExecutor{capabilities: []HarnessCapability{HarnessCapabilityAgentRunFromContext}}
-	call := NewAgentRunHarnessCall(packet, []HarnessCapability{HarnessCapabilityMeasuredTokenTelemetry})
+	call, err := NewAgentRunHarnessCall(packet, []HarnessCapability{HarnessCapabilityMeasuredTokenTelemetry})
+	if err != nil {
+		t.Fatalf("NewAgentRunHarnessCall returned error: %v", err)
+	}
 
-	_, _, err := StartHarnessCall(context.Background(), executor, call)
+	_, _, err = StartHarnessCall(context.Background(), executor, call)
 	if err == nil {
 		t.Fatal("StartHarnessCall returned nil error for missing required capability")
 	}
@@ -67,14 +86,49 @@ func TestStartExecutorRunRejectsMissingRequiredCapabilityBeforeStart(t *testing.
 	}
 }
 
+func TestStartExecutorRunRejectsMissingTimelineCapabilityBeforeStart(t *testing.T) {
+	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
+	executor := &spyExecutor{capabilities: []HarnessCapability{HarnessCapabilityAgentRunFromContext}}
+
+	_, _, err := StartExecutorRun(context.Background(), executor, packet)
+	if err == nil {
+		t.Fatal("StartExecutorRun returned nil error for missing timeline capability")
+	}
+	unsupported, ok := err.(*UnsupportedHarnessCapabilitiesError)
+	if !ok {
+		t.Fatalf("error = %T %[1]v, want UnsupportedHarnessCapabilitiesError", err)
+	}
+	if got := strings.Join(harnessCapabilitiesToStrings(unsupported.Capabilities), ","); got != string(HarnessCapabilityTimelineItems) {
+		t.Fatalf("unsupported capabilities = %q, want timeline items", got)
+	}
+	if executor.started {
+		t.Fatal("executor Start was called before timeline capability check")
+	}
+}
+
+func TestStartExecutorRunReturnsULIDEntropyError(t *testing.T) {
+	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
+	executor := newFakeHarness("fake", []TimelineItem{{Kind: "agent_text", Text: "done"}})
+	restore := replaceAriRandomReaderForTest(failingReader{})
+	t.Cleanup(restore)
+
+	_, _, err := StartExecutorRun(context.Background(), executor, packet)
+	if err == nil || !strings.Contains(err.Error(), "generate Ari ULID") {
+		t.Fatalf("StartExecutorRun error = %v, want Ari ULID entropy error", err)
+	}
+}
+
 func TestStartHarnessCallRejectsUnsupportedCapabilityBeforeStart(t *testing.T) {
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 	executor := &spyExecutor{capabilities: []HarnessCapability{HarnessCapabilityAgentRunFromContext}}
-	call := NewAgentRunHarnessCall(packet, nil)
+	call, err := NewAgentRunHarnessCall(packet, nil)
+	if err != nil {
+		t.Fatalf("NewAgentRunHarnessCall returned error: %v", err)
+	}
 	call.Capability = HarnessCapabilityFinalResponse
 	call.Required = nil
 
-	_, _, err := StartHarnessCall(context.Background(), executor, call)
+	_, _, err = StartHarnessCall(context.Background(), executor, call)
 	if err == nil {
 		t.Fatal("StartHarnessCall returned nil error for unsupported requested capability")
 	}
@@ -93,10 +147,13 @@ func TestStartHarnessCallRejectsUnsupportedCapabilityBeforeStart(t *testing.T) {
 func TestStartHarnessCallRejectsMismatchedSchemaBeforeStart(t *testing.T) {
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 	executor := &spyExecutor{capabilities: []HarnessCapability{HarnessCapabilityAgentRunFromContext}}
-	call := NewAgentRunHarnessCall(packet, nil)
+	call, err := NewAgentRunHarnessCall(packet, nil)
+	if err != nil {
+		t.Fatalf("NewAgentRunHarnessCall returned error: %v", err)
+	}
 	call.InputSchemaVersion = "agent.run.from_context.v999"
 
-	_, _, err := StartHarnessCall(context.Background(), executor, call)
+	_, _, err = StartHarnessCall(context.Background(), executor, call)
 	if err == nil {
 		t.Fatal("StartHarnessCall returned nil error for mismatched schema")
 	}
@@ -108,9 +165,12 @@ func TestStartHarnessCallRejectsMismatchedSchemaBeforeStart(t *testing.T) {
 func TestStartHarnessCallRejectsMissingInputBeforeStart(t *testing.T) {
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 	executor := &spyExecutor{capabilities: []HarnessCapability{HarnessCapabilityAgentRunFromContext}}
-	call := NewAgentRunHarnessCall(packet, nil)
+	call, err := NewAgentRunHarnessCall(packet, nil)
+	if err != nil {
+		t.Fatalf("NewAgentRunHarnessCall returned error: %v", err)
+	}
 
-	_, _, err := StartHarnessCall(context.Background(), executor, call)
+	_, _, err = StartHarnessCall(context.Background(), executor, call)
 	if err == nil {
 		t.Fatal("StartHarnessCall returned nil error for missing input")
 	}
@@ -122,10 +182,13 @@ func TestStartHarnessCallRejectsMissingInputBeforeStart(t *testing.T) {
 func TestStartHarnessCallRejectsInvalidJSONInputBeforeStart(t *testing.T) {
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 	executor := &spyExecutor{capabilities: []HarnessCapability{HarnessCapabilityAgentRunFromContext}}
-	call := NewAgentRunHarnessCall(packet, nil)
+	call, err := NewAgentRunHarnessCall(packet, nil)
+	if err != nil {
+		t.Fatalf("NewAgentRunHarnessCall returned error: %v", err)
+	}
 	call.Input = []byte("{")
 
-	_, _, err := StartHarnessCall(context.Background(), executor, call)
+	_, _, err = StartHarnessCall(context.Background(), executor, call)
 	if err == nil {
 		t.Fatal("StartHarnessCall returned nil error for invalid input")
 	}
@@ -136,7 +199,7 @@ func TestStartHarnessCallRejectsInvalidJSONInputBeforeStart(t *testing.T) {
 
 func TestHarnessSessionRefValidationRejectsInvalidEnums(t *testing.T) {
 	ref := HarnessSessionRef{
-		AriSessionID:           newAriULID(),
+		AriSessionID:           mustNewAriULID(t),
 		ProviderCanUseClientID: HarnessTriState("sometimes"),
 		Persistence:            HarnessSessionUnknown,
 		ResumeMode:             HarnessResumeNone,
@@ -156,7 +219,10 @@ func TestHarnessSessionRefValidationRejectsOutOfRangeULID(t *testing.T) {
 func TestStartHarnessCallResultReturnsUnknownTelemetrySeed(t *testing.T) {
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 	executor := newFakeHarness("fake", []TimelineItem{{Kind: "agent_text", Text: "done"}})
-	call := NewAgentRunHarnessCall(packet, nil)
+	call, err := NewAgentRunHarnessCall(packet, nil)
+	if err != nil {
+		t.Fatalf("NewAgentRunHarnessCall returned error: %v", err)
+	}
 	call.Input = []byte(renderContextPacket(packet))
 
 	result, err := StartHarnessCallResult(context.Background(), executor, call)
@@ -632,7 +698,8 @@ func TestAgentRunReturnsUnsupportedCapabilitiesData(t *testing.T) {
 	err := callMethodError(registry, "agent.run", AgentRunStartRequest{Executor: "limited", Packet: ContextPacket{ID: "ctx", WorkspaceID: "ws-1", TaskID: "task"}})
 	data := requireHandlerErrorData(t, err)
 	capabilities, ok := data["unsupported_capabilities"].([]string)
-	if !ok || strings.Join(capabilities, ",") != string(HarnessCapabilityAgentRunFromContext) || data["start_invoked"] != false {
+	wantCapabilities := string(HarnessCapabilityAgentRunFromContext) + "," + string(HarnessCapabilityTimelineItems)
+	if !ok || strings.Join(capabilities, ",") != wantCapabilities || data["start_invoked"] != false {
 		t.Fatalf("error data = %#v, want unsupported capabilities data", data)
 	}
 }
@@ -701,7 +768,8 @@ func TestAgentProfileRunReturnsUnsupportedCapabilitiesData(t *testing.T) {
 	err := callMethodError(registry, "agent.profile.run", AgentProfileRunRequest{Profile: "executor", Packet: ContextPacket{ID: "ctx", WorkspaceID: "ws-1", TaskID: "task"}})
 	data := requireHandlerErrorData(t, err)
 	capabilities, ok := data["unsupported_capabilities"].([]string)
-	if !ok || strings.Join(capabilities, ",") != string(HarnessCapabilityAgentRunFromContext) || data["start_invoked"] != false {
+	wantCapabilities := string(HarnessCapabilityAgentRunFromContext) + "," + string(HarnessCapabilityTimelineItems)
+	if !ok || strings.Join(capabilities, ",") != wantCapabilities || data["start_invoked"] != false {
 		t.Fatalf("error data = %#v, want profile unsupported capabilities data", data)
 	}
 }

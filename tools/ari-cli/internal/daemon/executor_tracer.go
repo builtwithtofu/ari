@@ -285,7 +285,10 @@ func StartExecutorRun(ctx context.Context, executor Executor, packet ContextPack
 	if strings.TrimSpace(packet.TaskID) == "" {
 		return AgentRun{}, nil, &HarnessValidationError{Message: "task id is required", Field: "packet.task_id"}
 	}
-	call := NewAgentRunHarnessCall(packet, nil)
+	call, err := NewAgentRunHarnessCall(packet, nil)
+	if err != nil {
+		return AgentRun{}, nil, err
+	}
 	if len(profile) > 0 {
 		call.SourceProfileID = strings.TrimSpace(profile[0].Name)
 		call.Model = strings.TrimSpace(profile[0].Model)

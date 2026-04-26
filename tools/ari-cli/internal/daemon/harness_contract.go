@@ -5,10 +5,13 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 	"time"
 )
+
+var ariRandomReader io.Reader = rand.Reader
 
 type HarnessCall struct {
 	CallID              string                 `json:"call_id"`
@@ -235,10 +238,13 @@ func (e *HarnessUnavailableError) Data() map[string]any {
 	return data
 }
 
-func NewAgentRunHarnessCall(packet ContextPacket, required []HarnessCapability) HarnessCall {
-	callID := newAriULID()
+func NewAgentRunHarnessCall(packet ContextPacket, required []HarnessCapability) (HarnessCall, error) {
+	callID, err := newAriULID()
+	if err != nil {
+		return HarnessCall{}, err
+	}
 	if len(required) == 0 {
-		required = []HarnessCapability{HarnessCapabilityAgentRunFromContext}
+		required = []HarnessCapability{HarnessCapabilityAgentRunFromContext, HarnessCapabilityTimelineItems}
 	}
 	return HarnessCall{
 		CallID:              callID,
@@ -250,7 +256,7 @@ func NewAgentRunHarnessCall(packet ContextPacket, required []HarnessCapability) 
 		InputSchemaVersion:  HarnessInputSchemaAgentRunFromContextV1,
 		ResultSchemaVersion: HarnessResultSchemaV1,
 		Required:            append([]HarnessCapability(nil), required...),
-	}
+	}, nil
 }
 
 func StartHarnessCall(ctx context.Context, executor Executor, call HarnessCall) (AgentRun, []TimelineItem, error) {
@@ -361,7 +367,10 @@ func harnessRuntimeEventsFromItems(run AgentRun, items []TimelineItem) []Harness
 }
 
 func startHarnessCallAfterCapabilityCheck(ctx context.Context, executor Executor, call HarnessCall, descriptor HarnessAdapterDescriptor) (AgentRun, []TimelineItem, error) {
-	ariRunID := newAriULID()
+	ariRunID, err := newAriULID()
+	if err != nil {
+		return AgentRun{}, nil, err
+	}
 	providerRun, err := executor.Start(ctx, ExecutorStartRequest{WorkspaceID: call.WorkspaceID, RunID: ariRunID, ContextPacket: string(call.Input), SourceProfileID: call.SourceProfileID, Model: call.Model, Prompt: call.Prompt, InvocationClass: call.InvocationClass})
 	if err != nil {
 		return AgentRun{}, nil, err
@@ -428,7 +437,7 @@ func harnessCapabilitiesToStrings(capabilities []HarnessCapability) []string {
 
 const ulidEncoding = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
-func newAriULID() string {
+func newAriULID() (string, error) {
 	var data [16]byte
 	millis := uint64(time.Now().UTC().UnixMilli())
 	data[0] = byte(millis >> 40)
@@ -437,10 +446,16 @@ func newAriULID() string {
 	data[3] = byte(millis >> 16)
 	data[4] = byte(millis >> 8)
 	data[5] = byte(millis)
-	if _, err := rand.Read(data[6:]); err != nil {
-		panic(fmt.Sprintf("generate Ari ULID: %v", err))
+	if _, err := io.ReadFull(ariRandomReader, data[6:]); err != nil {
+		return "", fmt.Errorf("generate Ari ULID: %w", err)
 	}
-	return encodeULID(data)
+	return encodeULID(data), nil
+}
+
+func replaceAriRandomReaderForTest(reader io.Reader) func() {
+	previous := ariRandomReader
+	ariRandomReader = reader
+	return func() { ariRandomReader = previous }
 }
 
 func encodeULID(data [16]byte) string {
