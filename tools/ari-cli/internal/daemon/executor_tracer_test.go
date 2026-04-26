@@ -20,8 +20,8 @@ func TestStartExecutorRunProjectsPacketIntoAgentRunAndTimeline(t *testing.T) {
 	if run.WorkspaceID != "ws-1" || run.TaskID != "task-1" || run.ContextPacketID != "ctx_123" {
 		t.Fatalf("agent run ids = %#v, want workspace/task/context packet ids", run)
 	}
-	if run.Executor != "fake" || run.Status != "running" {
-		t.Fatalf("agent run executor/status = %q/%q, want fake/running", run.Executor, run.Status)
+	if run.Executor != "fake" || run.Status != "completed" {
+		t.Fatalf("agent run executor/status = %q/%q, want fake/completed", run.Executor, run.Status)
 	}
 	if run.ProviderRunID == "" {
 		t.Fatal("provider run id is empty")
@@ -107,6 +107,10 @@ func TestAgentRunMethodStartsPTYExecutorFromContextPacket(t *testing.T) {
 		timeline := callMethod[WorkspaceTimelineResponse](t, registry, "workspace.timeline", WorkspaceTimelineRequest{WorkspaceID: "ws-1"})
 		for _, item := range timeline.Items {
 			if item.RunID == resp.Run.AgentRunID && item.Kind == "terminal_output" && item.Text == "done" {
+				activity := callMethod[WorkspaceActivityResponse](t, registry, "workspace.activity", WorkspaceActivityRequest{WorkspaceID: "ws-1"})
+				if len(activity.Agents) != 1 || activity.Agents[0].Status != "completed" {
+					t.Fatalf("activity agents = %#v, want completed pty run after output", activity.Agents)
+				}
 				return
 			}
 		}

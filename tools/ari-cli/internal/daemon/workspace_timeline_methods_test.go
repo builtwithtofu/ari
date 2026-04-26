@@ -59,6 +59,31 @@ func TestWorkspaceTimelineMapsCommandAgentAndProofOutput(t *testing.T) {
 	}
 }
 
+func TestWorkspaceTimelineOrdersExecutorItemsDeterministically(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+
+	d.recordExecutorRun(AgentRun{AgentRunID: "z-run", WorkspaceID: "ws-1", Status: "running", Executor: "fake", StartedAt: "2026-04-25T00:00:02Z"}, []TimelineItem{{ID: "z-item", WorkspaceID: "ws-1", RunID: "z-run", SourceKind: "executor", SourceID: "z-run", Kind: "agent_text", Status: "completed", Sequence: 1, Text: "z"}})
+	d.recordExecutorRun(AgentRun{AgentRunID: "a-run", WorkspaceID: "ws-1", Status: "running", Executor: "fake", StartedAt: "2026-04-25T00:00:01Z"}, []TimelineItem{{ID: "a-item", WorkspaceID: "ws-1", RunID: "a-run", SourceKind: "executor", SourceID: "a-run", Kind: "agent_text", Status: "completed", Sequence: 1, Text: "a"}})
+
+	resp := callMethod[WorkspaceTimelineResponse](t, registry, "workspace.timeline", WorkspaceTimelineRequest{WorkspaceID: "ws-1"})
+	if len(resp.Items) != 2 {
+		t.Fatalf("timeline items len = %d, want 2", len(resp.Items))
+	}
+	if resp.Items[0].RunID != "a-run" || resp.Items[0].Sequence != 1 {
+		t.Fatalf("first executor item = %#v, want a-run sequence 1", resp.Items[0])
+	}
+	if resp.Items[1].RunID != "z-run" || resp.Items[1].Sequence != 2 {
+		t.Fatalf("second executor item = %#v, want z-run sequence 2", resp.Items[1])
+	}
+}
+
 func TestFakeExecutorProducesTimelineCompatibleAgentText(t *testing.T) {
 	executor := NewFakeExecutor("fake", []TimelineItem{{Kind: "agent_text", Text: "hello"}})
 	run, err := executor.Start(context.Background(), ExecutorStartRequest{WorkspaceID: "ws-1", ContextPacket: "packet"})

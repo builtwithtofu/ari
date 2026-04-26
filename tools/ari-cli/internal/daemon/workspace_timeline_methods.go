@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -139,19 +140,39 @@ func (d *Daemon) workspaceTimeline(ctx context.Context, store *globaldb.Store, w
 			sequence++
 		}
 	}
+	for _, item := range d.executorTimelineItems(workspaceID) {
+		item.Sequence = sequence
+		items = append(items, item)
+		sequence++
+	}
+	return items, nil
+}
+
+func (d *Daemon) executorTimelineItems(workspaceID string) []TimelineItem {
 	d.executorMu.RLock()
+	out := make([]TimelineItem, 0)
 	for _, runItems := range d.executorItems {
 		for _, item := range runItems {
 			if item.WorkspaceID != workspaceID {
 				continue
 			}
-			item.Sequence = sequence
-			items = append(items, item)
-			sequence++
+			out = append(out, item)
 		}
 	}
 	d.executorMu.RUnlock()
-	return items, nil
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].CreatedAt != out[j].CreatedAt {
+			return out[i].CreatedAt < out[j].CreatedAt
+		}
+		if out[i].RunID != out[j].RunID {
+			return out[i].RunID < out[j].RunID
+		}
+		if out[i].Sequence != out[j].Sequence {
+			return out[i].Sequence < out[j].Sequence
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
 }
 
 type ExecutorStartRequest struct {

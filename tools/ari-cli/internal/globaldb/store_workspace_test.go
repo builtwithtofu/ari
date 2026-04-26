@@ -222,6 +222,21 @@ func TestAddFolderRejectsFolderAlreadyOwnedByAnotherWorkspace(t *testing.T) {
 	}
 }
 
+func TestAddFolderUsesImmediateTransactionForOwnershipCheck(t *testing.T) {
+	db := &recordingDB{queryRows: &testRows{items: [][]any{{"sess-1", "alpha", "active", "auto", "/tmp/origin", "manual", "2026-04-25T00:00:00Z", "2026-04-25T00:00:00Z"}}}}
+	store, err := NewStore(db)
+	if err != nil {
+		t.Fatalf("NewStore returned error: %v", err)
+	}
+
+	if err := store.AddFolder(context.Background(), "sess-1", "/tmp/repo-a", "git", true); err != nil {
+		t.Fatalf("AddFolder returned error: %v", err)
+	}
+	if !db.immediateTransactionStarted {
+		t.Fatal("AddFolder did not use an immediate transaction for folder ownership check")
+	}
+}
+
 func TestWorkspaceFolderPathMigrationAllowsHistoricalDuplicates(t *testing.T) {
 	store := newSessionTestStore(t)
 	ctx := context.Background()

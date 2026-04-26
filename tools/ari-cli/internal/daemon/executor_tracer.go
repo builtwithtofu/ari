@@ -86,6 +86,7 @@ func (d *Daemon) appendExecutorItems(runID string, items []TimelineItem) {
 	}
 	d.executorMu.Lock()
 	d.executorItems[runID] = append(d.executorItems[runID], items...)
+	d.updateExecutorRunStatusLocked(runID, items)
 	d.executorMu.Unlock()
 }
 
@@ -119,7 +120,7 @@ func StartExecutorRun(ctx context.Context, executor Executor, packet ContextPack
 		TaskID:          packet.TaskID,
 		Executor:        providerRun.Executor,
 		ProviderRunID:   providerRun.ProviderRunID,
-		Status:          "running",
+		Status:          executorRunStatusFromItems(items),
 		ContextPacketID: packet.ID,
 		StartedAt:       time.Now().UTC().Format(time.RFC3339Nano),
 		Capabilities:    append([]string(nil), providerRun.CapabilityNames...),
@@ -139,6 +140,34 @@ func (d *Daemon) recordExecutorRun(run AgentRun, items []TimelineItem) {
 	d.executorRuns[run.AgentRunID] = run
 	d.executorItems[run.AgentRunID] = append([]TimelineItem(nil), items...)
 	d.executorMu.Unlock()
+}
+
+func (d *Daemon) updateExecutorRunStatusLocked(runID string, items []TimelineItem) {
+	run, ok := d.executorRuns[runID]
+	if !ok {
+		return
+	}
+	status := executorRunStatusFromItems(items)
+	if status == "running" {
+		return
+	}
+	run.Status = status
+	d.executorRuns[runID] = run
+}
+
+func executorRunStatusFromItems(items []TimelineItem) string {
+	if len(items) == 0 {
+		return "running"
+	}
+	for _, item := range items {
+		switch strings.TrimSpace(item.Status) {
+		case "failed":
+			return "failed"
+		case "completed":
+			return "completed"
+		}
+	}
+	return "running"
 }
 
 func renderContextPacket(packet ContextPacket) string {

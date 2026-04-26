@@ -407,6 +407,7 @@ type Rows interface {
 type DB interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	QueryContext(ctx context.Context, query string, args ...any) (Rows, error)
+	WithImmediateTransaction(ctx context.Context, fn func(DB) error) error
 }
 
 type sqlDBAdapter struct {
@@ -419,6 +420,49 @@ func (a *sqlDBAdapter) ExecContext(ctx context.Context, query string, args ...an
 
 func (a *sqlDBAdapter) QueryContext(ctx context.Context, query string, args ...any) (Rows, error) {
 	return a.db.QueryContext(ctx, query, args...)
+}
+
+func (a *sqlDBAdapter) WithImmediateTransaction(ctx context.Context, fn func(DB) error) error {
+	conn, err := a.db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = conn.Close()
+	}()
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = conn.ExecContext(ctx, "ROLLBACK")
+		}
+	}()
+	if err := fn(&sqlConnAdapter{conn: conn}); err != nil {
+		return err
+	}
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
+type sqlConnAdapter struct {
+	conn *sql.Conn
+}
+
+func (a *sqlConnAdapter) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	return a.conn.ExecContext(ctx, query, args...)
+}
+
+func (a *sqlConnAdapter) QueryContext(ctx context.Context, query string, args ...any) (Rows, error) {
+	return a.conn.QueryContext(ctx, query, args...)
+}
+
+func (a *sqlConnAdapter) WithImmediateTransaction(ctx context.Context, fn func(DB) error) error {
+	return fn(a)
 }
 
 type Store struct {
@@ -603,38 +647,9 @@ func (s *Store) AddFolder(ctx context.Context, sessionID, folderPath, vcsType st
 		return fmt.Errorf("%w: invalid vcs type %q", ErrInvalidInput, vcsType)
 	}
 
-	session, err := s.GetSession(ctx, sessionID)
-	if err != nil {
-		return err
-	}
-	if session.Status == statusClosed {
-		return fmt.Errorf("%w: session id %q", ErrSessionClosed, sessionID)
-	}
-	existingWorkspaceID, err := s.workspaceIDByFolderPath(ctx, folderPath)
-	if err != nil {
-		return err
-	}
-	if existingWorkspaceID != "" && existingWorkspaceID != sessionID {
-		return fmt.Errorf("%w: folder %q already belongs to workspace %q", ErrInvalidInput, folderPath, existingWorkspaceID)
-	}
-
-	primary := 0
-	if isPrimary {
-		primary = 1
-	}
-
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := s.db.ExecContext(ctx, insertSessionFolderQuery, sessionID, folderPath, vcsType, primary, now); err != nil {
-		return fmt.Errorf("add session folder %q: %w", folderPath, err)
-	}
-
-	if isPrimary {
-		if _, err := s.db.ExecContext(ctx, promotePrimaryFolderQuery, folderPath, sessionID); err != nil {
-			return fmt.Errorf("promote session primary folder %q: %w", folderPath, err)
-		}
-	}
-
-	return nil
+	return s.db.WithImmediateTransaction(ctx, func(tx DB) error {
+		return addFolderInTransaction(ctx, tx, sessionID, folderPath, vcsType, isPrimary)
+	})
 }
 
 func (s *Store) RemoveFolder(ctx context.Context, sessionID, folderPath string) error {
@@ -737,13 +752,51 @@ func (s *Store) ListFolders(ctx context.Context, sessionID string) ([]SessionFol
 	return out, nil
 }
 
-func (s *Store) workspaceIDByFolderPath(ctx context.Context, folderPath string) (string, error) {
+func addFolderInTransaction(ctx context.Context, db DB, sessionID, folderPath, vcsType string, isPrimary bool) error {
+	sessions, err := querySessions(ctx, db, sessionByIDQuery, sessionID)
+	if err != nil {
+		return err
+	}
+	if len(sessions) == 0 {
+		return fmt.Errorf("%w: session id %q", ErrNotFound, sessionID)
+	}
+	if sessions[0].Status == statusClosed {
+		return fmt.Errorf("%w: session id %q", ErrSessionClosed, sessionID)
+	}
+	existingWorkspaceID, err := workspaceIDByFolderPath(ctx, db, folderPath)
+	if err != nil {
+		return err
+	}
+	if existingWorkspaceID != "" && existingWorkspaceID != sessionID {
+		return fmt.Errorf("%w: folder %q already belongs to workspace %q", ErrInvalidInput, folderPath, existingWorkspaceID)
+	}
+
+	primary := 0
+	if isPrimary {
+		primary = 1
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := db.ExecContext(ctx, insertSessionFolderQuery, sessionID, folderPath, vcsType, primary, now); err != nil {
+		return fmt.Errorf("add session folder %q: %w", folderPath, err)
+	}
+
+	if isPrimary {
+		if _, err := db.ExecContext(ctx, promotePrimaryFolderQuery, folderPath, sessionID); err != nil {
+			return fmt.Errorf("promote session primary folder %q: %w", folderPath, err)
+		}
+	}
+
+	return nil
+}
+
+func workspaceIDByFolderPath(ctx context.Context, db DB, folderPath string) (string, error) {
 	folderPath = strings.TrimSpace(folderPath)
 	if folderPath == "" {
 		return "", fmt.Errorf("%w: folder path is required", ErrInvalidInput)
 	}
 
-	rows, err := s.db.QueryContext(ctx, workspaceIDByFolderPathQuery, folderPath)
+	rows, err := db.QueryContext(ctx, workspaceIDByFolderPathQuery, folderPath)
 	if err != nil {
 		return "", fmt.Errorf("lookup workspace by folder path %q: %w", folderPath, err)
 	}
