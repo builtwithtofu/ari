@@ -635,6 +635,14 @@ func (s *Store) UpsertAgentProfile(ctx context.Context, profile AgentProfile) er
 	if profile.Name == "" {
 		return fmt.Errorf("%w: profile name is required", ErrInvalidInput)
 	}
+	if existing, err := s.getExactAgentProfile(ctx, profile.WorkspaceID, profile.Name); err == nil {
+		profile.ProfileID = existing.ProfileID
+		if profile.CreatedAt.IsZero() {
+			profile.CreatedAt = existing.CreatedAt
+		}
+	} else if !errors.Is(err, ErrNotFound) {
+		return err
+	}
 	if strings.TrimSpace(profile.DefaultsJSON) == "" {
 		profile.DefaultsJSON = "{}"
 	}
@@ -650,6 +658,27 @@ func (s *Store) UpsertAgentProfile(ctx context.Context, profile AgentProfile) er
 		return fmt.Errorf("upsert agent profile %q: %w", profile.Name, err)
 	}
 	return nil
+}
+
+func (s *Store) getExactAgentProfile(ctx context.Context, workspaceID, name string) (AgentProfile, error) {
+	if strings.TrimSpace(workspaceID) != "" {
+		profile, err := s.sqlcQueries().GetWorkspaceAgentProfileByName(ctx, dbsqlc.GetWorkspaceAgentProfileByNameParams{WorkspaceID: sqlNullString(workspaceID), Name: name})
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return AgentProfile{}, ErrNotFound
+			}
+			return AgentProfile{}, fmt.Errorf("query exact workspace agent profile: %w", err)
+		}
+		return agentProfileFromSQLC(profile), nil
+	}
+	profile, err := s.sqlcQueries().GetGlobalAgentProfileByName(ctx, name)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return AgentProfile{}, ErrNotFound
+		}
+		return AgentProfile{}, fmt.Errorf("query exact global agent profile: %w", err)
+	}
+	return agentProfileFromSQLC(profile), nil
 }
 
 func (s *Store) GetAgentProfile(ctx context.Context, workspaceID, name string) (AgentProfile, error) {

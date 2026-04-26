@@ -47,6 +47,25 @@ func TestAgentProfileAllowsNullableOverrides(t *testing.T) {
 	}
 }
 
+func TestAgentProfileUpsertUpdatesExistingScopeAndName(t *testing.T) {
+	store := newMigratedGlobalDBStore(t, "agent-profile-upsert")
+	ctx := context.Background()
+	if err := store.UpsertAgentProfile(ctx, AgentProfile{ProfileID: "ap_first", WorkspaceID: "ws-1", Name: "executor", Harness: "codex", Model: "gpt-5.1-codex"}); err != nil {
+		t.Fatalf("UpsertAgentProfile first returned error: %v", err)
+	}
+	if err := store.UpsertAgentProfile(ctx, AgentProfile{ProfileID: "ap_second", WorkspaceID: "ws-1", Name: "executor", Harness: "claude", Model: "opus"}); err != nil {
+		t.Fatalf("UpsertAgentProfile update returned error: %v", err)
+	}
+
+	profile, err := store.GetAgentProfile(ctx, "ws-1", "executor")
+	if err != nil {
+		t.Fatalf("GetAgentProfile returned error: %v", err)
+	}
+	if profile.ProfileID != "ap_first" || profile.Harness != "claude" || profile.Model != "opus" {
+		t.Fatalf("profile = %#v, want existing scoped name updated in place", profile)
+	}
+}
+
 func TestAgentProfileListUsesRequestedScope(t *testing.T) {
 	store := newMigratedGlobalDBStore(t, "agent-profile-list")
 	ctx := context.Background()

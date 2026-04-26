@@ -51,6 +51,35 @@ func TestCodexExecutorMapsAppServerNotifications(t *testing.T) {
 	}
 }
 
+func TestCodexExecutorAdvertisesFinalResponseCapability(t *testing.T) {
+	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo", StartTransport: fakeCodexStarter(newFakeCodexTransport(nil))})
+	if !harnessCapabilitiesContain(executor.Descriptor().Capabilities, HarnessCapabilityFinalResponse) {
+		t.Fatalf("codex capabilities = %#v, want final_response", executor.Descriptor().Capabilities)
+	}
+}
+
+func TestCodexStdioTransportReadsLargeNotificationLines(t *testing.T) {
+	largeText := strings.Repeat("x", 128*1024)
+	params, err := json.Marshal(map[string]any{"item": map[string]string{"id": "large", "type": "agent_message", "text": largeText}})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	message := codexRPCMessage{Method: "item/completed", Params: params}
+	encoded, err := json.Marshal(message)
+	if err != nil {
+		t.Fatalf("marshal message: %v", err)
+	}
+	transport := newCodexStdioTransport(nil, nopWriteCloser{Buffer: bytes.NewBuffer(nil)}, bytes.NewReader(append(encoded, '\n')), strings.NewReader(""), 1)
+	select {
+	case got := <-transport.Notifications():
+		if got.Method != "item/completed" || len(got.Params) == 0 {
+			t.Fatalf("notification = %#v, want large item/completed", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for large notification")
+	}
+}
+
 func TestCodexExecutorReportsMissingExecutableBeforeStart(t *testing.T) {
 	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: "missing-codex", Cwd: "/repo", StartTransport: func(ctx context.Context, opts codexExecutorOptions) (codexTransport, error) {
 		return nil, &HarnessUnavailableError{Harness: HarnessNameCodex, Reason: "missing_executable", Executable: opts.Executable, Probe: opts.Executable + " --version", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}

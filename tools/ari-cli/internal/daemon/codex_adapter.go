@@ -64,7 +64,7 @@ func newCodexExecutor(options codexExecutorOptions) *CodexExecutor {
 }
 
 func (e *CodexExecutor) Descriptor() HarnessAdapterDescriptor {
-	return HarnessAdapterDescriptor{Name: HarnessNameCodex, Capabilities: []HarnessCapability{HarnessCapabilityAgentRunFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems, HarnessCapabilityMeasuredTokenTelemetry}}
+	return HarnessAdapterDescriptor{Name: HarnessNameCodex, Capabilities: []HarnessCapability{HarnessCapabilityAgentRunFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems, HarnessCapabilityFinalResponse, HarnessCapabilityMeasuredTokenTelemetry}}
 }
 
 func (e *CodexExecutor) Start(ctx context.Context, req ExecutorStartRequest) (ExecutorRun, error) {
@@ -393,6 +393,7 @@ func (t *codexStdioTransport) readMessages(stdout io.Reader) {
 		t.closeOnce.Do(func() { close(t.closed) })
 	}()
 	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
 		var message codexRPCMessage
 		if err := json.Unmarshal(scanner.Bytes(), &message); err != nil {
