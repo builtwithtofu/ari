@@ -62,6 +62,16 @@ Executor-backed runs cross an Ari-owned harness-call contract before reaching a 
 - Timeline and activity projections use Ari run IDs. Provider IDs such as PTY process/run identifiers are retained as metadata and must not become client routing keys.
 - Runtime output is normalized into Ari timeline/runtime-event structures before clients render it; provider-specific event names stay adapter metadata.
 
+## Agent CLI Smoke Checks
+
+Ari adapter tests have three layers:
+
+1. Fixture contract tests exercise Ari parsing, identity mapping, telemetry extraction, and structured errors without installed CLIs or credentials.
+2. `just agent-smoke` uses `github:numtide/llm-agents.nix` to run no-credit binary checks for Codex, Claude Code, and OpenCode with version/help-style commands only.
+3. Authenticated model-calling integration tests, when added, must stay explicitly opt-in and outside `just verify`.
+
+The smoke target currently checks the package outputs `codex`, `claude-code`, and `opencode`. If a packaged command name differs from the command Ari invokes at runtime, the adapter or dev-shell wrapper must make that mapping explicit before adding a model-calling integration test.
+
 ## Sync Behavior
 
 Because projection is computed from canonical storage, sync behavior is immediate and one-way:

@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb/dbsqlc"
 )
 
 var (
@@ -469,7 +471,21 @@ func (a *sqlConnAdapter) WithImmediateTransaction(ctx context.Context, fn func(D
 }
 
 type Store struct {
-	db DB
+	db   DB
+	sqlc *dbsqlc.Queries
+}
+
+type AgentProfile struct {
+	ProfileID       string
+	WorkspaceID     string
+	Name            string
+	Harness         string
+	Model           string
+	Prompt          string
+	InvocationClass string
+	DefaultsJSON    string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 func NewStore(db DB) (*Store, error) {
@@ -483,7 +499,12 @@ func NewSQLStore(db *sql.DB) (*Store, error) {
 	if db == nil {
 		return nil, fmt.Errorf("%w: db is required", ErrInvalidInput)
 	}
-	return NewStore(&sqlDBAdapter{db: db})
+	store, err := NewStore(&sqlDBAdapter{db: db})
+	if err != nil {
+		return nil, err
+	}
+	store.sqlc = dbsqlc.New(db)
+	return store, nil
 }
 
 func (s *Store) SetMeta(ctx context.Context, key, value string) error {
@@ -512,6 +533,103 @@ func (s *Store) GetMeta(ctx context.Context, key string) (string, error) {
 	}
 
 	return values[0], nil
+}
+
+func (s *Store) UpsertAgentProfile(ctx context.Context, profile AgentProfile) error {
+	profile.ProfileID = strings.TrimSpace(profile.ProfileID)
+	profile.WorkspaceID = strings.TrimSpace(profile.WorkspaceID)
+	profile.Name = strings.TrimSpace(profile.Name)
+	profile.Harness = strings.TrimSpace(profile.Harness)
+	profile.Model = strings.TrimSpace(profile.Model)
+	profile.InvocationClass = strings.TrimSpace(profile.InvocationClass)
+	if profile.ProfileID == "" {
+		return fmt.Errorf("%w: profile id is required", ErrInvalidInput)
+	}
+	if profile.Name == "" {
+		return fmt.Errorf("%w: profile name is required", ErrInvalidInput)
+	}
+	if strings.TrimSpace(profile.DefaultsJSON) == "" {
+		profile.DefaultsJSON = "{}"
+	}
+	if !json.Valid([]byte(profile.DefaultsJSON)) {
+		return fmt.Errorf("%w: profile defaults json is invalid", ErrInvalidInput)
+	}
+	now := time.Now().UTC()
+	if profile.CreatedAt.IsZero() {
+		profile.CreatedAt = now
+	}
+	profile.UpdatedAt = now
+	if err := s.sqlcQueries().UpsertAgentProfile(ctx, dbsqlc.UpsertAgentProfileParams{ProfileID: profile.ProfileID, WorkspaceID: sqlNullString(profile.WorkspaceID), Name: profile.Name, Harness: sqlNullString(profile.Harness), Model: sqlNullString(profile.Model), Prompt: sqlNullString(profile.Prompt), InvocationClass: sqlNullString(profile.InvocationClass), DefaultsJson: profile.DefaultsJSON, CreatedAt: profile.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: profile.UpdatedAt.Format(time.RFC3339Nano)}); err != nil {
+		return fmt.Errorf("upsert agent profile %q: %w", profile.Name, err)
+	}
+	return nil
+}
+
+func (s *Store) GetAgentProfile(ctx context.Context, workspaceID, name string) (AgentProfile, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return AgentProfile{}, fmt.Errorf("%w: profile name is required", ErrInvalidInput)
+	}
+	if workspaceID != "" {
+		profile, err := s.sqlcQueries().GetWorkspaceAgentProfileByName(ctx, dbsqlc.GetWorkspaceAgentProfileByNameParams{WorkspaceID: sqlNullString(workspaceID), Name: name})
+		if err == nil {
+			return agentProfileFromSQLC(profile), nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return AgentProfile{}, fmt.Errorf("query workspace agent profile: %w", err)
+		}
+	}
+	profile, err := s.sqlcQueries().GetGlobalAgentProfileByName(ctx, name)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return AgentProfile{}, ErrNotFound
+		}
+		return AgentProfile{}, fmt.Errorf("query global agent profile: %w", err)
+	}
+	return agentProfileFromSQLC(profile), nil
+}
+
+func (s *Store) ListAgentProfiles(ctx context.Context, workspaceID string) ([]AgentProfile, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	var rows []dbsqlc.AgentProfile
+	var err error
+	if workspaceID == "" {
+		rows, err = s.sqlcQueries().ListGlobalAgentProfiles(ctx)
+	} else {
+		rows, err = s.sqlcQueries().ListWorkspaceAgentProfiles(ctx, sqlNullString(workspaceID))
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list agent profiles: %w", err)
+	}
+	profiles := make([]AgentProfile, 0, len(rows))
+	for _, row := range rows {
+		profiles = append(profiles, agentProfileFromSQLC(row))
+	}
+	return profiles, nil
+}
+
+func (s *Store) sqlcQueries() *dbsqlc.Queries {
+	if s.sqlc != nil {
+		return s.sqlc
+	}
+	adapter, ok := s.db.(*sqlDBAdapter)
+	if !ok {
+		panic("sqlc queries require SQL store")
+	}
+	s.sqlc = dbsqlc.New(adapter.db)
+	return s.sqlc
+}
+
+func sqlNullString(value string) sql.NullString {
+	value = strings.TrimSpace(value)
+	return sql.NullString{String: value, Valid: value != ""}
+}
+
+func agentProfileFromSQLC(row dbsqlc.AgentProfile) AgentProfile {
+	createdAt, _ := time.Parse(time.RFC3339Nano, row.CreatedAt)
+	updatedAt, _ := time.Parse(time.RFC3339Nano, row.UpdatedAt)
+	return AgentProfile{ProfileID: row.ProfileID, WorkspaceID: row.WorkspaceID.String, Name: row.Name, Harness: row.Harness.String, Model: row.Model.String, Prompt: row.Prompt.String, InvocationClass: row.InvocationClass.String, DefaultsJSON: row.DefaultsJson, CreatedAt: createdAt, UpdatedAt: updatedAt}
 }
 
 func (s *Store) CreateSession(ctx context.Context, id, name, originRoot, cleanupPolicy, vcsPreference string) error {

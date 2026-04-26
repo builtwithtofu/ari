@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -72,6 +73,40 @@ type AgentProfileRunResponse struct {
 	Items   []TimelineItem `json:"items"`
 }
 
+type AgentProfileCreateRequest struct {
+	WorkspaceID     string                 `json:"workspace_id,omitempty"`
+	Name            string                 `json:"name"`
+	Harness         string                 `json:"harness,omitempty"`
+	Model           string                 `json:"model,omitempty"`
+	Prompt          string                 `json:"prompt,omitempty"`
+	InvocationClass HarnessInvocationClass `json:"invocation_class,omitempty"`
+	Defaults        map[string]any         `json:"defaults,omitempty"`
+}
+
+type AgentProfileGetRequest struct {
+	WorkspaceID string `json:"workspace_id,omitempty"`
+	Name        string `json:"name"`
+}
+
+type AgentProfileListRequest struct {
+	WorkspaceID string `json:"workspace_id,omitempty"`
+}
+
+type AgentProfileListResponse struct {
+	Profiles []AgentProfileResponse `json:"profiles"`
+}
+
+type AgentProfileResponse struct {
+	ProfileID       string                 `json:"profile_id"`
+	WorkspaceID     string                 `json:"workspace_id,omitempty"`
+	Name            string                 `json:"name"`
+	Harness         string                 `json:"harness,omitempty"`
+	Model           string                 `json:"model,omitempty"`
+	Prompt          string                 `json:"prompt,omitempty"`
+	InvocationClass HarnessInvocationClass `json:"invocation_class,omitempty"`
+	Defaults        map[string]any         `json:"defaults,omitempty"`
+}
+
 func defaultAgentProfiles() map[string]AgentProfile {
 	return make(map[string]AgentProfile)
 }
@@ -133,7 +168,7 @@ func (d *Daemon) registerExecutorMethods(registry *rpc.MethodRegistry, store *gl
 		Name:        "agent.profile.run",
 		Description: "Start an agent run from a named Ari agent profile",
 		Handler: func(ctx context.Context, req AgentProfileRunRequest) (AgentProfileRunResponse, error) {
-			profile, err := d.resolveAgentProfileRunRequest(req)
+			profile, err := d.resolveAgentProfileRunRequest(ctx, store, req)
 			if err != nil {
 				return AgentProfileRunResponse{}, err
 			}
@@ -146,10 +181,103 @@ func (d *Daemon) registerExecutorMethods(registry *rpc.MethodRegistry, store *gl
 	}); err != nil {
 		return fmt.Errorf("register agent.profile.run: %w", err)
 	}
+	if err := rpc.RegisterMethod(registry, rpc.Method[AgentProfileCreateRequest, AgentProfileResponse]{
+		Name:        "agent.profile.create",
+		Description: "Create or update a durable Ari agent profile",
+		Handler: func(ctx context.Context, req AgentProfileCreateRequest) (AgentProfileResponse, error) {
+			return createStoredAgentProfile(ctx, store, req)
+		},
+	}); err != nil {
+		return fmt.Errorf("register agent.profile.create: %w", err)
+	}
+	if err := rpc.RegisterMethod(registry, rpc.Method[AgentProfileGetRequest, AgentProfileResponse]{
+		Name:        "agent.profile.get",
+		Description: "Get a durable Ari agent profile by name",
+		Handler: func(ctx context.Context, req AgentProfileGetRequest) (AgentProfileResponse, error) {
+			return getStoredAgentProfile(ctx, store, req)
+		},
+	}); err != nil {
+		return fmt.Errorf("register agent.profile.get: %w", err)
+	}
+	if err := rpc.RegisterMethod(registry, rpc.Method[AgentProfileListRequest, AgentProfileListResponse]{
+		Name:        "agent.profile.list",
+		Description: "List durable Ari agent profiles",
+		Handler: func(ctx context.Context, req AgentProfileListRequest) (AgentProfileListResponse, error) {
+			return listStoredAgentProfiles(ctx, store, req)
+		},
+	}); err != nil {
+		return fmt.Errorf("register agent.profile.list: %w", err)
+	}
 	return nil
 }
 
-func (d *Daemon) resolveAgentProfileRunRequest(req AgentProfileRunRequest) (AgentProfile, error) {
+func createStoredAgentProfile(ctx context.Context, store *globaldb.Store, req AgentProfileCreateRequest) (AgentProfileResponse, error) {
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		return AgentProfileResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "profile name is required", map[string]any{"reason": "missing_profile_name"})
+	}
+	if req.InvocationClass != "" && req.InvocationClass != HarnessInvocationAgent && req.InvocationClass != HarnessInvocationTemporary {
+		return AgentProfileResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "invocation class is invalid", map[string]any{"reason": "invalid_invocation_class"})
+	}
+	profileID, err := newAriULID()
+	if err != nil {
+		return AgentProfileResponse{}, err
+	}
+	defaultsJSON := "{}"
+	if len(req.Defaults) > 0 {
+		encoded, err := json.Marshal(req.Defaults)
+		if err != nil {
+			return AgentProfileResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "profile defaults are invalid", map[string]any{"reason": "invalid_defaults"})
+		}
+		defaultsJSON = string(encoded)
+	}
+	stored := globaldb.AgentProfile{ProfileID: "ap_" + profileID, WorkspaceID: strings.TrimSpace(req.WorkspaceID), Name: name, Harness: strings.TrimSpace(req.Harness), Model: strings.TrimSpace(req.Model), Prompt: strings.TrimSpace(req.Prompt), InvocationClass: string(req.InvocationClass), DefaultsJSON: defaultsJSON}
+	if err := store.UpsertAgentProfile(ctx, stored); err != nil {
+		return AgentProfileResponse{}, err
+	}
+	return agentProfileResponseFromStore(stored, req.Defaults), nil
+}
+
+func getStoredAgentProfile(ctx context.Context, store *globaldb.Store, req AgentProfileGetRequest) (AgentProfileResponse, error) {
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		return AgentProfileResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "profile name is required", map[string]any{"reason": "missing_profile_name"})
+	}
+	stored, err := store.GetAgentProfile(ctx, req.WorkspaceID, name)
+	if err != nil {
+		if errors.Is(err, globaldb.ErrNotFound) {
+			return AgentProfileResponse{}, unknownProfileError(name)
+		}
+		return AgentProfileResponse{}, err
+	}
+	defaults := map[string]any{}
+	if strings.TrimSpace(stored.DefaultsJSON) != "" {
+		_ = json.Unmarshal([]byte(stored.DefaultsJSON), &defaults)
+	}
+	return agentProfileResponseFromStore(stored, defaults), nil
+}
+
+func listStoredAgentProfiles(ctx context.Context, store *globaldb.Store, req AgentProfileListRequest) (AgentProfileListResponse, error) {
+	stored, err := store.ListAgentProfiles(ctx, req.WorkspaceID)
+	if err != nil {
+		return AgentProfileListResponse{}, err
+	}
+	profiles := make([]AgentProfileResponse, 0, len(stored))
+	for _, profile := range stored {
+		defaults := map[string]any{}
+		if strings.TrimSpace(profile.DefaultsJSON) != "" {
+			_ = json.Unmarshal([]byte(profile.DefaultsJSON), &defaults)
+		}
+		profiles = append(profiles, agentProfileResponseFromStore(profile, defaults))
+	}
+	return AgentProfileListResponse{Profiles: profiles}, nil
+}
+
+func agentProfileResponseFromStore(profile globaldb.AgentProfile, defaults map[string]any) AgentProfileResponse {
+	return AgentProfileResponse{ProfileID: profile.ProfileID, WorkspaceID: profile.WorkspaceID, Name: profile.Name, Harness: profile.Harness, Model: profile.Model, Prompt: profile.Prompt, InvocationClass: HarnessInvocationClass(profile.InvocationClass), Defaults: defaults}
+}
+
+func (d *Daemon) resolveAgentProfileRunRequest(ctx context.Context, store *globaldb.Store, req AgentProfileRunRequest) (AgentProfile, error) {
 	name := strings.TrimSpace(req.Profile)
 	if name != "" && req.ProfileDefinition != nil {
 		return AgentProfile{}, rpc.NewHandlerError(rpc.InvalidParams, "profile input is ambiguous", map[string]any{"profile": name, "profile_definition": strings.TrimSpace(req.ProfileDefinition.Name), "reason": "ambiguous_profile", "start_invoked": false})
@@ -161,7 +289,7 @@ func (d *Daemon) resolveAgentProfileRunRequest(req AgentProfileRunRequest) (Agen
 			profile.Name = name
 		}
 	} else if name != "" {
-		resolved, err := d.resolveAgentProfile(name)
+		resolved, err := d.resolveAgentProfile(ctx, store, req.Packet.WorkspaceID, name)
 		if err != nil {
 			return AgentProfile{}, err
 		}
@@ -193,19 +321,33 @@ func applyAgentRunDefaults(profile AgentProfile, defaults AgentRunDefaults) Agen
 	return profile
 }
 
-func (d *Daemon) resolveAgentProfile(name string) (AgentProfile, error) {
+func (d *Daemon) resolveAgentProfile(ctx context.Context, store *globaldb.Store, workspaceID, name string) (AgentProfile, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return AgentProfile{}, rpc.NewHandlerError(rpc.InvalidParams, "profile is required", map[string]any{"reason": "missing_profile", "start_invoked": false})
 	}
 	if d == nil || d.agentProfiles == nil {
-		return AgentProfile{}, unknownProfileError(name)
+		return resolveStoredAgentProfile(ctx, store, workspaceID, name)
 	}
 	profile, ok := d.agentProfiles[name]
 	if !ok {
-		return AgentProfile{}, unknownProfileError(name)
+		return resolveStoredAgentProfile(ctx, store, workspaceID, name)
 	}
 	return profile, nil
+}
+
+func resolveStoredAgentProfile(ctx context.Context, store *globaldb.Store, workspaceID, name string) (AgentProfile, error) {
+	if store == nil {
+		return AgentProfile{}, unknownProfileError(name)
+	}
+	stored, err := store.GetAgentProfile(ctx, workspaceID, name)
+	if err != nil {
+		if errors.Is(err, globaldb.ErrNotFound) {
+			return AgentProfile{}, unknownProfileError(name)
+		}
+		return AgentProfile{}, err
+	}
+	return AgentProfile{Name: stored.Name, Harness: stored.Harness, Model: stored.Model, Prompt: stored.Prompt, InvocationClass: HarnessInvocationClass(stored.InvocationClass)}, nil
 }
 
 func (d *Daemon) startAgentRun(ctx context.Context, store *globaldb.Store, req AgentRunStartRequest, profile ...AgentProfile) (AgentRunStartResponse, error) {

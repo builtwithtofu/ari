@@ -1,0 +1,176 @@
+package daemon
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestCodexExecutorMapsAppServerNotifications(t *testing.T) {
+	transport := newFakeCodexTransport([]codexNotification{
+		{Method: "thread/started", Params: mustRawJSON(t, `{"thread":{"id":"thr_123"}}`)},
+		{Method: "turn/started", Params: mustRawJSON(t, `{"threadId":"thr_123","turn":{"id":"turn_456"}}`)},
+		{Method: "item/agentMessage/delta", Params: mustRawJSON(t, `{"threadId":"thr_123","turnId":"turn_456","delta":"hello"}`)},
+		{Method: "item/completed", Params: mustRawJSON(t, `{"threadId":"thr_123","turnId":"turn_456","item":{"id":"item_1","type":"agent_message","text":"hello world"}}`)},
+		{Method: "thread/tokenUsage/updated", Params: mustRawJSON(t, `{"threadId":"thr_123","turnId":"turn_456","tokenUsage":{"last":{"inputTokens":9,"outputTokens":3},"total":{"inputTokens":9,"outputTokens":3}}}`)},
+		{Method: "turn/completed", Params: mustRawJSON(t, `{"threadId":"thr_123","turn":{"id":"turn_456","status":"completed"}}`)},
+	})
+	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo", StartTransport: fakeCodexStarter(transport)})
+	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
+
+	run, items, err := StartExecutorRun(context.Background(), executor, packet, AgentProfile{Name: "executor", Model: "gpt-5.1-codex", Prompt: "Do it", InvocationClass: HarnessInvocationAgent})
+	if err != nil {
+		t.Fatalf("StartExecutorRun returned error: %v", err)
+	}
+	if run.Executor != HarnessNameCodex || run.ProviderRunID != "thr_123" || run.AgentRunID == run.ProviderRunID || !isULID(run.AgentRunID) {
+		t.Fatalf("run = %#v, want Ari run id with Codex provider thread", run)
+	}
+	if len(items) != 4 {
+		t.Fatalf("items len = %d, want lifecycle/message/token/completed items: %#v", len(items), items)
+	}
+	if items[0].RunID != run.AgentRunID || items[0].SourceID != run.AgentRunID || items[0].Kind != "lifecycle" || items[0].Status != "running" {
+		t.Fatalf("first item = %#v, want Ari-linked running lifecycle", items[0])
+	}
+	if items[1].Kind != "agent_text" || items[1].Text != "hello world" {
+		t.Fatalf("message item = %#v, want completed agent text", items[1])
+	}
+	if !transport.closed {
+		t.Fatal("transport was not closed after completed Codex turn")
+	}
+	if got := strings.Join(transport.calledMethods, ","); got != "initialize,initialized,thread/start,turn/start" {
+		t.Fatalf("called methods = %q, want initialize/initialized/thread/start/turn/start", got)
+	}
+	threadStart := transport.paramsByMethod["thread/start"]
+	if threadStart["experimentalRawEvents"] != false || threadStart["persistExtendedHistory"] != true || threadStart["approvalPolicy"] != "never" {
+		t.Fatalf("thread/start params = %#v, want explicit app-server defaults", threadStart)
+	}
+}
+
+func TestCodexExecutorReportsMissingExecutableBeforeStart(t *testing.T) {
+	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: "missing-codex", Cwd: "/repo", StartTransport: func(ctx context.Context, opts codexExecutorOptions) (codexTransport, error) {
+		return nil, &HarnessUnavailableError{Harness: HarnessNameCodex, Reason: "missing_executable", Executable: opts.Executable, Probe: opts.Executable + " --version", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
+	}})
+	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
+
+	_, _, err := StartExecutorRun(context.Background(), executor, packet)
+	unavailable := &HarnessUnavailableError{}
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("error = %T %[1]v, want HarnessUnavailableError", err)
+	}
+	if unavailable.StartInvoked || unavailable.Executable != "missing-codex" || unavailable.RequiredCapability != HarnessCapabilityAgentRunFromContext {
+		t.Fatalf("unavailable = %#v, want pre-start missing executable", unavailable)
+	}
+}
+
+func TestCodexExecutorFailsWhenNotificationStreamEndsBeforeTurnCompletes(t *testing.T) {
+	transport := newFakeCodexTransport([]codexNotification{
+		{Method: "thread/started", Params: mustRawJSON(t, `{"thread":{"id":"thr_123"}}`)},
+		{Method: "item/completed", Params: mustRawJSON(t, `{"threadId":"thr_123","turnId":"turn_456","item":{"id":"item_1","type":"agent_message","text":"partial"}}`)},
+	})
+	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo", StartTransport: fakeCodexStarter(transport)})
+	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
+
+	_, _, err := StartExecutorRun(context.Background(), executor, packet)
+	if err == nil || !strings.Contains(err.Error(), "ended before turn completed") {
+		t.Fatalf("StartExecutorRun error = %v, want failed incomplete Codex stream", err)
+	}
+}
+
+func TestCodexStdioTransportReturnsWhenServerExitsBeforeResponse(t *testing.T) {
+	stdoutReader, stdoutWriter := io.Pipe()
+	_ = stdoutWriter.Close()
+	transport := newCodexStdioTransport(nil, nopWriteCloser{Buffer: bytes.NewBuffer(nil)}, stdoutReader, strings.NewReader(""), 4)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	t.Cleanup(cancel)
+
+	var result codexInitializeResult
+	err := transport.Call(ctx, "initialize", nil, &result)
+	if err == nil || !strings.Contains(err.Error(), "closed before initialize response") {
+		t.Fatalf("Call error = %v, want prompt closed-before-response error", err)
+	}
+}
+
+func mustRawJSON(t *testing.T, value string) json.RawMessage {
+	t.Helper()
+	if !json.Valid([]byte(value)) {
+		t.Fatalf("invalid fixture JSON: %s", value)
+	}
+	return json.RawMessage(value)
+}
+
+type nopWriteCloser struct {
+	*bytes.Buffer
+}
+
+func (w nopWriteCloser) Close() error { return nil }
+
+type fakeCodexTransport struct {
+	notifications  chan codexNotification
+	calledMethods  []string
+	paramsByMethod map[string]map[string]any
+	closed         bool
+}
+
+func newFakeCodexTransport(notifications []codexNotification) *fakeCodexTransport {
+	ch := make(chan codexNotification, len(notifications))
+	for _, notification := range notifications {
+		ch <- notification
+	}
+	close(ch)
+	return &fakeCodexTransport{notifications: ch, paramsByMethod: map[string]map[string]any{}}
+}
+
+func fakeCodexStarter(transport *fakeCodexTransport) codexTransportStarter {
+	return func(ctx context.Context, opts codexExecutorOptions) (codexTransport, error) {
+		_ = ctx
+		_ = opts
+		return transport, nil
+	}
+}
+
+func (t *fakeCodexTransport) Call(ctx context.Context, method string, params any, result any) error {
+	_ = ctx
+	t.calledMethods = append(t.calledMethods, method)
+	if params != nil {
+		encodedParams, err := json.Marshal(params)
+		if err != nil {
+			return err
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal(encodedParams, &decoded); err != nil {
+			return err
+		}
+		t.paramsByMethod[method] = decoded
+	}
+	encoded := []byte(`{}`)
+	switch method {
+	case "initialize":
+		encoded = []byte(`{"userAgent":"codex/0.0","codexHome":"/tmp/codex","platformFamily":"linux","platformOs":"linux"}`)
+	case "thread/start":
+		encoded = []byte(`{"thread":{"id":"thr_123"}}`)
+	case "turn/start":
+		encoded = []byte(`{"turn":{"id":"turn_456"}}`)
+	}
+	return json.Unmarshal(encoded, result)
+}
+
+func (t *fakeCodexTransport) Notify(ctx context.Context, method string, params any) error {
+	_ = ctx
+	_ = params
+	t.calledMethods = append(t.calledMethods, method)
+	return nil
+}
+
+func (t *fakeCodexTransport) Notifications() <-chan codexNotification {
+	return t.notifications
+}
+
+func (t *fakeCodexTransport) Close() error {
+	t.closed = true
+	return nil
+}

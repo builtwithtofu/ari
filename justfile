@@ -29,3 +29,10 @@ verify: nix-fmt-check fmt-check lint build test flake-check
 
 ci: verify
 	@echo "CI gate complete"
+
+# No-credit binary smoke checks for packaged agent CLIs. These verify that the
+# commands Ari targets are installable and can print metadata without auth.
+agent-smoke:
+	nix run github:numtide/llm-agents.nix#codex -- --version
+	nix run github:numtide/llm-agents.nix#claude-code -- --version
+	nix run github:numtide/llm-agents.nix#opencode -- --version

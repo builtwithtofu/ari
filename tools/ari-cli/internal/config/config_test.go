@@ -260,6 +260,25 @@ func TestWriteAndReadDefaultHarness(t *testing.T) {
 	}
 }
 
+func TestWriteRuntimeDefaults(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	if err := WritePreferredModel("gpt-5.1-codex"); err != nil {
+		t.Fatalf("WritePreferredModel returned error: %v", err)
+	}
+	if err := WriteDefaultInvocationClass("temporary"); err != nil {
+		t.Fatalf("WriteDefaultInvocationClass returned error: %v", err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.PreferredModel != "gpt-5.1-codex" || cfg.DefaultInvocationClass != "temporary" {
+		t.Fatalf("runtime defaults = model %q invocation %q, want configured values", cfg.PreferredModel, cfg.DefaultInvocationClass)
+	}
+}
+
 func TestWriteDefaultHarnessPatchesOnlyDefaultHarnessKey(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)

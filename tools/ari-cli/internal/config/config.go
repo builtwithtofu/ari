@@ -15,11 +15,13 @@ import (
 var osUserHomeDir = os.UserHomeDir
 
 type Config struct {
-	Daemon          DaemonConfig `json:"daemon" mapstructure:"daemon"`
-	LogLevel        string       `json:"log_level" mapstructure:"log_level"`
-	VCSPreference   string       `json:"vcs_preference" mapstructure:"vcs_preference"`
-	ActiveWorkspace string       `json:"active_workspace,omitempty" mapstructure:"active_workspace"`
-	DefaultHarness  string       `json:"default_harness,omitempty" mapstructure:"default_harness"`
+	Daemon                 DaemonConfig `json:"daemon" mapstructure:"daemon"`
+	LogLevel               string       `json:"log_level" mapstructure:"log_level"`
+	VCSPreference          string       `json:"vcs_preference" mapstructure:"vcs_preference"`
+	ActiveWorkspace        string       `json:"active_workspace,omitempty" mapstructure:"active_workspace"`
+	DefaultHarness         string       `json:"default_harness,omitempty" mapstructure:"default_harness"`
+	PreferredModel         string       `json:"preferred_model,omitempty" mapstructure:"preferred_model"`
+	DefaultInvocationClass string       `json:"default_invocation_class,omitempty" mapstructure:"default_invocation_class"`
 }
 
 type DaemonConfig struct {
@@ -52,6 +54,8 @@ func Load() (*Config, error) {
 	v.SetDefault("vcs_preference", defaults.VCSPreference)
 	v.SetDefault("active_workspace", "")
 	v.SetDefault("default_harness", "")
+	v.SetDefault("preferred_model", "")
+	v.SetDefault("default_invocation_class", "")
 
 	v.SetConfigName("config")
 	v.SetConfigType("json")
@@ -135,6 +139,13 @@ func Validate(cfg *Config) error {
 			return fmt.Errorf("validate config: default_harness must be one of %s", strings.Join(names, ", "))
 		}
 	}
+	if invocationClass := strings.TrimSpace(cfg.DefaultInvocationClass); invocationClass != "" {
+		switch daemon.HarnessInvocationClass(invocationClass) {
+		case daemon.HarnessInvocationAgent, daemon.HarnessInvocationTemporary:
+		default:
+			return fmt.Errorf("validate config: default_invocation_class must be one of agent, temporary")
+		}
+	}
 
 	return nil
 }
@@ -168,10 +179,12 @@ func normalizeConfig(cfg *Config) (*Config, error) {
 			DBPath:     dbPath,
 			PIDPath:    pidPath,
 		},
-		LogLevel:        logLevel,
-		VCSPreference:   vcsPreference,
-		ActiveWorkspace: strings.TrimSpace(cfg.ActiveWorkspace),
-		DefaultHarness:  strings.TrimSpace(cfg.DefaultHarness),
+		LogLevel:               logLevel,
+		VCSPreference:          vcsPreference,
+		ActiveWorkspace:        strings.TrimSpace(cfg.ActiveWorkspace),
+		DefaultHarness:         strings.TrimSpace(cfg.DefaultHarness),
+		PreferredModel:         strings.TrimSpace(cfg.PreferredModel),
+		DefaultInvocationClass: strings.TrimSpace(cfg.DefaultInvocationClass),
 	}, nil
 }
 
@@ -233,6 +246,14 @@ func WriteActiveWorkspace(workspaceID string) error {
 
 func WriteDefaultHarness(harness string) error {
 	return patchConfigKey("default_harness", harness, "write default harness")
+}
+
+func WritePreferredModel(model string) error {
+	return patchConfigKey("preferred_model", model, "write preferred model")
+}
+
+func WriteDefaultInvocationClass(invocationClass string) error {
+	return patchConfigKey("default_invocation_class", invocationClass, "write default invocation class")
 }
 
 func patchConfigKey(key string, value string, op string) error {

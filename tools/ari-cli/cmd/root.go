@@ -146,6 +146,7 @@ func NewRootCmd() *cobra.Command {
 	rootCmd.AddCommand(NewCommandCmd())
 	rootCmd.AddCommand(NewExecCmd())
 	rootCmd.AddCommand(NewAgentCmd())
+	rootCmd.AddCommand(NewProfileCmd())
 
 	return rootCmd
 }

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
 )
 
@@ -473,6 +474,67 @@ func TestAgentProfileRunUsesProfileHarness(t *testing.T) {
 	}
 	if resp.Run.ContextPacketID != "ctx_123" || len(resp.Items) != 1 || resp.Items[0].RunID != resp.Run.AgentRunID {
 		t.Fatalf("profile run items = %#v run = %#v, want linked context/timeline", resp.Items, resp.Run)
+	}
+}
+
+func TestAgentProfileRunUsesStoredProfile(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = primaryFolder
+		_ = sink
+		return newFakeHarness(req.Executor, []TimelineItem{{Kind: "agent_text", Text: "done"}}), nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	if err := store.UpsertAgentProfile(context.Background(), globaldb.AgentProfile{ProfileID: "ap_executor", Name: "executor", Harness: "test-harness", Model: "stored-model", Prompt: "stored-prompt", InvocationClass: string(HarnessInvocationAgent)}); err != nil {
+		t.Fatalf("UpsertAgentProfile returned error: %v", err)
+	}
+
+	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
+	resp := callMethod[AgentProfileRunResponse](t, registry, "agent.profile.run", AgentProfileRunRequest{Profile: "executor", Packet: packet})
+	if resp.Profile != "executor" || resp.Harness != "test-harness" || resp.Run.Executor != "test-harness" {
+		t.Fatalf("profile run response = %#v, want stored profile routed to test-harness", resp)
+	}
+}
+
+func TestAgentProfileCreateAndGetPersistProfile(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	created := callMethod[AgentProfileResponse](t, registry, "agent.profile.create", AgentProfileCreateRequest{Name: "executor", Harness: "codex", Model: "gpt-5.1-codex", Prompt: "Do work", InvocationClass: HarnessInvocationAgent, Defaults: map[string]any{"effort": "high"}})
+	if created.ProfileID == "" || created.Name != "executor" || created.Harness != "codex" || created.Defaults["effort"] != "high" {
+		t.Fatalf("created profile = %#v, want durable profile response", created)
+	}
+	got := callMethod[AgentProfileResponse](t, registry, "agent.profile.get", AgentProfileGetRequest{Name: "executor"})
+	if got.ProfileID != created.ProfileID || got.Model != "gpt-5.1-codex" || got.Prompt != "Do work" || got.InvocationClass != HarnessInvocationAgent {
+		t.Fatalf("got profile = %#v, want created profile %#v", got, created)
+	}
+	listed := callMethod[AgentProfileListResponse](t, registry, "agent.profile.list", AgentProfileListRequest{})
+	if len(listed.Profiles) != 1 || listed.Profiles[0].ProfileID != created.ProfileID {
+		t.Fatalf("listed profiles = %#v, want created profile", listed.Profiles)
+	}
+}
+
+func TestAgentProfileCreateRejectsMissingName(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "agent.profile.create", AgentProfileCreateRequest{Harness: "codex"})
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "missing_profile_name" {
+		t.Fatalf("error data = %#v, want missing profile name", data)
 	}
 }
 

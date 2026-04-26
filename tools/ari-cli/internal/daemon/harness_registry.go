@@ -15,26 +15,26 @@ func NewHarnessRegistry() *HarnessRegistry {
 
 func NewDefaultHarnessRegistry() *HarnessRegistry {
 	registry := NewHarnessRegistry()
-	for _, harness := range []struct {
-		name       string
-		executable string
-		probe      string
-	}{
-		{name: HarnessNameCodex, executable: "codex", probe: "codex --version"},
-		{name: HarnessNameClaude, executable: "claude", probe: "claude --version"},
-		{name: HarnessNameOpenCode, executable: "opencode", probe: "opencode --version"},
-	} {
-		name := harness.name
-		executable := harness.executable
-		probe := harness.probe
-		if err := registry.Register(name, func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
-			_ = req
-			_ = primaryFolder
-			_ = sink
-			return nil, &HarnessUnavailableError{Harness: name, Reason: "missing_executable", Executable: executable, Probe: probe, RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
-		}); err != nil {
-			panic(fmt.Sprintf("register default %s harness placeholder: %v", name, err))
-		}
+	if err := registry.Register(HarnessNameCodex, func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = sink
+		return NewCodexExecutor(primaryFolder), nil
+	}); err != nil {
+		panic(fmt.Sprintf("register default Codex harness: %v", err))
+	}
+	if err := registry.Register(HarnessNameClaude, func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = sink
+		return NewClaudeExecutor(primaryFolder), nil
+	}); err != nil {
+		panic(fmt.Sprintf("register default Claude harness: %v", err))
+	}
+	if err := registry.Register(HarnessNameOpenCode, func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = sink
+		return NewOpenCodeExecutor(primaryFolder), nil
+	}); err != nil {
+		panic(fmt.Sprintf("register default OpenCode harness: %v", err))
 	}
 	if err := registry.Register(HarnessNamePTY, func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		return NewPTYExecutorWithSink(req.Command, req.Args, primaryFolder, sink), nil

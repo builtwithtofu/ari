@@ -1,4 +1,4 @@
-h1:Ekp8HkSon2c86qY/mVigH/EKDATr2seGHBSzpRbC9T0=
+h1:Gf1SsYKh76uiGeZQhSkZrELxRbdXxsQNKKE3EsaQObQ=
 202602220901_init_globaldb.sql h1:tuoakYVx2MCuwugAXwGdaj/wnRQGWqX2y/Ke4jWMegw=
 202604012220_daemon_meta.sql h1:YxaCqnoWKLDk8qtiGyrmR/sK0ZswgR6RenvLh9BkKoY=
 202604032210_command_tracking.sql h1:Ckri0gtnHdx1GDnPAc9VgJTZXIcjMs+dCwvhDDT6VrE=
@@ -8,3 +8,4 @@ h1:Ekp8HkSon2c86qY/mVigH/EKDATr2seGHBSzpRbC9T0=
 202604062200_session_to_workspace.sql h1:gxnd/3cCqDpkxP5YDomvA3ToZAUkYAHhO1tjzY0Rw6Y=
 202604152230_workspace_command_definitions.sql h1:YxaUHxKN4tg3JGewB9BpfKCQF9XubWppZ6C8qr81P0k=
 202604232315_workspace_folder_path_index.sql h1:gsQHrW2WHHbKUyzxBFFHA+BV78ZHftQ+VAkZ5gBoOeI=
+202604262145_agent_profiles.sql h1:qUoTxWhss7gIUAHuvDfNbuMtPQIUAkkVs9kxFRFt9JM=
