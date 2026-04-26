@@ -90,3 +90,15 @@ func TestContextProjectRequiresTaskFields(t *testing.T) {
 		t.Fatal("context.project returned nil error for missing task fields")
 	}
 }
+
+func TestStableHashReturnsMarshalError(t *testing.T) {
+	_, err := stableHash(struct {
+		Bad func()
+	}{Bad: func() {}})
+	if err == nil {
+		t.Fatal("stableHash returned nil error for unmarshalable input")
+	}
+	if err.Error() != "stable hash marshal failed: json: unsupported type: func()" {
+		t.Fatalf("stableHash error = %q, want marshal error", err.Error())
+	}
+}

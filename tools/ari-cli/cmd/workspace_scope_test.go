@@ -160,6 +160,47 @@ func TestResolveWorkspaceByCWDSelectsMostSpecificMatch(t *testing.T) {
 	}
 }
 
+func TestResolveWorkspaceByCWDUsesPathSegmentSpecificity(t *testing.T) {
+	root := t.TempDir()
+	shortWide := filepath.Join(root, "bb")
+	deep := filepath.Join(root, "a", "b", "c", "d")
+	deepChild := filepath.Join(deep, "child")
+	if err := os.MkdirAll(shortWide, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll shortWide returned error: %v", err)
+	}
+	if err := os.MkdirAll(deepChild, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll deepChild returned error: %v", err)
+	}
+
+	workspaceID, err := resolveWorkspaceByCWD(deepChild, []daemon.WorkspaceGetResponse{
+		{WorkspaceID: "ws-wide", Name: "wide", OriginRoot: root},
+		{WorkspaceID: "ws-deep", Name: "deep", OriginRoot: deep},
+	})
+	if err != nil {
+		t.Fatalf("resolveWorkspaceByCWD returned error: %v", err)
+	}
+	if workspaceID != "ws-deep" {
+		t.Fatalf("workspaceID = %q, want %q", workspaceID, "ws-deep")
+	}
+}
+
+func TestWorkspacePathSegmentCountIgnoresRawNameLength(t *testing.T) {
+	shortBySegments := string(filepath.Separator) + filepath.Join("a", "bbbbbbbb")
+	longBySegments := string(filepath.Separator) + filepath.Join("a", "b", "c", "d")
+
+	shortScore := workspacePathSegmentCount(shortBySegments)
+	longScore := workspacePathSegmentCount(longBySegments)
+	if shortScore != 2 {
+		t.Fatalf("short score = %d, want 2", shortScore)
+	}
+	if longScore != 4 {
+		t.Fatalf("long score = %d, want 4", longScore)
+	}
+	if shortScore >= longScore {
+		t.Fatalf("segment scores = %d/%d, want deeper path to score higher", shortScore, longScore)
+	}
+}
+
 func TestResolveWorkspaceByCWDHandlesBasenameCollisionsByPath(t *testing.T) {
 	root := t.TempDir()
 	left := filepath.Join(root, "src", "clay")

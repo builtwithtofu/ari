@@ -202,11 +202,18 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 			}
 
 			startedAt := time.Now().UTC().Format(time.RFC3339Nano)
+			encodedArgs, err := encodeArgs(req.Args)
+			if err != nil {
+				_ = proc.Stop()
+				_, _ = proc.Wait()
+				return CommandRunResponse{}, err
+			}
+
 			if err := store.CreateCommand(ctx, globaldb.CreateCommandParams{
 				CommandID:   commandID,
 				WorkspaceID: sessionID,
 				Command:     command,
-				Args:        encodeArgs(req.Args),
+				Args:        encodedArgs,
 				Status:      "running",
 				StartedAt:   startedAt,
 			}); err != nil {
@@ -287,11 +294,16 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 				return CommandGetResponse{}, fmt.Errorf("map command record to tool: %w", err)
 			}
 
+			encodedArgs, err := encodeArgs(toolRecord.Command.Args)
+			if err != nil {
+				return CommandGetResponse{}, err
+			}
+
 			resp := CommandGetResponse{
 				CommandID:   toolRecord.ToolID,
 				WorkspaceID: toolRecord.WorkspaceID,
 				Command:     toolRecord.Command.Command,
-				Args:        encodeArgs(toolRecord.Command.Args),
+				Args:        encodedArgs,
 				Status:      toolRecord.Status,
 				ExitCode:    toolRecord.ExitCode,
 				StartedAt:   toolRecord.StartedAt,
@@ -402,12 +414,17 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 				return WorkspaceCommandCreateResponse{}, fmt.Errorf("generate command id: %w", err)
 			}
 
+			encodedArgs, err := encodeArgs(req.Args)
+			if err != nil {
+				return WorkspaceCommandCreateResponse{}, err
+			}
+
 			if err := store.CreateWorkspaceCommandDefinition(ctx, globaldb.CreateWorkspaceCommandDefinitionParams{
 				CommandID:   commandID,
 				WorkspaceID: workspaceID,
 				Name:        strings.TrimSpace(req.Name),
 				Command:     strings.TrimSpace(req.Command),
-				Args:        encodeArgs(req.Args),
+				Args:        encodedArgs,
 			}); err != nil {
 				return WorkspaceCommandCreateResponse{}, mapCommandStoreError(err, workspaceID)
 			}
@@ -650,15 +667,15 @@ func mapCommandStoreError(err error, sessionID string) error {
 	return err
 }
 
-func encodeArgs(args []string) string {
+func encodeArgs(args []string) (string, error) {
 	if args == nil {
 		args = make([]string, 0)
 	}
 	encoded, err := json.Marshal(args)
 	if err != nil {
-		panic(fmt.Sprintf("encode command args: %v", err))
+		return "", fmt.Errorf("encode command args: %w", err)
 	}
-	return string(encoded)
+	return string(encoded), nil
 }
 
 func projectWorkspaceCommandDefinition(definition globaldb.WorkspaceCommandDefinition, workspaceID string) (tool.Tool, error) {

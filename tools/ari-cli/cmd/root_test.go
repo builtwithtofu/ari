@@ -10,12 +10,19 @@ import (
 	"github.com/spf13/cobra"
 )
 
+func replaceRootDeps(t *testing.T, deps rootRunDeps) {
+	t.Helper()
+	original := rootDeps
+	rootDeps = deps
+	t.Cleanup(func() {
+		rootDeps = original
+	})
+}
+
 func TestRootRunUsesNonInteractivePath(t *testing.T) {
-	originalIsInteractive := rootIsInteractiveTerminal
 	originalInteractiveRun := rootRunInteractive
 	originalNonInteractiveRun := rootRunNonInteractive
 	t.Cleanup(func() {
-		rootIsInteractiveTerminal = originalIsInteractive
 		rootRunInteractive = originalInteractiveRun
 		rootRunNonInteractive = originalNonInteractiveRun
 	})
@@ -23,10 +30,10 @@ func TestRootRunUsesNonInteractivePath(t *testing.T) {
 	interactiveCalled := false
 	nonInteractiveCalled := false
 
-	rootIsInteractiveTerminal = func(cmd *cobra.Command) bool {
+	replaceRootDeps(t, rootRunDeps{isInteractiveTerminal: func(cmd *cobra.Command) bool {
 		_ = cmd
 		return false
-	}
+	}})
 	rootRunInteractive = func(cmd *cobra.Command, args []string) error {
 		_ = cmd
 		_ = args
@@ -53,30 +60,25 @@ func TestRootRunUsesNonInteractivePath(t *testing.T) {
 }
 
 func TestRootRunUsesInteractivePath(t *testing.T) {
-	originalIsInteractive := rootIsInteractiveTerminal
 	originalInteractiveRun := rootRunInteractive
 	originalNonInteractiveRun := rootRunNonInteractive
-	originalAttach := rootRunWorkspaceAttach
 	t.Cleanup(func() {
-		rootIsInteractiveTerminal = originalIsInteractive
 		rootRunInteractive = originalInteractiveRun
 		rootRunNonInteractive = originalNonInteractiveRun
-		rootRunWorkspaceAttach = originalAttach
 	})
 
 	interactiveCalled := false
 	nonInteractiveCalled := false
 
-	rootIsInteractiveTerminal = func(cmd *cobra.Command) bool {
+	replaceRootDeps(t, rootRunDeps{isInteractiveTerminal: func(cmd *cobra.Command) bool {
 		_ = cmd
 		return true
-	}
-	rootRunWorkspaceAttach = func(cmd *cobra.Command, args []string) error {
+	}, runWorkspaceAttach: func(cmd *cobra.Command, args []string) error {
 		_ = cmd
 		_ = args
 		interactiveCalled = true
 		return nil
-	}
+	}})
 	rootRunNonInteractive = func(cmd *cobra.Command, args []string) error {
 		_ = cmd
 		_ = args
@@ -98,21 +100,19 @@ func TestRootRunUsesInteractivePath(t *testing.T) {
 
 func TestRootRunInteractiveDelegatesToWorkspaceAttachPath(t *testing.T) {
 	originalInteractive := rootRunInteractive
-	originalAttach := rootRunWorkspaceAttach
 	t.Cleanup(func() {
 		rootRunInteractive = originalInteractive
-		rootRunWorkspaceAttach = originalAttach
 	})
 
 	called := false
-	rootRunWorkspaceAttach = func(cmd *cobra.Command, args []string) error {
+	replaceRootDeps(t, rootRunDeps{runWorkspaceAttach: func(cmd *cobra.Command, args []string) error {
 		_ = cmd
 		if len(args) != 0 {
 			t.Fatalf("args length = %d, want 0", len(args))
 		}
 		called = true
 		return nil
-	}
+	}})
 
 	if err := rootRunInteractive(&cobra.Command{}, nil); err != nil {
 		t.Fatalf("rootRunInteractive returned error: %v", err)
@@ -123,16 +123,11 @@ func TestRootRunInteractiveDelegatesToWorkspaceAttachPath(t *testing.T) {
 }
 
 func TestRootRunInteractiveFallsBackWithoutErrorWhenAttachNotImplemented(t *testing.T) {
-	originalAttach := rootRunWorkspaceAttach
-	t.Cleanup(func() {
-		rootRunWorkspaceAttach = originalAttach
-	})
-
-	rootRunWorkspaceAttach = func(cmd *cobra.Command, args []string) error {
+	replaceRootDeps(t, rootRunDeps{runWorkspaceAttach: func(cmd *cobra.Command, args []string) error {
 		_ = cmd
 		_ = args
 		return nil
-	}
+	}})
 
 	if err := rootRunInteractive(&cobra.Command{}, nil); err != nil {
 		t.Fatalf("rootRunInteractive returned error: %v", err)
@@ -140,24 +135,13 @@ func TestRootRunInteractiveFallsBackWithoutErrorWhenAttachNotImplemented(t *test
 }
 
 func TestRootRunNonInteractiveRendersWorkspaceDashboard(t *testing.T) {
-	originalIsInteractive := rootIsInteractiveTerminal
 	originalRunInteractive := rootRunInteractive
-	originalConfigured := rootConfiguredDaemonConfig
-	originalEnsure := rootEnsureDaemonRunning
-	originalResolve := rootResolveWorkspaceFromCWD
-	originalAgentList := rootAgentListRPC
-	originalActivity := rootWorkspaceActivityRPC
 	t.Cleanup(func() {
-		rootIsInteractiveTerminal = originalIsInteractive
 		rootRunInteractive = originalRunInteractive
-		rootConfiguredDaemonConfig = originalConfigured
-		rootEnsureDaemonRunning = originalEnsure
-		rootResolveWorkspaceFromCWD = originalResolve
-		rootAgentListRPC = originalAgentList
-		rootWorkspaceActivityRPC = originalActivity
 	})
 
-	rootIsInteractiveTerminal = func(cmd *cobra.Command) bool {
+	deps := rootDeps
+	deps.isInteractiveTerminal = func(cmd *cobra.Command) bool {
 		_ = cmd
 		return false
 	}
@@ -167,27 +151,27 @@ func TestRootRunNonInteractiveRendersWorkspaceDashboard(t *testing.T) {
 		t.Fatal("interactive handler called unexpectedly")
 		return nil
 	}
-	rootConfiguredDaemonConfig = func() (*config.Config, error) {
+	deps.configuredDaemonConfig = func() (*config.Config, error) {
 		return &config.Config{Daemon: config.DaemonConfig{SocketPath: "/tmp/daemon.sock"}}, nil
 	}
-	rootEnsureDaemonRunning = func(ctx context.Context, cfg *config.Config) error {
+	deps.ensureDaemonRunning = func(ctx context.Context, cfg *config.Config) error {
 		_ = ctx
 		_ = cfg
 		return nil
 	}
-	rootResolveWorkspaceFromCWD = func(ctx context.Context, socketPath, cwd string) (daemon.WorkspaceGetResponse, error) {
+	deps.resolveWorkspaceFromCWD = func(ctx context.Context, socketPath, cwd string) (daemon.WorkspaceGetResponse, error) {
 		_ = ctx
 		_ = socketPath
 		_ = cwd
 		return daemon.WorkspaceGetResponse{WorkspaceID: "ws-1", Name: "clay", Status: "active", OriginRoot: "/tmp/work/clay"}, nil
 	}
-	rootAgentListRPC = func(ctx context.Context, socketPath, sessionID string) (daemon.AgentListResponse, error) {
+	deps.agentListRPC = func(ctx context.Context, socketPath, sessionID string) (daemon.AgentListResponse, error) {
 		_ = ctx
 		_ = socketPath
 		_ = sessionID
 		return daemon.AgentListResponse{Agents: []daemon.AgentSummary{{AgentID: "a1"}, {AgentID: "a2"}}}, nil
 	}
-	rootWorkspaceActivityRPC = func(ctx context.Context, socketPath, workspaceID string) (daemon.WorkspaceActivityResponse, error) {
+	deps.workspaceActivityRPC = func(ctx context.Context, socketPath, workspaceID string) (daemon.WorkspaceActivityResponse, error) {
 		_ = ctx
 		_ = socketPath
 		if workspaceID != "ws-1" {
@@ -203,6 +187,7 @@ func TestRootRunNonInteractiveRendersWorkspaceDashboard(t *testing.T) {
 			Proofs:        []daemon.ProofResultSummary{{ID: "proof_cmd-1", Status: "failed", Command: "just verify"}},
 		}, nil
 	}
+	replaceRootDeps(t, deps)
 
 	out, err := executeRootCommandRaw()
 	if err != nil {
@@ -235,35 +220,26 @@ func TestRootRunNonInteractiveRendersWorkspaceDashboard(t *testing.T) {
 }
 
 func TestRootRunNonInteractivePrintsNoWorkspaceMatchHint(t *testing.T) {
-	originalIsInteractive := rootIsInteractiveTerminal
-	originalConfigured := rootConfiguredDaemonConfig
-	originalEnsure := rootEnsureDaemonRunning
-	originalResolve := rootResolveWorkspaceFromCWD
-	t.Cleanup(func() {
-		rootIsInteractiveTerminal = originalIsInteractive
-		rootConfiguredDaemonConfig = originalConfigured
-		rootEnsureDaemonRunning = originalEnsure
-		rootResolveWorkspaceFromCWD = originalResolve
-	})
-
-	rootIsInteractiveTerminal = func(cmd *cobra.Command) bool {
+	deps := rootDeps
+	deps.isInteractiveTerminal = func(cmd *cobra.Command) bool {
 		_ = cmd
 		return false
 	}
-	rootConfiguredDaemonConfig = func() (*config.Config, error) {
+	deps.configuredDaemonConfig = func() (*config.Config, error) {
 		return &config.Config{Daemon: config.DaemonConfig{SocketPath: "/tmp/daemon.sock"}}, nil
 	}
-	rootEnsureDaemonRunning = func(ctx context.Context, cfg *config.Config) error {
+	deps.ensureDaemonRunning = func(ctx context.Context, cfg *config.Config) error {
 		_ = ctx
 		_ = cfg
 		return nil
 	}
-	rootResolveWorkspaceFromCWD = func(ctx context.Context, socketPath, cwd string) (daemon.WorkspaceGetResponse, error) {
+	deps.resolveWorkspaceFromCWD = func(ctx context.Context, socketPath, cwd string) (daemon.WorkspaceGetResponse, error) {
 		_ = ctx
 		_ = socketPath
 		_ = cwd
 		return daemon.WorkspaceGetResponse{}, workspaceCWDResolutionError{reason: workspaceCWDReasonNoMatch}
 	}
+	replaceRootDeps(t, deps)
 
 	out, err := executeRootCommandRaw()
 	if err == nil {

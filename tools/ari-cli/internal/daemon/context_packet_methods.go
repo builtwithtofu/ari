@@ -132,7 +132,10 @@ func (d *Daemon) projectContextPacket(ctx context.Context, store *globaldb.Store
 		{Name: "latest_proof", Content: strings.Join(proofLines, "\n")},
 		{Name: "omissions", Content: renderOmissions(omissions)},
 	}
-	diffHash := stableHash(diff)
+	diffHash, err := stableHash(diff)
+	if err != nil {
+		return ContextPacket{}, err
+	}
 	packet := ContextPacket{
 		WorkspaceID:        workspaceID,
 		TaskID:             taskID,
@@ -144,7 +147,7 @@ func (d *Daemon) projectContextPacket(ctx context.Context, store *globaldb.Store
 		Omissions:          omissions,
 		CreatedAt:          time.Now().UTC().Format(time.RFC3339Nano),
 	}
-	packet.PacketHash = stableHash(struct {
+	packetHash, err := stableHash(struct {
 		WorkspaceID        string
 		TaskID             string
 		DiffHash           string
@@ -154,6 +157,10 @@ func (d *Daemon) projectContextPacket(ctx context.Context, store *globaldb.Store
 		IncludedProofIDs   []string
 		Omissions          []ContextOmission
 	}{packet.WorkspaceID, packet.TaskID, packet.DiffHash, packet.Sections, packet.IncludedFilePaths, packet.IncludedCommandIDs, packet.IncludedProofIDs, packet.Omissions})
+	if err != nil {
+		return ContextPacket{}, err
+	}
+	packet.PacketHash = packetHash
 	packet.ID = "ctx_" + strings.TrimPrefix(packet.PacketHash, "sha256:")[:12]
 	return packet, nil
 }
@@ -180,11 +187,11 @@ func renderOmissions(omissions []ContextOmission) string {
 	return strings.Join(lines, "\n")
 }
 
-func stableHash(value any) string {
+func stableHash(value any) (string, error) {
 	encoded, err := json.Marshal(value)
 	if err != nil {
-		panic(fmt.Sprintf("stable hash marshal failed: %v", err))
+		return "", fmt.Errorf("stable hash marshal failed: %w", err)
 	}
 	hash := sha256.Sum256(encoded)
-	return "sha256:" + hex.EncodeToString(hash[:])
+	return "sha256:" + hex.EncodeToString(hash[:]), nil
 }

@@ -7,39 +7,46 @@ import (
 	"time"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/client"
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/config"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
 	"github.com/spf13/cobra"
 )
 
-var rootIsInteractiveTerminal = func(cmd *cobra.Command) bool {
-	return isInteractiveTerminalWithOutput(cmd)
+type rootRunDeps struct {
+	isInteractiveTerminal   func(*cobra.Command) bool
+	configuredDaemonConfig  func() (*config.Config, error)
+	ensureDaemonRunning     func(context.Context, *config.Config) error
+	resolveWorkspaceFromCWD func(context.Context, string, string) (daemon.WorkspaceGetResponse, error)
+	agentListRPC            func(context.Context, string, string) (daemon.AgentListResponse, error)
+	workspaceActivityRPC    func(context.Context, string, string) (daemon.WorkspaceActivityResponse, error)
+	runWorkspaceAttach      func(*cobra.Command, []string) error
 }
 
-var rootConfiguredDaemonConfig = configuredDaemonConfig
-
-var rootEnsureDaemonRunning = ensureDaemonRunning
-
-var rootResolveWorkspaceFromCWD = resolveWorkspaceFromCWD
-
-var rootAgentListRPC = agentListRPC
-
-var rootWorkspaceActivityRPC = func(ctx context.Context, socketPath, workspaceID string) (daemon.WorkspaceActivityResponse, error) {
-	rpcClient := client.New(socketPath)
-	var response daemon.WorkspaceActivityResponse
-	if err := rpcClient.Call(ctx, "workspace.activity", daemon.WorkspaceActivityRequest{WorkspaceID: workspaceID}, &response); err != nil {
-		return daemon.WorkspaceActivityResponse{}, err
-	}
-	return response, nil
+var rootDeps = rootRunDeps{
+	isInteractiveTerminal: func(cmd *cobra.Command) bool {
+		return isInteractiveTerminalWithOutput(cmd)
+	},
+	configuredDaemonConfig:  configuredDaemonConfig,
+	ensureDaemonRunning:     ensureDaemonRunning,
+	resolveWorkspaceFromCWD: resolveWorkspaceFromCWD,
+	agentListRPC:            agentListRPC,
+	workspaceActivityRPC: func(ctx context.Context, socketPath, workspaceID string) (daemon.WorkspaceActivityResponse, error) {
+		rpcClient := client.New(socketPath)
+		var response daemon.WorkspaceActivityResponse
+		if err := rpcClient.Call(ctx, "workspace.activity", daemon.WorkspaceActivityRequest{WorkspaceID: workspaceID}, &response); err != nil {
+			return daemon.WorkspaceActivityResponse{}, err
+		}
+		return response, nil
+	},
+	runWorkspaceAttach: runWorkspaceAttachEntrypoint,
 }
-
-var rootRunWorkspaceAttach = runWorkspaceAttachEntrypoint
 
 var rootRunInteractive = func(cmd *cobra.Command, _ []string) error {
 	if cmd == nil {
 		return fmt.Errorf("root command is required")
 	}
 
-	return rootRunWorkspaceAttach(cmd, nil)
+	return rootDeps.runWorkspaceAttach(cmd, nil)
 }
 
 var rootRunNonInteractive = func(cmd *cobra.Command, _ []string) error {
@@ -47,12 +54,12 @@ var rootRunNonInteractive = func(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("root command is required")
 	}
 
-	cfg, err := rootConfiguredDaemonConfig()
+	cfg, err := rootDeps.configuredDaemonConfig()
 	if err != nil {
 		return err
 	}
 
-	if err := rootEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
+	if err := rootDeps.ensureDaemonRunning(cmd.Context(), cfg); err != nil {
 		return err
 	}
 
@@ -64,7 +71,7 @@ var rootRunNonInteractive = func(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	workspace, err := rootResolveWorkspaceFromCWD(ctx, cfg.Daemon.SocketPath, cwd)
+	workspace, err := rootDeps.resolveWorkspaceFromCWD(ctx, cfg.Daemon.SocketPath, cwd)
 	if err != nil {
 		if isWorkspaceCWDNoMatch(err) {
 			_, writeErr := fmt.Fprintln(cmd.OutOrStdout(), "No workspace matches current directory.")
@@ -80,11 +87,11 @@ var rootRunNonInteractive = func(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	agents, err := rootAgentListRPC(ctx, cfg.Daemon.SocketPath, workspace.WorkspaceID)
+	agents, err := rootDeps.agentListRPC(ctx, cfg.Daemon.SocketPath, workspace.WorkspaceID)
 	if err != nil {
 		return mapSessionRPCError(err)
 	}
-	activity, err := rootWorkspaceActivityRPC(ctx, cfg.Daemon.SocketPath, workspace.WorkspaceID)
+	activity, err := rootDeps.workspaceActivityRPC(ctx, cfg.Daemon.SocketPath, workspace.WorkspaceID)
 	if err != nil {
 		return mapSessionRPCError(err)
 	}
@@ -131,7 +138,7 @@ func NewRootCmd() *cobra.Command {
 		Use:   "ari",
 		Short: "Ari daemon CLI",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if rootIsInteractiveTerminal(cmd) {
+			if rootDeps.isInteractiveTerminal(cmd) {
 				return rootRunInteractive(cmd, args)
 			}
 			return rootRunNonInteractive(cmd, args)

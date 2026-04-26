@@ -797,7 +797,6 @@ func TestWorkspaceAttachUsesCWDWorkspaceAndRunsAttachFlow(t *testing.T) {
 	}
 
 	originalEnsure := workspaceEnsureDaemonRunning
-	originalCfg := rootConfiguredDaemonConfig
 	originalList := workspaceListRPC
 	originalGet := workspaceGetRPC
 	originalPrepare := agentAttachPrepareTerminalFn
@@ -806,9 +805,6 @@ func TestWorkspaceAttachUsesCWDWorkspaceAndRunsAttachFlow(t *testing.T) {
 	originalRunSession := agentAttachRunSession
 
 	workspaceEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
-	rootConfiguredDaemonConfig = func() (*config.Config, error) {
-		return &config.Config{Daemon: config.DaemonConfig{SocketPath: "/tmp/daemon.sock"}}, nil
-	}
 	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
 		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{{WorkspaceID: "ws-1", Name: "clay"}}}, nil
 	}
@@ -834,7 +830,6 @@ func TestWorkspaceAttachUsesCWDWorkspaceAndRunsAttachFlow(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		workspaceEnsureDaemonRunning = originalEnsure
-		rootConfiguredDaemonConfig = originalCfg
 		workspaceListRPC = originalList
 		workspaceGetRPC = originalGet
 		agentAttachPrepareTerminalFn = originalPrepare

@@ -246,7 +246,7 @@ func workspaceMatchScore(cwd string, workspace daemon.WorkspaceGetResponse) (int
 			continue
 		}
 
-		score := len(normalizedRoot)
+		score := workspacePathSegmentCount(normalizedRoot)
 		if !matched || score > bestScore {
 			bestScore = score
 			matched = true
@@ -254,6 +254,18 @@ func workspaceMatchScore(cwd string, workspace daemon.WorkspaceGetResponse) (int
 	}
 
 	return bestScore, matched, nil
+}
+
+func workspacePathSegmentCount(path string) int {
+	cleanPath := filepath.Clean(path)
+	if cleanPath == "." || cleanPath == string(os.PathSeparator) {
+		return 0
+	}
+	trimmed := strings.Trim(cleanPath, string(os.PathSeparator))
+	if trimmed == "" {
+		return 0
+	}
+	return len(strings.Split(trimmed, string(os.PathSeparator)))
 }
 
 func workspaceRootCandidates(workspace daemon.WorkspaceGetResponse) []string {

@@ -184,11 +184,18 @@ func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globa
 			}
 
 			startedAt := time.Now().UTC().Format(time.RFC3339Nano)
+			encodedArgs, err := encodeArgs(launchSpec.Args)
+			if err != nil {
+				_ = proc.Stop()
+				_, _ = proc.Wait()
+				return AgentSpawnResponse{}, err
+			}
+
 			createParams := globaldb.CreateAgentParams{
 				AgentID:            agentID,
 				WorkspaceID:        sessionID,
 				Command:            launchSpec.Command,
-				Args:               encodeArgs(launchSpec.Args),
+				Args:               encodedArgs,
 				Status:             "running",
 				StartedAt:          startedAt,
 				Harness:            harnessIdentity.Harness,

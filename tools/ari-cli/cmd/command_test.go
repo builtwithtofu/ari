@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/config"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
@@ -99,27 +100,31 @@ func TestTopLevelExecSubcommandsExist(t *testing.T) {
 	}
 }
 
-func TestWorkspaceTargetingHelpDoesNotExposeExecutionRootPath(t *testing.T) {
+func TestWorkspaceTargetingHelpRegistersWorkspaceFlagOnly(t *testing.T) {
 	tests := []struct {
 		name string
 		args []string
 	}{
-		{name: "exec run", args: []string{"exec", "run", "--help"}},
-		{name: "agent spawn", args: []string{"agent", "spawn", "--help"}},
-		{name: "workspace command create", args: []string{"command", "create", "--help"}},
+		{name: "exec run", args: []string{"exec", "run"}},
+		{name: "agent spawn", args: []string{"agent", "spawn"}},
+		{name: "workspace command create", args: []string{"command", "create"}},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			out, err := executeRootCommand(tc.args...)
+			cmd, _, err := NewRootCmd().Find(tc.args)
 			if err != nil {
-				t.Fatalf("help returned error: %v", err)
+				t.Fatalf("find %v returned error: %v", tc.args, err)
 			}
-			if !strings.Contains(out, "Target workspace id or name (defaults to active workspace)") {
-				t.Fatalf("help output = %q, want target workspace wording", out)
+			workspaceFlag := cmd.Flags().Lookup("workspace")
+			if workspaceFlag == nil {
+				t.Fatalf("%v has no workspace flag", tc.args)
 			}
-			if strings.Contains(out, "execution_root") || strings.Contains(out, "execution-root") {
-				t.Fatalf("help output = %q, did not expect execution root flag", out)
+			if workspaceFlag.Usage != "Target workspace id or name (defaults to active workspace)" {
+				t.Fatalf("workspace flag usage = %q, want target workspace wording", workspaceFlag.Usage)
+			}
+			if executionRootFlag := cmd.Flags().Lookup("execution-root"); executionRootFlag != nil {
+				t.Fatalf("%v unexpectedly registers execution-root flag", tc.args)
 			}
 		})
 	}
@@ -632,6 +637,53 @@ func TestCommandRunUsesExplicitAgentSelector(t *testing.T) {
 	}
 	if gotSelector != "1" {
 		t.Fatalf("agent selector = %q, want %q", gotSelector, "1")
+	}
+}
+
+func TestCommandRunStopsPollingAtConfiguredWallclockCap(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalResolveTarget := commandResolveSessionTarget
+	originalReadActive := commandReadActiveSession
+	originalEnsure := commandEnsureDaemonRunning
+	originalEnsureScope := commandEnsureWorkspaceScope
+	originalRun := commandRunRPC
+	originalGet := commandGetRPC
+	originalResolveAgent := commandResolveAgentSelector
+	originalMaxDuration := oneOffCommandMaxDuration
+
+	commandResolveSessionTarget = func(context.Context, string, string) (resolvedSessionTarget, error) {
+		return resolvedSessionTarget{WorkspaceID: "sess-1", Session: &daemon.WorkspaceGetResponse{WorkspaceID: "sess-1", OriginRoot: t.TempDir()}}, nil
+	}
+	commandReadActiveSession = func() (string, error) { return "sess-1", nil }
+	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	commandEnsureWorkspaceScope = func(*daemon.WorkspaceGetResponse, string) error { return nil }
+	commandResolveAgentSelector = func(context.Context, string, string, string) (string, error) { return "agt-1", nil }
+	commandRunRPC = func(context.Context, string, daemon.CommandRunRequest) (daemon.CommandRunResponse, error) {
+		return daemon.CommandRunResponse{CommandID: "cmd-1", Status: "running"}, nil
+	}
+	commandGetRPC = func(context.Context, string, string, string) (daemon.CommandGetResponse, error) {
+		return daemon.CommandGetResponse{CommandID: "cmd-1", Status: "running"}, nil
+	}
+	oneOffCommandMaxDuration = 20 * time.Millisecond
+	t.Cleanup(func() {
+		commandResolveSessionTarget = originalResolveTarget
+		commandReadActiveSession = originalReadActive
+		commandEnsureDaemonRunning = originalEnsure
+		commandEnsureWorkspaceScope = originalEnsureScope
+		commandRunRPC = originalRun
+		commandGetRPC = originalGet
+		commandResolveAgentSelector = originalResolveAgent
+		oneOffCommandMaxDuration = originalMaxDuration
+	})
+
+	_, err := executeRootCommandRaw("exec", "run", "--", "go", "test")
+	if err == nil {
+		t.Fatal("execute command run returned nil error for command that exceeded wallclock cap")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("execute command run error = %v, want context deadline exceeded", err)
 	}
 }
 

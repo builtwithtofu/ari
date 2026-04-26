@@ -65,6 +65,7 @@ var (
 	}
 	commandResolveAgentSelector = resolveAgentSelector
 	commandAgentSendRPC         = agentSendRPC
+	oneOffCommandMaxDuration    = 24 * time.Hour
 )
 
 func NewExecCmd() *cobra.Command {
@@ -342,10 +343,12 @@ func runOneOffCommandAndForwardOutput(cmd *cobra.Command, cfg *config.Config, wo
 		return userFacingError{message: "Command is required"}
 	}
 
-	runCtx := cmd.Context()
-	if runCtx == nil {
-		runCtx = context.Background()
+	parentCtx := cmd.Context()
+	if parentCtx == nil {
+		parentCtx = context.Background()
 	}
+	runCtx, runCancel := context.WithTimeout(parentCtx, oneOffCommandMaxDuration)
+	defer runCancel()
 
 	agentID, err := commandResolveAgentSelector(runCtx, cfg.Daemon.SocketPath, workspaceID, agentSelector)
 	if err != nil {
@@ -423,9 +426,7 @@ func waitForCommandCompletion(ctx context.Context, socketPath, workspaceID, comm
 	defer ticker.Stop()
 
 	for {
-		pollCtx, pollCancel := context.WithTimeout(ctx, 5*time.Second)
-		resp, err := commandGetRPC(pollCtx, socketPath, workspaceID, commandID)
-		pollCancel()
+		resp, err := commandGetRPC(ctx, socketPath, workspaceID, commandID)
 		if err != nil {
 			return daemon.CommandGetResponse{}, mapCommandRPCError(err)
 		}
