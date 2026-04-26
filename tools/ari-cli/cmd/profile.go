@@ -56,6 +56,9 @@ func newProfileDefaultsCmd() *cobra.Command {
 		Short: "Set top-level agent profile defaults",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_ = args
+			if err := validateProfileDefaultsInput(harness, invocationClass); err != nil {
+				return err
+			}
 			if strings.TrimSpace(harness) != "" {
 				if err := config.WriteDefaultHarness(harness); err != nil {
 					return err
@@ -83,6 +86,29 @@ func newProfileDefaultsCmd() *cobra.Command {
 	cmd.Flags().StringVar(&model, "model", "", "Preferred model or variant for profiles without an explicit model")
 	cmd.Flags().StringVar(&invocationClass, "invocation-class", "", "Default invocation class: agent or temporary")
 	return cmd
+}
+
+func validateProfileDefaultsInput(harness, invocationClass string) error {
+	if harness = strings.TrimSpace(harness); harness != "" {
+		valid := false
+		for _, supported := range daemon.SupportedHarnesses() {
+			if harness == supported {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return fmt.Errorf("validate config: default_harness must be one of %s", strings.Join(daemon.SupportedHarnesses(), ", "))
+		}
+	}
+	if invocationClass = strings.TrimSpace(invocationClass); invocationClass != "" {
+		switch daemon.HarnessInvocationClass(invocationClass) {
+		case daemon.HarnessInvocationAgent, daemon.HarnessInvocationTemporary:
+		default:
+			return fmt.Errorf("validate config: default_invocation_class must be one of agent, temporary")
+		}
+	}
+	return nil
 }
 
 func newProfileCreateCmd() *cobra.Command {

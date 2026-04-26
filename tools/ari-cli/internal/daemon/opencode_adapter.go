@@ -117,6 +117,7 @@ type opencodeEvent struct {
 func parseOpenCodeEvents(output []byte) (opencodeParsedEvents, error) {
 	var parsed opencodeParsedEvents
 	scanner := bufio.NewScanner(bytes.NewReader(bytes.TrimSpace(output)))
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
 		line := bytes.TrimSpace(scanner.Bytes())
 		if len(line) == 0 {

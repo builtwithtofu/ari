@@ -2,9 +2,11 @@ package daemon
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -12,6 +14,9 @@ import (
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/testutil"
+
+	_ "modernc.org/sqlite"
 )
 
 type failingReader struct{}
@@ -61,6 +66,44 @@ func TestStartExecutorRunProjectsPacketIntoAgentRunAndTimeline(t *testing.T) {
 	if items[0].SourceID != run.AgentRunID {
 		t.Fatalf("timeline source id = %q, want Ari run id %q", items[0].SourceID, run.AgentRunID)
 	}
+}
+
+func TestCreateStoredAgentProfileReturnsPersistedProfileIDAfterUpdate(t *testing.T) {
+	store := newDaemonMigratedGlobalDBStore(t)
+	ctx := context.Background()
+
+	first, err := createStoredAgentProfile(ctx, store, AgentProfileCreateRequest{WorkspaceID: "ws-1", Name: "executor", Harness: HarnessNameCodex})
+	if err != nil {
+		t.Fatalf("createStoredAgentProfile first returned error: %v", err)
+	}
+	second, err := createStoredAgentProfile(ctx, store, AgentProfileCreateRequest{WorkspaceID: "ws-1", Name: "executor", Harness: HarnessNameClaude})
+	if err != nil {
+		t.Fatalf("createStoredAgentProfile update returned error: %v", err)
+	}
+	if second.ProfileID != first.ProfileID || second.Harness != HarnessNameClaude {
+		t.Fatalf("updated profile = %#v, want existing persisted id %q and updated harness", second, first.ProfileID)
+	}
+}
+
+func newDaemonMigratedGlobalDBStore(t *testing.T) *globaldb.Store {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "ari.db")
+	migrationsDir := filepath.Join("..", "..", "migrations")
+	if err := testutil.ApplySQLMigrations(dbPath, migrationsDir); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite db: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	t.Cleanup(func() { _ = db.Close() })
+	store, err := globaldb.NewSQLStore(db)
+	if err != nil {
+		t.Fatalf("NewSQLStore returned error: %v", err)
+	}
+	return store
 }
 
 func TestStartExecutorRunRejectsMissingRequiredCapabilityBeforeStart(t *testing.T) {

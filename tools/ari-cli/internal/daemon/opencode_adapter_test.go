@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -38,6 +39,29 @@ func TestOpenCodeExecutorMapsJSONEvents(t *testing.T) {
 	}
 	if !strings.Contains(runner.prompt, "Build it") || !strings.Contains(runner.prompt, "ctx_123") {
 		t.Fatalf("opencode prompt = %q, want profile prompt plus context packet", runner.prompt)
+	}
+}
+
+func TestOpenCodeExecutorParsesLargeJSONLEvent(t *testing.T) {
+	largeText := strings.Repeat("x", 128*1024)
+	line, err := json.Marshal(map[string]any{"type": "message.part.updated", "properties": map[string]any{"part": map[string]string{"id": "part_1", "sessionID": "sess_123", "messageID": "msg_123", "type": "text", "text": largeText}}})
+	if err != nil {
+		t.Fatalf("marshal event: %v", err)
+	}
+	runner := &fakeOpenCodeRunner{output: []byte(strings.Join([]string{
+		`{"type":"session.status","properties":{"sessionID":"sess_123","status":{"type":"busy"}}}`,
+		string(line),
+		`{"type":"session.status","properties":{"sessionID":"sess_123","status":{"type":"idle"}}}`,
+	}, "\n"))}
+	executor := NewOpenCodeExecutorForTest(opencodeExecutorOptions{Executable: "opencode", Cwd: "/repo", RunCommand: runner.Run})
+	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
+
+	_, items, err := StartExecutorRun(context.Background(), executor, packet)
+	if err != nil {
+		t.Fatalf("StartExecutorRun returned error: %v", err)
+	}
+	if len(items) != 3 || items[1].Kind != "agent_text" || items[1].Text != largeText {
+		t.Fatalf("items = %#v, want large OpenCode text event preserved", items)
 	}
 }
 

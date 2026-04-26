@@ -375,7 +375,11 @@ func createStoredAgentProfile(ctx context.Context, store *globaldb.Store, req Ag
 	if err := store.UpsertAgentProfile(ctx, stored); err != nil {
 		return AgentProfileResponse{}, err
 	}
-	return agentProfileResponseFromStore(stored, req.Defaults), nil
+	persisted, err := store.GetAgentProfile(ctx, stored.WorkspaceID, stored.Name)
+	if err != nil {
+		return AgentProfileResponse{}, err
+	}
+	return agentProfileResponseFromStore(persisted, req.Defaults), nil
 }
 
 func getStoredAgentProfile(ctx context.Context, store *globaldb.Store, req AgentProfileGetRequest) (AgentProfileResponse, error) {
