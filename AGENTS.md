@@ -1,112 +1,92 @@
 # Ari Agent Rules
 
-This repository is pre-alpha. Keep changes small, typed, and easy to verify.
-
-## Alpha Evolution
-
-- This project is greenfield/pre-alpha.
-- Breaking changes are acceptable when they improve the core design.
-- Do not add compatibility shims or legacy aliases unless explicitly requested.
-
-## Version Control
-
-- This is a JJ project. Use JJ-first workflows for local version control operations.
-- Create frequent JJ checkpoints during active work by committing logical WIP slices.
-- Keep a moving WIP bookmark for visibility while iterating.
-
-### JJ Checkpoints
-
-- Check state before checkpoint: `jj st --no-pager --color=never --quiet` and `jj diff --summary --no-pager --color=never --quiet`.
-- Create checkpoint commit: `jj commit -m "wip: <short-description>"`.
-- Move/update bookmark to latest checkpoint: `jj bookmark set wip/<topic> -r @-`.
-- Use dated milestone bookmarks for stable pauses: `jj bookmark set checkpoint/<yyyy-mm-dd>-<topic> -r @-`.
-- Create checkpoints after each completed task/wave, before risky refactors, and before rebases.
-
-### JJ Safety Boundaries
-
-- JJ checkpoint commits are safe to rewrite/replace while they are local-only (not published).
-- It is acceptable to override local WIP history by creating a new checkpoint and moving the `wip/<topic>` bookmark.
-- `main` (trunk) is the sacred boundary: do not rewrite commits on `main`.
-- Published downstream stacks may be rewritten only when clearly safe; if safety is uncertain, ask the user first.
-- Before cleanup or history rewrites, preview local-only mutable commits with: `jj log -r 'mutable() & ~ancestors(remote_bookmarks(remote=origin)) & ~@' --no-pager --color=never --quiet`.
-
-## Development Environment
-
-- Enter the environment with `nix develop`.
-- Use Go tooling for the Ari CLI baseline.
-- Prefer `go run`, `go test`, and `go fmt` when needed.
-
-## Language and Typing
-
-- Use Go for CLI/runtime code.
-- Keep code explicit and easy to test.
-
-## Comments and Documentation
-
-- Keep comments in present tense.
-- Do not reference deleted or replaced code in comments.
-- Prefer comments that explain current intent, not history.
+Ari is pre-alpha. Keep changes small, typed, and easy to verify.
 
 ## Critical Constraints (MUST)
 
-### Test-Driven Development
+- Work primarily in `tools/ari-cli/`; treat old plugin/harness artifacts as archived context.
+- Use Go for CLI/runtime code.
+- Use JJ for local version control; do not rewrite `main`/`trunk()`.
+- Run project tooling through Nix, not host-installed tools.
+- Before finishing code changes, run `nix develop -c just verify`.
 
-- RED first: write failing test before implementation.
-- GREEN second: write minimum code to pass.
-- REFACTOR third: clean up while keeping tests green.
-- NEVER modify tests to make them pass; fix the code.
-- NEVER use `assert.Contains`; assert on complete expected values.
-- Prefer real database tests over mocked tests.
-- TESTS MUST NOT write inline migration or table-creation logic; use Atlas-backed migrations/helpers as the schema source.
+## Development Environment
+
+- Enter tools with `nix develop` or prefix commands with `nix develop -c`.
+- Preferred checks:
+  - `nix develop -c go test ./...` from `tools/ari-cli/` for quick Go validation.
+  - `nix develop -c just verify` from repo root for the CI-equivalent gate.
+- Use `go fmt`/`gofumpt`, `go test`, and `go build` only through the Nix shell.
+
+## Pipeline Stability
+
+CI splits the same repo contract into separate jobs, so a change can pass one local command and still fail another gate.
+
+- Format can fail for either repo-root Nix files or Go files:
+  - root: `nix run nixpkgs#nixpkgs-fmt -- --check .`
+  - Go: `nix develop -c just fmt-check` (`gofumpt -l tools/ari-cli`)
+- Lint/build/test run from the Nix dev shell and are scoped by `justfile`:
+  - `nix develop -c just lint`
+  - `nix develop -c just build`
+  - `nix develop -c just test`
+- Common breakages to prevent:
+  - forgetting `gofumpt` after Go edits;
+  - using host Go/lint versions instead of Nix versions;
+  - editing migrations without updating Atlas revision state;
+  - adding timing-sensitive PTY/daemon tests without generous synchronization;
+  - relying on unordered maps, filesystem order, or Git output order in tests.
+- If CI fails, inspect the named job first and reproduce that exact `just` or Nix command locally before changing code.
+
+## Test-Driven Development
+
+- RED first: write a meaningful failing test before behavior changes or bug fixes.
+- GREEN second: implement the minimum code to pass.
+- REFACTOR third: clean up while tests stay green.
+- Never weaken or delete tests to make code pass.
+- Prefer real database tests over mocks.
 - Test behavior, not implementation details.
-- For bug reports (stack traces, logs, or repro steps), add a reproducer test before fixing.
+- Do not use `assert.Contains`; assert complete expected values when exact output is known.
+- Tests must not create schema inline; use Atlas-backed migrations/helpers as the schema source.
+- For bug reports with logs, stack traces, or repro steps, add the reproducer test first.
 
-### Tiger Style
+## Go Runtime Rules
 
-- At least 2 assertions per function (input validation, return validation).
-- Validate all arguments at function entry.
-- Validate all returns before returning.
-- Fail-fast: panic on nil, error on invalid state.
-- No silent failures: all errors handled or propagated.
-- No hidden behavior: explicit over implicit.
+- Validate arguments at function entry and validate important returns before returning.
+- Return errors for recoverable runtime failures: I/O, RPC, config, user/system state.
+- Use `panic` only for programmer errors and impossible internal states.
+- Handle or propagate every error; avoid silent failures.
+- Keep behavior explicit; avoid hidden defaults and broad recover wrappers.
+- Keep comments present-tense and focused on current intent, not history.
 
-### Daemon Foundations (Go)
+## Daemon Foundations
 
 - Build daemon lifecycle around `context.Context` and `signal.NotifyContext`.
-- Use synchronous startup: initialize dependencies, bind socket, then serve.
-- Use explicit shutdown sequencing: cancel context, close listener, wait for goroutines, clean socket/pid artifacts.
+- Start synchronously: initialize dependencies, bind socket, then serve.
+- Shut down explicitly: cancel context, close listener, wait for goroutines, clean socket/pid artifacts.
 - Tie every goroutine lifetime to context cancellation or channel close.
-- Use Unix socket `PlainObjectCodec` framing consistently for local RPC.
+- Use Unix socket `PlainObjectCodec` framing for local RPC.
 - Remove stale Unix socket files before bind and unlink socket file on close.
 - Report daemon status with at least version, pid, uptime, and socket path.
+- Test signal handling through injectable seams or subprocess tests; do not signal the test runner process.
 
-### Invariant Policy
+## Database and Migrations
 
-- Use `panic` only for programmer errors and impossible internal states.
-- Use `error` returns for recoverable runtime failures (I/O, RPC, config, user/system state).
-- Keep invariant helpers minimal and internal (`Must`, `Must1`, `Invariant`).
-- Do not hide control flow with broad recover wrappers in normal runtime paths.
-- Test signal handling through injectable seams or subprocess tests; do not send SIGTERM to the test runner process.
-
-### Migration Safety
-
-- Preserve existing user databases during normal bootstrap and upgrades.
-- Never rewrite or edit already-applied migration files; add new forward migrations instead.
+- Preserve existing user databases during bootstrap and upgrades.
+- Never rewrite or edit already-applied migration files; add forward migrations instead.
 - Keep migrations forward-only by default and use Atlas revision history as source of truth.
-- Use explicit backup + restore or a corrective forward migration for recovery; do not use destructive reset behavior in upgrade paths.
+- Use explicit backup/restore or corrective forward migration for recovery; do not reset destructively in upgrade paths.
+- Run migration-related checks from the Nix shell so Atlas and SQLite versions match CI.
 
-## Scope Discipline
+## JJ Workflow
 
-- Keep active implementation focused on `tools/ari-cli/`.
+- Inspect before checkpoints: `jj st --no-pager --color=never --quiet` and `jj diff --summary --no-pager --color=never --quiet`.
+- Commit logical WIP slices: `jj commit -m "wip: <short-description>"`.
+- Move the active bookmark after committing: `jj bookmark set wip/<topic> -r @-`.
+- Use dated pause bookmarks when helpful: `jj bookmark set checkpoint/<yyyy-mm-dd>-<topic> -r @-`.
+- Preview mutable local-only commits before cleanup: `jj log -r 'mutable() & ~ancestors(remote_bookmarks(remote=origin)) & ~@' --no-pager --color=never --quiet`.
+
+## Product Direction
+
 - Ari is the project and interface name.
-- Treat historical plugin and harness artifacts as archived context, not active scope.
-
-## Validation
-
-- Before finishing a change, run at least:
-  - `nix develop -c just verify`
-- Run project tooling through Nix instead of calling tools directly from the host shell.
-- Preferred validation commands:
-  - `nix develop -c go test ./...`
-  - `nix develop -c just verify`
-- If migration checks are needed, run them from the Nix shell so Atlas and SQLite toolchain versions match CI.
+- Breaking changes are acceptable when they improve the core design.
+- Do not add compatibility shims or legacy aliases unless explicitly requested.
