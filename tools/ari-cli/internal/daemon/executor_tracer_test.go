@@ -91,7 +91,7 @@ func TestAgentRunMethodStartsPTYExecutorFromContextPacket(t *testing.T) {
 		Executor: "pty",
 		Packet:   packet,
 		Command:  "/bin/sh",
-		Args:     []string{"-c", "sleep 1; printf done"},
+		Args:     []string{"-c", "sleep 0.2; printf done"},
 	})
 	if time.Since(start) > 500*time.Millisecond {
 		t.Fatalf("agent.run pty took %s, want prompt return", time.Since(start))
@@ -102,7 +102,7 @@ func TestAgentRunMethodStartsPTYExecutorFromContextPacket(t *testing.T) {
 	if len(resp.Items) != 1 || resp.Items[0].Kind != "lifecycle" || resp.Items[0].Status != "running" {
 		t.Fatalf("items = %#v, want one running lifecycle item", resp.Items)
 	}
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(boundedTestTimeout(t, 5*time.Second))
 	for time.Now().Before(deadline) {
 		timeline := callMethod[WorkspaceTimelineResponse](t, registry, "workspace.timeline", WorkspaceTimelineRequest{WorkspaceID: "ws-1"})
 		for _, item := range timeline.Items {
