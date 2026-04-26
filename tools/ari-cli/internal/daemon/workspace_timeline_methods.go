@@ -189,6 +189,9 @@ type ExecutorRun struct {
 	RunID           string
 	Executor        string
 	ProviderRunID   string
+	PID             int
+	ExitCode        *int
+	ProcessSample   *ProcessMetricsSample
 	CapabilityNames []string
 }
 
@@ -268,7 +271,7 @@ func (e *PTYExecutor) Start(ctx context.Context, req ExecutorStartRequest) (Exec
 			e.sink(ariRunID, []TimelineItem{sinkItem})
 		}
 	}()
-	return ExecutorRun{RunID: runID, Executor: "pty", ProviderRunID: runID, CapabilityNames: []string{"timeline", "pty"}}, nil
+	return ExecutorRun{RunID: runID, Executor: "pty", ProviderRunID: runID, PID: proc.PID(), CapabilityNames: []string{"timeline", "pty"}}, nil
 }
 
 func (e *PTYExecutor) Items(ctx context.Context, runID string) ([]TimelineItem, error) {

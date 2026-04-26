@@ -166,6 +166,26 @@ func TestAgentSpawnRejectsExecutionRootPathOutsideWorkspace(t *testing.T) {
 	}
 }
 
+func TestAgentSpawnRejectsInvalidInvocationClass(t *testing.T) {
+	store := newAgentMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerAgentMethods(registry, store); err != nil {
+		t.Fatalf("registerAgentMethods returned error: %v", err)
+	}
+
+	seedSessionWithPrimaryFolder(t, store, "sess-1", t.TempDir())
+	err := callMethodError(registry, "agent.spawn", AgentSpawnRequest{WorkspaceID: "sess-1", InvocationClass: "temproary", Command: "/bin/sh", Args: []string{"-c", "exit 0"}})
+	var rpcErr *rpc.HandlerError
+	if !errors.As(err, &rpcErr) {
+		t.Fatalf("agent.spawn error type = %T, want *rpc.HandlerError", err)
+	}
+	if rpcErr.Code != rpc.InvalidParams {
+		t.Fatalf("agent.spawn error code = %d, want %d", rpcErr.Code, rpc.InvalidParams)
+	}
+}
+
 func TestAgentSpawnRejectsRelativeExecutionRootPath(t *testing.T) {
 	store := newAgentMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
@@ -234,6 +254,36 @@ func TestAgentListAndGetIncludeSpawnedAgent(t *testing.T) {
 
 	_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 	waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "stopped")
+}
+
+func TestAgentListHidesTemporaryAgentsByDefault(t *testing.T) {
+	store := newAgentMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerAgentMethods(registry, store); err != nil {
+		t.Fatalf("registerAgentMethods returned error: %v", err)
+	}
+	workspace := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
+
+	regular := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{WorkspaceID: "sess-1", Name: "regular", Command: "/bin/sh", Args: []string{"-c", "while true; do sleep 1; done"}})
+	temporary := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{WorkspaceID: "sess-1", Name: "temporary", InvocationClass: string(HarnessInvocationTemporary), Command: "/bin/sh", Args: []string{"-c", "while true; do sleep 1; done"}})
+
+	defaultList := callMethod[AgentListResponse](t, registry, "agent.list", AgentListRequest{WorkspaceID: "sess-1"})
+	if len(defaultList.Agents) != 1 || defaultList.Agents[0].AgentID != regular.AgentID || defaultList.Agents[0].InvocationClass != string(HarnessInvocationAgent) {
+		t.Fatalf("default list = %#v, want only regular agent", defaultList.Agents)
+	}
+	fullList := callMethod[AgentListResponse](t, registry, "agent.list", AgentListRequest{WorkspaceID: "sess-1", ShowTemporary: true})
+	if len(fullList.Agents) != 2 {
+		t.Fatalf("full list len = %d, want 2: %#v", len(fullList.Agents), fullList.Agents)
+	}
+	getResp := callMethod[AgentGetResponse](t, registry, "agent.get", AgentGetRequest{WorkspaceID: "sess-1", AgentID: temporary.AgentID})
+	if getResp.InvocationClass != string(HarnessInvocationTemporary) {
+		t.Fatalf("temporary get invocation class = %q, want temporary", getResp.InvocationClass)
+	}
+
+	_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: regular.AgentID})
+	_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: temporary.AgentID})
 }
 
 func TestAgentSendReturnsAgentNotRunningAfterSelfExit(t *testing.T) {

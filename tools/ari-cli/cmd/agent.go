@@ -126,9 +126,12 @@ var (
 		return response, nil
 	}
 	agentListRPC = func(ctx context.Context, socketPath, sessionID string) (daemon.AgentListResponse, error) {
+		return agentListWithTemporaryRPC(ctx, socketPath, sessionID, false)
+	}
+	agentListWithTemporaryRPC = func(ctx context.Context, socketPath, sessionID string, showTemporary bool) (daemon.AgentListResponse, error) {
 		rpcClient := client.New(socketPath)
 		var response daemon.AgentListResponse
-		if err := rpcClient.Call(ctx, "agent.list", daemon.AgentListRequest{WorkspaceID: sessionID}, &response); err != nil {
+		if err := rpcClient.Call(ctx, "agent.list", daemon.AgentListRequest{WorkspaceID: sessionID, ShowTemporary: showTemporary}, &response); err != nil {
 			return daemon.AgentListResponse{}, err
 		}
 		return response, nil
@@ -510,6 +513,7 @@ func newAgentSpawnCmd() *cobra.Command {
 	var name string
 	var harness string
 	var sessionRef string
+	var invocationClass string
 
 	cmd := &cobra.Command{
 		Use:   "spawn [--workspace <id-or-name>] [--name <name>] [--harness <harness>] [-- <command> [args...]]",
@@ -557,11 +561,12 @@ func newAgentSpawnCmd() *cobra.Command {
 			}
 
 			resp, err := agentSpawnRPC(ctx, cfg.Daemon.SocketPath, daemon.AgentSpawnRequest{
-				WorkspaceID: target.WorkspaceID,
-				Name:        strings.TrimSpace(name),
-				Harness:     strings.TrimSpace(harness),
-				Command:     command,
-				Args:        commandArgs,
+				WorkspaceID:     target.WorkspaceID,
+				Name:            strings.TrimSpace(name),
+				Harness:         strings.TrimSpace(harness),
+				InvocationClass: strings.TrimSpace(invocationClass),
+				Command:         command,
+				Args:            commandArgs,
 			})
 			if err != nil {
 				return mapAgentRPCError(err)
@@ -574,12 +579,14 @@ func newAgentSpawnCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&name, "name", "", "Optional agent name")
 	cmd.Flags().StringVar(&harness, "harness", "", fmt.Sprintf("Harness identity (%s)", strings.Join(daemon.SupportedHarnesses(), "|")))
+	cmd.Flags().StringVar(&invocationClass, "invocation-class", "", "Invocation class: agent or temporary")
 	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
 	return cmd
 }
 
 func newAgentListCmd() *cobra.Command {
 	var sessionRef string
+	var showTemporary bool
 	cmd := &cobra.Command{
 		Use:   "list [--workspace <id-or-name>]",
 		Short: "List agents for a workspace",
@@ -608,12 +615,17 @@ func newAgentListCmd() *cobra.Command {
 				return err
 			}
 
-			resp, err := agentListRPC(ctx, cfg.Daemon.SocketPath, target.WorkspaceID)
+			var resp daemon.AgentListResponse
+			if showTemporary {
+				resp, err = agentListWithTemporaryRPC(ctx, cfg.Daemon.SocketPath, target.WorkspaceID, true)
+			} else {
+				resp, err = agentListRPC(ctx, cfg.Daemon.SocketPath, target.WorkspaceID)
+			}
 			if err != nil {
 				return mapAgentRPCError(err)
 			}
 
-			if _, err := fmt.Fprintln(cmd.OutOrStdout(), "ID       NAME       STATUS     STARTED                COMMAND"); err != nil {
+			if _, err := fmt.Fprintln(cmd.OutOrStdout(), "ID       NAME       CLASS      STATUS     STARTED                COMMAND"); err != nil {
 				return err
 			}
 			for _, item := range resp.Agents {
@@ -621,7 +633,11 @@ func newAgentListCmd() *cobra.Command {
 				if len(shortID) > 8 {
 					shortID = shortID[:8]
 				}
-				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%-8s %-10s %-10s %-22s %s\n", shortID, item.Name, item.Status, item.StartedAt, item.Command); err != nil {
+				invocationClass := strings.TrimSpace(item.InvocationClass)
+				if invocationClass == "" {
+					invocationClass = string(daemon.HarnessInvocationAgent)
+				}
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%-8s %-10s %-10s %-10s %-22s %s\n", shortID, item.Name, invocationClass, item.Status, item.StartedAt, item.Command); err != nil {
 					return err
 				}
 			}
@@ -630,6 +646,7 @@ func newAgentListCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
+	cmd.Flags().BoolVar(&showTemporary, "show-temporary", false, "Include temporary agents")
 	return cmd
 }
 

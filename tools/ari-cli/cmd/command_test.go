@@ -23,6 +23,7 @@ func TestRootRegistersCommandCommand(t *testing.T) {
 	}{
 		{name: "command root registered", path: []string{"command"}, want: "command"},
 		{name: "exec root registered", path: []string{"exec"}, want: "exec"},
+		{name: "profile root registered", path: []string{"profile"}, want: "profile"},
 		{name: "daemon root still registered", path: []string{"daemon"}, want: "daemon"},
 		{name: "workspace root still registered", path: []string{"workspace"}, want: "workspace"},
 	}
@@ -41,6 +42,19 @@ func TestRootRegistersCommandCommand(t *testing.T) {
 				t.Fatalf("command name = %q, want %q", cmd.Name(), tc.want)
 			}
 		})
+	}
+}
+
+func TestProfileSubcommandsExist(t *testing.T) {
+	root := NewRootCmd()
+	for _, path := range [][]string{{"profile", "create"}, {"profile", "list"}, {"profile", "show"}, {"profile", "defaults"}} {
+		cmd, _, err := root.Find(path)
+		if err != nil {
+			t.Fatalf("find %v: %v", path, err)
+		}
+		if cmd == nil {
+			t.Fatalf("expected command %v to be registered", path)
+		}
 	}
 }
 

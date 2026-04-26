@@ -50,6 +50,15 @@ nix develop -c go test ./...
 
 For migration-related checks, run them from `nix develop` as well so Atlas and SQLite tool versions are consistent.
 
+## Agent runtime surfaces
+
+The current Go runtime exposes profile-driven local agent runs through JSON-RPC and CLI commands under `tools/ari-cli/`.
+
+- Profiles: `ari profile create|list|show|defaults` maps to `agent.profile.create|get|list`.
+- Temporary visibility: `ari agent list` hides temporary agents; `ari agent list --show-temporary` includes them with a `CLASS` label.
+- Final responses: `ari final-response show --run-id <run>` reads the first-class final-response artifact, while `ari final-response export --run-id <run>` prints only shareable final text without transcript, hidden context, or provider-private metadata.
+- Telemetry: `ari telemetry rollup --workspace-id <workspace>` reports local run counts and known/unknown token, cost, duration, and process facts without guessing missing values.
+
 ---
 
 ## Architecture

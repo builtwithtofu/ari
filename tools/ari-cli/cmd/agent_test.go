@@ -380,8 +380,8 @@ func TestAgentSpawnListShowOutputStop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute agent list: %v", err)
 	}
-	if !strings.Contains(listOut, "claude") {
-		t.Fatalf("list output = %q, want agent name", listOut)
+	if !strings.Contains(listOut, "CLASS") || !strings.Contains(listOut, "agent") || !strings.Contains(listOut, "claude") {
+		t.Fatalf("list output = %q, want class label and agent name", listOut)
 	}
 
 	showOut, err := executeRootCommand("agent", "show", "claude")
@@ -736,6 +736,52 @@ func TestAgentListUsesSessionFlagOverride(t *testing.T) {
 	}
 	if gotLookup != "alpha" {
 		t.Fatalf("session lookup argument = %q, want %q", gotLookup, "alpha")
+	}
+}
+
+func TestAgentListShowTemporaryUsesExplicitRPC(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalResolveTarget := commandResolveSessionTarget
+	originalReadActive := agentReadActiveSession
+	originalEnsure := agentEnsureDaemonRunning
+	originalList := agentListRPC
+	originalListWithTemporary := agentListWithTemporaryRPC
+
+	commandResolveSessionTarget = func(_ context.Context, _ string, idOrName string) (resolvedSessionTarget, error) {
+		return resolvedSessionTarget{WorkspaceID: idOrName, Session: &daemon.WorkspaceGetResponse{WorkspaceID: idOrName, OriginRoot: t.TempDir()}}, nil
+	}
+	agentReadActiveSession = func() (string, error) { return "sess-1", nil }
+	agentEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	agentListRPC = func(context.Context, string, string) (daemon.AgentListResponse, error) {
+		return daemon.AgentListResponse{}, errors.New("default list RPC should not be called")
+	}
+	var gotShowTemporary bool
+	agentListWithTemporaryRPC = func(_ context.Context, _ string, workspaceID string, showTemporary bool) (daemon.AgentListResponse, error) {
+		gotShowTemporary = showTemporary
+		if workspaceID != "sess-1" {
+			t.Fatalf("workspaceID = %q, want sess-1", workspaceID)
+		}
+		return daemon.AgentListResponse{Agents: []daemon.AgentSummary{{AgentID: "agt-temp", Name: "scratch", Status: "running", StartedAt: "now", Command: "codex", InvocationClass: string(daemon.HarnessInvocationTemporary)}}}, nil
+	}
+	t.Cleanup(func() {
+		commandResolveSessionTarget = originalResolveTarget
+		agentReadActiveSession = originalReadActive
+		agentEnsureDaemonRunning = originalEnsure
+		agentListRPC = originalList
+		agentListWithTemporaryRPC = originalListWithTemporary
+	})
+
+	out, err := executeRootCommand("agent", "list", "--workspace", "sess-1", "--show-temporary")
+	if err != nil {
+		t.Fatalf("execute agent list --show-temporary: %v", err)
+	}
+	if !gotShowTemporary {
+		t.Fatal("agent list --show-temporary did not request temporary agents")
+	}
+	if !strings.Contains(out, "CLASS") || !strings.Contains(out, "temporary") || !strings.Contains(out, "scratch") {
+		t.Fatalf("output = %q, want labelled temporary agent row", out)
 	}
 }
 

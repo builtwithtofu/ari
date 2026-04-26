@@ -25,17 +25,16 @@ func resolveAgentSelector(ctx context.Context, socketPath, workspaceID, selector
 		selector = "0"
 	}
 
-	if details, err := agentGetRPC(ctx, socketPath, workspaceID, selector); err == nil {
-		if !strings.EqualFold(strings.TrimSpace(details.Status), "running") {
-			return "", userFacingError{message: "Agent is not running"}
-		}
-		return strings.TrimSpace(details.AgentID), nil
-	} else if !isAgentNotFoundRPCError(err) {
-		return "", mapAgentRPCError(err)
-	}
-
 	index, err := strconv.Atoi(selector)
 	if err != nil {
+		if details, err := agentGetRPC(ctx, socketPath, workspaceID, selector); err == nil {
+			if !strings.EqualFold(strings.TrimSpace(details.Status), "running") {
+				return "", userFacingError{message: "Agent is not running"}
+			}
+			return strings.TrimSpace(details.AgentID), nil
+		} else if !isAgentNotFoundRPCError(err) {
+			return "", mapAgentRPCError(err)
+		}
 		return "", userFacingError{message: "Agent not found"}
 	}
 	if index < 0 {

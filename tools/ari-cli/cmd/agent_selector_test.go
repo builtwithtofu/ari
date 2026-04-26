@@ -9,7 +9,35 @@ import (
 	"github.com/sourcegraph/jsonrpc2"
 )
 
-func TestResolveAgentSelectorPrefersExactIDOrNameOverNumericIndex(t *testing.T) {
+func TestResolveAgentSelectorUsesNumericInputAsVisibleIndex(t *testing.T) {
+	originalGet := agentGetRPC
+	originalList := agentListRPC
+	getCalled := false
+	agentGetRPC = func(context.Context, string, string, string) (daemon.AgentGetResponse, error) {
+		getCalled = true
+		return daemon.AgentGetResponse{AgentID: "agt-hidden-temporary", WorkspaceID: "ws-1", Status: "running", InvocationClass: string(daemon.HarnessInvocationTemporary)}, nil
+	}
+	agentListRPC = func(context.Context, string, string) (daemon.AgentListResponse, error) {
+		return daemon.AgentListResponse{Agents: []daemon.AgentSummary{{AgentID: "agt-visible-0", Status: "running", InvocationClass: string(daemon.HarnessInvocationAgent)}}}, nil
+	}
+	t.Cleanup(func() {
+		agentGetRPC = originalGet
+		agentListRPC = originalList
+	})
+
+	agentID, err := resolveAgentSelector(context.Background(), "/tmp/daemon.sock", "ws-1", "0")
+	if err != nil {
+		t.Fatalf("resolveAgentSelector returned error: %v", err)
+	}
+	if agentID != "agt-visible-0" {
+		t.Fatalf("agent id = %q, want visible indexed agent", agentID)
+	}
+	if getCalled {
+		t.Fatal("agent get called for numeric selector")
+	}
+}
+
+func TestResolveAgentSelectorPrefersExactNameForNonNumericSelector(t *testing.T) {
 	originalGet := agentGetRPC
 	originalList := agentListRPC
 	agentGetRPC = func(context.Context, string, string, string) (daemon.AgentGetResponse, error) {
@@ -25,7 +53,7 @@ func TestResolveAgentSelectorPrefersExactIDOrNameOverNumericIndex(t *testing.T) 
 		agentListRPC = originalList
 	})
 
-	agentID, err := resolveAgentSelector(context.Background(), "/tmp/daemon.sock", "ws-1", "1")
+	agentID, err := resolveAgentSelector(context.Background(), "/tmp/daemon.sock", "ws-1", "builder")
 	if err != nil {
 		t.Fatalf("resolveAgentSelector returned error: %v", err)
 	}

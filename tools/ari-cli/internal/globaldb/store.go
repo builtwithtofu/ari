@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb/dbsqlc"
 )
 
 var (
@@ -210,8 +212,9 @@ WHERE workspace_id = ? AND command_id = ?`
 	stopped_at,
 	harness,
 	harness_resumable_id,
-	harness_metadata
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	harness_metadata,
+	invocation_class
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	agentByIDQuery = `SELECT
 		agent_id,
@@ -225,7 +228,8 @@ WHERE workspace_id = ? AND command_id = ?`
 	stopped_at,
 	harness,
 	harness_resumable_id,
-	harness_metadata
+	harness_metadata,
+	invocation_class
 FROM agents
 WHERE workspace_id = ? AND agent_id = ?`
 
@@ -241,7 +245,8 @@ WHERE workspace_id = ? AND agent_id = ?`
 	stopped_at,
 	harness,
 	harness_resumable_id,
-	harness_metadata
+	harness_metadata,
+	invocation_class
 FROM agents
 WHERE workspace_id = ? AND name = ?`
 
@@ -257,7 +262,8 @@ WHERE workspace_id = ? AND name = ?`
 	stopped_at,
 	harness,
 	harness_resumable_id,
-	harness_metadata
+	harness_metadata,
+	invocation_class
 FROM agents
 WHERE workspace_id = ?
 ORDER BY started_at DESC, agent_id ASC`
@@ -375,6 +381,7 @@ type Agent struct {
 	Harness            *string
 	HarnessResumableID *string
 	HarnessMetadata    string
+	InvocationClass    string
 }
 
 type CreateAgentParams struct {
@@ -390,6 +397,7 @@ type CreateAgentParams struct {
 	Harness            *string
 	HarnessResumableID *string
 	HarnessMetadata    string
+	InvocationClass    string
 }
 
 type UpdateAgentStatusParams struct {
@@ -469,7 +477,102 @@ func (a *sqlConnAdapter) WithImmediateTransaction(ctx context.Context, fn func(D
 }
 
 type Store struct {
-	db DB
+	db   DB
+	sqlc *dbsqlc.Queries
+}
+
+type AgentProfile struct {
+	ProfileID       string
+	WorkspaceID     string
+	Name            string
+	Harness         string
+	Model           string
+	Prompt          string
+	InvocationClass string
+	DefaultsJSON    string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+type FinalResponse struct {
+	FinalResponseID   string
+	RunID             string
+	WorkspaceID       string
+	TaskID            string
+	ContextPacketID   string
+	ProfileID         string
+	Status            string
+	Text              string
+	EvidenceLinksJSON string
+	CreatedAt         time.Time
+	UpdatedAt         *time.Time
+}
+
+type KnownInt64 struct {
+	Known bool
+	Value *int64
+}
+
+type AgentRunTelemetry struct {
+	RunID                   string
+	WorkspaceID             string
+	TaskID                  string
+	ProfileID               string
+	ProfileName             string
+	Harness                 string
+	Model                   string
+	InvocationClass         string
+	Status                  string
+	InputTokensKnown        bool
+	InputTokens             *int64
+	OutputTokensKnown       bool
+	OutputTokens            *int64
+	EstimatedCostKnown      bool
+	EstimatedCostMicros     *int64
+	DurationMSKnown         bool
+	DurationMS              *int64
+	ExitCodeKnown           bool
+	ExitCode                *int64
+	OwnedByAri              bool
+	PIDKnown                bool
+	PID                     *int64
+	CPUTimeMSKnown          bool
+	CPUTimeMS               *int64
+	MemoryRSSBytesPeakKnown bool
+	MemoryRSSBytesPeak      *int64
+	ChildProcessesPeakKnown bool
+	ChildProcessesPeak      *int64
+	PortsJSON               string
+	OrphanState             string
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
+}
+
+type AgentRunTelemetryGroup struct {
+	ProfileID       string
+	ProfileName     string
+	Harness         string
+	Model           string
+	InvocationClass string
+}
+
+type AgentRunTelemetryRollup struct {
+	Group         AgentRunTelemetryGroup
+	Runs          int
+	Completed     int
+	Failed        int
+	InputTokens   KnownInt64
+	OutputTokens  KnownInt64
+	EstimatedCost KnownInt64
+	DurationMS    KnownInt64
+	ExitCode      KnownInt64
+	PID           KnownInt64
+	CPUTimeMS     KnownInt64
+	MemoryRSS     KnownInt64
+	ChildCount    KnownInt64
+	OwnedByAri    bool
+	PortsJSON     string
+	OrphanState   string
 }
 
 func NewStore(db DB) (*Store, error) {
@@ -483,7 +586,12 @@ func NewSQLStore(db *sql.DB) (*Store, error) {
 	if db == nil {
 		return nil, fmt.Errorf("%w: db is required", ErrInvalidInput)
 	}
-	return NewStore(&sqlDBAdapter{db: db})
+	store, err := NewStore(&sqlDBAdapter{db: db})
+	if err != nil {
+		return nil, err
+	}
+	store.sqlc = dbsqlc.New(db)
+	return store, nil
 }
 
 func (s *Store) SetMeta(ctx context.Context, key, value string) error {
@@ -512,6 +620,389 @@ func (s *Store) GetMeta(ctx context.Context, key string) (string, error) {
 	}
 
 	return values[0], nil
+}
+
+func (s *Store) UpsertAgentProfile(ctx context.Context, profile AgentProfile) error {
+	profile.ProfileID = strings.TrimSpace(profile.ProfileID)
+	profile.WorkspaceID = strings.TrimSpace(profile.WorkspaceID)
+	profile.Name = strings.TrimSpace(profile.Name)
+	profile.Harness = strings.TrimSpace(profile.Harness)
+	profile.Model = strings.TrimSpace(profile.Model)
+	profile.InvocationClass = strings.TrimSpace(profile.InvocationClass)
+	if profile.ProfileID == "" {
+		return fmt.Errorf("%w: profile id is required", ErrInvalidInput)
+	}
+	if profile.Name == "" {
+		return fmt.Errorf("%w: profile name is required", ErrInvalidInput)
+	}
+	if existing, err := s.getExactAgentProfile(ctx, profile.WorkspaceID, profile.Name); err == nil {
+		profile.ProfileID = existing.ProfileID
+		if profile.CreatedAt.IsZero() {
+			profile.CreatedAt = existing.CreatedAt
+		}
+	} else if !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	if strings.TrimSpace(profile.DefaultsJSON) == "" {
+		profile.DefaultsJSON = "{}"
+	}
+	if !json.Valid([]byte(profile.DefaultsJSON)) {
+		return fmt.Errorf("%w: profile defaults json is invalid", ErrInvalidInput)
+	}
+	now := time.Now().UTC()
+	if profile.CreatedAt.IsZero() {
+		profile.CreatedAt = now
+	}
+	profile.UpdatedAt = now
+	if err := s.sqlcQueries().UpsertAgentProfile(ctx, dbsqlc.UpsertAgentProfileParams{ProfileID: profile.ProfileID, WorkspaceID: sqlNullString(profile.WorkspaceID), Name: profile.Name, Harness: sqlNullString(profile.Harness), Model: sqlNullString(profile.Model), Prompt: sqlNullString(profile.Prompt), InvocationClass: sqlNullString(profile.InvocationClass), DefaultsJson: profile.DefaultsJSON, CreatedAt: profile.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: profile.UpdatedAt.Format(time.RFC3339Nano)}); err != nil {
+		return fmt.Errorf("upsert agent profile %q: %w", profile.Name, err)
+	}
+	return nil
+}
+
+func (s *Store) getExactAgentProfile(ctx context.Context, workspaceID, name string) (AgentProfile, error) {
+	if strings.TrimSpace(workspaceID) != "" {
+		profile, err := s.sqlcQueries().GetWorkspaceAgentProfileByName(ctx, dbsqlc.GetWorkspaceAgentProfileByNameParams{WorkspaceID: sqlNullString(workspaceID), Name: name})
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return AgentProfile{}, ErrNotFound
+			}
+			return AgentProfile{}, fmt.Errorf("query exact workspace agent profile: %w", err)
+		}
+		return agentProfileFromSQLC(profile), nil
+	}
+	profile, err := s.sqlcQueries().GetGlobalAgentProfileByName(ctx, name)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return AgentProfile{}, ErrNotFound
+		}
+		return AgentProfile{}, fmt.Errorf("query exact global agent profile: %w", err)
+	}
+	return agentProfileFromSQLC(profile), nil
+}
+
+func (s *Store) GetAgentProfile(ctx context.Context, workspaceID, name string) (AgentProfile, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return AgentProfile{}, fmt.Errorf("%w: profile name is required", ErrInvalidInput)
+	}
+	if workspaceID != "" {
+		profile, err := s.sqlcQueries().GetWorkspaceAgentProfileByName(ctx, dbsqlc.GetWorkspaceAgentProfileByNameParams{WorkspaceID: sqlNullString(workspaceID), Name: name})
+		if err == nil {
+			return agentProfileFromSQLC(profile), nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return AgentProfile{}, fmt.Errorf("query workspace agent profile: %w", err)
+		}
+	}
+	profile, err := s.sqlcQueries().GetGlobalAgentProfileByName(ctx, name)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return AgentProfile{}, ErrNotFound
+		}
+		return AgentProfile{}, fmt.Errorf("query global agent profile: %w", err)
+	}
+	return agentProfileFromSQLC(profile), nil
+}
+
+func (s *Store) ListAgentProfiles(ctx context.Context, workspaceID string) ([]AgentProfile, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	var rows []dbsqlc.AgentProfile
+	var err error
+	if workspaceID == "" {
+		rows, err = s.sqlcQueries().ListGlobalAgentProfiles(ctx)
+	} else {
+		rows, err = s.sqlcQueries().ListWorkspaceAgentProfiles(ctx, sqlNullString(workspaceID))
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list agent profiles: %w", err)
+	}
+	profiles := make([]AgentProfile, 0, len(rows))
+	for _, row := range rows {
+		profiles = append(profiles, agentProfileFromSQLC(row))
+	}
+	return profiles, nil
+}
+
+func (s *Store) UpsertFinalResponse(ctx context.Context, response FinalResponse) error {
+	response.FinalResponseID = strings.TrimSpace(response.FinalResponseID)
+	response.RunID = strings.TrimSpace(response.RunID)
+	response.WorkspaceID = strings.TrimSpace(response.WorkspaceID)
+	response.TaskID = strings.TrimSpace(response.TaskID)
+	response.ContextPacketID = strings.TrimSpace(response.ContextPacketID)
+	response.ProfileID = strings.TrimSpace(response.ProfileID)
+	response.Status = strings.TrimSpace(response.Status)
+	response.Text = strings.TrimSpace(response.Text)
+	if response.FinalResponseID == "" {
+		return fmt.Errorf("%w: final response id is required", ErrInvalidInput)
+	}
+	if response.RunID == "" {
+		return fmt.Errorf("%w: run id is required", ErrInvalidInput)
+	}
+	if response.WorkspaceID == "" {
+		return fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
+	}
+	if response.TaskID == "" {
+		return fmt.Errorf("%w: task id is required", ErrInvalidInput)
+	}
+	if response.ContextPacketID == "" {
+		return fmt.Errorf("%w: context packet id is required", ErrInvalidInput)
+	}
+	if !validFinalResponseStatus(response.Status) {
+		return fmt.Errorf("%w: invalid final response status %q", ErrInvalidInput, response.Status)
+	}
+	if strings.TrimSpace(response.EvidenceLinksJSON) == "" {
+		response.EvidenceLinksJSON = "[]"
+	}
+	if !json.Valid([]byte(response.EvidenceLinksJSON)) {
+		return fmt.Errorf("%w: evidence links json is invalid", ErrInvalidInput)
+	}
+	now := time.Now().UTC()
+	if response.CreatedAt.IsZero() {
+		response.CreatedAt = now
+	}
+	updatedAt := sql.NullString{}
+	if response.UpdatedAt != nil {
+		updatedAt = sql.NullString{String: response.UpdatedAt.UTC().Format(time.RFC3339Nano), Valid: true}
+	}
+	if err := s.sqlcQueries().UpsertFinalResponse(ctx, dbsqlc.UpsertFinalResponseParams{FinalResponseID: response.FinalResponseID, RunID: response.RunID, WorkspaceID: response.WorkspaceID, TaskID: response.TaskID, ContextPacketID: response.ContextPacketID, ProfileID: sqlNullString(response.ProfileID), Status: response.Status, Text: response.Text, EvidenceLinks: response.EvidenceLinksJSON, CreatedAt: response.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: updatedAt}); err != nil {
+		return fmt.Errorf("upsert final response %q: %w", response.FinalResponseID, err)
+	}
+	return nil
+}
+
+func (s *Store) GetFinalResponseByRunID(ctx context.Context, runID string) (FinalResponse, error) {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return FinalResponse{}, fmt.Errorf("%w: run id is required", ErrInvalidInput)
+	}
+	row, err := s.sqlcQueries().GetFinalResponseByRunID(ctx, runID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return FinalResponse{}, ErrNotFound
+		}
+		return FinalResponse{}, fmt.Errorf("query final response by run id: %w", err)
+	}
+	return finalResponseFromSQLC(row), nil
+}
+
+func (s *Store) GetFinalResponseByID(ctx context.Context, finalResponseID string) (FinalResponse, error) {
+	finalResponseID = strings.TrimSpace(finalResponseID)
+	if finalResponseID == "" {
+		return FinalResponse{}, fmt.Errorf("%w: final response id is required", ErrInvalidInput)
+	}
+	row, err := s.sqlcQueries().GetFinalResponseByID(ctx, finalResponseID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return FinalResponse{}, ErrNotFound
+		}
+		return FinalResponse{}, fmt.Errorf("query final response by id: %w", err)
+	}
+	return finalResponseFromSQLC(row), nil
+}
+
+func (s *Store) ListFinalResponses(ctx context.Context, workspaceID string) ([]FinalResponse, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		return nil, fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
+	}
+	rows, err := s.sqlcQueries().ListFinalResponsesByWorkspace(ctx, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("list final responses: %w", err)
+	}
+	responses := make([]FinalResponse, 0, len(rows))
+	for _, row := range rows {
+		responses = append(responses, finalResponseFromSQLC(row))
+	}
+	return responses, nil
+}
+
+func validFinalResponseStatus(status string) bool {
+	switch status {
+	case "completed", "failed", "partial", "unavailable":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Store) UpsertAgentRunTelemetry(ctx context.Context, telemetry AgentRunTelemetry) error {
+	telemetry.RunID = strings.TrimSpace(telemetry.RunID)
+	telemetry.WorkspaceID = strings.TrimSpace(telemetry.WorkspaceID)
+	telemetry.TaskID = strings.TrimSpace(telemetry.TaskID)
+	telemetry.ProfileID = strings.TrimSpace(telemetry.ProfileID)
+	telemetry.ProfileName = strings.TrimSpace(telemetry.ProfileName)
+	telemetry.Harness = strings.TrimSpace(telemetry.Harness)
+	telemetry.Model = strings.TrimSpace(telemetry.Model)
+	telemetry.InvocationClass = strings.TrimSpace(telemetry.InvocationClass)
+	telemetry.Status = strings.TrimSpace(telemetry.Status)
+	if telemetry.RunID == "" {
+		return fmt.Errorf("%w: run id is required", ErrInvalidInput)
+	}
+	if telemetry.WorkspaceID == "" {
+		return fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
+	}
+	if telemetry.TaskID == "" {
+		return fmt.Errorf("%w: task id is required", ErrInvalidInput)
+	}
+	if telemetry.Harness == "" {
+		return fmt.Errorf("%w: harness is required", ErrInvalidInput)
+	}
+	if telemetry.Model == "" {
+		telemetry.Model = "unknown"
+	}
+	if telemetry.InvocationClass == "" {
+		telemetry.InvocationClass = "agent"
+	}
+	if telemetry.Status == "" {
+		telemetry.Status = "unknown"
+	}
+	if strings.TrimSpace(telemetry.PortsJSON) == "" {
+		telemetry.PortsJSON = "[]"
+	}
+	if !json.Valid([]byte(telemetry.PortsJSON)) {
+		return fmt.Errorf("%w: ports json is invalid", ErrInvalidInput)
+	}
+	if strings.TrimSpace(telemetry.OrphanState) == "" {
+		telemetry.OrphanState = "unknown"
+	}
+	now := time.Now().UTC()
+	if telemetry.CreatedAt.IsZero() {
+		telemetry.CreatedAt = now
+	}
+	if telemetry.UpdatedAt.IsZero() {
+		telemetry.UpdatedAt = now
+	}
+	params := dbsqlc.UpsertAgentRunTelemetryParams{RunID: telemetry.RunID, WorkspaceID: telemetry.WorkspaceID, TaskID: telemetry.TaskID, ProfileID: sqlNullString(telemetry.ProfileID), ProfileName: sqlNullString(telemetry.ProfileName), Harness: telemetry.Harness, Model: telemetry.Model, InvocationClass: telemetry.InvocationClass, Status: telemetry.Status, InputTokensKnown: boolInt64(telemetry.InputTokensKnown), InputTokens: sqlNullInt64(telemetry.InputTokens), OutputTokensKnown: boolInt64(telemetry.OutputTokensKnown), OutputTokens: sqlNullInt64(telemetry.OutputTokens), EstimatedCostKnown: boolInt64(telemetry.EstimatedCostKnown), EstimatedCostMicros: sqlNullInt64(telemetry.EstimatedCostMicros), DurationMsKnown: boolInt64(telemetry.DurationMSKnown), DurationMs: sqlNullInt64(telemetry.DurationMS), ExitCodeKnown: boolInt64(telemetry.ExitCodeKnown), ExitCode: sqlNullInt64(telemetry.ExitCode), OwnedByAri: boolInt64(telemetry.OwnedByAri), PidKnown: boolInt64(telemetry.PIDKnown), Pid: sqlNullInt64(telemetry.PID), CpuTimeMsKnown: boolInt64(telemetry.CPUTimeMSKnown), CpuTimeMs: sqlNullInt64(telemetry.CPUTimeMS), MemoryRssBytesPeakKnown: boolInt64(telemetry.MemoryRSSBytesPeakKnown), MemoryRssBytesPeak: sqlNullInt64(telemetry.MemoryRSSBytesPeak), ChildProcessesPeakKnown: boolInt64(telemetry.ChildProcessesPeakKnown), ChildProcessesPeak: sqlNullInt64(telemetry.ChildProcessesPeak), PortsJson: telemetry.PortsJSON, OrphanState: telemetry.OrphanState, CreatedAt: telemetry.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: telemetry.UpdatedAt.Format(time.RFC3339Nano)}
+	if err := s.sqlcQueries().UpsertAgentRunTelemetry(ctx, params); err != nil {
+		return fmt.Errorf("upsert agent run telemetry %q: %w", telemetry.RunID, err)
+	}
+	return nil
+}
+
+func (s *Store) RollupAgentRunTelemetry(ctx context.Context, workspaceID string) ([]AgentRunTelemetryRollup, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		return nil, fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
+	}
+	rows, err := s.sqlcQueries().ListAgentRunTelemetryByWorkspace(ctx, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("list agent run telemetry: %w", err)
+	}
+	byGroup := map[AgentRunTelemetryGroup]*AgentRunTelemetryRollup{}
+	order := []AgentRunTelemetryGroup{}
+	for _, row := range rows {
+		group := AgentRunTelemetryGroup{ProfileID: row.ProfileID.String, ProfileName: row.ProfileName.String, Harness: row.Harness, Model: row.Model, InvocationClass: row.InvocationClass}
+		rollup := byGroup[group]
+		if rollup == nil {
+			rollup = &AgentRunTelemetryRollup{Group: group}
+			byGroup[group] = rollup
+			order = append(order, group)
+		}
+		rollup.Runs++
+		switch row.Status {
+		case "completed":
+			rollup.Completed++
+		case "failed":
+			rollup.Failed++
+		}
+		addKnownInt64(&rollup.InputTokens, row.InputTokensKnown, row.InputTokens)
+		addKnownInt64(&rollup.OutputTokens, row.OutputTokensKnown, row.OutputTokens)
+		addKnownInt64(&rollup.EstimatedCost, row.EstimatedCostKnown, row.EstimatedCostMicros)
+		addKnownInt64(&rollup.DurationMS, row.DurationMsKnown, row.DurationMs)
+		addKnownInt64(&rollup.ExitCode, row.ExitCodeKnown, row.ExitCode)
+		addKnownInt64(&rollup.PID, row.PidKnown, row.Pid)
+		addKnownInt64(&rollup.CPUTimeMS, row.CpuTimeMsKnown, row.CpuTimeMs)
+		maxKnownInt64(&rollup.MemoryRSS, row.MemoryRssBytesPeakKnown, row.MemoryRssBytesPeak)
+		maxKnownInt64(&rollup.ChildCount, row.ChildProcessesPeakKnown, row.ChildProcessesPeak)
+		rollup.OwnedByAri = rollup.OwnedByAri || row.OwnedByAri != 0
+		if rollup.PortsJSON == "" && strings.TrimSpace(row.PortsJson) != "" && strings.TrimSpace(row.PortsJson) != "[]" {
+			rollup.PortsJSON = row.PortsJson
+		}
+		if (rollup.OrphanState == "" || rollup.OrphanState == "unknown") && strings.TrimSpace(row.OrphanState) != "" {
+			rollup.OrphanState = row.OrphanState
+		}
+	}
+	rollups := make([]AgentRunTelemetryRollup, 0, len(order))
+	for _, group := range order {
+		if byGroup[group].Runs != 1 {
+			byGroup[group].PID = KnownInt64{}
+			byGroup[group].ExitCode = KnownInt64{}
+		}
+		rollups = append(rollups, *byGroup[group])
+	}
+	return rollups, nil
+}
+
+func boolInt64(value bool) int64 {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func sqlNullInt64(value *int64) sql.NullInt64 {
+	if value == nil {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: *value, Valid: true}
+}
+
+func addKnownInt64(total *KnownInt64, known int64, value sql.NullInt64) {
+	if known == 0 || !value.Valid {
+		return
+	}
+	if total.Value == nil {
+		zero := int64(0)
+		total.Value = &zero
+	}
+	total.Known = true
+	*total.Value += value.Int64
+}
+
+func maxKnownInt64(total *KnownInt64, known int64, value sql.NullInt64) {
+	if known == 0 || !value.Valid {
+		return
+	}
+	if total.Value == nil || value.Int64 > *total.Value {
+		v := value.Int64
+		total.Value = &v
+	}
+	total.Known = true
+}
+
+func (s *Store) sqlcQueries() *dbsqlc.Queries {
+	if s.sqlc != nil {
+		return s.sqlc
+	}
+	adapter, ok := s.db.(*sqlDBAdapter)
+	if !ok {
+		panic("sqlc queries require SQL store")
+	}
+	s.sqlc = dbsqlc.New(adapter.db)
+	return s.sqlc
+}
+
+func sqlNullString(value string) sql.NullString {
+	value = strings.TrimSpace(value)
+	return sql.NullString{String: value, Valid: value != ""}
+}
+
+func agentProfileFromSQLC(row dbsqlc.AgentProfile) AgentProfile {
+	createdAt, _ := time.Parse(time.RFC3339Nano, row.CreatedAt)
+	updatedAt, _ := time.Parse(time.RFC3339Nano, row.UpdatedAt)
+	return AgentProfile{ProfileID: row.ProfileID, WorkspaceID: row.WorkspaceID.String, Name: row.Name, Harness: row.Harness.String, Model: row.Model.String, Prompt: row.Prompt.String, InvocationClass: row.InvocationClass.String, DefaultsJSON: row.DefaultsJson, CreatedAt: createdAt, UpdatedAt: updatedAt}
+}
+
+func finalResponseFromSQLC(row dbsqlc.FinalResponse) FinalResponse {
+	createdAt, _ := time.Parse(time.RFC3339Nano, row.CreatedAt)
+	var updatedAt *time.Time
+	if row.UpdatedAt.Valid {
+		parsed, _ := time.Parse(time.RFC3339Nano, row.UpdatedAt.String)
+		updatedAt = &parsed
+	}
+	return FinalResponse{FinalResponseID: row.FinalResponseID, RunID: row.RunID, WorkspaceID: row.WorkspaceID, TaskID: row.TaskID, ContextPacketID: row.ContextPacketID, ProfileID: row.ProfileID.String, Status: row.Status, Text: row.Text, EvidenceLinksJSON: row.EvidenceLinks, CreatedAt: createdAt, UpdatedAt: updatedAt}
 }
 
 func (s *Store) CreateSession(ctx context.Context, id, name, originRoot, cleanupPolicy, vcsPreference string) error {
@@ -1163,6 +1654,12 @@ func (s *Store) CreateAgent(ctx context.Context, params CreateAgentParams) error
 	if !json.Valid([]byte(params.HarnessMetadata)) {
 		return fmt.Errorf("%w: harness metadata must be valid json", ErrInvalidInput)
 	}
+	if params.InvocationClass = strings.TrimSpace(params.InvocationClass); params.InvocationClass == "" {
+		params.InvocationClass = "agent"
+	}
+	if params.InvocationClass != "agent" && params.InvocationClass != "temporary" {
+		return fmt.Errorf("%w: invalid invocation class %q", ErrInvalidInput, params.InvocationClass)
+	}
 
 	if _, err := s.db.ExecContext(
 		ctx,
@@ -1179,6 +1676,7 @@ func (s *Store) CreateAgent(ctx context.Context, params CreateAgentParams) error
 		params.Harness,
 		params.HarnessResumableID,
 		params.HarnessMetadata,
+		params.InvocationClass,
 	); err != nil {
 		return fmt.Errorf("create agent %q: %w", params.AgentID, err)
 	}
@@ -1385,6 +1883,7 @@ func queryAgents(ctx context.Context, db DB, query string, args ...any) ([]Agent
 			&item.Harness,
 			&item.HarnessResumableID,
 			&item.HarnessMetadata,
+			&item.InvocationClass,
 		); err != nil {
 			return nil, err
 		}

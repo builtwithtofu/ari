@@ -21,6 +21,7 @@ type AgentSpawnRequest struct {
 	WorkspaceID       string   `json:"workspace_id"`
 	Name              string   `json:"name,omitempty"`
 	Harness           string   `json:"harness,omitempty"`
+	InvocationClass   string   `json:"invocation_class,omitempty"`
 	Command           string   `json:"command"`
 	Args              []string `json:"args"`
 	ExecutionRootPath string   `json:"execution_root_path,omitempty"`
@@ -32,15 +33,17 @@ type AgentSpawnResponse struct {
 }
 
 type AgentListRequest struct {
-	WorkspaceID string `json:"workspace_id"`
+	WorkspaceID   string `json:"workspace_id"`
+	ShowTemporary bool   `json:"show_temporary,omitempty"`
 }
 
 type AgentSummary struct {
-	AgentID   string `json:"agent_id"`
-	Name      string `json:"name,omitempty"`
-	Command   string `json:"command"`
-	Status    string `json:"status"`
-	StartedAt string `json:"started_at"`
+	AgentID         string `json:"agent_id"`
+	Name            string `json:"name,omitempty"`
+	Command         string `json:"command"`
+	Status          string `json:"status"`
+	StartedAt       string `json:"started_at"`
+	InvocationClass string `json:"invocation_class"`
 }
 
 type AgentListResponse struct {
@@ -65,6 +68,7 @@ type AgentGetResponse struct {
 	Harness            string          `json:"harness,omitempty"`
 	HarnessResumableID string          `json:"harness_resumable_id,omitempty"`
 	HarnessMetadata    json.RawMessage `json:"harness_metadata,omitempty"`
+	InvocationClass    string          `json:"invocation_class"`
 }
 
 type AgentSendRequest struct {
@@ -106,6 +110,17 @@ var updateAgentStatus = func(store *globaldb.Store, ctx context.Context, params 
 }
 
 var agentHarnessProjector HarnessProjector = defaultHarnessProjector{}
+
+func normalizeAgentInvocationClass(value string) (string, error) {
+	switch HarnessInvocationClass(strings.TrimSpace(value)) {
+	case "", HarnessInvocationAgent:
+		return string(HarnessInvocationAgent), nil
+	case HarnessInvocationTemporary:
+		return string(HarnessInvocationTemporary), nil
+	default:
+		return "", rpc.NewHandlerError(rpc.InvalidParams, "invocation_class must be agent or temporary", map[string]any{"reason": "invalid_invocation_class"})
+	}
+}
 
 func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globaldb.Store) error {
 	if registry == nil {
@@ -190,6 +205,12 @@ func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globa
 				_, _ = proc.Wait()
 				return AgentSpawnResponse{}, err
 			}
+			invocationClass, err := normalizeAgentInvocationClass(req.InvocationClass)
+			if err != nil {
+				_ = proc.Stop()
+				_, _ = proc.Wait()
+				return AgentSpawnResponse{}, err
+			}
 
 			createParams := globaldb.CreateAgentParams{
 				AgentID:            agentID,
@@ -201,6 +222,7 @@ func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globa
 				Harness:            harnessIdentity.Harness,
 				HarnessResumableID: harnessIdentity.ResumableID,
 				HarnessMetadata:    harnessIdentity.Metadata,
+				InvocationClass:    invocationClass,
 			}
 			if name := strings.TrimSpace(req.Name); name != "" {
 				createParams.Name = &name
@@ -240,11 +262,15 @@ func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globa
 
 			out := make([]AgentSummary, 0, len(agents))
 			for _, agent := range agents {
+				if !req.ShowTemporary && agent.InvocationClass == string(HarnessInvocationTemporary) {
+					continue
+				}
 				item := AgentSummary{
-					AgentID:   agent.AgentID,
-					Command:   agent.Command,
-					Status:    agent.Status,
-					StartedAt: agent.StartedAt,
+					AgentID:         agent.AgentID,
+					Command:         agent.Command,
+					Status:          agent.Status,
+					StartedAt:       agent.StartedAt,
+					InvocationClass: agent.InvocationClass,
 				}
 				if agent.Name != nil {
 					item.Name = *agent.Name
@@ -280,13 +306,14 @@ func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globa
 			}
 
 			resp := AgentGetResponse{
-				AgentID:     agent.AgentID,
-				WorkspaceID: agent.WorkspaceID,
-				Command:     agent.Command,
-				Args:        agent.Args,
-				Status:      agent.Status,
-				ExitCode:    agent.ExitCode,
-				StartedAt:   agent.StartedAt,
+				AgentID:         agent.AgentID,
+				WorkspaceID:     agent.WorkspaceID,
+				Command:         agent.Command,
+				Args:            agent.Args,
+				Status:          agent.Status,
+				ExitCode:        agent.ExitCode,
+				StartedAt:       agent.StartedAt,
+				InvocationClass: agent.InvocationClass,
 			}
 			if agent.Name != nil {
 				resp.Name = *agent.Name

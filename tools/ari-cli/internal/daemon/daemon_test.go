@@ -439,7 +439,7 @@ func tryDaemonMethod(ctx context.Context, socketPath, method string, params any,
 	var dialErr error
 	var conn net.Conn
 	dialer := &net.Dialer{}
-	for i := 0; i < 50; i++ {
+	for {
 		conn, dialErr = dialer.DialContext(ctx, "unix", socketPath)
 		if dialErr == nil {
 			break
