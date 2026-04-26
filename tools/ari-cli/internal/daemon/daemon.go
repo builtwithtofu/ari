@@ -50,6 +50,8 @@ type Daemon struct {
 	executorMu        sync.RWMutex
 	executorRuns      map[string]AgentRun
 	executorItems     map[string][]TimelineItem
+	harnessRegistry   *HarnessRegistry
+	agentProfiles     map[string]AgentProfile
 	attachMu          sync.Mutex
 	attachByToken     map[string]attachSession
 	attachByAgent     map[string]string
@@ -107,6 +109,8 @@ func NewWithSignalChannel(socketPath, dbPath, pidPath, configPath, configSource,
 		agentStops:        make(map[string]bool),
 		executorRuns:      make(map[string]AgentRun),
 		executorItems:     make(map[string][]TimelineItem),
+		harnessRegistry:   NewDefaultHarnessRegistry(),
+		agentProfiles:     defaultAgentProfiles(),
 		attachByToken:     make(map[string]attachSession),
 		attachByAgent:     make(map[string]string),
 		attachConnByAgent: make(map[string]net.Conn),

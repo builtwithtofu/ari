@@ -176,8 +176,13 @@ func (d *Daemon) executorTimelineItems(workspaceID string) []TimelineItem {
 }
 
 type ExecutorStartRequest struct {
-	WorkspaceID   string
-	ContextPacket string
+	WorkspaceID     string
+	RunID           string
+	ContextPacket   string
+	SourceProfileID string
+	Model           string
+	Prompt          string
+	InvocationClass HarnessInvocationClass
 }
 
 type ExecutorRun struct {
@@ -193,92 +198,6 @@ type Executor interface {
 	Stop(context.Context, string) error
 }
 
-type FakeExecutor struct {
-	mu                sync.Mutex
-	name              string
-	template          []TimelineItem
-	runs              map[string][]TimelineItem
-	lastContextPacket string
-}
-
-func NewFakeExecutor(name string, items []TimelineItem) *FakeExecutor {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		name = "fake"
-	}
-	return &FakeExecutor{name: name, template: append([]TimelineItem(nil), items...), runs: map[string][]TimelineItem{}}
-}
-
-func (e *FakeExecutor) Start(ctx context.Context, req ExecutorStartRequest) (ExecutorRun, error) {
-	if ctx == nil {
-		return ExecutorRun{}, fmt.Errorf("context is required")
-	}
-	if e == nil {
-		return ExecutorRun{}, fmt.Errorf("executor is required")
-	}
-	workspaceID := strings.TrimSpace(req.WorkspaceID)
-	if workspaceID == "" {
-		return ExecutorRun{}, fmt.Errorf("workspace id is required")
-	}
-	runID := fmt.Sprintf("%s-run-%d", e.name, time.Now().UnixNano())
-	e.lastContextPacket = req.ContextPacket
-	items := append([]TimelineItem(nil), e.template...)
-	for i := range items {
-		items[i].RunID = runID
-		items[i].WorkspaceID = workspaceID
-		items[i].SourceKind = "executor"
-		if strings.TrimSpace(items[i].SourceID) == "" {
-			items[i].SourceID = runID
-		}
-		if strings.TrimSpace(items[i].ID) == "" {
-			items[i].ID = fmt.Sprintf("%s:item-%d", runID, i+1)
-		}
-		if items[i].Sequence == 0 {
-			items[i].Sequence = i + 1
-		}
-		if strings.TrimSpace(items[i].Status) == "" {
-			items[i].Status = "completed"
-		}
-	}
-	e.mu.Lock()
-	e.runs[runID] = items
-	e.mu.Unlock()
-	return ExecutorRun{RunID: runID, Executor: e.name, ProviderRunID: runID, CapabilityNames: []string{"timeline"}}, nil
-}
-
-func (e *FakeExecutor) Items(ctx context.Context, runID string) ([]TimelineItem, error) {
-	if ctx == nil {
-		return nil, fmt.Errorf("context is required")
-	}
-	if e == nil {
-		return nil, fmt.Errorf("executor is required")
-	}
-	runID = strings.TrimSpace(runID)
-	if runID == "" {
-		return nil, fmt.Errorf("run id is required")
-	}
-	e.mu.Lock()
-	items, ok := e.runs[runID]
-	e.mu.Unlock()
-	if !ok {
-		return nil, fmt.Errorf("run %q not found", runID)
-	}
-	return append([]TimelineItem(nil), items...), nil
-}
-
-func (e *FakeExecutor) Stop(ctx context.Context, runID string) error {
-	if ctx == nil {
-		return fmt.Errorf("context is required")
-	}
-	if e == nil {
-		return fmt.Errorf("executor is required")
-	}
-	if strings.TrimSpace(runID) == "" {
-		return fmt.Errorf("run id is required")
-	}
-	return nil
-}
-
 type PTYExecutor struct {
 	command string
 	args    []string
@@ -286,6 +205,10 @@ type PTYExecutor struct {
 	sink    func(string, []TimelineItem)
 	mu      sync.Mutex
 	runs    map[string][]TimelineItem
+}
+
+func (e *PTYExecutor) Descriptor() HarnessAdapterDescriptor {
+	return HarnessAdapterDescriptor{Name: "pty", Capabilities: []HarnessCapability{HarnessCapabilityAgentRunFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems}}
 }
 
 func NewPTYExecutor(command string, args []string, dir string) *PTYExecutor {
@@ -309,7 +232,7 @@ func (e *PTYExecutor) Start(ctx context.Context, req ExecutorStartRequest) (Exec
 		return ExecutorRun{}, fmt.Errorf("workspace id is required")
 	}
 	if e.command == "" {
-		return ExecutorRun{}, fmt.Errorf("command is required")
+		return ExecutorRun{}, &HarnessValidationError{Message: "command is required", Field: "command"}
 	}
 	proc, err := process.New(e.command, e.args, process.Options{Dir: e.dir})
 	if err != nil {
@@ -319,6 +242,10 @@ func (e *PTYExecutor) Start(ctx context.Context, req ExecutorStartRequest) (Exec
 		return ExecutorRun{}, err
 	}
 	runID := fmt.Sprintf("pty-run-%d", time.Now().UnixNano())
+	ariRunID := strings.TrimSpace(req.RunID)
+	if ariRunID == "" {
+		ariRunID = runID
+	}
 	item := TimelineItem{ID: runID + ":lifecycle", WorkspaceID: req.WorkspaceID, RunID: runID, SourceKind: "executor", SourceID: runID, Kind: "lifecycle", Status: "running", Sequence: 1, Text: e.command}
 	e.mu.Lock()
 	e.runs[runID] = []TimelineItem{item}
@@ -335,7 +262,10 @@ func (e *PTYExecutor) Start(ctx context.Context, req ExecutorStartRequest) (Exec
 		e.runs[runID] = append(e.runs[runID], exitItem)
 		e.mu.Unlock()
 		if e.sink != nil {
-			e.sink(runID, []TimelineItem{exitItem})
+			sinkItem := exitItem
+			sinkItem.RunID = ariRunID
+			sinkItem.SourceID = ariRunID
+			e.sink(ariRunID, []TimelineItem{sinkItem})
 		}
 	}()
 	return ExecutorRun{RunID: runID, Executor: "pty", ProviderRunID: runID, CapabilityNames: []string{"timeline", "pty"}}, nil
