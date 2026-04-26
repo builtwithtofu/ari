@@ -209,6 +209,31 @@ func TestWorkspaceCommandDefinitionLifecycle(t *testing.T) {
 	}
 }
 
+func TestWorkspaceCommandDefinitionUsesImmediateTransactionForCollisionChecks(t *testing.T) {
+	db := &recordingDB{queryRowsSequence: []Rows{
+		&testRows{items: [][]any{{"sess-1", "alpha", "active", "auto", "/tmp/origin", "manual", "2026-04-25T00:00:00Z", "2026-04-25T00:00:00Z"}}},
+		&testRows{},
+		&testRows{},
+	}}
+	store, err := NewStore(db)
+	if err != nil {
+		t.Fatalf("NewStore returned error: %v", err)
+	}
+
+	if err := store.CreateWorkspaceCommandDefinition(context.Background(), CreateWorkspaceCommandDefinitionParams{
+		CommandID:   "cmd-def-1",
+		WorkspaceID: "sess-1",
+		Name:        "test",
+		Command:     "go",
+		Args:        `[]`,
+	}); err != nil {
+		t.Fatalf("CreateWorkspaceCommandDefinition returned error: %v", err)
+	}
+	if !db.immediateTransactionStarted {
+		t.Fatal("CreateWorkspaceCommandDefinition did not use an immediate transaction for collision checks")
+	}
+}
+
 func TestWorkspaceCommandDefinitionRejectsNameThatCollidesWithExistingID(t *testing.T) {
 	store := newCommandTestStore(t)
 	ctx := context.Background()

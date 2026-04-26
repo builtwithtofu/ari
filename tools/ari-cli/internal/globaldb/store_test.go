@@ -21,6 +21,7 @@ type recordingDB struct {
 	execCalls                   []execCall
 	queryCalls                  []queryCall
 	queryRows                   Rows
+	queryRowsSequence           []Rows
 	queryErr                    error
 	execErr                     error
 	immediateTransactionStarted bool
@@ -38,6 +39,11 @@ func (r *recordingDB) QueryContext(_ context.Context, query string, args ...any)
 	r.queryCalls = append(r.queryCalls, queryCall{query: query, args: args})
 	if r.queryErr != nil {
 		return nil, r.queryErr
+	}
+	if len(r.queryRowsSequence) > 0 {
+		rows := r.queryRowsSequence[0]
+		r.queryRowsSequence = r.queryRowsSequence[1:]
+		return rows, nil
 	}
 	if r.queryRows == nil {
 		return &testRows{}, nil
