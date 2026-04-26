@@ -87,10 +87,6 @@ var rootRunNonInteractive = func(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	agents, err := rootDeps.agentListRPC(ctx, cfg.Daemon.SocketPath, workspace.WorkspaceID)
-	if err != nil {
-		return mapSessionRPCError(err)
-	}
 	activity, err := rootDeps.workspaceActivityRPC(ctx, cfg.Daemon.SocketPath, workspace.WorkspaceID)
 	if err != nil {
 		return mapSessionRPCError(err)
@@ -111,7 +107,7 @@ var rootRunNonInteractive = func(cmd *cobra.Command, _ []string) error {
 	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Origin: %s\n", workspace.OriginRoot); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Agents: %d\n", len(agents.Agents)); err != nil {
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Agents: %d\n", len(activity.Agents)); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "VCS: %s (%d changed files)\n", activity.VCS.Backend, activity.VCS.ChangedFiles); err != nil {

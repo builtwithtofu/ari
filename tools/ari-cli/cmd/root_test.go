@@ -219,6 +219,49 @@ func TestRootRunNonInteractiveRendersWorkspaceDashboard(t *testing.T) {
 	}
 }
 
+func TestRootRunNonInteractiveCountsActivityAgents(t *testing.T) {
+	deps := rootDeps
+	deps.isInteractiveTerminal = func(cmd *cobra.Command) bool {
+		_ = cmd
+		return false
+	}
+	deps.configuredDaemonConfig = func() (*config.Config, error) {
+		return &config.Config{Daemon: config.DaemonConfig{SocketPath: "/tmp/daemon.sock"}}, nil
+	}
+	deps.ensureDaemonRunning = func(ctx context.Context, cfg *config.Config) error {
+		_ = ctx
+		_ = cfg
+		return nil
+	}
+	deps.resolveWorkspaceFromCWD = func(ctx context.Context, socketPath, cwd string) (daemon.WorkspaceGetResponse, error) {
+		_ = ctx
+		_ = socketPath
+		_ = cwd
+		return daemon.WorkspaceGetResponse{WorkspaceID: "ws-1", Name: "clay", Status: "active", OriginRoot: "/tmp/work/clay"}, nil
+	}
+	deps.agentListRPC = func(ctx context.Context, socketPath, sessionID string) (daemon.AgentListResponse, error) {
+		_ = ctx
+		_ = socketPath
+		_ = sessionID
+		return daemon.AgentListResponse{}, nil
+	}
+	deps.workspaceActivityRPC = func(ctx context.Context, socketPath, workspaceID string) (daemon.WorkspaceActivityResponse, error) {
+		_ = ctx
+		_ = socketPath
+		_ = workspaceID
+		return daemon.WorkspaceActivityResponse{Agents: []daemon.AgentActivity{{ID: "run-1"}, {ID: "run-2"}}}, nil
+	}
+	replaceRootDeps(t, deps)
+
+	out, err := executeRootCommandRaw()
+	if err != nil {
+		t.Fatalf("executeRootCommandRaw returned error: %v", err)
+	}
+	if !strings.Contains(out, "Agents: 2") {
+		t.Fatalf("output = %q, want activity agent count", out)
+	}
+}
+
 func TestRootRunNonInteractivePrintsNoWorkspaceMatchHint(t *testing.T) {
 	deps := rootDeps
 	deps.isInteractiveTerminal = func(cmd *cobra.Command) bool {
