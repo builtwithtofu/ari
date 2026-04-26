@@ -314,12 +314,18 @@ func requireWorkspaceRoots(ctx context.Context, store *globaldb.Store, rawWorksp
 		return "", nil, mapWorkspaceStoreError(err, session.ID)
 	}
 	roots := make([]string, 0, len(folders))
+	primaryRoots := make([]string, 0, 1)
 	for _, folder := range folders {
 		if strings.TrimSpace(folder.FolderPath) == "" {
 			continue
 		}
+		if folder.IsPrimary {
+			primaryRoots = append(primaryRoots, folder.FolderPath)
+			continue
+		}
 		roots = append(roots, folder.FolderPath)
 	}
+	roots = append(primaryRoots, roots...)
 	return session.ID, roots, nil
 }
 

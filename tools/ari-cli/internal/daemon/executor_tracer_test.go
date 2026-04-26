@@ -118,3 +118,49 @@ func TestAgentRunMethodStartsPTYExecutorFromContextPacket(t *testing.T) {
 	}
 	t.Fatalf("workspace.timeline did not persist pty output for run %s", resp.Run.AgentRunID)
 }
+
+func TestRecordExecutorRunPreservesBufferedSinkItems(t *testing.T) {
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.appendExecutorItems("run-1", []TimelineItem{{ID: "run-1:output", WorkspaceID: "ws-1", RunID: "run-1", SourceKind: "executor", SourceID: "run-1", Kind: "terminal_output", Status: "completed", Text: "done"}})
+
+	d.recordExecutorRun(AgentRun{AgentRunID: "run-1", WorkspaceID: "ws-1", Status: "running", Executor: "pty"}, []TimelineItem{{ID: "run-1:lifecycle", WorkspaceID: "ws-1", RunID: "run-1", SourceKind: "executor", SourceID: "run-1", Kind: "lifecycle", Status: "running", Text: "pty"}})
+
+	items := d.executorTimelineItems("ws-1")
+	if len(items) != 2 {
+		t.Fatalf("executor items len = %d, want buffered output plus initial lifecycle: %#v", len(items), items)
+	}
+	if items[0].ID != "run-1:lifecycle" || items[1].ID != "run-1:output" {
+		t.Fatalf("executor items = %#v, want lifecycle then buffered output", items)
+	}
+	activity := AgentActivity{Status: d.executorRuns["run-1"].Status}
+	if activity.Status != "completed" {
+		t.Fatalf("executor run status = %q, want completed from buffered sink item", activity.Status)
+	}
+}
+
+func TestAgentRunMethodMarksPTYFailureFromExitCode(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+
+	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
+	resp := callMethod[AgentRunStartResponse](t, registry, "agent.run", AgentRunStartRequest{
+		Executor: "pty",
+		Packet:   packet,
+		Command:  "/bin/sh",
+		Args:     []string{"-c", "printf failed; exit 7"},
+	})
+	deadline := time.Now().Add(boundedTestTimeout(t, 5*time.Second))
+	for time.Now().Before(deadline) {
+		activity := callMethod[WorkspaceActivityResponse](t, registry, "workspace.activity", WorkspaceActivityRequest{WorkspaceID: "ws-1"})
+		if len(activity.Agents) == 1 && activity.Agents[0].ID == resp.Run.AgentRunID && activity.Agents[0].Status == "failed" {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("workspace.activity did not mark failed pty run %s as failed", resp.Run.AgentRunID)
+}

@@ -94,6 +94,33 @@ func TestWorkspaceActivityProjectsCommandsAgentsProofsAndVCS(t *testing.T) {
 	}
 }
 
+func TestWorkspaceDiffUsesPrimaryFolderFirst(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	gitRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(gitRoot, ".git"), 0o755); err != nil {
+		t.Fatalf("create git marker: %v", err)
+	}
+	jjRoot := t.TempDir()
+	if err := makeJJMarker(jjRoot); err != nil {
+		t.Fatalf("makeJJMarker returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "ws-1", gitRoot)
+	if err := store.AddFolder(context.Background(), "ws-1", jjRoot, "jj", true); err != nil {
+		t.Fatalf("AddFolder primary jj root returned error: %v", err)
+	}
+
+	resp := callMethod[WorkspaceDiffResponse](t, registry, "workspace.diff", WorkspaceDiffRequest{WorkspaceID: "ws-1"})
+	if resp.Diff.Backend != "jj" {
+		t.Fatalf("diff backend = %q, want primary folder jj backend", resp.Diff.Backend)
+	}
+}
+
 func TestWorkspaceProjectionMethodsRejectMissingWorkspaceID(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()

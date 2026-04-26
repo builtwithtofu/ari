@@ -138,8 +138,28 @@ func (d *Daemon) recordExecutorRun(run AgentRun, items []TimelineItem) {
 	}
 	d.executorMu.Lock()
 	d.executorRuns[run.AgentRunID] = run
-	d.executorItems[run.AgentRunID] = append([]TimelineItem(nil), items...)
+	buffered := append([]TimelineItem(nil), d.executorItems[run.AgentRunID]...)
+	d.executorItems[run.AgentRunID] = mergeExecutorItems(items, buffered)
+	d.updateExecutorRunStatusLocked(run.AgentRunID, d.executorItems[run.AgentRunID])
 	d.executorMu.Unlock()
+}
+
+func mergeExecutorItems(primary, buffered []TimelineItem) []TimelineItem {
+	out := make([]TimelineItem, 0, len(primary)+len(buffered))
+	seen := make(map[string]bool, len(primary)+len(buffered))
+	for _, item := range primary {
+		out = append(out, item)
+		if strings.TrimSpace(item.ID) != "" {
+			seen[item.ID] = true
+		}
+	}
+	for _, item := range buffered {
+		if strings.TrimSpace(item.ID) != "" && seen[item.ID] {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func (d *Daemon) updateExecutorRunStatusLocked(runID string, items []TimelineItem) {

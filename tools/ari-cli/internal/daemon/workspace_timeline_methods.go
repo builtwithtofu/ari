@@ -324,9 +324,13 @@ func (e *PTYExecutor) Start(ctx context.Context, req ExecutorStartRequest) (Exec
 	e.runs[runID] = []TimelineItem{item}
 	e.mu.Unlock()
 	go func() {
-		_, _ = proc.Wait()
+		result, waitErr := proc.Wait()
 		output := strings.TrimSpace(string(proc.OutputSnapshot()))
-		exitItem := TimelineItem{ID: runID + ":output", WorkspaceID: req.WorkspaceID, RunID: runID, SourceKind: "executor", SourceID: runID, Kind: "terminal_output", Status: "completed", Sequence: 2, Text: output}
+		status := "completed"
+		if waitErr != nil || result.Signaled || result.ExitCode != 0 {
+			status = "failed"
+		}
+		exitItem := TimelineItem{ID: runID + ":output", WorkspaceID: req.WorkspaceID, RunID: runID, SourceKind: "executor", SourceID: runID, Kind: "terminal_output", Status: status, Sequence: 2, Text: output}
 		e.mu.Lock()
 		e.runs[runID] = append(e.runs[runID], exitItem)
 		e.mu.Unlock()
