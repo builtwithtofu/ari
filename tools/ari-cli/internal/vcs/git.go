@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -112,6 +113,7 @@ func (g *gitBackend) ChangedFiles() ([]string, error) {
 	for f := range files {
 		result = append(result, f)
 	}
+	sort.Strings(result)
 	return result, nil
 }
 

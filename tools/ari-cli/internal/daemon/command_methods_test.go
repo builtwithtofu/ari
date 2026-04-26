@@ -113,6 +113,109 @@ func TestCommandRunUsesSessionPrimaryFolderAsCWD(t *testing.T) {
 	}
 }
 
+func TestCommandRunUsesExecutionRootPathWhenProvided(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerCommandMethods(registry, store); err != nil {
+		t.Fatalf("registerCommandMethods returned error: %v", err)
+	}
+
+	primaryFolder := t.TempDir()
+	secondaryFolder := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "sess-1", primaryFolder)
+	if err := store.AddFolder(context.Background(), "sess-1", secondaryFolder, "git", false); err != nil {
+		t.Fatalf("AddFolder secondary returned error: %v", err)
+	}
+
+	runResp := callMethod[CommandRunResponse](t, registry, "command.run", CommandRunRequest{
+		WorkspaceID:       "sess-1",
+		Command:           "/bin/sh",
+		Args:              []string{"-c", "pwd"},
+		ExecutionRootPath: secondaryFolder,
+	})
+
+	waitForCommandStatus(t, registry, "sess-1", runResp.CommandID, "exited")
+
+	outputResp := callMethod[CommandOutputResponse](t, registry, "command.output", CommandOutputRequest{WorkspaceID: "sess-1", CommandID: runResp.CommandID})
+	if !strings.Contains(outputResp.Output, secondaryFolder) {
+		t.Fatalf("command.output output = %q, want execution root %q", outputResp.Output, secondaryFolder)
+	}
+	if strings.Contains(outputResp.Output, primaryFolder) {
+		t.Fatalf("command.output output = %q, did not expect primary folder %q", outputResp.Output, primaryFolder)
+	}
+}
+
+func TestCommandRunRejectsExecutionRootPathOutsideWorkspace(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerCommandMethods(registry, store); err != nil {
+		t.Fatalf("registerCommandMethods returned error: %v", err)
+	}
+
+	primaryFolder := t.TempDir()
+	outsideFolder := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "sess-1", primaryFolder)
+
+	spec, ok := registry.Get("command.run")
+	if !ok {
+		t.Fatal("command.run method not registered")
+	}
+	raw, err := json.Marshal(CommandRunRequest{WorkspaceID: "sess-1", Command: "/bin/sh", Args: []string{"-c", "pwd"}, ExecutionRootPath: outsideFolder})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+
+	_, err = spec.Call(context.Background(), raw)
+	if err == nil {
+		t.Fatal("command.run returned nil error for execution root outside workspace")
+	}
+	var rpcErr *rpc.HandlerError
+	if !errors.As(err, &rpcErr) {
+		t.Fatalf("command.run error type = %T, want *rpc.HandlerError", err)
+	}
+	if rpcErr.Code != rpc.InvalidParams {
+		t.Fatalf("command.run error code = %d, want %d", rpcErr.Code, rpc.InvalidParams)
+	}
+}
+
+func TestCommandRunRejectsRelativeExecutionRootPath(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerCommandMethods(registry, store); err != nil {
+		t.Fatalf("registerCommandMethods returned error: %v", err)
+	}
+
+	primaryFolder := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "sess-1", primaryFolder)
+
+	spec, ok := registry.Get("command.run")
+	if !ok {
+		t.Fatal("command.run method not registered")
+	}
+	raw, err := json.Marshal(CommandRunRequest{WorkspaceID: "sess-1", Command: "/bin/sh", Args: []string{"-c", "pwd"}, ExecutionRootPath: "relative/path"})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+
+	_, err = spec.Call(context.Background(), raw)
+	if err == nil {
+		t.Fatal("command.run returned nil error for relative execution root")
+	}
+	var rpcErr *rpc.HandlerError
+	if !errors.As(err, &rpcErr) {
+		t.Fatalf("command.run error type = %T, want *rpc.HandlerError", err)
+	}
+	if rpcErr.Code != rpc.InvalidParams {
+		t.Fatalf("command.run error code = %d, want %d", rpcErr.Code, rpc.InvalidParams)
+	}
+}
+
 func TestCommandRunInvalidSessionStateAndFolderGuards(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -189,7 +292,7 @@ func TestCommandListReturnsCommandsForSession(t *testing.T) {
 
 	workspace := t.TempDir()
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
-	seedSessionWithPrimaryFolder(t, store, "sess-2", workspace)
+	seedSessionWithPrimaryFolder(t, store, "sess-2", t.TempDir())
 
 	if err := store.CreateCommand(context.Background(), globaldb.CreateCommandParams{CommandID: "cmd-1", WorkspaceID: "sess-1", Command: "echo one", Args: "[]", Status: "running", StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}); err != nil {
 		t.Fatalf("CreateCommand cmd-1 returned error: %v", err)
@@ -204,6 +307,241 @@ func TestCommandListReturnsCommandsForSession(t *testing.T) {
 	}
 	if resp.Commands[0].CommandID != "cmd-1" {
 		t.Fatalf("command.list[0].command_id = %q, want %q", resp.Commands[0].CommandID, "cmd-1")
+	}
+}
+
+func TestCommandListRejectsMalformedStoredArgs(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerCommandMethods(registry, store); err != nil {
+		t.Fatalf("registerCommandMethods returned error: %v", err)
+	}
+
+	workspace := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
+
+	if err := store.CreateCommand(context.Background(), globaldb.CreateCommandParams{CommandID: "cmd-bad", WorkspaceID: "sess-1", Command: "echo one", Args: `{"bad":true}`, Status: "running", StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}); err != nil {
+		t.Fatalf("CreateCommand cmd-bad returned error: %v", err)
+	}
+
+	spec, ok := registry.Get("command.list")
+	if !ok {
+		t.Fatal("command.list method not registered")
+	}
+	raw, err := json.Marshal(CommandListRequest{WorkspaceID: "sess-1"})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	_, err = spec.Call(context.Background(), raw)
+	if err == nil {
+		t.Fatal("command.list returned nil error for malformed args")
+	}
+	if !strings.Contains(err.Error(), "map command record to tool: decode command args") {
+		t.Fatalf("command.list error = %q, want decode args mapping error", err.Error())
+	}
+}
+
+func TestCommandGetRejectsMalformedStoredArgs(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerCommandMethods(registry, store); err != nil {
+		t.Fatalf("registerCommandMethods returned error: %v", err)
+	}
+
+	workspace := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
+
+	if err := store.CreateCommand(context.Background(), globaldb.CreateCommandParams{CommandID: "cmd-bad", WorkspaceID: "sess-1", Command: "echo one", Args: `{"bad":true}`, Status: "running", StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}); err != nil {
+		t.Fatalf("CreateCommand cmd-bad returned error: %v", err)
+	}
+
+	spec, ok := registry.Get("command.get")
+	if !ok {
+		t.Fatal("command.get method not registered")
+	}
+	raw, err := json.Marshal(CommandGetRequest{WorkspaceID: "sess-1", CommandID: "cmd-bad"})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	_, err = spec.Call(context.Background(), raw)
+	if err == nil {
+		t.Fatal("command.get returned nil error for malformed args")
+	}
+	if !strings.Contains(err.Error(), "map command record to tool: decode command args") {
+		t.Fatalf("command.get error = %q, want decode args mapping error", err.Error())
+	}
+}
+
+func TestWorkspaceCommandDefinitionMethodsLifecycle(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerCommandMethods(registry, store); err != nil {
+		t.Fatalf("registerCommandMethods returned error: %v", err)
+	}
+
+	workspace := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
+
+	createResp := callMethod[WorkspaceCommandCreateResponse](t, registry, "workspace.command.create", WorkspaceCommandCreateRequest{
+		WorkspaceID: "sess-1",
+		Name:        "test",
+		Command:     "go",
+		Args:        []string{"test", "./..."},
+	})
+	if createResp.CommandID == "" {
+		t.Fatal("workspace.command.create returned empty command_id")
+	}
+	if createResp.Name != "test" {
+		t.Fatalf("workspace.command.create name = %q, want %q", createResp.Name, "test")
+	}
+
+	listResp := callMethod[WorkspaceCommandListResponse](t, registry, "workspace.command.list", WorkspaceCommandListRequest{WorkspaceID: "sess-1"})
+	if len(listResp.Commands) != 1 {
+		t.Fatalf("workspace.command.list len = %d, want 1", len(listResp.Commands))
+	}
+	if listResp.Commands[0].Name != "test" {
+		t.Fatalf("workspace.command.list[0].name = %q, want %q", listResp.Commands[0].Name, "test")
+	}
+	if len(listResp.Commands[0].Args) != 2 || listResp.Commands[0].Args[0] != "test" || listResp.Commands[0].Args[1] != "./..." {
+		t.Fatalf("workspace.command.list[0].args = %#v, want [test ./...]", listResp.Commands[0].Args)
+	}
+
+	getResp := callMethod[WorkspaceCommandGetResponse](t, registry, "workspace.command.get", WorkspaceCommandGetRequest{WorkspaceID: "sess-1", CommandIDOrName: createResp.CommandID})
+	if getResp.CommandID != createResp.CommandID {
+		t.Fatalf("workspace.command.get command_id = %q, want %q", getResp.CommandID, createResp.CommandID)
+	}
+	getByNameResp := callMethod[WorkspaceCommandGetResponse](t, registry, "workspace.command.get", WorkspaceCommandGetRequest{WorkspaceID: "sess-1", CommandIDOrName: "test"})
+	if getByNameResp.CommandID != createResp.CommandID {
+		t.Fatalf("workspace.command.get by name command_id = %q, want %q", getByNameResp.CommandID, createResp.CommandID)
+	}
+
+	removeResp := callMethod[WorkspaceCommandRemoveResponse](t, registry, "workspace.command.remove", WorkspaceCommandRemoveRequest{WorkspaceID: "sess-1", CommandIDOrName: createResp.CommandID})
+	if removeResp.Status != "removed" {
+		t.Fatalf("workspace.command.remove status = %q, want %q", removeResp.Status, "removed")
+	}
+
+	listAfter := callMethod[WorkspaceCommandListResponse](t, registry, "workspace.command.list", WorkspaceCommandListRequest{WorkspaceID: "sess-1"})
+	if len(listAfter.Commands) != 0 {
+		t.Fatalf("workspace.command.list after remove len = %d, want 0", len(listAfter.Commands))
+	}
+}
+
+func TestWorkspaceCommandDefinitionCreateRejectsNameThatCollidesWithID(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerCommandMethods(registry, store); err != nil {
+		t.Fatalf("registerCommandMethods returned error: %v", err)
+	}
+
+	workspace := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
+
+	createResp := callMethod[WorkspaceCommandCreateResponse](t, registry, "workspace.command.create", WorkspaceCommandCreateRequest{
+		WorkspaceID: "sess-1",
+		Name:        "first",
+		Command:     "go",
+		Args:        []string{"test", "./..."},
+	})
+
+	spec, ok := registry.Get("workspace.command.create")
+	if !ok {
+		t.Fatal("workspace.command.create method not registered")
+	}
+	raw, err := json.Marshal(WorkspaceCommandCreateRequest{
+		WorkspaceID: "sess-1",
+		Name:        createResp.CommandID,
+		Command:     "go",
+		Args:        []string{"test", "./..."},
+	})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	_, err = spec.Call(context.Background(), raw)
+	if err == nil {
+		t.Fatal("workspace.command.create returned nil error for colliding name")
+	}
+	var rpcErr *rpc.HandlerError
+	if !errors.As(err, &rpcErr) {
+		t.Fatalf("workspace.command.create error type = %T, want *rpc.HandlerError", err)
+	}
+	if rpcErr.Code != rpc.InvalidParams {
+		t.Fatalf("workspace.command.create error code = %d, want %d", rpcErr.Code, rpc.InvalidParams)
+	}
+}
+
+func TestWorkspaceCommandDefinitionCreateDefaultsMissingArgsToEmptyList(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerCommandMethods(registry, store); err != nil {
+		t.Fatalf("registerCommandMethods returned error: %v", err)
+	}
+
+	workspace := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
+
+	resp := callMethod[WorkspaceCommandCreateResponse](t, registry, "workspace.command.create", WorkspaceCommandCreateRequest{
+		WorkspaceID: "sess-1",
+		Name:        "test",
+		Command:     "go",
+		Args:        nil,
+	})
+	if len(resp.Args) != 0 {
+		t.Fatalf("workspace.command.create args len = %d, want 0", len(resp.Args))
+	}
+}
+
+func TestWorkspaceCommandDefinitionCreateRejectsDuplicateName(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerCommandMethods(registry, store); err != nil {
+		t.Fatalf("registerCommandMethods returned error: %v", err)
+	}
+
+	workspace := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
+
+	_ = callMethod[WorkspaceCommandCreateResponse](t, registry, "workspace.command.create", WorkspaceCommandCreateRequest{
+		WorkspaceID: "sess-1",
+		Name:        "test",
+		Command:     "go",
+		Args:        []string{"test", "./..."},
+	})
+
+	spec, ok := registry.Get("workspace.command.create")
+	if !ok {
+		t.Fatal("workspace.command.create method not registered")
+	}
+	raw, err := json.Marshal(WorkspaceCommandCreateRequest{
+		WorkspaceID: "sess-1",
+		Name:        "test",
+		Command:     "go",
+		Args:        []string{"test", "./..."},
+	})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	_, err = spec.Call(context.Background(), raw)
+	if err == nil {
+		t.Fatal("workspace.command.create returned nil error for duplicate name")
+	}
+	var rpcErr *rpc.HandlerError
+	if !errors.As(err, &rpcErr) {
+		t.Fatalf("workspace.command.create error type = %T, want *rpc.HandlerError", err)
+	}
+	if rpcErr.Code != rpc.InvalidParams {
+		t.Fatalf("workspace.command.create error code = %d, want %d", rpcErr.Code, rpc.InvalidParams)
 	}
 }
 

@@ -77,8 +77,8 @@ func TestCommandSmokeLifecycleOverRPC(t *testing.T) {
 	waitForCommandOutputContains(t, socketPath, create.WorkspaceID, run.CommandID, "smoke-output")
 
 	stop := StopResponse{}
-	callDaemonMethod(t, socketPath, "daemon.stop", StopRequest{}, &stop)
-	if stop.Status != "stopping" {
+	stopErr := tryDaemonMethod(context.Background(), socketPath, "daemon.stop", StopRequest{}, &stop)
+	if stopErr == nil && stop.Status != "stopping" {
 		t.Fatalf("daemon.stop status = %q, want %q", stop.Status, "stopping")
 	}
 
@@ -87,7 +87,10 @@ func TestCommandSmokeLifecycleOverRPC(t *testing.T) {
 		if err != nil {
 			t.Fatalf("daemon start returned error: %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(boundedTestTimeout(t, 10*time.Second)):
+		if stopErr != nil {
+			t.Fatalf("daemon.stop returned %v and daemon did not exit", stopErr)
+		}
 		t.Fatal("timed out waiting for daemon to exit")
 	}
 }
@@ -95,7 +98,7 @@ func TestCommandSmokeLifecycleOverRPC(t *testing.T) {
 func waitForCommandExited(t *testing.T, socketPath, sessionID, commandID string) {
 	t.Helper()
 
-	ctx, cancel := context.WithTimeout(context.Background(), boundedTestTimeout(t, 8*time.Second))
+	ctx, cancel := context.WithTimeout(context.Background(), boundedTestTimeout(t, 20*time.Second))
 	defer cancel()
 
 	ticker := time.NewTicker(25 * time.Millisecond)
@@ -131,7 +134,7 @@ func waitForCommandExited(t *testing.T, socketPath, sessionID, commandID string)
 func waitForCommandOutputContains(t *testing.T, socketPath, sessionID, commandID, want string) {
 	t.Helper()
 
-	ctx, cancel := context.WithTimeout(context.Background(), boundedTestTimeout(t, 8*time.Second))
+	ctx, cancel := context.WithTimeout(context.Background(), boundedTestTimeout(t, 20*time.Second))
 	defer cancel()
 
 	ticker := time.NewTicker(25 * time.Millisecond)

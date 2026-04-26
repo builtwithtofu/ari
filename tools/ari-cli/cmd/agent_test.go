@@ -77,8 +77,8 @@ func TestAgentListRejectsActiveSessionOutsideWorkspace(t *testing.T) {
 	if err == nil {
 		t.Fatal("agent list returned nil error for cross-workspace active session")
 	}
-	if err.Error() != "Active workspace belongs to a different workspace; use --workspace <id-or-name> to override" {
-		t.Fatalf("agent list error = %q, want %q", err.Error(), "Active workspace belongs to a different workspace; use --workspace <id-or-name> to override")
+	if err.Error() != "Active workspace belongs to a different workspace; use --workspace <id-or-name> to target a workspace explicitly" {
+		t.Fatalf("agent list error = %q, want %q", err.Error(), "Active workspace belongs to a different workspace; use --workspace <id-or-name> to target a workspace explicitly")
 	}
 }
 
@@ -223,7 +223,7 @@ func TestAgentSubcommandsRejectActiveSessionOutsideWorkspace(t *testing.T) {
 			if err == nil {
 				t.Fatalf("%s returned nil error", tc.name)
 			}
-			if err.Error() != "Active workspace belongs to a different workspace; use --workspace <id-or-name> to override" {
+			if err.Error() != "Active workspace belongs to a different workspace; use --workspace <id-or-name> to target a workspace explicitly" {
 				t.Fatalf("%s error = %q, want workspace mismatch error", tc.name, err.Error())
 			}
 		})

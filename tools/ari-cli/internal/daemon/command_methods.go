@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,12 +13,14 @@ import (
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/process"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/tool"
 )
 
 type CommandRunRequest struct {
-	WorkspaceID string   `json:"workspace_id"`
-	Command     string   `json:"command"`
-	Args        []string `json:"args"`
+	WorkspaceID       string   `json:"workspace_id"`
+	Command           string   `json:"command"`
+	Args              []string `json:"args"`
+	ExecutionRootPath string   `json:"execution_root_path,omitempty"`
 }
 
 type CommandRunResponse struct {
@@ -74,6 +77,62 @@ type CommandStopResponse struct {
 	Status string `json:"status"`
 }
 
+type WorkspaceCommandCreateRequest struct {
+	WorkspaceID string   `json:"workspace_id"`
+	Name        string   `json:"name"`
+	Command     string   `json:"command"`
+	Args        []string `json:"args"`
+}
+
+type WorkspaceCommandCreateResponse struct {
+	CommandID string   `json:"command_id"`
+	Name      string   `json:"name"`
+	Command   string   `json:"command"`
+	Args      []string `json:"args"`
+	CreatedAt string   `json:"created_at"`
+	UpdatedAt string   `json:"updated_at"`
+}
+
+type WorkspaceCommandListRequest struct {
+	WorkspaceID string `json:"workspace_id"`
+}
+
+type WorkspaceCommandSummary struct {
+	CommandID string   `json:"command_id"`
+	Name      string   `json:"name"`
+	Command   string   `json:"command"`
+	Args      []string `json:"args"`
+	CreatedAt string   `json:"created_at"`
+	UpdatedAt string   `json:"updated_at"`
+}
+
+type WorkspaceCommandListResponse struct {
+	Commands []WorkspaceCommandSummary `json:"commands"`
+}
+
+type WorkspaceCommandGetRequest struct {
+	WorkspaceID     string `json:"workspace_id"`
+	CommandIDOrName string `json:"command_id_or_name"`
+}
+
+type WorkspaceCommandGetResponse struct {
+	CommandID string   `json:"command_id"`
+	Name      string   `json:"name"`
+	Command   string   `json:"command"`
+	Args      []string `json:"args"`
+	CreatedAt string   `json:"created_at"`
+	UpdatedAt string   `json:"updated_at"`
+}
+
+type WorkspaceCommandRemoveRequest struct {
+	WorkspaceID     string `json:"workspace_id"`
+	CommandIDOrName string `json:"command_id_or_name"`
+}
+
+type WorkspaceCommandRemoveResponse struct {
+	Status string `json:"status"`
+}
+
 const maxRetainedCommandLogs = 128
 
 var stopCommandProcess = func(proc *process.Process) error {
@@ -119,8 +178,15 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 				}
 				return CommandRunResponse{}, mapCommandStoreError(err, sessionID)
 			}
+			executionRootPath, err := validateWorkspaceExecutionRootPath(ctx, store, sessionID, req.ExecutionRootPath)
+			if err != nil {
+				return CommandRunResponse{}, err
+			}
+			if executionRootPath == "" {
+				executionRootPath = primaryFolder
+			}
 
-			proc, err := process.New(command, req.Args, process.Options{Dir: primaryFolder})
+			proc, err := process.New(command, req.Args, process.Options{Dir: executionRootPath})
 			if err != nil {
 				return CommandRunResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), sessionID)
 			}
@@ -136,11 +202,18 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 			}
 
 			startedAt := time.Now().UTC().Format(time.RFC3339Nano)
+			encodedArgs, err := encodeArgs(req.Args)
+			if err != nil {
+				_ = proc.Stop()
+				_, _ = proc.Wait()
+				return CommandRunResponse{}, err
+			}
+
 			if err := store.CreateCommand(ctx, globaldb.CreateCommandParams{
 				CommandID:   commandID,
 				WorkspaceID: sessionID,
 				Command:     command,
-				Args:        encodeArgs(req.Args),
+				Args:        encodedArgs,
 				Status:      "running",
 				StartedAt:   startedAt,
 			}); err != nil {
@@ -178,11 +251,15 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 
 			out := make([]CommandSummary, 0, len(commands))
 			for _, command := range commands {
+				toolRecord, err := tool.FromCommandRecord(command)
+				if err != nil {
+					return CommandListResponse{}, fmt.Errorf("map command record to tool: %w", err)
+				}
 				out = append(out, CommandSummary{
-					CommandID: command.CommandID,
-					Command:   command.Command,
-					Status:    command.Status,
-					StartedAt: command.StartedAt,
+					CommandID: toolRecord.ToolID,
+					Command:   toolRecord.Command.Command,
+					Status:    toolRecord.Status,
+					StartedAt: toolRecord.StartedAt,
 				})
 			}
 
@@ -212,18 +289,27 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 			if err != nil {
 				return CommandGetResponse{}, mapCommandStoreError(err, sessionID)
 			}
+			toolRecord, err := tool.FromCommandRecord(*command)
+			if err != nil {
+				return CommandGetResponse{}, fmt.Errorf("map command record to tool: %w", err)
+			}
+
+			encodedArgs, err := encodeArgs(toolRecord.Command.Args)
+			if err != nil {
+				return CommandGetResponse{}, err
+			}
 
 			resp := CommandGetResponse{
-				CommandID:   command.CommandID,
-				WorkspaceID: command.WorkspaceID,
-				Command:     command.Command,
-				Args:        command.Args,
-				Status:      command.Status,
-				ExitCode:    command.ExitCode,
-				StartedAt:   command.StartedAt,
+				CommandID:   toolRecord.ToolID,
+				WorkspaceID: toolRecord.WorkspaceID,
+				Command:     toolRecord.Command.Command,
+				Args:        encodedArgs,
+				Status:      toolRecord.Status,
+				ExitCode:    toolRecord.ExitCode,
+				StartedAt:   toolRecord.StartedAt,
 			}
-			if command.FinishedAt != nil {
-				resp.FinishedAt = *command.FinishedAt
+			if toolRecord.FinishedAt != nil {
+				resp.FinishedAt = *toolRecord.FinishedAt
 			}
 
 			return resp, nil
@@ -309,6 +395,159 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 		},
 	}); err != nil {
 		return fmt.Errorf("register command.stop: %w", err)
+	}
+
+	if err := rpc.RegisterMethod(registry, rpc.Method[WorkspaceCommandCreateRequest, WorkspaceCommandCreateResponse]{
+		Name:        "workspace.command.create",
+		Description: "Create workspace command definition",
+		Handler: func(ctx context.Context, req WorkspaceCommandCreateRequest) (WorkspaceCommandCreateResponse, error) {
+			workspaceID := strings.TrimSpace(req.WorkspaceID)
+			if workspaceID == "" {
+				return WorkspaceCommandCreateResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
+			}
+			if _, err := store.GetSession(ctx, workspaceID); err != nil {
+				return WorkspaceCommandCreateResponse{}, mapWorkspaceStoreError(err, workspaceID)
+			}
+
+			commandID, err := newCommandID()
+			if err != nil {
+				return WorkspaceCommandCreateResponse{}, fmt.Errorf("generate command id: %w", err)
+			}
+
+			encodedArgs, err := encodeArgs(req.Args)
+			if err != nil {
+				return WorkspaceCommandCreateResponse{}, err
+			}
+
+			if err := store.CreateWorkspaceCommandDefinition(ctx, globaldb.CreateWorkspaceCommandDefinitionParams{
+				CommandID:   commandID,
+				WorkspaceID: workspaceID,
+				Name:        strings.TrimSpace(req.Name),
+				Command:     strings.TrimSpace(req.Command),
+				Args:        encodedArgs,
+			}); err != nil {
+				return WorkspaceCommandCreateResponse{}, mapCommandStoreError(err, workspaceID)
+			}
+
+			definition, err := store.GetWorkspaceCommandDefinition(ctx, workspaceID, commandID)
+			if err != nil {
+				return WorkspaceCommandCreateResponse{}, mapCommandStoreError(err, workspaceID)
+			}
+			projected, err := projectWorkspaceCommandDefinition(*definition, workspaceID)
+			if err != nil {
+				return WorkspaceCommandCreateResponse{}, err
+			}
+
+			return WorkspaceCommandCreateResponse{
+				CommandID: projected.ToolID,
+				Name:      projected.Command.Name,
+				Command:   projected.Command.Command,
+				Args:      projected.Command.Args,
+				CreatedAt: definition.CreatedAt,
+				UpdatedAt: definition.UpdatedAt,
+			}, nil
+		},
+	}); err != nil {
+		return fmt.Errorf("register workspace.command.create: %w", err)
+	}
+
+	if err := rpc.RegisterMethod(registry, rpc.Method[WorkspaceCommandListRequest, WorkspaceCommandListResponse]{
+		Name:        "workspace.command.list",
+		Description: "List workspace command definitions",
+		Handler: func(ctx context.Context, req WorkspaceCommandListRequest) (WorkspaceCommandListResponse, error) {
+			workspaceID := strings.TrimSpace(req.WorkspaceID)
+			if workspaceID == "" {
+				return WorkspaceCommandListResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
+			}
+			if _, err := store.GetSession(ctx, workspaceID); err != nil {
+				return WorkspaceCommandListResponse{}, mapWorkspaceStoreError(err, workspaceID)
+			}
+
+			definitions, err := store.ListWorkspaceCommandDefinitions(ctx, workspaceID)
+			if err != nil {
+				return WorkspaceCommandListResponse{}, mapCommandStoreError(err, workspaceID)
+			}
+
+			out := make([]WorkspaceCommandSummary, 0, len(definitions))
+			for _, definition := range definitions {
+				projected, err := projectWorkspaceCommandDefinition(definition, workspaceID)
+				if err != nil {
+					return WorkspaceCommandListResponse{}, err
+				}
+				out = append(out, WorkspaceCommandSummary{
+					CommandID: projected.ToolID,
+					Name:      projected.Command.Name,
+					Command:   projected.Command.Command,
+					Args:      projected.Command.Args,
+					CreatedAt: definition.CreatedAt,
+					UpdatedAt: definition.UpdatedAt,
+				})
+			}
+
+			return WorkspaceCommandListResponse{Commands: out}, nil
+		},
+	}); err != nil {
+		return fmt.Errorf("register workspace.command.list: %w", err)
+	}
+
+	if err := rpc.RegisterMethod(registry, rpc.Method[WorkspaceCommandGetRequest, WorkspaceCommandGetResponse]{
+		Name:        "workspace.command.get",
+		Description: "Get workspace command definition",
+		Handler: func(ctx context.Context, req WorkspaceCommandGetRequest) (WorkspaceCommandGetResponse, error) {
+			workspaceID := strings.TrimSpace(req.WorkspaceID)
+			if workspaceID == "" {
+				return WorkspaceCommandGetResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
+			}
+			if _, err := store.GetSession(ctx, workspaceID); err != nil {
+				return WorkspaceCommandGetResponse{}, mapWorkspaceStoreError(err, workspaceID)
+			}
+
+			definition, err := lookupWorkspaceCommandDefinitionByIDOrName(ctx, store, workspaceID, req.CommandIDOrName)
+			if err != nil {
+				return WorkspaceCommandGetResponse{}, mapCommandStoreError(err, workspaceID)
+			}
+			projected, err := projectWorkspaceCommandDefinition(*definition, workspaceID)
+			if err != nil {
+				return WorkspaceCommandGetResponse{}, err
+			}
+
+			return WorkspaceCommandGetResponse{
+				CommandID: projected.ToolID,
+				Name:      projected.Command.Name,
+				Command:   projected.Command.Command,
+				Args:      projected.Command.Args,
+				CreatedAt: definition.CreatedAt,
+				UpdatedAt: definition.UpdatedAt,
+			}, nil
+		},
+	}); err != nil {
+		return fmt.Errorf("register workspace.command.get: %w", err)
+	}
+
+	if err := rpc.RegisterMethod(registry, rpc.Method[WorkspaceCommandRemoveRequest, WorkspaceCommandRemoveResponse]{
+		Name:        "workspace.command.remove",
+		Description: "Remove workspace command definition",
+		Handler: func(ctx context.Context, req WorkspaceCommandRemoveRequest) (WorkspaceCommandRemoveResponse, error) {
+			workspaceID := strings.TrimSpace(req.WorkspaceID)
+			if workspaceID == "" {
+				return WorkspaceCommandRemoveResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
+			}
+			if _, err := store.GetSession(ctx, workspaceID); err != nil {
+				return WorkspaceCommandRemoveResponse{}, mapWorkspaceStoreError(err, workspaceID)
+			}
+
+			definition, err := lookupWorkspaceCommandDefinitionByIDOrName(ctx, store, workspaceID, req.CommandIDOrName)
+			if err != nil {
+				return WorkspaceCommandRemoveResponse{}, mapCommandStoreError(err, workspaceID)
+			}
+			if err := store.DeleteWorkspaceCommandDefinition(ctx, workspaceID, definition.CommandID); err != nil {
+				return WorkspaceCommandRemoveResponse{}, mapCommandStoreError(err, workspaceID)
+			}
+
+			return WorkspaceCommandRemoveResponse{Status: "removed"}, nil
+		},
+	}); err != nil {
+		return fmt.Errorf("register workspace.command.remove: %w", err)
 	}
 
 	return nil
@@ -428,22 +667,49 @@ func mapCommandStoreError(err error, sessionID string) error {
 	return err
 }
 
-func encodeArgs(args []string) string {
-	if len(args) == 0 {
-		return "[]"
+func encodeArgs(args []string) (string, error) {
+	if args == nil {
+		args = make([]string, 0)
+	}
+	encoded, err := json.Marshal(args)
+	if err != nil {
+		return "", fmt.Errorf("encode command args: %w", err)
+	}
+	return string(encoded), nil
+}
+
+func projectWorkspaceCommandDefinition(definition globaldb.WorkspaceCommandDefinition, workspaceID string) (tool.Tool, error) {
+	projected, err := tool.FromWorkspaceCommandDefinition(definition)
+	if err != nil {
+		return tool.Tool{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), workspaceID)
+	}
+	if projected.Command == nil {
+		return tool.Tool{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace command projection missing command payload", workspaceID)
+	}
+	return projected, nil
+}
+
+func lookupWorkspaceCommandDefinitionByIDOrName(ctx context.Context, store *globaldb.Store, workspaceID, commandIDOrName string) (*globaldb.WorkspaceCommandDefinition, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("context is required")
+	}
+	if store == nil {
+		return nil, fmt.Errorf("store is required")
+	}
+	if workspaceID = strings.TrimSpace(workspaceID); workspaceID == "" {
+		return nil, fmt.Errorf("workspace id is required")
+	}
+	if commandIDOrName = strings.TrimSpace(commandIDOrName); commandIDOrName == "" {
+		return nil, fmt.Errorf("%w: command id or name is required", globaldb.ErrInvalidInput)
 	}
 
-	b := strings.Builder{}
-	b.WriteString("[")
-	for i, arg := range args {
-		if i > 0 {
-			b.WriteString(",")
-		}
-		b.WriteString(fmt.Sprintf("%q", arg))
+	if definition, err := store.GetWorkspaceCommandDefinition(ctx, workspaceID, commandIDOrName); err == nil {
+		return definition, nil
+	} else if !errors.Is(err, globaldb.ErrNotFound) {
+		return nil, err
 	}
-	b.WriteString("]")
 
-	return b.String()
+	return store.GetWorkspaceCommandDefinitionByName(ctx, workspaceID, commandIDOrName)
 }
 
 func newCommandID() (string, error) {

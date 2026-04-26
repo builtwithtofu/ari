@@ -18,20 +18,12 @@ import (
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/vcs"
 	"github.com/sourcegraph/jsonrpc2"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 )
 
 var (
 	workspaceEnsureDaemonRunning         = ensureDaemonRunning
 	workspaceSwitchIsInteractiveTerminal = func(cmd *cobra.Command) bool {
-		if cmd == nil {
-			return false
-		}
-		inputFile, ok := cmd.InOrStdin().(*os.File)
-		if !ok {
-			return false
-		}
-		return term.IsTerminal(int(inputFile.Fd()))
+		return isInteractiveTerminal(cmd)
 	}
 	workspaceCreateRPC = func(ctx context.Context, socketPath string, req daemon.WorkspaceCreateRequest) (daemon.WorkspaceCreateResponse, error) {
 		rpcClient := client.New(socketPath)
@@ -109,6 +101,7 @@ func NewWorkspaceCmd() *cobra.Command {
 	cmd.AddCommand(newWorkspaceSwitchCmd())
 	cmd.AddCommand(newWorkspaceClearCmd())
 	cmd.AddCommand(newWorkspaceFolderCmd())
+	cmd.AddCommand(newWorkspaceAttachCmd())
 	return cmd
 }
 
@@ -720,26 +713,66 @@ func resolveSessionTarget(ctx context.Context, socketPath, idOrName string) (res
 		return resolvedSessionTarget{}, userFacingError{message: "Workspace identifier is required"}
 	}
 
+	var directNameLookup *daemon.WorkspaceGetResponse
+
 	if session, err := workspaceGetRPC(ctx, socketPath, idOrName); err == nil {
+		workspaceID := strings.TrimSpace(session.WorkspaceID)
+		if workspaceID == idOrName {
+			resolved := session
+			return resolvedSessionTarget{WorkspaceID: session.WorkspaceID, Session: &resolved}, nil
+		}
 		resolved := session
-		return resolvedSessionTarget{WorkspaceID: session.WorkspaceID, Session: &resolved}, nil
+		directNameLookup = &resolved
 	} else if !isSessionNotFoundError(err) {
 		return resolvedSessionTarget{}, mapSessionRPCError(err)
 	}
 
 	list, err := workspaceListRPC(ctx, socketPath)
 	if err != nil {
+		if directNameLookup != nil {
+			return resolvedSessionTarget{WorkspaceID: directNameLookup.WorkspaceID, Session: directNameLookup}, nil
+		}
 		return resolvedSessionTarget{}, mapSessionRPCError(err)
 	}
 
+	exactIDMatches := make([]daemon.WorkspaceSummary, 0)
+	nameMatches := make([]daemon.WorkspaceSummary, 0)
 	prefixMatches := make([]string, 0)
 	for _, session := range list.Workspaces {
+		if session.WorkspaceID == idOrName {
+			exactIDMatches = append(exactIDMatches, session)
+		}
 		if session.Name == idOrName {
-			return resolvedSessionTarget{WorkspaceID: session.WorkspaceID}, nil
+			nameMatches = append(nameMatches, session)
 		}
 		if strings.HasPrefix(session.WorkspaceID, idOrName) {
 			prefixMatches = append(prefixMatches, session.WorkspaceID)
 		}
+	}
+	if len(exactIDMatches) == 1 {
+		session, err := workspaceGetRPC(ctx, socketPath, exactIDMatches[0].WorkspaceID)
+		if err != nil {
+			return resolvedSessionTarget{}, mapSessionRPCError(err)
+		}
+		resolved := session
+		return resolvedSessionTarget{WorkspaceID: session.WorkspaceID, Session: &resolved}, nil
+	}
+	if len(exactIDMatches) > 1 {
+		return resolvedSessionTarget{}, userFacingError{message: "Workspace ID prefix is ambiguous"}
+	}
+	if len(nameMatches) == 1 {
+		resolved := resolvedSessionTarget{WorkspaceID: nameMatches[0].WorkspaceID}
+		if directNameLookup != nil && strings.TrimSpace(directNameLookup.WorkspaceID) == nameMatches[0].WorkspaceID {
+			resolved.Session = directNameLookup
+		}
+		return resolved, nil
+	}
+	if len(nameMatches) > 1 {
+		workspaceID, err := resolveNameCollisionByCWD(ctx, socketPath, nameMatches)
+		if err != nil {
+			return resolvedSessionTarget{}, err
+		}
+		return resolvedSessionTarget{WorkspaceID: workspaceID}, nil
 	}
 	if len(prefixMatches) == 1 {
 		return resolvedSessionTarget{WorkspaceID: prefixMatches[0]}, nil
@@ -748,7 +781,46 @@ func resolveSessionTarget(ctx context.Context, socketPath, idOrName string) (res
 		return resolvedSessionTarget{}, userFacingError{message: "Workspace ID prefix is ambiguous"}
 	}
 
+	if directNameLookup != nil {
+		return resolvedSessionTarget{WorkspaceID: directNameLookup.WorkspaceID, Session: directNameLookup}, nil
+	}
+
 	return resolvedSessionTarget{}, userFacingError{message: "Workspace not found"}
+}
+
+func resolveNameCollisionByCWD(ctx context.Context, socketPath string, nameMatches []daemon.WorkspaceSummary) (string, error) {
+	if len(nameMatches) < 2 {
+		return "", fmt.Errorf("name collision requires at least two matches")
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+
+	candidates, err := loadLiveWorkspaceCandidates(ctx, socketPath, nameMatches)
+	if err != nil {
+		return "", err
+	}
+
+	if len(candidates) == 0 {
+		return "", userFacingError{message: "Workspace not found"}
+	}
+
+	if len(candidates) == 1 {
+		return candidates[0].WorkspaceID, nil
+	}
+
+	workspaceID, resolveErr := resolveWorkspaceByCWD(cwd, candidates)
+	if resolveErr == nil {
+		return workspaceID, nil
+	}
+
+	if isWorkspaceCWDNoMatch(resolveErr) {
+		return "", userFacingError{message: "Workspace name is ambiguous; run `ari workspace set <id-or-name>` to choose one"}
+	}
+
+	return "", resolveErr
 }
 
 func mapSessionRPCError(err error) error {

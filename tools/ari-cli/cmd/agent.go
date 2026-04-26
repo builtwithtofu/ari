@@ -218,7 +218,7 @@ var (
 			}
 		}
 
-		scanner := termio.NewDetachScanner()
+		scanner := termio.NewPrefixScanner()
 		buf := make([]byte, 1024)
 		inputResultCh := make(chan attachSessionOutcome, 1)
 		errCh := make(chan error, 2)
@@ -381,57 +381,83 @@ func newAgentAttachCmd() *cobra.Command {
 				return err
 			}
 
-			cols, rows := agentAttachTerminalSize(cmd)
-
-			resp, err := agentAttachRPC(rpcCtx, cfg.Daemon.SocketPath, daemon.AgentAttachRequest{
-				WorkspaceID: target.WorkspaceID,
-				AgentID:     strings.TrimSpace(args[0]),
-				InitialCols: cols,
-				InitialRows: rows,
-			})
-			if err != nil {
-				if isDaemonDisconnectError(err) {
-					return userFacingError{message: "Daemon disconnected. Agent may still be running."}
-				}
-				return mapAgentRPCError(err)
-			}
-
-			resizeSignalCh := make(chan os.Signal, 1)
-			signal.Notify(resizeSignalCh, syscall.SIGWINCH)
-			defer signal.Stop(resizeSignalCh)
-
-			outcome, err := agentAttachRunSession(
-				runCtx,
-				cmd.InOrStdin(),
-				cmd.OutOrStdout(),
-				cfg.Daemon.SocketPath,
-				resp.Token,
-				cols,
-				rows,
-				resizeSignalCh,
-				func() (uint16, uint16) { return agentAttachTerminalSize(cmd) },
-			)
-			if err != nil {
-				if isDaemonDisconnectError(err) {
-					return userFacingError{message: "Daemon disconnected. Agent may still be running."}
-				}
-				return err
-			}
-			restoreTerminal()
-			if outcome.ExitCode != nil {
-				_, err = fmt.Fprintf(cmd.OutOrStdout(), "Agent exited (code %d).\n", *outcome.ExitCode)
-				return err
-			}
-			if !outcome.Detached {
-				return userFacingError{message: "Attach session ended unexpectedly"}
-			}
-
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Detached from agent %q.\n", strings.TrimSpace(args[0]))
-			return err
+			return runAgentAttachFlow(cmd, cfg, runCtx, restoreTerminal, target.WorkspaceID, strings.TrimSpace(args[0]))
 		},
 	}
-	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Workspace id or name override (defaults to active workspace)")
+	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
 	return cmd
+}
+
+func runAgentAttachFlow(cmd *cobra.Command, cfg *config.Config, runCtx context.Context, restoreTerminal func(), workspaceID, agentID string) error {
+	if cmd == nil {
+		return fmt.Errorf("agent attach: command is required")
+	}
+	if cfg == nil {
+		return fmt.Errorf("agent attach: config is required")
+	}
+	if runCtx == nil {
+		return fmt.Errorf("agent attach: run context is required")
+	}
+	if restoreTerminal == nil {
+		return fmt.Errorf("agent attach: restore terminal callback is required")
+	}
+	if strings.TrimSpace(workspaceID) == "" {
+		return userFacingError{message: "Workspace not found"}
+	}
+	if strings.TrimSpace(agentID) == "" {
+		return userFacingError{message: "Agent identifier is required"}
+	}
+
+	rpcCtx, cancel := context.WithTimeout(runCtx, 5*time.Second)
+	defer cancel()
+
+	cols, rows := agentAttachTerminalSize(cmd)
+
+	resp, err := agentAttachRPC(rpcCtx, cfg.Daemon.SocketPath, daemon.AgentAttachRequest{
+		WorkspaceID: workspaceID,
+		AgentID:     agentID,
+		InitialCols: cols,
+		InitialRows: rows,
+	})
+	if err != nil {
+		if isDaemonDisconnectError(err) {
+			return userFacingError{message: "Daemon disconnected. Agent may still be running."}
+		}
+		return mapAgentRPCError(err)
+	}
+
+	resizeSignalCh := make(chan os.Signal, 1)
+	signal.Notify(resizeSignalCh, syscall.SIGWINCH)
+	defer signal.Stop(resizeSignalCh)
+
+	outcome, err := agentAttachRunSession(
+		runCtx,
+		cmd.InOrStdin(),
+		cmd.OutOrStdout(),
+		cfg.Daemon.SocketPath,
+		resp.Token,
+		cols,
+		rows,
+		resizeSignalCh,
+		func() (uint16, uint16) { return agentAttachTerminalSize(cmd) },
+	)
+	if err != nil {
+		if isDaemonDisconnectError(err) {
+			return userFacingError{message: "Daemon disconnected. Agent may still be running."}
+		}
+		return err
+	}
+	restoreTerminal()
+	if outcome.ExitCode != nil {
+		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Agent exited (code %d).\n", *outcome.ExitCode)
+		return err
+	}
+	if !outcome.Detached {
+		return userFacingError{message: "Attach session ended unexpectedly"}
+	}
+
+	_, err = fmt.Fprintf(cmd.OutOrStdout(), "Detached from agent %q.\n", agentID)
+	return err
 }
 
 func newAgentDetachCmd() *cobra.Command {
@@ -476,7 +502,7 @@ func newAgentDetachCmd() *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Workspace id or name override (defaults to active workspace)")
+	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
 	return cmd
 }
 
@@ -548,7 +574,7 @@ func newAgentSpawnCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&name, "name", "", "Optional agent name")
 	cmd.Flags().StringVar(&harness, "harness", "", fmt.Sprintf("Harness identity (%s)", strings.Join(daemon.SupportedHarnesses(), "|")))
-	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Workspace id or name override (defaults to active workspace)")
+	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
 	return cmd
 }
 
@@ -603,7 +629,7 @@ func newAgentListCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Workspace id or name override (defaults to active workspace)")
+	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
 	return cmd
 }
 
@@ -685,7 +711,7 @@ func newAgentShowCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Workspace id or name override (defaults to active workspace)")
+	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
 	return cmd
 }
 
@@ -753,7 +779,7 @@ func newAgentSendCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&inputFlag, "input", "", "Input text to send")
-	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Workspace id or name override (defaults to active workspace)")
+	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
 	return cmd
 }
 
@@ -796,7 +822,7 @@ func newAgentOutputCmd() *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Workspace id or name override (defaults to active workspace)")
+	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
 	return cmd
 }
 
@@ -839,7 +865,7 @@ func newAgentStopCmd() *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Workspace id or name override (defaults to active workspace)")
+	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
 	return cmd
 }
 

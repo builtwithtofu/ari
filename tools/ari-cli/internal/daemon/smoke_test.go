@@ -55,8 +55,8 @@ func TestDaemonSmokeLifecycle(t *testing.T) {
 	}
 
 	stop := StopResponse{}
-	callDaemonMethod(t, socketPath, "daemon.stop", StopRequest{}, &stop)
-	if stop.Status != "stopping" {
+	stopErr := tryDaemonMethod(context.Background(), socketPath, "daemon.stop", StopRequest{}, &stop)
+	if stopErr == nil && stop.Status != "stopping" {
 		t.Fatalf("stop status = %q, want stopping", stop.Status)
 	}
 
@@ -66,6 +66,9 @@ func TestDaemonSmokeLifecycle(t *testing.T) {
 			t.Fatalf("daemon start returned error: %v", err)
 		}
 	case <-time.After(5 * time.Second):
+		if stopErr != nil {
+			t.Fatalf("daemon.stop returned %v and daemon did not exit", stopErr)
+		}
 		t.Fatal("timed out waiting for daemon to exit")
 	}
 

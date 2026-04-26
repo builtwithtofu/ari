@@ -111,6 +111,284 @@ func TestGetCommandMissingReturnsNotFound(t *testing.T) {
 	}
 }
 
+func TestCreateCommandRejectsMissingWorkspace(t *testing.T) {
+	store := newCommandTestStore(t)
+	ctx := context.Background()
+
+	err := store.CreateCommand(ctx, CreateCommandParams{
+		CommandID:   "cmd-1",
+		WorkspaceID: "missing-workspace",
+		Command:     "go test ./...",
+		Args:        `[]`,
+		Status:      "running",
+		StartedAt:   "2026-04-03T00:00:00Z",
+	})
+	if err == nil {
+		t.Fatal("CreateCommand returned nil error for missing workspace")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("CreateCommand missing workspace error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestWorkspaceCommandDefinitionRejectsMissingWorkspace(t *testing.T) {
+	store := newCommandTestStore(t)
+	ctx := context.Background()
+
+	err := store.CreateWorkspaceCommandDefinition(ctx, CreateWorkspaceCommandDefinitionParams{
+		CommandID:   "cmd-def-1",
+		WorkspaceID: "missing-workspace",
+		Name:        "test",
+		Command:     "go",
+		Args:        `[]`,
+	})
+	if err == nil {
+		t.Fatal("CreateWorkspaceCommandDefinition returned nil error for missing workspace")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("CreateWorkspaceCommandDefinition missing workspace error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestWorkspaceCommandDefinitionLifecycle(t *testing.T) {
+	store := newCommandTestStore(t)
+	ctx := context.Background()
+
+	if err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	createReq := CreateWorkspaceCommandDefinitionParams{
+		CommandID:   "cmd-def-1",
+		WorkspaceID: "sess-1",
+		Name:        "test",
+		Command:     "go",
+		Args:        `["test","./..."]`,
+	}
+	if err := store.CreateWorkspaceCommandDefinition(ctx, createReq); err != nil {
+		t.Fatalf("CreateWorkspaceCommandDefinition returned error: %v", err)
+	}
+
+	gotByID, err := store.GetWorkspaceCommandDefinition(ctx, "sess-1", "cmd-def-1")
+	if err != nil {
+		t.Fatalf("GetWorkspaceCommandDefinition returned error: %v", err)
+	}
+	if gotByID.Name != "test" {
+		t.Fatalf("GetWorkspaceCommandDefinition Name = %q, want %q", gotByID.Name, "test")
+	}
+
+	gotByName, err := store.GetWorkspaceCommandDefinitionByName(ctx, "sess-1", "test")
+	if err != nil {
+		t.Fatalf("GetWorkspaceCommandDefinitionByName returned error: %v", err)
+	}
+	if gotByName.CommandID != "cmd-def-1" {
+		t.Fatalf("GetWorkspaceCommandDefinitionByName CommandID = %q, want %q", gotByName.CommandID, "cmd-def-1")
+	}
+
+	list, err := store.ListWorkspaceCommandDefinitions(ctx, "sess-1")
+	if err != nil {
+		t.Fatalf("ListWorkspaceCommandDefinitions returned error: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("ListWorkspaceCommandDefinitions len = %d, want 1", len(list))
+	}
+	if list[0].Command != "go" {
+		t.Fatalf("ListWorkspaceCommandDefinitions[0].Command = %q, want %q", list[0].Command, "go")
+	}
+
+	if err := store.DeleteWorkspaceCommandDefinition(ctx, "sess-1", "cmd-def-1"); err != nil {
+		t.Fatalf("DeleteWorkspaceCommandDefinition returned error: %v", err)
+	}
+
+	_, err = store.GetWorkspaceCommandDefinition(ctx, "sess-1", "cmd-def-1")
+	if err == nil {
+		t.Fatal("GetWorkspaceCommandDefinition after delete returned nil error")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetWorkspaceCommandDefinition after delete error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestWorkspaceCommandDefinitionUsesImmediateTransactionForCollisionChecks(t *testing.T) {
+	db := &recordingDB{queryRowsSequence: []Rows{
+		&testRows{items: [][]any{{"sess-1", "alpha", "active", "auto", "/tmp/origin", "manual", "2026-04-25T00:00:00Z", "2026-04-25T00:00:00Z"}}},
+		&testRows{},
+		&testRows{},
+	}}
+	store, err := NewStore(db)
+	if err != nil {
+		t.Fatalf("NewStore returned error: %v", err)
+	}
+
+	if err := store.CreateWorkspaceCommandDefinition(context.Background(), CreateWorkspaceCommandDefinitionParams{
+		CommandID:   "cmd-def-1",
+		WorkspaceID: "sess-1",
+		Name:        "test",
+		Command:     "go",
+		Args:        `[]`,
+	}); err != nil {
+		t.Fatalf("CreateWorkspaceCommandDefinition returned error: %v", err)
+	}
+	if !db.immediateTransactionStarted {
+		t.Fatal("CreateWorkspaceCommandDefinition did not use an immediate transaction for collision checks")
+	}
+}
+
+func TestWorkspaceCommandDefinitionRejectsNameThatCollidesWithExistingID(t *testing.T) {
+	store := newCommandTestStore(t)
+	ctx := context.Background()
+
+	if err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := store.CreateWorkspaceCommandDefinition(ctx, CreateWorkspaceCommandDefinitionParams{
+		CommandID:   "cmd-def-1",
+		WorkspaceID: "sess-1",
+		Name:        "first",
+		Command:     "go",
+		Args:        `[]`,
+	}); err != nil {
+		t.Fatalf("CreateWorkspaceCommandDefinition first returned error: %v", err)
+	}
+
+	err := store.CreateWorkspaceCommandDefinition(ctx, CreateWorkspaceCommandDefinitionParams{
+		CommandID:   "cmd-def-2",
+		WorkspaceID: "sess-1",
+		Name:        "cmd-def-1",
+		Command:     "go",
+		Args:        `[]`,
+	})
+	if err == nil {
+		t.Fatal("CreateWorkspaceCommandDefinition returned nil error for colliding name")
+	}
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("CreateWorkspaceCommandDefinition collision error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestWorkspaceCommandDefinitionRejectsIDThatCollidesWithExistingName(t *testing.T) {
+	store := newCommandTestStore(t)
+	ctx := context.Background()
+
+	if err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := store.CreateWorkspaceCommandDefinition(ctx, CreateWorkspaceCommandDefinitionParams{
+		CommandID:   "cmd-def-1",
+		WorkspaceID: "sess-1",
+		Name:        "build",
+		Command:     "go",
+		Args:        `[]`,
+	}); err != nil {
+		t.Fatalf("CreateWorkspaceCommandDefinition first returned error: %v", err)
+	}
+
+	err := store.CreateWorkspaceCommandDefinition(ctx, CreateWorkspaceCommandDefinitionParams{
+		CommandID:   "build",
+		WorkspaceID: "sess-1",
+		Name:        "test",
+		Command:     "go",
+		Args:        `[]`,
+	})
+	if err == nil {
+		t.Fatal("CreateWorkspaceCommandDefinition returned nil error for colliding id")
+	}
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("CreateWorkspaceCommandDefinition collision error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestWorkspaceCommandDefinitionRejectsNullArgs(t *testing.T) {
+	store := newCommandTestStore(t)
+	ctx := context.Background()
+
+	if err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	err := store.CreateWorkspaceCommandDefinition(ctx, CreateWorkspaceCommandDefinitionParams{
+		CommandID:   "cmd-def-1",
+		WorkspaceID: "sess-1",
+		Name:        "test",
+		Command:     "go",
+		Args:        `null`,
+	})
+	if err == nil {
+		t.Fatal("CreateWorkspaceCommandDefinition returned nil error for null args")
+	}
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("CreateWorkspaceCommandDefinition null args error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestWorkspaceCommandDefinitionRejectsDuplicateNameInSameWorkspace(t *testing.T) {
+	store := newCommandTestStore(t)
+	ctx := context.Background()
+
+	if err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := store.CreateWorkspaceCommandDefinition(ctx, CreateWorkspaceCommandDefinitionParams{
+		CommandID:   "cmd-def-1",
+		WorkspaceID: "sess-1",
+		Name:        "test",
+		Command:     "go",
+		Args:        `[]`,
+	}); err != nil {
+		t.Fatalf("CreateWorkspaceCommandDefinition first returned error: %v", err)
+	}
+
+	err := store.CreateWorkspaceCommandDefinition(ctx, CreateWorkspaceCommandDefinitionParams{
+		CommandID:   "cmd-def-2",
+		WorkspaceID: "sess-1",
+		Name:        "test",
+		Command:     "go",
+		Args:        `[]`,
+	})
+	if err == nil {
+		t.Fatal("CreateWorkspaceCommandDefinition returned nil error for duplicate name")
+	}
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("CreateWorkspaceCommandDefinition duplicate name error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestWorkspaceCommandDefinitionRejectsDuplicateCommandIDInSameWorkspace(t *testing.T) {
+	store := newCommandTestStore(t)
+	ctx := context.Background()
+
+	if err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := store.CreateWorkspaceCommandDefinition(ctx, CreateWorkspaceCommandDefinitionParams{
+		CommandID:   "cmd-def-1",
+		WorkspaceID: "sess-1",
+		Name:        "test-1",
+		Command:     "go",
+		Args:        `[]`,
+	}); err != nil {
+		t.Fatalf("CreateWorkspaceCommandDefinition first returned error: %v", err)
+	}
+
+	err := store.CreateWorkspaceCommandDefinition(ctx, CreateWorkspaceCommandDefinitionParams{
+		CommandID:   "cmd-def-1",
+		WorkspaceID: "sess-1",
+		Name:        "test-2",
+		Command:     "go",
+		Args:        `[]`,
+	})
+	if err == nil {
+		t.Fatal("CreateWorkspaceCommandDefinition returned nil error for duplicate command id")
+	}
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("CreateWorkspaceCommandDefinition duplicate id error = %v, want ErrInvalidInput", err)
+	}
+}
+
 func intPtr(v int) *int { return &v }
 
 func stringPtr(v string) *string { return &v }

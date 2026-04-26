@@ -18,11 +18,13 @@ type queryCall struct {
 }
 
 type recordingDB struct {
-	execCalls  []execCall
-	queryCalls []queryCall
-	queryRows  Rows
-	queryErr   error
-	execErr    error
+	execCalls                   []execCall
+	queryCalls                  []queryCall
+	queryRows                   Rows
+	queryRowsSequence           []Rows
+	queryErr                    error
+	execErr                     error
+	immediateTransactionStarted bool
 }
 
 func (r *recordingDB) ExecContext(_ context.Context, query string, args ...any) (sql.Result, error) {
@@ -38,10 +40,20 @@ func (r *recordingDB) QueryContext(_ context.Context, query string, args ...any)
 	if r.queryErr != nil {
 		return nil, r.queryErr
 	}
+	if len(r.queryRowsSequence) > 0 {
+		rows := r.queryRowsSequence[0]
+		r.queryRowsSequence = r.queryRowsSequence[1:]
+		return rows, nil
+	}
 	if r.queryRows == nil {
 		return &testRows{}, nil
 	}
 	return r.queryRows, nil
+}
+
+func (r *recordingDB) WithImmediateTransaction(ctx context.Context, fn func(DB) error) error {
+	r.immediateTransactionStarted = true
+	return fn(r)
 }
 
 type testResult int64
