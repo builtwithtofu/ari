@@ -64,6 +64,8 @@ type Process struct {
 
 const defaultStopTimeout = 10 * time.Second
 
+const outputDrainTimeout = 250 * time.Millisecond
+
 var processGroupKill = syscall.Kill
 
 func New(command string, args []string, opts Options) (*Process, error) {
@@ -329,11 +331,20 @@ func (p *Process) waitInternal() error {
 		close(p.done)
 	})
 
-	if ptyFile != nil {
+	if outputDone != nil {
+		select {
+		case <-outputDone:
+		case <-time.After(outputDrainTimeout):
+			if ptyFile != nil {
+				_ = ptyFile.Close()
+			}
+			<-outputDone
+		}
+	} else if ptyFile != nil {
 		_ = ptyFile.Close()
 	}
-	if outputDone != nil {
-		<-outputDone
+	if ptyFile != nil {
+		_ = ptyFile.Close()
 	}
 
 	p.mu.Lock()
