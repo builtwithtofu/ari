@@ -28,8 +28,8 @@ ON CONFLICT(key) DO UPDATE SET
 	metaByKeyQuery = `SELECT value FROM daemon_meta WHERE key = ?`
 
 	insertSessionQuery = `INSERT INTO workspaces (
-		workspace_id, name, status, vcs_preference, origin_root, cleanup_policy, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+		workspace_id, name, status, vcs_preference, origin_root, cleanup_policy, created_at, updated_at, workspace_kind
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	sessionByIDQuery = `SELECT
 		workspace_id,
@@ -39,7 +39,9 @@ ON CONFLICT(key) DO UPDATE SET
 	origin_root,
 	cleanup_policy,
 	created_at,
-	updated_at
+		updated_at
+	,
+	workspace_kind
 FROM workspaces
 WHERE workspace_id = ?`
 
@@ -51,7 +53,9 @@ WHERE workspace_id = ?`
 	origin_root,
 	cleanup_policy,
 	created_at,
-	updated_at
+		updated_at
+	,
+	workspace_kind
 FROM workspaces
 WHERE name = ?`
 
@@ -63,9 +67,24 @@ WHERE name = ?`
 	origin_root,
 	cleanup_policy,
 	created_at,
-	updated_at
+		updated_at
+	,
+	workspace_kind
 FROM workspaces
 ORDER BY created_at DESC, workspace_id ASC`
+
+	systemSessionQuery = `SELECT
+		workspace_id,
+	name,
+	status,
+	vcs_preference,
+	origin_root,
+	cleanup_policy,
+	created_at,
+	updated_at,
+	workspace_kind
+FROM workspaces
+WHERE workspace_kind = 'system'`
 
 	updateSessionStatusQuery = `UPDATE workspaces
 SET status = ?, updated_at = ?
@@ -310,6 +329,7 @@ type Session struct {
 	CleanupPolicy string
 	CreatedAt     string
 	UpdatedAt     string
+	Kind          string
 }
 
 type SessionFolder struct {
@@ -415,6 +435,10 @@ type Rows interface {
 	Close() error
 }
 
+type columnRows interface {
+	Columns() ([]string, error)
+}
+
 type DB interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	QueryContext(ctx context.Context, query string, args ...any) (Rows, error)
@@ -493,6 +517,8 @@ type AgentProfile struct {
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }
+
+const DefaultHelperProfileName = "helper"
 
 type FinalResponse struct {
 	FinalResponseID   string
@@ -658,6 +684,35 @@ func (s *Store) UpsertAgentProfile(ctx context.Context, profile AgentProfile) er
 		return fmt.Errorf("upsert agent profile %q: %w", profile.Name, err)
 	}
 	return nil
+}
+
+func (s *Store) EnsureDefaultHelperProfile(ctx context.Context, workspaceID, harness, prompt string) (AgentProfile, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		return AgentProfile{}, fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
+	}
+	if _, err := s.GetSession(ctx, workspaceID); err != nil {
+		return AgentProfile{}, err
+	}
+	if existing, err := s.getExactAgentProfile(ctx, workspaceID, DefaultHelperProfileName); err == nil {
+		return existing, nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return AgentProfile{}, err
+	}
+	profileID := "ap_helper_" + strings.ReplaceAll(workspaceID, "-", "_")
+	profile := AgentProfile{ProfileID: profileID, WorkspaceID: workspaceID, Name: DefaultHelperProfileName, Harness: strings.TrimSpace(harness), Prompt: strings.TrimSpace(prompt), InvocationClass: "agent", DefaultsJSON: "{}"}
+	if err := s.UpsertAgentProfile(ctx, profile); err != nil {
+		return AgentProfile{}, err
+	}
+	return s.getExactAgentProfile(ctx, workspaceID, DefaultHelperProfileName)
+}
+
+func (s *Store) GetDefaultHelperProfile(ctx context.Context, workspaceID string) (AgentProfile, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		return AgentProfile{}, fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
+	}
+	return s.getExactAgentProfile(ctx, workspaceID, DefaultHelperProfileName)
 }
 
 func (s *Store) getExactAgentProfile(ctx context.Context, workspaceID, name string) (AgentProfile, error) {
@@ -1006,28 +1061,79 @@ func finalResponseFromSQLC(row dbsqlc.FinalResponse) FinalResponse {
 }
 
 func (s *Store) CreateSession(ctx context.Context, id, name, originRoot, cleanupPolicy, vcsPreference string) error {
+	return s.CreateWorkspace(ctx, id, name, originRoot, cleanupPolicy, vcsPreference, "project")
+}
+
+func (s *Store) CreateWorkspace(ctx context.Context, id, name, originRoot, cleanupPolicy, vcsPreference, kind string) error {
 	if id = strings.TrimSpace(id); id == "" {
 		return fmt.Errorf("%w: session id is required", ErrInvalidInput)
 	}
 	if name = strings.TrimSpace(name); name == "" {
 		return fmt.Errorf("%w: session name is required", ErrInvalidInput)
 	}
-	if originRoot = strings.TrimSpace(originRoot); originRoot == "" {
-		return fmt.Errorf("%w: origin root is required", ErrInvalidInput)
-	}
+	originRoot = strings.TrimSpace(originRoot)
 	if err := validateCleanupPolicy(cleanupPolicy); err != nil {
 		return err
 	}
 	if err := validateVCSPreference(vcsPreference); err != nil {
 		return err
 	}
+	if kind = strings.TrimSpace(kind); kind == "" {
+		kind = "project"
+	}
+	if !isValidWorkspaceKind(kind) {
+		return fmt.Errorf("%w: invalid workspace kind %q", ErrInvalidInput, kind)
+	}
+	if kind == "system" && originRoot != "" {
+		return fmt.Errorf("%w: system workspace origin root must be empty", ErrInvalidInput)
+	}
+	if kind == "project" && originRoot == "" {
+		return fmt.Errorf("%w: origin root is required", ErrInvalidInput)
+	}
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := s.db.ExecContext(ctx, insertSessionQuery, id, name, statusActive, vcsPreference, originRoot, cleanupPolicy, now, now); err != nil {
+	if _, err := s.db.ExecContext(ctx, insertSessionQuery, id, name, statusActive, vcsPreference, originRoot, cleanupPolicy, now, now, kind); err != nil {
 		return fmt.Errorf("create session %q: %w", id, err)
 	}
 
 	return nil
+}
+
+func (s *Store) EnsureSystemWorkspace(ctx context.Context, id string) (*Session, error) {
+	sessions, err := querySessions(ctx, s.db, systemSessionQuery)
+	if err != nil {
+		return nil, err
+	}
+	if len(sessions) > 0 {
+		if sessions[0].Status != statusActive {
+			return nil, fmt.Errorf("%w: system workspace is not active", ErrInvalidInput)
+		}
+		return &sessions[0], nil
+	}
+	if id = strings.TrimSpace(id); id == "" {
+		return nil, fmt.Errorf("%w: system workspace id is required", ErrInvalidInput)
+	}
+	if existing, err := s.GetSessionByName(ctx, "system"); err == nil && existing.Kind != "system" {
+		return nil, fmt.Errorf("%w: project workspace named system blocks system workspace setup", ErrInvalidInput)
+	} else if err != nil && !errors.Is(err, ErrNotFound) {
+		return nil, err
+	}
+	if err := s.CreateWorkspace(ctx, id, "system", "", "manual", "auto", "system"); err != nil {
+		sessions, lookupErr := querySessions(ctx, s.db, systemSessionQuery)
+		if lookupErr == nil && len(sessions) > 0 && sessions[0].Status == statusActive {
+			return &sessions[0], nil
+		}
+		return nil, err
+	}
+	return s.GetSession(ctx, id)
+}
+
+func (s *Store) HasSystemWorkspace(ctx context.Context) (bool, error) {
+	sessions, err := querySessions(ctx, s.db, systemSessionQuery)
+	if err != nil {
+		return false, err
+	}
+	return len(sessions) > 0 && sessions[0].Status == statusActive, nil
 }
 
 func (s *Store) GetSession(ctx context.Context, id string) (*Session, error) {
@@ -1080,6 +1186,9 @@ func (s *Store) UpdateSessionStatus(ctx context.Context, id, status string) erro
 	session, err := s.GetSession(ctx, id)
 	if err != nil {
 		return err
+	}
+	if session.Kind == "system" {
+		return fmt.Errorf("%w: system workspace status cannot be changed", ErrInvalidInput)
 	}
 
 	if !canTransitionSessionStatus(session.Status, status) {
@@ -1253,6 +1362,9 @@ func addFolderInTransaction(ctx context.Context, db DB, sessionID, folderPath, v
 	}
 	if len(sessions) == 0 {
 		return fmt.Errorf("%w: session id %q", ErrNotFound, sessionID)
+	}
+	if sessions[0].Kind == "system" {
+		return fmt.Errorf("%w: system workspace cannot have folders", ErrInvalidInput)
 	}
 	if sessions[0].Status == statusClosed {
 		return fmt.Errorf("%w: session id %q", ErrSessionClosed, sessionID)
@@ -1804,17 +1916,21 @@ func querySessions(ctx context.Context, db DB, query string, args ...any) ([]Ses
 	out := make([]Session, 0)
 	for rows.Next() {
 		var item Session
-		if err := rows.Scan(
-			&item.ID,
-			&item.Name,
-			&item.Status,
-			&item.VCSPreference,
-			&item.OriginRoot,
-			&item.CleanupPolicy,
-			&item.CreatedAt,
-			&item.UpdatedAt,
-		); err != nil {
+		scan := []any{&item.ID, &item.Name, &item.Status, &item.VCSPreference, &item.OriginRoot, &item.CleanupPolicy, &item.CreatedAt, &item.UpdatedAt}
+		if withColumns, ok := rows.(columnRows); ok {
+			columns, err := withColumns.Columns()
+			if err != nil {
+				return nil, err
+			}
+			if len(columns) == 9 {
+				scan = append(scan, &item.Kind)
+			}
+		}
+		if err := rows.Scan(scan...); err != nil {
 			return nil, err
+		}
+		if item.Kind == "" {
+			item.Kind = "project"
 		}
 		out = append(out, item)
 	}
@@ -1931,6 +2047,15 @@ func queryWorkspaceCommandDefinitions(ctx context.Context, db DB, query string, 
 func isValidSessionStatus(status string) bool {
 	switch status {
 	case statusActive, statusSuspended, statusClosed:
+		return true
+	default:
+		return false
+	}
+}
+
+func isValidWorkspaceKind(kind string) bool {
+	switch kind {
+	case "project", "system":
 		return true
 	default:
 		return false

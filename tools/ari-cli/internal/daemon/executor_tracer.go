@@ -102,6 +102,16 @@ type AgentProfileListResponse struct {
 	Profiles []AgentProfileResponse `json:"profiles"`
 }
 
+type DefaultHelperEnsureRequest struct {
+	WorkspaceID string `json:"workspace_id"`
+	Harness     string `json:"harness,omitempty"`
+	Prompt      string `json:"prompt,omitempty"`
+}
+
+type DefaultHelperGetRequest struct {
+	WorkspaceID string `json:"workspace_id"`
+}
+
 type ProcessMetricValue struct {
 	Known      bool   `json:"known"`
 	Value      *int64 `json:"value,omitempty"`
@@ -321,6 +331,24 @@ func (d *Daemon) registerExecutorMethods(registry *rpc.MethodRegistry, store *gl
 	}); err != nil {
 		return fmt.Errorf("register agent.profile.list: %w", err)
 	}
+	if err := rpc.RegisterMethod(registry, rpc.Method[DefaultHelperEnsureRequest, AgentProfileResponse]{
+		Name:        "agent.profile.helper.ensure",
+		Description: "Ensure a workspace default helper profile exists",
+		Handler: func(ctx context.Context, req DefaultHelperEnsureRequest) (AgentProfileResponse, error) {
+			return ensureDefaultHelperProfile(ctx, store, req)
+		},
+	}); err != nil {
+		return fmt.Errorf("register agent.profile.helper.ensure: %w", err)
+	}
+	if err := rpc.RegisterMethod(registry, rpc.Method[DefaultHelperGetRequest, AgentProfileResponse]{
+		Name:        "agent.profile.helper.get",
+		Description: "Get a workspace default helper profile",
+		Handler: func(ctx context.Context, req DefaultHelperGetRequest) (AgentProfileResponse, error) {
+			return getDefaultHelperProfile(ctx, store, req)
+		},
+	}); err != nil {
+		return fmt.Errorf("register agent.profile.helper.get: %w", err)
+	}
 	if err := rpc.RegisterMethod(registry, rpc.Method[FinalResponseGetRequest, FinalResponseResponse]{
 		Name:        "final_response.get",
 		Description: "Get a final response artifact by id or run id",
@@ -419,6 +447,37 @@ func listStoredAgentProfiles(ctx context.Context, store *globaldb.Store, req Age
 
 func agentProfileResponseFromStore(profile globaldb.AgentProfile, defaults map[string]any) AgentProfileResponse {
 	return AgentProfileResponse{ProfileID: profile.ProfileID, WorkspaceID: profile.WorkspaceID, Name: profile.Name, Harness: profile.Harness, Model: profile.Model, Prompt: profile.Prompt, InvocationClass: HarnessInvocationClass(profile.InvocationClass), Defaults: defaults}
+}
+
+func ensureDefaultHelperProfile(ctx context.Context, store *globaldb.Store, req DefaultHelperEnsureRequest) (AgentProfileResponse, error) {
+	workspaceID := strings.TrimSpace(req.WorkspaceID)
+	if workspaceID == "" {
+		return AgentProfileResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", map[string]any{"reason": "missing_workspace_id"})
+	}
+	prompt := strings.TrimSpace(req.Prompt)
+	if prompt == "" {
+		prompt = projectHelperPrompt()
+	}
+	stored, err := store.EnsureDefaultHelperProfile(ctx, workspaceID, req.Harness, prompt)
+	if err != nil {
+		return AgentProfileResponse{}, err
+	}
+	return agentProfileResponseFromStore(stored, map[string]any{}), nil
+}
+
+func getDefaultHelperProfile(ctx context.Context, store *globaldb.Store, req DefaultHelperGetRequest) (AgentProfileResponse, error) {
+	workspaceID := strings.TrimSpace(req.WorkspaceID)
+	if workspaceID == "" {
+		return AgentProfileResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", map[string]any{"reason": "missing_workspace_id"})
+	}
+	stored, err := store.GetDefaultHelperProfile(ctx, workspaceID)
+	if err != nil {
+		if errors.Is(err, globaldb.ErrNotFound) {
+			return AgentProfileResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "default helper profile is not set up for this workspace", map[string]any{"reason": "helper_setup_required", "workspace_id": workspaceID})
+		}
+		return AgentProfileResponse{}, err
+	}
+	return agentProfileResponseFromStore(stored, map[string]any{}), nil
 }
 
 func getFinalResponse(ctx context.Context, store *globaldb.Store, req FinalResponseGetRequest) (FinalResponseResponse, error) {

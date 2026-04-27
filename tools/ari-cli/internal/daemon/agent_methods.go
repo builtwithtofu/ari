@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ import (
 type AgentSpawnRequest struct {
 	WorkspaceID       string   `json:"workspace_id"`
 	Name              string   `json:"name,omitempty"`
+	Profile           string   `json:"profile,omitempty"`
 	Harness           string   `json:"harness,omitempty"`
 	InvocationClass   string   `json:"invocation_class,omitempty"`
 	Command           string   `json:"command"`
@@ -147,19 +149,41 @@ func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globa
 				return AgentSpawnResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace is closed", sessionID)
 			}
 
-			primaryFolder, err := lookupPrimaryFolder(ctx, store, sessionID)
-			if err != nil {
-				if errors.Is(err, errNoPrimaryFolder) {
-					return AgentSpawnResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace has no primary folder", sessionID)
-				}
-				return AgentSpawnResponse{}, mapAgentStoreError(err, sessionID)
+			profileName := strings.TrimSpace(req.Profile)
+			helperProfileLaunch := false
+			if profileName == "" && strings.TrimSpace(req.Harness) == "" && strings.TrimSpace(req.Command) == "" {
+				profileName = globaldb.DefaultHelperProfileName
 			}
-			executionRootPath, err := validateWorkspaceExecutionRootPath(ctx, store, sessionID, req.ExecutionRootPath)
+			if profileName != "" {
+				profile, err := store.GetAgentProfile(ctx, sessionID, profileName)
+				if err != nil {
+					if errors.Is(err, globaldb.ErrNotFound) && profileName == globaldb.DefaultHelperProfileName {
+						return AgentSpawnResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "default helper profile is not set up for this workspace", map[string]any{"reason": "helper_setup_required", "workspace_id": sessionID})
+					}
+					return AgentSpawnResponse{}, err
+				}
+				if strings.TrimSpace(req.Harness) == "" {
+					req.Harness = profile.Harness
+				}
+				if profileName == globaldb.DefaultHelperProfileName && strings.TrimSpace(req.Harness) == "" && strings.TrimSpace(req.Command) == "" {
+					return AgentSpawnResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "default helper profile is not ready for this workspace", map[string]any{"reason": "helper_setup_required", "workspace_id": sessionID})
+				}
+				if strings.TrimSpace(req.Name) == "" {
+					req.Name = profile.Name
+				}
+				if strings.TrimSpace(req.InvocationClass) == "" {
+					req.InvocationClass = profile.InvocationClass
+				}
+				helperProfileLaunch = profile.Name == globaldb.DefaultHelperProfileName
+			}
+
+			executionRootPath, err := resolveAgentExecutionRoot(ctx, store, session, req.ExecutionRootPath)
 			if err != nil {
 				return AgentSpawnResponse{}, err
 			}
-			if executionRootPath == "" {
-				executionRootPath = primaryFolder
+
+			if helperProfileLaunch && strings.TrimSpace(req.Command) == "" {
+				req.Args = buildHelperLaunchArgs(session, req.Args)
 			}
 
 			launcher, err := resolveAgentLauncher(req.Harness)
@@ -459,6 +483,37 @@ func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globa
 	}
 
 	return nil
+}
+
+func resolveAgentExecutionRoot(ctx context.Context, store *globaldb.Store, session *globaldb.Session, requested string) (string, error) {
+	if session == nil {
+		return "", fmt.Errorf("session is required")
+	}
+	if session.Kind == "system" {
+		if strings.TrimSpace(requested) != "" {
+			return "", rpc.NewHandlerError(rpc.InvalidParams, "system workspace agents do not accept execution_root_path", map[string]any{"reason": "system_execution_root_forbidden", "workspace_id": session.ID})
+		}
+		home, err := os.UserHomeDir()
+		if err != nil || strings.TrimSpace(home) == "" {
+			return "", rpc.NewHandlerError(rpc.InvalidParams, "home directory is required for system workspace agents", map[string]any{"reason": "missing_home_dir", "workspace_id": session.ID})
+		}
+		return home, nil
+	}
+	primaryFolder, err := lookupPrimaryFolder(ctx, store, session.ID)
+	if err != nil {
+		if errors.Is(err, errNoPrimaryFolder) {
+			return "", rpc.NewHandlerError(rpc.InvalidParams, "workspace has no primary folder", session.ID)
+		}
+		return "", mapAgentStoreError(err, session.ID)
+	}
+	executionRootPath, err := validateWorkspaceExecutionRootPath(ctx, store, session.ID, requested)
+	if err != nil {
+		return "", err
+	}
+	if executionRootPath == "" {
+		executionRootPath = primaryFolder
+	}
+	return executionRootPath, nil
 }
 
 func inferHarnessFromCommand(command string) string {

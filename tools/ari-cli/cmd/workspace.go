@@ -489,11 +489,24 @@ func newWorkspaceShowCmd() *cobra.Command {
 			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Status: %s\n", response.Status); err != nil {
 				return err
 			}
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Origin: %s\n", response.OriginRoot); err != nil {
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Kind: %s\n", response.Kind); err != nil {
+				return err
+			}
+			origin := response.OriginRoot
+			if origin == "" {
+				origin = "none"
+			}
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Origin: %s\n", origin); err != nil {
 				return err
 			}
 			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Cleanup: %s\n", response.CleanupPolicy); err != nil {
 				return err
+			}
+			if len(response.Folders) == 0 {
+				if _, err := fmt.Fprintln(cmd.OutOrStdout(), "Folders: none"); err != nil {
+					return err
+				}
+				return nil
 			}
 			if _, err := fmt.Fprintln(cmd.OutOrStdout(), "Folders:"); err != nil {
 				return err

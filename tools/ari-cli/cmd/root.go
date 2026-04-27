@@ -142,6 +142,7 @@ func NewRootCmd() *cobra.Command {
 	}
 
 	rootCmd.AddCommand(NewDaemonCmd())
+	rootCmd.AddCommand(NewInitCmd())
 	rootCmd.AddCommand(NewWorkspaceCmd())
 	rootCmd.AddCommand(NewCommandCmd())
 	rootCmd.AddCommand(NewExecCmd())

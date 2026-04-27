@@ -625,6 +625,43 @@ func TestAgentSpawnHarnessTreatsPositionalArgsAsHarnessArgs(t *testing.T) {
 	}
 }
 
+func TestAgentSpawnProfileAllowsCommandOverride(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalResolve := commandResolveSessionIdentifier
+	originalReadActive := agentReadActiveSession
+	originalSpawn := agentSpawnRPC
+	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+		return "sess-1", nil
+	}
+	agentReadActiveSession = func() (string, error) { return "sess-1", nil }
+	var got daemon.AgentSpawnRequest
+	agentSpawnRPC = func(_ context.Context, _ string, req daemon.AgentSpawnRequest) (daemon.AgentSpawnResponse, error) {
+		got = req
+		return daemon.AgentSpawnResponse{AgentID: "agt-1", Status: "running"}, nil
+	}
+	t.Cleanup(func() {
+		commandResolveSessionIdentifier = originalResolve
+		agentReadActiveSession = originalReadActive
+		agentSpawnRPC = originalSpawn
+	})
+
+	_, err := executeRootCommand("agent", "spawn", "--profile", "helper", "--", "/bin/sh", "-c", "pwd")
+	if err != nil {
+		t.Fatalf("execute profile command override spawn: %v", err)
+	}
+	if got.Profile != "helper" {
+		t.Fatalf("spawn profile = %q, want helper", got.Profile)
+	}
+	if got.Command != "/bin/sh" {
+		t.Fatalf("spawn command = %q, want /bin/sh", got.Command)
+	}
+	if len(got.Args) != 2 || got.Args[0] != "-c" || got.Args[1] != "pwd" {
+		t.Fatalf("spawn args = %v, want [-c pwd]", got.Args)
+	}
+}
+
 func TestMapAgentRPCErrorAgentAlreadyAttached(t *testing.T) {
 	err := mapAgentRPCError(&jsonrpc2.Error{Code: int64(rpc.AgentAlreadyAttached), Message: "agent already has an active attach session"})
 	if err == nil {

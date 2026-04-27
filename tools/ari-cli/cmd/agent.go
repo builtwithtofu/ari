@@ -512,11 +512,12 @@ func newAgentDetachCmd() *cobra.Command {
 func newAgentSpawnCmd() *cobra.Command {
 	var name string
 	var harness string
+	var profile string
 	var sessionRef string
 	var invocationClass string
 
 	cmd := &cobra.Command{
-		Use:   "spawn [--workspace <id-or-name>] [--name <name>] [--harness <harness>] [-- <command> [args...]]",
+		Use:   "spawn [--workspace <id-or-name>] [--name <name>] [--profile <name>] [--harness <harness>] [-- <command-or-prompt> [args...]]",
 		Short: "Spawn an agent in workspace",
 		Args: func(_ *cobra.Command, args []string) error {
 			return nil
@@ -556,13 +557,10 @@ func newAgentSpawnCmd() *cobra.Command {
 					commandArgs = append(commandArgs, extra[1:]...)
 				}
 			}
-			if strings.TrimSpace(harness) == "" && strings.TrimSpace(command) == "" {
-				return userFacingError{message: "Provide --harness or an explicit command"}
-			}
-
 			resp, err := agentSpawnRPC(ctx, cfg.Daemon.SocketPath, daemon.AgentSpawnRequest{
 				WorkspaceID:     target.WorkspaceID,
 				Name:            strings.TrimSpace(name),
+				Profile:         strings.TrimSpace(profile),
 				Harness:         strings.TrimSpace(harness),
 				InvocationClass: strings.TrimSpace(invocationClass),
 				Command:         command,
@@ -578,6 +576,7 @@ func newAgentSpawnCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&name, "name", "", "Optional agent name")
+	cmd.Flags().StringVar(&profile, "profile", "", "Profile name (defaults to workspace helper when harness and command are omitted)")
 	cmd.Flags().StringVar(&harness, "harness", "", fmt.Sprintf("Harness identity (%s)", strings.Join(daemon.SupportedHarnesses(), "|")))
 	cmd.Flags().StringVar(&invocationClass, "invocation-class", "", "Invocation class: agent or temporary")
 	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
