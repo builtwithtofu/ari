@@ -144,7 +144,7 @@ func TestGetDefaultHelperProfileDoesNotFallbackAcrossScopes(t *testing.T) {
 	if err := store.CreateSession(ctx, "project-id", "project", "/tmp/project-origin", "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession project returned error: %v", err)
 	}
-	if _, err := store.EnsureDefaultHelperProfile(ctx, "system-id", "codex", "System helper"); err != nil {
+	if _, err := store.EnsureDefaultHelperProfile(ctx, "system-id", "codex", "Home helper"); err != nil {
 		t.Fatalf("EnsureDefaultHelperProfile system returned error: %v", err)
 	}
 

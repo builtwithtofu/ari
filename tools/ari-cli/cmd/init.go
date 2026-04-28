@@ -75,13 +75,13 @@ func NewInitCmd() *cobra.Command {
 			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Default harness set: %s\n", response.DefaultHarness); err != nil {
 				return err
 			}
-			if response.SystemWorkspaceReady {
-				if _, err := fmt.Fprintln(cmd.OutOrStdout(), "System workspace ready: system"); err != nil {
+			if response.HomeWorkspaceReady {
+				if _, err := fmt.Fprintln(cmd.OutOrStdout(), "Home workspace ready: home"); err != nil {
 					return err
 				}
 			}
-			if response.SystemHelperReady {
-				if _, err := fmt.Fprintln(cmd.OutOrStdout(), "System helper ready: helper"); err != nil {
+			if response.HomeHelperReady {
+				if _, err := fmt.Fprintln(cmd.OutOrStdout(), "Home helper ready: helper"); err != nil {
 					return err
 				}
 			}

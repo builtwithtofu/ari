@@ -37,19 +37,19 @@ func TestInitMethodsExposeOptionsStateAndApplyThroughRPC(t *testing.T) {
 
 	var before InitStateResponse
 	callDaemonMethod(t, socketPath, "init.state", InitStateRequest{}, &before)
-	if before.Initialized || before.DefaultHarness != "" || before.SystemWorkspaceReady || before.SystemHelperReady {
+	if before.Initialized || before.DefaultHarness != "" || before.HomeWorkspaceReady || before.HomeHelperReady {
 		t.Fatalf("unexpected initial state: %#v", before)
 	}
 
 	var applied InitApplyResponse
 	callDaemonMethod(t, socketPath, "init.apply", InitApplyRequest{Harness: "codex"}, &applied)
-	if !applied.Initialized || applied.DefaultHarness != "codex" || !applied.DefaultHarnessSet || !applied.SystemHelperReady {
+	if !applied.Initialized || applied.DefaultHarness != "codex" || !applied.DefaultHarnessSet || !applied.HomeHelperReady {
 		t.Fatalf("unexpected apply response: %#v", applied)
 	}
 
 	var after InitStateResponse
 	callDaemonMethod(t, socketPath, "init.state", InitStateRequest{}, &after)
-	if !after.Initialized || after.DefaultHarness != "codex" || !after.SystemWorkspaceReady || !after.SystemHelperReady {
+	if !after.Initialized || after.DefaultHarness != "codex" || !after.HomeWorkspaceReady || !after.HomeHelperReady {
 		t.Fatalf("unexpected state after apply: %#v", after)
 	}
 

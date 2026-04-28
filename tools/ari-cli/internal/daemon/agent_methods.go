@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -488,16 +487,6 @@ func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globa
 func resolveAgentExecutionRoot(ctx context.Context, store *globaldb.Store, session *globaldb.Session, requested string) (string, error) {
 	if session == nil {
 		return "", fmt.Errorf("session is required")
-	}
-	if session.Kind == "system" {
-		if strings.TrimSpace(requested) != "" {
-			return "", rpc.NewHandlerError(rpc.InvalidParams, "system workspace agents do not accept execution_root_path", map[string]any{"reason": "system_execution_root_forbidden", "workspace_id": session.ID})
-		}
-		home, err := os.UserHomeDir()
-		if err != nil || strings.TrimSpace(home) == "" {
-			return "", rpc.NewHandlerError(rpc.InvalidParams, "home directory is required for system workspace agents", map[string]any{"reason": "missing_home_dir", "workspace_id": session.ID})
-		}
-		return home, nil
 	}
 	primaryFolder, err := lookupPrimaryFolder(ctx, store, session.ID)
 	if err != nil {

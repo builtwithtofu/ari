@@ -468,12 +468,8 @@ CREATE TABLE workspaces (
 	origin_root TEXT NOT NULL,
 	cleanup_policy TEXT NOT NULL DEFAULT 'manual',
 	created_at TEXT NOT NULL,
-	updated_at TEXT NOT NULL,
-	workspace_kind TEXT NOT NULL DEFAULT 'project'
+	updated_at TEXT NOT NULL
 );
-CREATE UNIQUE INDEX workspaces_single_system_uq
-	ON workspaces (workspace_kind)
-	WHERE workspace_kind = 'system';
 CREATE TABLE workspace_folders (
 	workspace_id TEXT NOT NULL,
 	folder_path TEXT NOT NULL,
@@ -532,8 +528,7 @@ CREATE TABLE workspaces (
 	origin_root TEXT NOT NULL,
 	cleanup_policy TEXT NOT NULL DEFAULT 'manual',
 	created_at TEXT NOT NULL,
-	updated_at TEXT NOT NULL,
-	workspace_kind TEXT NOT NULL DEFAULT 'project'
+	updated_at TEXT NOT NULL
 );
 `); err != nil {
 		t.Fatalf("create schema: %v", err)

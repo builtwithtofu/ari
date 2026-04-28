@@ -3,7 +3,6 @@ package globaldb
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -64,92 +63,6 @@ func TestSessionCreateStoresExplicitVCSPreference(t *testing.T) {
 	}
 	if got.VCSPreference != "git" {
 		t.Fatalf("GetSession VCSPreference = %q, want %q", got.VCSPreference, "git")
-	}
-}
-
-func TestEnsureSystemWorkspaceCreatesSingletonWithoutFolder(t *testing.T) {
-	store := newSessionTestStore(t)
-	ctx := context.Background()
-
-	first, err := store.EnsureSystemWorkspace(ctx, "system-1")
-	if err != nil {
-		t.Fatalf("EnsureSystemWorkspace returned error: %v", err)
-	}
-	second, err := store.EnsureSystemWorkspace(ctx, "system-2")
-	if err != nil {
-		t.Fatalf("EnsureSystemWorkspace second call returned error: %v", err)
-	}
-	if first.ID != second.ID {
-		t.Fatalf("system workspace IDs differ: %q vs %q", first.ID, second.ID)
-	}
-	if first.Name != "system" || first.Kind != "system" || first.OriginRoot != "" {
-		t.Fatalf("unexpected system workspace: %#v", first)
-	}
-	folders, err := store.ListFolders(ctx, first.ID)
-	if err != nil {
-		t.Fatalf("ListFolders returned error: %v", err)
-	}
-	if len(folders) != 0 {
-		t.Fatalf("system folder count = %d, want 0", len(folders))
-	}
-}
-
-func TestEnsureSystemWorkspaceRejectsLegacyProjectNameCollision(t *testing.T) {
-	store := newSessionTestStore(t)
-	ctx := context.Background()
-	if err := store.CreateSession(ctx, "project-system", "system", "/tmp/origin", "manual", "auto"); err != nil {
-		t.Fatalf("CreateSession returned error: %v", err)
-	}
-	_, err := store.EnsureSystemWorkspace(ctx, "system-1")
-	if err == nil {
-		t.Fatal("EnsureSystemWorkspace returned nil error for project named system")
-	}
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("EnsureSystemWorkspace error = %v, want ErrInvalidInput", err)
-	}
-}
-
-func TestEnsureSystemWorkspaceConcurrentCallsReturnSingleton(t *testing.T) {
-	store := newSessionTestStore(t)
-	ctx := context.Background()
-	const workers = 2
-	results := make(chan string, workers)
-	errs := make(chan error, workers)
-	var start sync.WaitGroup
-	start.Add(1)
-	for i := 0; i < workers; i++ {
-		go func(id string) {
-			start.Wait()
-			system, err := store.EnsureSystemWorkspace(ctx, id)
-			if err != nil {
-				errs <- err
-				return
-			}
-			results <- system.ID
-		}(fmt.Sprintf("system-%d", i))
-	}
-	start.Done()
-	for i := 0; i < workers; i++ {
-		select {
-		case err := <-errs:
-			t.Fatalf("EnsureSystemWorkspace returned error: %v", err)
-		case <-results:
-		}
-	}
-}
-
-func TestSystemWorkspaceRejectsFoldersAndStatusChanges(t *testing.T) {
-	store := newSessionTestStore(t)
-	ctx := context.Background()
-	systemWorkspace, err := store.EnsureSystemWorkspace(ctx, "system-1")
-	if err != nil {
-		t.Fatalf("EnsureSystemWorkspace returned error: %v", err)
-	}
-	if err := store.AddFolder(ctx, systemWorkspace.ID, "/tmp/repo", "git", true); err == nil || !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("AddFolder system error = %v, want ErrInvalidInput", err)
-	}
-	if err := store.UpdateSessionStatus(ctx, systemWorkspace.ID, statusSuspended); err == nil || !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("UpdateSessionStatus system error = %v, want ErrInvalidInput", err)
 	}
 }
 

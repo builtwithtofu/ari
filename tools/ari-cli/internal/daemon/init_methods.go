@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,10 +15,10 @@ import (
 type InitStateRequest struct{}
 
 type InitStateResponse struct {
-	Initialized          bool   `json:"initialized"`
-	DefaultHarness       string `json:"default_harness"`
-	SystemWorkspaceReady bool   `json:"system_workspace_ready"`
-	SystemHelperReady    bool   `json:"system_helper_ready"`
+	Initialized        bool   `json:"initialized"`
+	DefaultHarness     string `json:"default_harness"`
+	HomeWorkspaceReady bool   `json:"home_workspace_ready"`
+	HomeHelperReady    bool   `json:"home_helper_ready"`
 }
 
 type InitOptionsRequest struct{}
@@ -38,11 +37,11 @@ type InitApplyRequest struct {
 }
 
 type InitApplyResponse struct {
-	Initialized          bool   `json:"initialized"`
-	DefaultHarness       string `json:"default_harness"`
-	DefaultHarnessSet    bool   `json:"default_harness_set"`
-	SystemWorkspaceReady bool   `json:"system_workspace_ready"`
-	SystemHelperReady    bool   `json:"system_helper_ready"`
+	Initialized        bool   `json:"initialized"`
+	DefaultHarness     string `json:"default_harness"`
+	DefaultHarnessSet  bool   `json:"default_harness_set"`
+	HomeWorkspaceReady bool   `json:"home_workspace_ready"`
+	HomeHelperReady    bool   `json:"home_helper_ready"`
 }
 
 func (d *Daemon) registerInitMethods(registry *rpc.MethodRegistry, store *globaldb.Store) error {
@@ -84,26 +83,15 @@ func (d *Daemon) initState(ctx context.Context, store *globaldb.Store) (InitStat
 	if err != nil {
 		return InitStateResponse{}, err
 	}
-	workspaceReady := false
-	helperReady := false
+	homeWorkspaceReady := false
+	homeHelperReady := false
 	if store != nil {
-		workspaceReady, err = store.HasSystemWorkspace(ctx)
+		homeWorkspaceReady, homeHelperReady, err = d.homeWorkspaceInitState(ctx, store)
 		if err != nil {
 			return InitStateResponse{}, err
 		}
-		if workspaceReady {
-			system, err := store.EnsureSystemWorkspace(ctx, "init-state-system")
-			if err != nil {
-				return InitStateResponse{}, err
-			}
-			if _, err := store.GetDefaultHelperProfile(ctx, system.ID); err == nil {
-				helperReady = true
-			} else if !errors.Is(err, globaldb.ErrNotFound) {
-				return InitStateResponse{}, err
-			}
-		}
 	}
-	return InitStateResponse{Initialized: harness != "" && workspaceReady && helperReady, DefaultHarness: harness, SystemWorkspaceReady: workspaceReady, SystemHelperReady: helperReady}, nil
+	return InitStateResponse{Initialized: harness != "", DefaultHarness: harness, HomeWorkspaceReady: homeWorkspaceReady, HomeHelperReady: homeHelperReady}, nil
 }
 
 func initOptions() InitOptionsResponse {
@@ -123,21 +111,67 @@ func (d *Daemon) applyInit(ctx context.Context, store *globaldb.Store, req InitA
 	if store == nil {
 		return InitApplyResponse{}, fmt.Errorf("globaldb store is required")
 	}
-	workspaceID, err := newWorkspaceID()
-	if err != nil {
-		return InitApplyResponse{}, fmt.Errorf("generate workspace id: %w", err)
-	}
-	system, err := store.EnsureSystemWorkspace(ctx, workspaceID)
+	home, err := d.ensureHomeWorkspace(ctx, store)
 	if err != nil {
 		return InitApplyResponse{}, err
 	}
-	if _, err := store.EnsureDefaultHelperProfile(ctx, system.ID, harness, systemHelperPrompt()); err != nil {
-		return InitApplyResponse{}, err
+	homeHelperReady := false
+	if home != nil {
+		if _, err := store.EnsureDefaultHelperProfile(ctx, home.ID, harness, helperPrompt()); err != nil {
+			return InitApplyResponse{}, err
+		}
+		homeHelperReady = true
 	}
 	if err := patchJSONConfigString(d.configPath, "default_harness", harness); err != nil {
 		return InitApplyResponse{}, err
 	}
-	return InitApplyResponse{Initialized: true, DefaultHarness: harness, DefaultHarnessSet: true, SystemWorkspaceReady: true, SystemHelperReady: true}, nil
+	return InitApplyResponse{Initialized: true, DefaultHarness: harness, DefaultHarnessSet: true, HomeWorkspaceReady: home != nil, HomeHelperReady: homeHelperReady}, nil
+}
+
+func (d *Daemon) homeWorkspaceInitState(ctx context.Context, store *globaldb.Store) (bool, bool, error) {
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return false, false, nil
+	}
+	sessions, err := store.ListSessions(ctx)
+	if err != nil {
+		return false, false, err
+	}
+	for _, session := range sessions {
+		if session.Status != "closed" && session.OriginRoot == home {
+			_, helperErr := store.GetDefaultHelperProfile(ctx, session.ID)
+			return true, helperErr == nil, nil
+		}
+	}
+	return false, false, nil
+}
+
+func (d *Daemon) ensureHomeWorkspace(ctx context.Context, store *globaldb.Store) (*globaldb.Session, error) {
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return nil, nil
+	}
+	sessions, err := store.ListSessions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, session := range sessions {
+		if session.Status != "closed" && session.OriginRoot == home {
+			return &session, nil
+		}
+	}
+	workspaceID, err := newWorkspaceID()
+	if err != nil {
+		return nil, fmt.Errorf("generate workspace id: %w", err)
+	}
+	if err := store.CreateSession(ctx, workspaceID, "home", home, "manual", "auto"); err != nil {
+		return nil, err
+	}
+	if err := store.AddFolder(ctx, workspaceID, home, "unknown", true); err != nil {
+		_ = store.DeleteSession(ctx, workspaceID)
+		return nil, err
+	}
+	return store.GetSession(ctx, workspaceID)
 }
 
 func (d *Daemon) readConfiguredDefaultHarness() (string, error) {

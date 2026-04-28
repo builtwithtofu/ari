@@ -39,7 +39,6 @@ type AriToolCallRequest struct {
 type AriToolScope struct {
 	SourceRunID        string `json:"source_run_id"`
 	WorkspaceID        string `json:"workspace_id"`
-	WorkspaceKind      string `json:"workspace_kind"`
 	ProfileID          string `json:"profile_id"`
 	ProfileName        string `json:"profile_name"`
 	ToolName           string `json:"tool_name"`
@@ -55,12 +54,11 @@ type AriToolApproval struct {
 }
 
 type AriToolApprovalScope struct {
-	WorkspaceID   string `json:"workspace_id"`
-	WorkspaceKind string `json:"workspace_kind"`
-	ProfileID     string `json:"profile_id"`
-	ProfileName   string `json:"profile_name"`
-	ToolName      string `json:"tool_name"`
-	SourceRunID   string `json:"source_run_id"`
+	WorkspaceID string `json:"workspace_id"`
+	ProfileID   string `json:"profile_id"`
+	ProfileName string `json:"profile_name"`
+	ToolName    string `json:"tool_name"`
+	SourceRunID string `json:"source_run_id"`
 }
 
 type AriToolCallResponse struct {
@@ -84,7 +82,7 @@ var ariTools = []AriToolSchema{
 }
 
 func ariToolScopeFields() []string {
-	return []string{"source_run_id", "workspace_id", "workspace_kind", "profile_id", "profile_name", "tool_name", "within_default_scope"}
+	return []string{"source_run_id", "workspace_id", "profile_id", "profile_name", "tool_name", "within_default_scope"}
 }
 
 func (d *Daemon) registerAriToolMethods(registry *rpc.MethodRegistry, store *globaldb.Store) error {
@@ -131,15 +129,11 @@ func (d *Daemon) callAriTool(ctx context.Context, store *globaldb.Store, req Ari
 	if err := validateAriToolScope(req.Scope); err != nil {
 		return AriToolCallResponse{}, err
 	}
-	workspace, err := store.GetSession(ctx, req.Scope.WorkspaceID)
-	if err != nil {
+	if _, err := store.GetSession(ctx, req.Scope.WorkspaceID); err != nil {
 		return AriToolCallResponse{}, err
 	}
-	if workspace.Kind != req.Scope.WorkspaceKind {
-		return AriToolCallResponse{}, ariToolError("scope_workspace_mismatch", "workspace scope metadata does not match stored workspace")
-	}
-	if name == "ari.defaults.set" && req.Scope.WorkspaceKind != "system" {
-		return AriToolCallResponse{}, ariToolError("system_handoff_required", "system defaults writes require system workspace approval")
+	if name == "ari.defaults.set" && !req.Scope.WithinDefaultScope {
+		return AriToolCallResponse{}, ariToolError("handoff_required", "defaults writes require an in-scope helper approval")
 	}
 	if tool.ApprovalRequired {
 		if err := validateAndConsumeAriApproval(ctx, store, req); err != nil {
@@ -174,11 +168,8 @@ func ariToolByName(name string) (AriToolSchema, bool) {
 }
 
 func validateAriToolScope(scope AriToolScope) error {
-	if strings.TrimSpace(scope.WorkspaceID) == "" || strings.TrimSpace(scope.WorkspaceKind) == "" || strings.TrimSpace(scope.ToolName) == "" || strings.TrimSpace(scope.ProfileID) == "" || strings.TrimSpace(scope.ProfileName) == "" || strings.TrimSpace(scope.SourceRunID) == "" {
+	if strings.TrimSpace(scope.WorkspaceID) == "" || strings.TrimSpace(scope.ToolName) == "" || strings.TrimSpace(scope.ProfileID) == "" || strings.TrimSpace(scope.ProfileName) == "" || strings.TrimSpace(scope.SourceRunID) == "" {
 		return ariToolError("missing_scope", "tool scope requires source run, workspace, profile, and tool metadata")
-	}
-	if scope.WorkspaceKind != "system" && scope.WorkspaceKind != "project" {
-		return ariToolError("invalid_scope", "workspace_kind must be system or project")
 	}
 	return nil
 }
@@ -208,7 +199,7 @@ func validateAndConsumeAriApproval(ctx context.Context, store *globaldb.Store, r
 	if time.Since(approvedAt) > 10*time.Minute || time.Until(approvedAt) > time.Minute {
 		return ariToolError("approval_stale", "approval is stale or from the future")
 	}
-	if approval.Scope.WorkspaceID != req.Scope.WorkspaceID || approval.Scope.WorkspaceKind != req.Scope.WorkspaceKind || approval.Scope.ProfileID != req.Scope.ProfileID || approval.Scope.ProfileName != req.Scope.ProfileName || approval.Scope.ToolName != req.Name || approval.Scope.SourceRunID != req.Scope.SourceRunID {
+	if approval.Scope.WorkspaceID != req.Scope.WorkspaceID || approval.Scope.ProfileID != req.Scope.ProfileID || approval.Scope.ProfileName != req.Scope.ProfileName || approval.Scope.ToolName != req.Name || approval.Scope.SourceRunID != req.Scope.SourceRunID {
 		return ariToolError("approval_wrong_scope", "approval scope does not match tool call")
 	}
 	hash, err := HashAriToolRequest(req.Name, req.Input)
@@ -364,7 +355,7 @@ func ariProfileSave(ctx context.Context, store *globaldb.Store, scope AriToolSco
 func (d *Daemon) ariSelfCheck(ctx context.Context, store *globaldb.Store, scope AriToolScope) (AriToolCallResponse, error) {
 	_, cfgErr := readJSONConfig(d.configPath)
 	_, wsErr := store.GetSession(ctx, scope.WorkspaceID)
-	return AriToolCallResponse{Status: "ok", Output: map[string]any{"daemon_version": d.version, "config_readable": cfgErr == nil, "workspace_available": wsErr == nil, "workspace_kind": scope.WorkspaceKind}}, nil
+	return AriToolCallResponse{Status: "ok", Output: map[string]any{"daemon_version": d.version, "config_readable": cfgErr == nil, "workspace_available": wsErr == nil}}, nil
 }
 
 func ariRunExplainLatest(ctx context.Context, store *globaldb.Store, scope AriToolScope) (AriToolCallResponse, error) {

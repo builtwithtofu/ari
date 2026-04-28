@@ -54,6 +54,11 @@ For migration-related checks, run them from `nix develop` as well so Atlas and S
 
 The current Go runtime exposes profile-driven local agent runs through JSON-RPC and CLI commands under `tools/ari-cli/`.
 
+- Ari is headless first: the daemon/API owns product behavior and state; CLI and future UI surfaces are clients.
+- Onboarding: `ari init` renders the daemon-owned `init.state`, `init.options`, and `init.apply` flow. The only day-one choice is the default harness.
+- Workspaces: the daemon owns workspace creation and resolution. Init creates a normal `$HOME` workspace as a starter landing place when possible.
+- Helpers: each workspace can have an ordinary profile named `helper`. Home and project helpers share one helper contract; scope comes from workspace context, not from a profile role/type field.
+- Ari tools: helper-visible settings/profile/self-check/run-forensics actions are daemon-owned tool calls with scoped metadata. Writes require explicit, single-use approval markers.
 - Profiles: `ari profile create|list|show|defaults` maps to `agent.profile.create|get|list`.
 - Temporary visibility: `ari agent list` hides temporary agents; `ari agent list --show-temporary` includes them with a `CLASS` label.
 - Final responses: `ari final-response show --run-id <run>` reads the first-class final-response artifact, while `ari final-response export --run-id <run>` prints only shareable final text without transcript, hidden context, or provider-private metadata.
@@ -87,21 +92,22 @@ The current Go runtime exposes profile-driven local agent runs through JSON-RPC 
 └─────────────────────────────────────────────────────────┘
 ```
 
-The runtime is headless by design. The CLI is just the first client. Visualization, rendering, and UI are client concerns. Ari works in CI, in Docker, over SSH, piped between processes, or driven by other agents.
+The runtime is headless by design. The CLI is just the first client. Visualization, rendering, prompts, and UI are client concerns; product behavior belongs behind daemon JSON-RPC/service methods first. Ari works in CI, in Docker, over SSH, piped between processes, or driven by other agents.
 
 ---
 
 ## How it works
 
 ```bash
-ari init          # start a new world, or discover an existing one
-ari plan          # explore the idea space before committing to a path
-ari build         # execute against a validated plan
-ari review        # understand what changed and why
-ari ask           # interrogate the world - what exists, what was decided
+ari init                                  # choose a default harness and ensure a normal home workspace/helper
+ari agent spawn --workspace home -- \
+  "Teach me how Ari profiles work."       # ask the home helper about Ari
+ari workspace create my-app               # create a project workspace with a project helper when defaults exist
+ari agent spawn --workspace my-app -- \
+  "Tell me about this project."           # ask the project helper from project context
 ```
 
-Ari asks before she acts. She plans before she builds. She surfaces what she doesn't know rather than guessing. The result is a guide you can trust, and a world you can navigate.
+Ari asks before she acts. Helpers teach, explain, diagnose, draft, route, and request approval; they do not write project source. Coding work belongs to explicitly configured specialist profiles such as builders, reviewers, or test writers. Ari does not install or authenticate external harnesses, poll provider model catalogs, or turn natural language into every CLI command.
 
 ---
 

@@ -32,7 +32,6 @@ type WorkspaceCreateResponse struct {
 	IsPrimary     bool   `json:"is_primary"`
 	OriginRoot    string `json:"origin_root"`
 	VCSPreference string `json:"vcs_preference"`
-	Kind          string `json:"kind"`
 }
 
 type WorkspaceListRequest struct{}
@@ -44,17 +43,6 @@ type WorkspaceSummary struct {
 	PrimaryFolder string `json:"primary_folder"`
 	FolderCount   int    `json:"folder_count"`
 	CreatedAt     string `json:"created_at"`
-	Kind          string `json:"kind"`
-}
-
-type WorkspaceSystemEnsureRequest struct{}
-
-type WorkspaceSystemEnsureResponse struct {
-	WorkspaceID string `json:"workspace_id"`
-	Name        string `json:"name"`
-	Status      string `json:"status"`
-	Kind        string `json:"kind"`
-	OriginRoot  string `json:"origin_root"`
 }
 
 type WorkspaceListResponse struct {
@@ -83,7 +71,6 @@ type WorkspaceGetResponse struct {
 	CreatedAt     string                `json:"created_at"`
 	UpdatedAt     string                `json:"updated_at"`
 	Folders       []WorkspaceFolderInfo `json:"folders"`
-	Kind          string                `json:"kind"`
 }
 
 type WorkspaceCloseRequest struct {
@@ -185,7 +172,7 @@ func (d *Daemon) registerWorkspaceMethods(registry *rpc.MethodRegistry, store *g
 				return WorkspaceCreateResponse{}, err
 			}
 			if helperHarness != "" {
-				if _, err := store.EnsureDefaultHelperProfile(ctx, sessionID, helperHarness, projectHelperPrompt()); err != nil {
+				if _, err := store.EnsureDefaultHelperProfile(ctx, sessionID, helperHarness, helperPrompt()); err != nil {
 					if rollbackErr := store.DeleteSession(ctx, sessionID); rollbackErr != nil && !errors.Is(rollbackErr, globaldb.ErrNotFound) {
 						return WorkspaceCreateResponse{}, fmt.Errorf("rollback workspace create after helper ensure failure: %w", rollbackErr)
 					}
@@ -207,30 +194,10 @@ func (d *Daemon) registerWorkspaceMethods(registry *rpc.MethodRegistry, store *g
 				IsPrimary:     true,
 				OriginRoot:    session.OriginRoot,
 				VCSPreference: session.VCSPreference,
-				Kind:          session.Kind,
 			}, nil
 		},
 	}); err != nil {
 		return fmt.Errorf("register workspace.create: %w", err)
-	}
-
-	if err := rpc.RegisterMethod(registry, rpc.Method[WorkspaceSystemEnsureRequest, WorkspaceSystemEnsureResponse]{
-		Name:        "workspace.system.ensure",
-		Description: "Ensure the singleton system workspace exists",
-		Handler: func(ctx context.Context, req WorkspaceSystemEnsureRequest) (WorkspaceSystemEnsureResponse, error) {
-			_ = req
-			workspaceID, err := newWorkspaceID()
-			if err != nil {
-				return WorkspaceSystemEnsureResponse{}, fmt.Errorf("generate workspace id: %w", err)
-			}
-			session, err := store.EnsureSystemWorkspace(ctx, workspaceID)
-			if err != nil {
-				return WorkspaceSystemEnsureResponse{}, mapWorkspaceStoreError(err, workspaceID)
-			}
-			return WorkspaceSystemEnsureResponse{WorkspaceID: session.ID, Name: session.Name, Status: session.Status, Kind: session.Kind, OriginRoot: session.OriginRoot}, nil
-		},
-	}); err != nil {
-		return fmt.Errorf("register workspace.system.ensure: %w", err)
 	}
 
 	if err := rpc.RegisterMethod(registry, rpc.Method[WorkspaceListRequest, WorkspaceListResponse]{
@@ -265,7 +232,6 @@ func (d *Daemon) registerWorkspaceMethods(registry *rpc.MethodRegistry, store *g
 					PrimaryFolder: primary,
 					FolderCount:   len(folders),
 					CreatedAt:     session.CreatedAt,
-					Kind:          session.Kind,
 				})
 			}
 
@@ -323,7 +289,6 @@ func (d *Daemon) registerWorkspaceMethods(registry *rpc.MethodRegistry, store *g
 				CreatedAt:     session.CreatedAt,
 				UpdatedAt:     session.UpdatedAt,
 				Folders:       folderInfo,
-				Kind:          session.Kind,
 			}, nil
 		},
 	}); err != nil {

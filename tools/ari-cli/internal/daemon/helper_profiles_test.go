@@ -8,21 +8,14 @@ import (
 )
 
 func TestDefaultHelperPromptsShareOneBaseContract(t *testing.T) {
-	if systemHelperPrompt() != helperPrompt() {
-		t.Fatalf("system helper prompt diverged from shared helper prompt")
-	}
-	if projectHelperPrompt() != helperPrompt() {
-		t.Fatalf("project helper prompt diverged from shared helper prompt")
+	if helperPrompt() == "" {
+		t.Fatalf("helper prompt is empty")
 	}
 }
 
-func TestHelperWorkspaceContextDistinguishesScopeWithoutHelperTypes(t *testing.T) {
-	systemContext := helperWorkspaceContext(&globaldb.Session{Kind: "system", Name: "system"})
-	if !strings.Contains(systemContext, "system/global starter workspace") || strings.Contains(systemContext, "project workspace") {
-		t.Fatalf("system helper context = %q", systemContext)
-	}
-	projectContext := helperWorkspaceContext(&globaldb.Session{Kind: "project", Name: "alpha", OriginRoot: "/repo/alpha"})
-	if !strings.Contains(projectContext, "project workspace alpha at /repo/alpha") || !strings.Contains(projectContext, "also answer general Ari questions") {
-		t.Fatalf("project helper context = %q", projectContext)
+func TestHelperWorkspaceContextUsesNormalWorkspaceScope(t *testing.T) {
+	context := helperWorkspaceContext(&globaldb.Session{Name: "home", OriginRoot: "/home/user"})
+	if !strings.Contains(context, "workspace home at /home/user") || !strings.Contains(context, "also answer general Ari questions") {
+		t.Fatalf("helper context = %q", context)
 	}
 }

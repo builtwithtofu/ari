@@ -489,9 +489,6 @@ func newWorkspaceShowCmd() *cobra.Command {
 			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Status: %s\n", response.Status); err != nil {
 				return err
 			}
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Kind: %s\n", response.Kind); err != nil {
-				return err
-			}
 			origin := response.OriginRoot
 			if origin == "" {
 				origin = "none"

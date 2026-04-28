@@ -34,7 +34,6 @@ type HelperContextResponse struct {
 type HelperWorkspaceSummary struct {
 	WorkspaceID string `json:"workspace_id"`
 	Name        string `json:"name"`
-	Kind        string `json:"kind"`
 	Status      string `json:"status"`
 	OriginRoot  string `json:"origin_root"`
 	FolderCount int    `json:"folder_count"`
@@ -77,7 +76,6 @@ type HelperHealthSummary struct {
 	DaemonVersion      string `json:"daemon_version"`
 	ConfigReadable     bool   `json:"config_readable"`
 	WorkspaceAvailable bool   `json:"workspace_available"`
-	WorkspaceKind      string `json:"workspace_kind"`
 }
 
 type HelperExplainRequest struct {
@@ -147,20 +145,18 @@ func (d *Daemon) helperContext(ctx context.Context, store *globaldb.Store, req H
 	if err != nil {
 		return HelperContextResponse{}, err
 	}
-	resp := HelperContextResponse{Workspace: helperWorkspaceSummary(ctx, store, session), Defaults: defaults, Profiles: profiles, FinalResponses: finalResponses, Telemetry: telemetry, Proofs: proofs, Health: d.helperHealth(ctx, store, session), WorkflowLearnings: learnings, Docs: helperDocs(), Explanations: helperExplanationTopics()}
-	if session.Kind == "system" {
-		resp.Workspaces, err = helperWorkspaceSummaries(ctx, store)
-		if err != nil {
-			return HelperContextResponse{}, err
-		}
+	workspaces, err := helperWorkspaceSummaries(ctx, store)
+	if err != nil {
+		return HelperContextResponse{}, err
 	}
+	resp := HelperContextResponse{Workspace: helperWorkspaceSummary(ctx, store, session), Defaults: defaults, Profiles: profiles, Workspaces: workspaces, FinalResponses: finalResponses, Telemetry: telemetry, Proofs: proofs, Health: d.helperHealth(ctx, store, session), WorkflowLearnings: learnings, Docs: helperDocs(), Explanations: helperExplanationTopics()}
 	return resp, nil
 }
 
 func (d *Daemon) helperHealth(ctx context.Context, store *globaldb.Store, session *globaldb.Session) HelperHealthSummary {
 	_, cfgErr := readJSONConfig(d.configPath)
 	_, wsErr := store.GetSession(ctx, session.ID)
-	return HelperHealthSummary{DaemonVersion: d.version, ConfigReadable: cfgErr == nil, WorkspaceAvailable: wsErr == nil, WorkspaceKind: session.Kind}
+	return HelperHealthSummary{DaemonVersion: d.version, ConfigReadable: cfgErr == nil, WorkspaceAvailable: wsErr == nil}
 }
 
 func (d *Daemon) helperExplain(ctx context.Context, store *globaldb.Store, req HelperExplainRequest) (HelperExplainResponse, error) {
@@ -183,8 +179,8 @@ func (d *Daemon) helperExplain(ctx context.Context, store *globaldb.Store, req H
 		return HelperExplainResponse{Topic: "profile", Explanation: fmt.Sprintf("Profiles are workspace-scoped run configurations. This workspace has %d configured profile(s); helper is the conventional default helper profile when present.", len(profiles)), Anchors: []string{"agent.profile.list", "agent.profile.helper.get", "helper profile convention"}}, nil
 	case "harness":
 		return HelperExplainResponse{Topic: "harness", Explanation: "A harness is the external agent runtime Ari launches, such as codex, opencode, or claude-code. Ari stores local state and passes scoped context to the harness.", Anchors: []string{"default_harness", "agent.spawn", "agent.profile.run"}}, nil
-	case "workspace type", "workspace":
-		return HelperExplainResponse{Topic: "workspace type", Explanation: "Workspace type controls scope: system is the folderless Ari/local-machine starter workspace, while project workspaces are folder-backed project scopes.", Anchors: []string{"workspace_kind", "workspace.system.ensure", "workspace.get"}}, nil
+	case "workspace":
+		return HelperExplainResponse{Topic: "workspace", Explanation: "A workspace is a folder-backed place Ari can use for context. Init creates a normal home workspace as a starter landing place when possible; users can delete it without changing Ari defaults.", Anchors: []string{"workspace.create", "workspace.get", "ari init"}}, nil
 	case "telemetry":
 		return HelperExplainResponse{Topic: "telemetry", Explanation: "Telemetry summarizes Ari-owned run evidence such as status, token/cost knowledge, exit code, process metrics, and orphan state when available.", Anchors: []string{"telemetry.rollup", "agent_run_telemetry"}}, nil
 	case "final response":
@@ -237,7 +233,7 @@ func helperWorkspaceSummary(ctx context.Context, store *globaldb.Store, session 
 	if folders, err := store.ListFolders(ctx, session.ID); err == nil {
 		count = len(folders)
 	}
-	return HelperWorkspaceSummary{WorkspaceID: session.ID, Name: session.Name, Kind: session.Kind, Status: session.Status, OriginRoot: session.OriginRoot, FolderCount: count}
+	return HelperWorkspaceSummary{WorkspaceID: session.ID, Name: session.Name, Status: session.Status, OriginRoot: session.OriginRoot, FolderCount: count}
 }
 
 func helperFinalResponses(ctx context.Context, store *globaldb.Store, workspaceID string) ([]HelperFinalResponse, error) {
@@ -286,7 +282,7 @@ func helperWorkflowLearnings(ctx context.Context, store *globaldb.Store, session
 		}
 		learnings = append(learnings, WorkflowLearning{SourceKind: "proof", SourceID: proof.SourceID, Summary: summary})
 	}
-	if session.Kind == "project" && strings.TrimSpace(session.OriginRoot) != "" {
+	if strings.TrimSpace(session.OriginRoot) != "" {
 		learnings = append(learnings, helperAriWorkflowLearnings(session.OriginRoot)...)
 	}
 	return learnings, nil
@@ -351,9 +347,9 @@ func helperLatestFailedRunExplanation(ctx context.Context, store *globaldb.Store
 }
 
 func helperDocs() []string {
-	return []string{"ari init: choose the default harness and create the system helper", "ari agent spawn --workspace system: start the system helper", "ari workspace show: inspect workspace kind, folders, and origin"}
+	return []string{"ari init: choose the default harness and create a normal home workspace when possible", "ari agent spawn --workspace home: start the home helper", "ari workspace show: inspect workspace folders and origin"}
 }
 
 func helperExplanationTopics() []string {
-	return []string{"profile", "harness", "workspace type", "telemetry", "final response", "tool grant", "restart-required setting", "latest failed run"}
+	return []string{"profile", "harness", "workspace", "telemetry", "final response", "tool grant", "restart-required setting", "latest failed run"}
 }

@@ -131,7 +131,7 @@ func TestAgentSpawnUsesExecutionRootPathWhenProvided(t *testing.T) {
 	_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 }
 
-func TestAgentSpawnInSystemWorkspaceUsesHomeAndHelperProfile(t *testing.T) {
+func TestAgentSpawnInHomeWorkspaceUsesHelperProfile(t *testing.T) {
 	store := newAgentMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
@@ -139,51 +139,31 @@ func TestAgentSpawnInSystemWorkspaceUsesHomeAndHelperProfile(t *testing.T) {
 	if err := d.registerAgentMethods(registry, store); err != nil {
 		t.Fatalf("registerAgentMethods returned error: %v", err)
 	}
-	if err := store.CreateWorkspace(context.Background(), "system-id", "system", "", "manual", "auto", "system"); err != nil {
-		t.Fatalf("CreateWorkspace system returned error: %v", err)
+	home := t.TempDir()
+	if err := store.CreateSession(context.Background(), "home-id", "home", home, "manual", "auto"); err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
 	}
-	if _, err := store.EnsureDefaultHelperProfile(context.Background(), "system-id", "codex", "Help Ari"); err != nil {
+	if err := store.AddFolder(context.Background(), "home-id", home, "unknown", true); err != nil {
+		t.Fatalf("AddFolder returned error: %v", err)
+	}
+	if _, err := store.EnsureDefaultHelperProfile(context.Background(), "home-id", "codex", "Help Ari"); err != nil {
 		t.Fatalf("EnsureDefaultHelperProfile returned error: %v", err)
-	}
-	home, err := os.UserHomeDir()
-	if err != nil || strings.TrimSpace(home) == "" {
-		t.Fatalf("home directory unavailable: %v", err)
 	}
 
 	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
-		WorkspaceID: "system-id",
+		WorkspaceID: "home-id",
 		Profile:     "helper",
 		Command:     "/bin/sh",
 		Args:        []string{"-c", "pwd"},
 	})
-	waitForAgentStatus(t, registry, "system-id", spawnResp.AgentID, "exited")
-	outputResp := callMethod[AgentOutputResponse](t, registry, "agent.output", AgentOutputRequest{WorkspaceID: "system-id", AgentID: spawnResp.AgentID})
+	waitForAgentStatus(t, registry, "home-id", spawnResp.AgentID, "exited")
+	outputResp := callMethod[AgentOutputResponse](t, registry, "agent.output", AgentOutputRequest{WorkspaceID: "home-id", AgentID: spawnResp.AgentID})
 	if !strings.Contains(outputResp.Output, home) {
 		t.Fatalf("agent.output = %q, want home %q", outputResp.Output, home)
 	}
-	agentResp := callMethod[AgentGetResponse](t, registry, "agent.get", AgentGetRequest{WorkspaceID: "system-id", AgentID: spawnResp.AgentID})
+	agentResp := callMethod[AgentGetResponse](t, registry, "agent.get", AgentGetRequest{WorkspaceID: "home-id", AgentID: spawnResp.AgentID})
 	if agentResp.Name != "helper" || agentResp.Harness != "codex" {
 		t.Fatalf("agent get = %#v, want helper/codex", agentResp)
-	}
-}
-
-func TestAgentSpawnSystemWorkspaceRejectsExecutionRootOverride(t *testing.T) {
-	store := newAgentMethodTestStore(t)
-	registry := rpc.NewMethodRegistry()
-	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	if err := d.registerAgentMethods(registry, store); err != nil {
-		t.Fatalf("registerAgentMethods returned error: %v", err)
-	}
-	if err := store.CreateWorkspace(context.Background(), "system-id", "system", "", "manual", "auto", "system"); err != nil {
-		t.Fatalf("CreateWorkspace system returned error: %v", err)
-	}
-	if _, err := store.EnsureDefaultHelperProfile(context.Background(), "system-id", "codex", "Help Ari"); err != nil {
-		t.Fatalf("EnsureDefaultHelperProfile returned error: %v", err)
-	}
-	err := callMethodError(registry, "agent.spawn", AgentSpawnRequest{WorkspaceID: "system-id", Profile: "helper", Command: "/bin/sh", Args: []string{"-c", "pwd"}, ExecutionRootPath: t.TempDir()})
-	data := requireHandlerErrorData(t, err)
-	if data["reason"] != "system_execution_root_forbidden" {
-		t.Fatalf("error data = %#v, want system_execution_root_forbidden", data)
 	}
 }
 
@@ -238,22 +218,26 @@ func TestAgentSpawnHelperLaunchPassesWorkspaceContextAsPrompt(t *testing.T) {
 		t.Fatalf("read shim args: %v", err)
 	}
 	got := string(body)
-	if !strings.Contains(got, "Scope: project workspace alpha at ") || !strings.Contains(got, projectRoot) || !strings.Contains(got, "Tell me about this project") {
+	if !strings.Contains(got, "Scope: workspace alpha at ") || !strings.Contains(got, projectRoot) || !strings.Contains(got, "Tell me about this project") {
 		t.Fatalf("helper launch args = %q", got)
 	}
 }
 
-func TestAgentSpawnSystemHelperLaunchPassesGlobalContextAsPrompt(t *testing.T) {
+func TestAgentSpawnHomeHelperLaunchPassesWorkspaceContextAsPrompt(t *testing.T) {
 	store := newAgentMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	if err := d.registerAgentMethods(registry, store); err != nil {
 		t.Fatalf("registerAgentMethods returned error: %v", err)
 	}
-	if err := store.CreateWorkspace(context.Background(), "system-id", "system", "", "manual", "auto", "system"); err != nil {
-		t.Fatalf("CreateWorkspace system returned error: %v", err)
+	home := t.TempDir()
+	if err := store.CreateSession(context.Background(), "home-id", "home", home, "manual", "auto"); err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
 	}
-	if _, err := store.EnsureDefaultHelperProfile(context.Background(), "system-id", "test-helper", helperPrompt()); err != nil {
+	if err := store.AddFolder(context.Background(), "home-id", home, "unknown", true); err != nil {
+		t.Fatalf("AddFolder returned error: %v", err)
+	}
+	if _, err := store.EnsureDefaultHelperProfile(context.Background(), "home-id", "test-helper", helperPrompt()); err != nil {
 		t.Fatalf("EnsureDefaultHelperProfile returned error: %v", err)
 	}
 	argsPath := filepath.Join(t.TempDir(), "args.txt")
@@ -268,14 +252,14 @@ func TestAgentSpawnSystemHelperLaunchPassesGlobalContextAsPrompt(t *testing.T) {
 		delete(harnessDefinitions, "test-helper")
 	})
 
-	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{WorkspaceID: "system-id", Args: []string{"What is Ari?"}})
-	waitForAgentStatus(t, registry, "system-id", spawnResp.AgentID, "exited")
+	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{WorkspaceID: "home-id", Args: []string{"What is Ari?"}})
+	waitForAgentStatus(t, registry, "home-id", spawnResp.AgentID, "exited")
 	body, err := os.ReadFile(argsPath)
 	if err != nil {
 		t.Fatalf("read shim args: %v", err)
 	}
 	got := string(body)
-	if !strings.Contains(got, "Scope: system/global starter workspace") || !strings.Contains(got, "What is Ari?") || strings.Contains(got, "project workspace") {
+	if !strings.Contains(got, "Scope: workspace home at ") || !strings.Contains(got, home) || !strings.Contains(got, "What is Ari?") {
 		t.Fatalf("helper launch args = %q", got)
 	}
 }

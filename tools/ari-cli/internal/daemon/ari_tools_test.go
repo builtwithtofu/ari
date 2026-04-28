@@ -55,9 +55,9 @@ func TestAriDefaultsSetRequiresScopedSingleUseApproval(t *testing.T) {
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
-	system := ensureSystemWorkspaceForToolTest(t, store)
+	home := ensureHomeWorkspaceForToolTest(t, store)
 	req := AriToolCallRequest{
-		Scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: system.ID, WorkspaceKind: "system", ProfileID: "ap-helper", ProfileName: "helper", ToolName: "ari.defaults.set", WithinDefaultScope: true},
+		Scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: home.ID, ProfileID: "ap-helper", ProfileName: "helper", ToolName: "ari.defaults.set", WithinDefaultScope: true},
 		Name:  "ari.defaults.set",
 		Input: map[string]any{"default_harness": "opencode", "preferred_model": "gpt-next"},
 	}
@@ -71,7 +71,7 @@ func TestAriDefaultsSetRequiresScopedSingleUseApproval(t *testing.T) {
 	if resp.Status != "ok" || resp.ApplicationStatus != "restart_required" {
 		t.Fatalf("defaults.set response = %#v", resp)
 	}
-	defaults := callMethod[AriToolCallResponse](t, registry, "ari.tool.call", AriToolCallRequest{Name: "ari.defaults.get", Scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: system.ID, WorkspaceKind: "system", ProfileID: "ap-helper", ProfileName: "helper", ToolName: "ari.defaults.get", WithinDefaultScope: true}})
+	defaults := callMethod[AriToolCallResponse](t, registry, "ari.tool.call", AriToolCallRequest{Name: "ari.defaults.get", Scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: home.ID, ProfileID: "ap-helper", ProfileName: "helper", ToolName: "ari.defaults.get", WithinDefaultScope: true}})
 	if defaults.Output["default_harness"] != "opencode" || defaults.Output["preferred_model"] != "gpt-next" {
 		t.Fatalf("defaults after set = %#v", defaults.Output)
 	}
@@ -89,8 +89,8 @@ func TestAriToolCallsRequireProfileIDInScope(t *testing.T) {
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
-	system := ensureSystemWorkspaceForToolTest(t, store)
-	err := callMethodError(registry, "ari.tool.call", AriToolCallRequest{Name: "ari.defaults.get", Scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: system.ID, WorkspaceKind: "system", ProfileName: "helper", ToolName: "ari.defaults.get", WithinDefaultScope: true}})
+	home := ensureHomeWorkspaceForToolTest(t, store)
+	err := callMethodError(registry, "ari.tool.call", AriToolCallRequest{Name: "ari.defaults.get", Scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: home.ID, ProfileName: "helper", ToolName: "ari.defaults.get", WithinDefaultScope: true}})
 	if err == nil || !strings.Contains(err.Error(), "missing_scope") {
 		t.Fatalf("missing profile_id error = %v, want missing_scope", err)
 	}
@@ -103,12 +103,12 @@ func TestAriToolsRejectWrongScopeHashAndStaleApprovals(t *testing.T) {
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
-	system := ensureSystemWorkspaceForToolTest(t, store)
-	req := AriToolCallRequest{Name: "ari.defaults.set", Scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: system.ID, WorkspaceKind: "system", ProfileID: "ap-helper", ProfileName: "helper", ToolName: "ari.defaults.set", WithinDefaultScope: true}, Input: map[string]any{"default_harness": "codex"}}
+	home := ensureHomeWorkspaceForToolTest(t, store)
+	req := AriToolCallRequest{Name: "ari.defaults.set", Scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: home.ID, ProfileID: "ap-helper", ProfileName: "helper", ToolName: "ari.defaults.set", WithinDefaultScope: true}, Input: map[string]any{"default_harness": "codex"}}
 
 	wrongScope := req
 	wrongScope.Approval = storeIssuedApprovalForToolRequest(t, store, req, "tester")
-	wrongScope.Approval.Scope.WorkspaceKind = "project"
+	wrongScope.Approval.Scope.WorkspaceID = "other-workspace"
 	if err := callMethodError(registry, "ari.tool.call", wrongScope); err == nil || !strings.Contains(err.Error(), "approval_mismatch") {
 		t.Fatalf("wrong-scope approval error = %v, want approval_mismatch", err)
 	}
@@ -138,11 +138,11 @@ func TestAriToolsRejectRepurposedIssuedApproval(t *testing.T) {
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
-	system := ensureSystemWorkspaceForToolTest(t, store)
-	approvedSave := AriToolCallRequest{Name: "ari.profile.save", Scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: system.ID, WorkspaceKind: "system", ProfileID: "ap-helper", ProfileName: "helper", ToolName: "ari.profile.save", WithinDefaultScope: true}, Input: map[string]any{"name": "reviewer", "harness": "codex"}}
+	home := ensureHomeWorkspaceForToolTest(t, store)
+	approvedSave := AriToolCallRequest{Name: "ari.profile.save", Scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: home.ID, ProfileID: "ap-helper", ProfileName: "helper", ToolName: "ari.profile.save", WithinDefaultScope: true}, Input: map[string]any{"name": "reviewer", "harness": "codex"}}
 	issued := storeIssuedApprovalForToolRequest(t, store, approvedSave, "tester")
-	maliciousDefaults := AriToolCallRequest{Name: "ari.defaults.set", Scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: system.ID, WorkspaceKind: "system", ProfileID: "ap-helper", ProfileName: "helper", ToolName: "ari.defaults.set", WithinDefaultScope: true}, Input: map[string]any{"default_harness": "opencode"}}
-	issued.Scope = AriToolApprovalScope{WorkspaceID: system.ID, WorkspaceKind: "system", ProfileID: "ap-helper", ProfileName: "helper", ToolName: "ari.defaults.set", SourceRunID: "run-1"}
+	maliciousDefaults := AriToolCallRequest{Name: "ari.defaults.set", Scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: home.ID, ProfileID: "ap-helper", ProfileName: "helper", ToolName: "ari.defaults.set", WithinDefaultScope: true}, Input: map[string]any{"default_harness": "opencode"}}
+	issued.Scope = AriToolApprovalScope{WorkspaceID: home.ID, ProfileID: "ap-helper", ProfileName: "helper", ToolName: "ari.defaults.set", SourceRunID: "run-1"}
 	issued.RequestHash, _ = HashAriToolRequest(maliciousDefaults.Name, maliciousDefaults.Input)
 	maliciousDefaults.Approval = issued
 	if err := callMethodError(registry, "ari.tool.call", maliciousDefaults); err == nil || !strings.Contains(err.Error(), "approval_mismatch") {
@@ -157,8 +157,8 @@ func TestAriToolsRejectApprovalForDifferentProfile(t *testing.T) {
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
-	system := ensureSystemWorkspaceForToolTest(t, store)
-	req := AriToolCallRequest{Name: "ari.defaults.set", Scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: system.ID, WorkspaceKind: "system", ProfileID: "ap-helper", ProfileName: "helper", ToolName: "ari.defaults.set", WithinDefaultScope: true}, Input: map[string]any{"default_harness": "codex"}}
+	home := ensureHomeWorkspaceForToolTest(t, store)
+	req := AriToolCallRequest{Name: "ari.defaults.set", Scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: home.ID, ProfileID: "ap-helper", ProfileName: "helper", ToolName: "ari.defaults.set", WithinDefaultScope: true}, Input: map[string]any{"default_harness": "codex"}}
 	req.Approval = storeIssuedApprovalForToolRequest(t, store, req, "tester")
 	req.Scope.ProfileID = "ap-other"
 	req.Scope.ProfileName = "other"
@@ -174,15 +174,15 @@ func TestAriToolsRejectForgedApprovalWithoutDaemonIssuedRecord(t *testing.T) {
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
-	system := ensureSystemWorkspaceForToolTest(t, store)
-	req := AriToolCallRequest{Name: "ari.defaults.set", Scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: system.ID, WorkspaceKind: "system", ProfileID: "ap-helper", ProfileName: "helper", ToolName: "ari.defaults.set", WithinDefaultScope: true}, Input: map[string]any{"default_harness": "codex"}}
+	home := ensureHomeWorkspaceForToolTest(t, store)
+	req := AriToolCallRequest{Name: "ari.defaults.set", Scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: home.ID, ProfileID: "ap-helper", ProfileName: "helper", ToolName: "ari.defaults.set", WithinDefaultScope: true}, Input: map[string]any{"default_harness": "codex"}}
 	req.Approval = forgedApprovalForToolRequest(t, req)
 	if err := callMethodError(registry, "ari.tool.call", req); err == nil || !strings.Contains(err.Error(), "approval_unknown") {
 		t.Fatalf("forged approval error = %v, want approval_unknown", err)
 	}
 }
 
-func TestAriDefaultsSetRejectsSpoofedSystemScopeForProjectWorkspace(t *testing.T) {
+func TestAriDefaultsSetRejectsMissingWorkspace(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
@@ -192,10 +192,10 @@ func TestAriDefaultsSetRejectsSpoofedSystemScopeForProjectWorkspace(t *testing.T
 	if err := store.CreateSession(context.Background(), "project-1", "alpha", t.TempDir(), "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
-	req := AriToolCallRequest{Name: "ari.defaults.set", Scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: "project-1", WorkspaceKind: "system", ProfileID: "ap-helper", ProfileName: "helper", ToolName: "ari.defaults.set", WithinDefaultScope: true}, Input: map[string]any{"default_harness": "codex"}}
+	req := AriToolCallRequest{Name: "ari.defaults.set", Scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: "missing", ProfileID: "ap-helper", ProfileName: "helper", ToolName: "ari.defaults.set", WithinDefaultScope: true}, Input: map[string]any{"default_harness": "codex"}}
 	req.Approval = forgedApprovalForToolRequest(t, req)
-	if err := callMethodError(registry, "ari.tool.call", req); err == nil || !strings.Contains(err.Error(), "scope_workspace_mismatch") {
-		t.Fatalf("spoofed scope error = %v, want scope_workspace_mismatch", err)
+	if err := callMethodError(registry, "ari.tool.call", req); err == nil || !strings.Contains(err.Error(), "globaldb record not found") {
+		t.Fatalf("missing workspace error = %v, want not found", err)
 	}
 }
 
@@ -207,8 +207,8 @@ func TestAriApprovalsRemainSingleUseAfterDaemonRestart(t *testing.T) {
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
-	system := ensureSystemWorkspaceForToolTest(t, store)
-	req := AriToolCallRequest{Name: "ari.defaults.set", Scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: system.ID, WorkspaceKind: "system", ProfileID: "ap-helper", ProfileName: "helper", ToolName: "ari.defaults.set", WithinDefaultScope: true}, Input: map[string]any{"default_harness": "codex"}}
+	home := ensureHomeWorkspaceForToolTest(t, store)
+	req := AriToolCallRequest{Name: "ari.defaults.set", Scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: home.ID, ProfileID: "ap-helper", ProfileName: "helper", ToolName: "ari.defaults.set", WithinDefaultScope: true}, Input: map[string]any{"default_harness": "codex"}}
 	req.Approval = storeIssuedApprovalForToolRequest(t, store, req, "tester")
 	_ = callMethod[AriToolCallResponse](t, registry, "ari.tool.call", req)
 
@@ -233,8 +233,8 @@ func TestAriDefaultsSetValidatesWholeRequestBeforeWriting(t *testing.T) {
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
-	system := ensureSystemWorkspaceForToolTest(t, store)
-	req := AriToolCallRequest{Name: "ari.defaults.set", Scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: system.ID, WorkspaceKind: "system", ProfileID: "ap-helper", ProfileName: "helper", ToolName: "ari.defaults.set", WithinDefaultScope: true}, Input: map[string]any{"default_harness": "opencode", "default_invocation_class": "bad"}}
+	home := ensureHomeWorkspaceForToolTest(t, store)
+	req := AriToolCallRequest{Name: "ari.defaults.set", Scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: home.ID, ProfileID: "ap-helper", ProfileName: "helper", ToolName: "ari.defaults.set", WithinDefaultScope: true}, Input: map[string]any{"default_harness": "opencode", "default_invocation_class": "bad"}}
 	req.Approval = storeIssuedApprovalForToolRequest(t, store, req, "tester")
 	if err := callMethodError(registry, "ari.tool.call", req); err == nil || !strings.Contains(err.Error(), "invalid_default_invocation_class") {
 		t.Fatalf("invalid defaults error = %v, want invalid_default_invocation_class", err)
@@ -255,19 +255,19 @@ func TestAriProfileDraftAndSaveSeparateDraftFromPersistedWrite(t *testing.T) {
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
-	system := ensureSystemWorkspaceForToolTest(t, store)
-	scope := AriToolScope{SourceRunID: "run-1", WorkspaceID: system.ID, WorkspaceKind: "system", ProfileID: "ap-helper", ProfileName: "helper", ToolName: "ari.profile.draft", WithinDefaultScope: true}
+	home := ensureHomeWorkspaceForToolTest(t, store)
+	scope := AriToolScope{SourceRunID: "run-1", WorkspaceID: home.ID, ProfileID: "ap-helper", ProfileName: "helper", ToolName: "ari.profile.draft", WithinDefaultScope: true}
 	draftReq := AriToolCallRequest{Name: "ari.profile.draft", Scope: scope, Input: map[string]any{"name": "frontend-reviewer", "harness": "codex", "prompt": "Review UI regressions"}}
 	draft := callMethod[AriToolCallResponse](t, registry, "ari.tool.call", draftReq)
 	if draft.Status != "draft" || draft.Output["profile_id"] != nil {
 		t.Fatalf("draft response = %#v", draft)
 	}
-	_, err := store.GetAgentProfile(context.Background(), system.ID, "frontend-reviewer")
+	_, err := store.GetAgentProfile(context.Background(), home.ID, "frontend-reviewer")
 	if !errors.Is(err, globaldb.ErrNotFound) {
 		t.Fatalf("draft persisted profile lookup error = %v, want ErrNotFound", err)
 	}
 
-	saveReq := AriToolCallRequest{Name: "ari.profile.save", Scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: system.ID, WorkspaceKind: "system", ProfileID: "ap-helper", ProfileName: "helper", ToolName: "ari.profile.save", WithinDefaultScope: true}, Input: draft.Output}
+	saveReq := AriToolCallRequest{Name: "ari.profile.save", Scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: home.ID, ProfileID: "ap-helper", ProfileName: "helper", ToolName: "ari.profile.save", WithinDefaultScope: true}, Input: draft.Output}
 	if err := callMethodError(registry, "ari.tool.call", saveReq); err == nil || !strings.Contains(err.Error(), "approval_required") {
 		t.Fatalf("profile.save without approval error = %v, want approval_required", err)
 	}
@@ -278,7 +278,7 @@ func TestAriProfileDraftAndSaveSeparateDraftFromPersistedWrite(t *testing.T) {
 	}
 }
 
-func TestAriProjectHelperCannotSilentlyWriteSystemSettings(t *testing.T) {
+func TestAriDefaultsSetRequiresDefaultScope(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
@@ -288,10 +288,10 @@ func TestAriProjectHelperCannotSilentlyWriteSystemSettings(t *testing.T) {
 	if err := store.CreateSession(context.Background(), "project-1", "alpha", t.TempDir(), "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
-	req := AriToolCallRequest{Name: "ari.defaults.set", Scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: "project-1", WorkspaceKind: "project", ProfileID: "ap-helper", ProfileName: "helper", ToolName: "ari.defaults.set", WithinDefaultScope: false}, Input: map[string]any{"default_harness": "codex"}}
+	req := AriToolCallRequest{Name: "ari.defaults.set", Scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: "project-1", ProfileID: "ap-helper", ProfileName: "helper", ToolName: "ari.defaults.set", WithinDefaultScope: false}, Input: map[string]any{"default_harness": "codex"}}
 	err := callMethodError(registry, "ari.tool.call", req)
-	if err == nil || !strings.Contains(err.Error(), "system_handoff_required") {
-		t.Fatalf("project defaults.set error = %v, want system_handoff_required", err)
+	if err == nil || !strings.Contains(err.Error(), "handoff_required") {
+		t.Fatalf("out-of-scope defaults.set error = %v, want handoff_required", err)
 	}
 }
 
@@ -306,8 +306,8 @@ func TestAriReadOnlyToolsDoNotRequireApprovalOrMutateState(t *testing.T) {
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
-	system := ensureSystemWorkspaceForToolTest(t, store)
-	scope := AriToolScope{SourceRunID: "run-1", WorkspaceID: system.ID, WorkspaceKind: "system", ProfileID: "ap-helper", ProfileName: "helper", WithinDefaultScope: true}
+	home := ensureHomeWorkspaceForToolTest(t, store)
+	scope := AriToolScope{SourceRunID: "run-1", WorkspaceID: home.ID, ProfileID: "ap-helper", ProfileName: "helper", WithinDefaultScope: true}
 	selfCheck := callMethod[AriToolCallResponse](t, registry, "ari.tool.call", AriToolCallRequest{Name: "ari.self_check", Scope: scope})
 	if selfCheck.Status != "ok" || selfCheck.Output["daemon_version"] != "test-version" || selfCheck.Output["config_readable"] != true {
 		t.Fatalf("self_check response = %#v", selfCheck)
@@ -322,13 +322,20 @@ func TestAriReadOnlyToolsDoNotRequireApprovalOrMutateState(t *testing.T) {
 	}
 }
 
-func ensureSystemWorkspaceForToolTest(t *testing.T, store *globaldb.Store) *globaldb.Session {
+func ensureHomeWorkspaceForToolTest(t *testing.T, store *globaldb.Store) *globaldb.Session {
 	t.Helper()
-	system, err := store.EnsureSystemWorkspace(context.Background(), "system-tools")
-	if err != nil {
-		t.Fatalf("EnsureSystemWorkspace returned error: %v", err)
+	home := t.TempDir()
+	if err := store.CreateSession(context.Background(), "home-tools", "home", home, "manual", "auto"); err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
 	}
-	return system
+	if err := store.AddFolder(context.Background(), "home-tools", home, "unknown", true); err != nil {
+		t.Fatalf("AddFolder returned error: %v", err)
+	}
+	session, err := store.GetSession(context.Background(), "home-tools")
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	return session
 }
 
 func storeIssuedApprovalForToolRequest(t *testing.T, store *globaldb.Store, req AriToolCallRequest, approvedBy string) AriToolApproval {
@@ -337,7 +344,7 @@ func storeIssuedApprovalForToolRequest(t *testing.T, store *globaldb.Store, req 
 	if err != nil {
 		t.Fatalf("HashAriToolRequest returned error: %v", err)
 	}
-	approval := AriToolApproval{ApprovalID: "approval-issued-" + strings.ReplaceAll(req.Name, ".", "-") + "-" + strings.ReplaceAll(req.Scope.SourceRunID, "-", "_"), ApprovedBy: approvedBy, ApprovedAt: time.Now().UTC().Format(time.RFC3339), Scope: AriToolApprovalScope{WorkspaceID: req.Scope.WorkspaceID, WorkspaceKind: req.Scope.WorkspaceKind, ProfileID: req.Scope.ProfileID, ProfileName: req.Scope.ProfileName, ToolName: req.Name, SourceRunID: req.Scope.SourceRunID}, RequestHash: hash}
+	approval := AriToolApproval{ApprovalID: "approval-issued-" + strings.ReplaceAll(req.Name, ".", "-") + "-" + strings.ReplaceAll(req.Scope.SourceRunID, "-", "_"), ApprovedBy: approvedBy, ApprovedAt: time.Now().UTC().Format(time.RFC3339), Scope: AriToolApprovalScope{WorkspaceID: req.Scope.WorkspaceID, ProfileID: req.Scope.ProfileID, ProfileName: req.Scope.ProfileName, ToolName: req.Name, SourceRunID: req.Scope.SourceRunID}, RequestHash: hash}
 	if err := storeAriApproval(context.Background(), store, storedAriApproval{Approval: approval}); err != nil {
 		t.Fatalf("store approval: %v", err)
 	}
@@ -350,7 +357,7 @@ func forgedApprovalForToolRequest(t *testing.T, req AriToolCallRequest) AriToolA
 	if err != nil {
 		t.Fatalf("HashAriToolRequest returned error: %v", err)
 	}
-	return AriToolApproval{ApprovalID: "approval-forged-" + strings.ReplaceAll(req.Name, ".", "-"), ApprovedBy: "tester", ApprovedAt: time.Now().UTC().Format(time.RFC3339), Scope: AriToolApprovalScope{WorkspaceID: req.Scope.WorkspaceID, WorkspaceKind: req.Scope.WorkspaceKind, ProfileID: req.Scope.ProfileID, ProfileName: req.Scope.ProfileName, ToolName: req.Name, SourceRunID: req.Scope.SourceRunID}, RequestHash: hash}
+	return AriToolApproval{ApprovalID: "approval-forged-" + strings.ReplaceAll(req.Name, ".", "-"), ApprovedBy: "tester", ApprovedAt: time.Now().UTC().Format(time.RFC3339), Scope: AriToolApprovalScope{WorkspaceID: req.Scope.WorkspaceID, ProfileID: req.Scope.ProfileID, ProfileName: req.Scope.ProfileName, ToolName: req.Name, SourceRunID: req.Scope.SourceRunID}, RequestHash: hash}
 }
 
 func TestAriToolRequestHashIsStable(t *testing.T) {

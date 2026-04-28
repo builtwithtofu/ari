@@ -456,7 +456,7 @@ func ensureDefaultHelperProfile(ctx context.Context, store *globaldb.Store, req 
 	}
 	prompt := strings.TrimSpace(req.Prompt)
 	if prompt == "" {
-		prompt = projectHelperPrompt()
+		prompt = helperPrompt()
 	}
 	stored, err := store.EnsureDefaultHelperProfile(ctx, workspaceID, req.Harness, prompt)
 	if err != nil {

@@ -28,8 +28,8 @@ ON CONFLICT(key) DO UPDATE SET
 	metaByKeyQuery = `SELECT value FROM daemon_meta WHERE key = ?`
 
 	insertSessionQuery = `INSERT INTO workspaces (
-		workspace_id, name, status, vcs_preference, origin_root, cleanup_policy, created_at, updated_at, workspace_kind
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		workspace_id, name, status, vcs_preference, origin_root, cleanup_policy, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 
 	sessionByIDQuery = `SELECT
 		workspace_id,
@@ -40,8 +40,6 @@ ON CONFLICT(key) DO UPDATE SET
 	cleanup_policy,
 	created_at,
 		updated_at
-	,
-	workspace_kind
 FROM workspaces
 WHERE workspace_id = ?`
 
@@ -54,8 +52,6 @@ WHERE workspace_id = ?`
 	cleanup_policy,
 	created_at,
 		updated_at
-	,
-	workspace_kind
 FROM workspaces
 WHERE name = ?`
 
@@ -68,23 +64,8 @@ WHERE name = ?`
 	cleanup_policy,
 	created_at,
 		updated_at
-	,
-	workspace_kind
 FROM workspaces
 ORDER BY created_at DESC, workspace_id ASC`
-
-	systemSessionQuery = `SELECT
-		workspace_id,
-	name,
-	status,
-	vcs_preference,
-	origin_root,
-	cleanup_policy,
-	created_at,
-	updated_at,
-	workspace_kind
-FROM workspaces
-WHERE workspace_kind = 'system'`
 
 	updateSessionStatusQuery = `UPDATE workspaces
 SET status = ?, updated_at = ?
@@ -329,7 +310,6 @@ type Session struct {
 	CleanupPolicy string
 	CreatedAt     string
 	UpdatedAt     string
-	Kind          string
 }
 
 type SessionFolder struct {
@@ -433,10 +413,6 @@ type Rows interface {
 	Scan(dest ...any) error
 	Err() error
 	Close() error
-}
-
-type columnRows interface {
-	Columns() ([]string, error)
 }
 
 type DB interface {
@@ -1061,10 +1037,6 @@ func finalResponseFromSQLC(row dbsqlc.FinalResponse) FinalResponse {
 }
 
 func (s *Store) CreateSession(ctx context.Context, id, name, originRoot, cleanupPolicy, vcsPreference string) error {
-	return s.CreateWorkspace(ctx, id, name, originRoot, cleanupPolicy, vcsPreference, "project")
-}
-
-func (s *Store) CreateWorkspace(ctx context.Context, id, name, originRoot, cleanupPolicy, vcsPreference, kind string) error {
 	if id = strings.TrimSpace(id); id == "" {
 		return fmt.Errorf("%w: session id is required", ErrInvalidInput)
 	}
@@ -1078,62 +1050,16 @@ func (s *Store) CreateWorkspace(ctx context.Context, id, name, originRoot, clean
 	if err := validateVCSPreference(vcsPreference); err != nil {
 		return err
 	}
-	if kind = strings.TrimSpace(kind); kind == "" {
-		kind = "project"
-	}
-	if !isValidWorkspaceKind(kind) {
-		return fmt.Errorf("%w: invalid workspace kind %q", ErrInvalidInput, kind)
-	}
-	if kind == "system" && originRoot != "" {
-		return fmt.Errorf("%w: system workspace origin root must be empty", ErrInvalidInput)
-	}
-	if kind == "project" && originRoot == "" {
+	if originRoot == "" {
 		return fmt.Errorf("%w: origin root is required", ErrInvalidInput)
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := s.db.ExecContext(ctx, insertSessionQuery, id, name, statusActive, vcsPreference, originRoot, cleanupPolicy, now, now, kind); err != nil {
+	if _, err := s.db.ExecContext(ctx, insertSessionQuery, id, name, statusActive, vcsPreference, originRoot, cleanupPolicy, now, now); err != nil {
 		return fmt.Errorf("create session %q: %w", id, err)
 	}
 
 	return nil
-}
-
-func (s *Store) EnsureSystemWorkspace(ctx context.Context, id string) (*Session, error) {
-	sessions, err := querySessions(ctx, s.db, systemSessionQuery)
-	if err != nil {
-		return nil, err
-	}
-	if len(sessions) > 0 {
-		if sessions[0].Status != statusActive {
-			return nil, fmt.Errorf("%w: system workspace is not active", ErrInvalidInput)
-		}
-		return &sessions[0], nil
-	}
-	if id = strings.TrimSpace(id); id == "" {
-		return nil, fmt.Errorf("%w: system workspace id is required", ErrInvalidInput)
-	}
-	if existing, err := s.GetSessionByName(ctx, "system"); err == nil && existing.Kind != "system" {
-		return nil, fmt.Errorf("%w: project workspace named system blocks system workspace setup", ErrInvalidInput)
-	} else if err != nil && !errors.Is(err, ErrNotFound) {
-		return nil, err
-	}
-	if err := s.CreateWorkspace(ctx, id, "system", "", "manual", "auto", "system"); err != nil {
-		sessions, lookupErr := querySessions(ctx, s.db, systemSessionQuery)
-		if lookupErr == nil && len(sessions) > 0 && sessions[0].Status == statusActive {
-			return &sessions[0], nil
-		}
-		return nil, err
-	}
-	return s.GetSession(ctx, id)
-}
-
-func (s *Store) HasSystemWorkspace(ctx context.Context) (bool, error) {
-	sessions, err := querySessions(ctx, s.db, systemSessionQuery)
-	if err != nil {
-		return false, err
-	}
-	return len(sessions) > 0 && sessions[0].Status == statusActive, nil
 }
 
 func (s *Store) GetSession(ctx context.Context, id string) (*Session, error) {
@@ -1187,10 +1113,6 @@ func (s *Store) UpdateSessionStatus(ctx context.Context, id, status string) erro
 	if err != nil {
 		return err
 	}
-	if session.Kind == "system" {
-		return fmt.Errorf("%w: system workspace status cannot be changed", ErrInvalidInput)
-	}
-
 	if !canTransitionSessionStatus(session.Status, status) {
 		if session.Status == statusClosed {
 			return fmt.Errorf("%w: session id %q", ErrSessionClosed, id)
@@ -1362,9 +1284,6 @@ func addFolderInTransaction(ctx context.Context, db DB, sessionID, folderPath, v
 	}
 	if len(sessions) == 0 {
 		return fmt.Errorf("%w: session id %q", ErrNotFound, sessionID)
-	}
-	if sessions[0].Kind == "system" {
-		return fmt.Errorf("%w: system workspace cannot have folders", ErrInvalidInput)
 	}
 	if sessions[0].Status == statusClosed {
 		return fmt.Errorf("%w: session id %q", ErrSessionClosed, sessionID)
@@ -1916,21 +1835,8 @@ func querySessions(ctx context.Context, db DB, query string, args ...any) ([]Ses
 	out := make([]Session, 0)
 	for rows.Next() {
 		var item Session
-		scan := []any{&item.ID, &item.Name, &item.Status, &item.VCSPreference, &item.OriginRoot, &item.CleanupPolicy, &item.CreatedAt, &item.UpdatedAt}
-		if withColumns, ok := rows.(columnRows); ok {
-			columns, err := withColumns.Columns()
-			if err != nil {
-				return nil, err
-			}
-			if len(columns) == 9 {
-				scan = append(scan, &item.Kind)
-			}
-		}
-		if err := rows.Scan(scan...); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.Status, &item.VCSPreference, &item.OriginRoot, &item.CleanupPolicy, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
-		}
-		if item.Kind == "" {
-			item.Kind = "project"
 		}
 		out = append(out, item)
 	}
@@ -2047,15 +1953,6 @@ func queryWorkspaceCommandDefinitions(ctx context.Context, db DB, query string, 
 func isValidSessionStatus(status string) bool {
 	switch status {
 	case statusActive, statusSuspended, statusClosed:
-		return true
-	default:
-		return false
-	}
-}
-
-func isValidWorkspaceKind(kind string) bool {
-	switch kind {
-	case "project", "system":
 		return true
 	default:
 		return false

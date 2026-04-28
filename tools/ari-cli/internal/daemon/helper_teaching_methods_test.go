@@ -12,7 +12,7 @@ import (
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
 )
 
-func TestHelperContextSystemUsesConfiguredState(t *testing.T) {
+func TestHelperContextHomeUsesConfiguredState(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	configPath := filepath.Join(t.TempDir(), "config.json")
@@ -23,20 +23,23 @@ func TestHelperContextSystemUsesConfiguredState(t *testing.T) {
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
-	system, err := store.EnsureSystemWorkspace(context.Background(), "system-id")
-	if err != nil {
-		t.Fatalf("EnsureSystemWorkspace returned error: %v", err)
+	home := t.TempDir()
+	if err := store.CreateSession(context.Background(), "home-id", "home", home, "manual", "auto"); err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
 	}
-	if err := store.UpsertAgentProfile(context.Background(), globaldb.AgentProfile{ProfileID: "ap-helper", WorkspaceID: system.ID, Name: "helper", Harness: "codex", Prompt: helperPrompt()}); err != nil {
+	if err := store.AddFolder(context.Background(), "home-id", home, "unknown", true); err != nil {
+		t.Fatalf("AddFolder returned error: %v", err)
+	}
+	if err := store.UpsertAgentProfile(context.Background(), globaldb.AgentProfile{ProfileID: "ap-helper", WorkspaceID: "home-id", Name: "helper", Harness: "codex", Prompt: helperPrompt()}); err != nil {
 		t.Fatalf("UpsertAgentProfile helper returned error: %v", err)
 	}
-	if err := store.UpsertAgentProfile(context.Background(), globaldb.AgentProfile{ProfileID: "ap-reviewer", WorkspaceID: system.ID, Name: "frontend-reviewer", Harness: "opencode", Prompt: "Review UI regressions"}); err != nil {
+	if err := store.UpsertAgentProfile(context.Background(), globaldb.AgentProfile{ProfileID: "ap-reviewer", WorkspaceID: "home-id", Name: "frontend-reviewer", Harness: "opencode", Prompt: "Review UI regressions"}); err != nil {
 		t.Fatalf("UpsertAgentProfile reviewer returned error: %v", err)
 	}
 	seedSessionWithPrimaryFolder(t, store, "project-1", t.TempDir())
 
-	resp := callMethod[HelperContextResponse](t, registry, "helper.context", HelperContextRequest{WorkspaceID: system.ID, Question: "what do I have?"})
-	if resp.Workspace.Kind != "system" || resp.Workspace.OriginRoot != "" {
+	resp := callMethod[HelperContextResponse](t, registry, "helper.context", HelperContextRequest{WorkspaceID: "home-id", Question: "what do I have?"})
+	if resp.Workspace.Name != "home" || resp.Workspace.OriginRoot != home {
 		t.Fatalf("workspace context = %#v", resp.Workspace)
 	}
 	if resp.Defaults["default_harness"] != "codex" || resp.Defaults["preferred_model"] != "gpt-5.1" {
@@ -49,7 +52,7 @@ func TestHelperContextSystemUsesConfiguredState(t *testing.T) {
 		t.Fatalf("profiles = %#v, want frontend-reviewer opencode", resp.Profiles)
 	}
 	if len(resp.Workspaces) < 2 {
-		t.Fatalf("workspaces = %#v, want system and project summaries", resp.Workspaces)
+		t.Fatalf("workspaces = %#v, want home and project summaries", resp.Workspaces)
 	}
 	if !containsString(resp.Docs, "ari init") || !containsString(resp.Explanations, "profile") {
 		t.Fatalf("docs/explanations = %#v %#v", resp.Docs, resp.Explanations)
@@ -92,7 +95,7 @@ func TestHelperContextProjectIncludesWorkflowLearningsFromAriStateAndArtifacts(t
 	d.setCommandOutput("cmd-verify", "verify failed")
 
 	resp := callMethod[HelperContextResponse](t, registry, "helper.context", HelperContextRequest{WorkspaceID: "project-1", Question: "tell me about this project"})
-	if resp.Workspace.Kind != "project" || resp.Workspace.OriginRoot != projectRoot {
+	if resp.Workspace.OriginRoot != projectRoot {
 		t.Fatalf("workspace = %#v", resp.Workspace)
 	}
 	if len(resp.FinalResponses) != 1 || resp.FinalResponses[0].Summary != "Build failed because gofmt found files" {
