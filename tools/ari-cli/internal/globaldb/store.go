@@ -2,7 +2,9 @@ package globaldb
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,6 +28,11 @@ ON CONFLICT(key) DO UPDATE SET
 	value = excluded.value`
 
 	metaByKeyQuery = `SELECT value FROM daemon_meta WHERE key = ?`
+
+	compareAndSwapMetaQuery = `UPDATE daemon_meta
+SET value = ?
+WHERE key = ?
+  AND value = ?`
 
 	insertSessionQuery = `INSERT INTO workspaces (
 		workspace_id, name, status, vcs_preference, origin_root, cleanup_policy, created_at, updated_at
@@ -494,6 +501,8 @@ type AgentProfile struct {
 	UpdatedAt       time.Time
 }
 
+const DefaultHelperProfileName = "helper"
+
 type FinalResponse struct {
 	FinalResponseID   string
 	RunID             string
@@ -622,6 +631,22 @@ func (s *Store) GetMeta(ctx context.Context, key string) (string, error) {
 	return values[0], nil
 }
 
+func (s *Store) CompareAndSwapMeta(ctx context.Context, key, oldValue, newValue string) (bool, error) {
+	if key == "" {
+		return false, fmt.Errorf("%w: key is required", ErrInvalidInput)
+	}
+
+	result, err := s.db.ExecContext(ctx, compareAndSwapMetaQuery, newValue, key, oldValue)
+	if err != nil {
+		return false, fmt.Errorf("compare and swap meta %q: %w", key, err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("compare and swap meta %q: rows affected: %w", key, err)
+	}
+	return changed == 1, nil
+}
+
 func (s *Store) UpsertAgentProfile(ctx context.Context, profile AgentProfile) error {
 	profile.ProfileID = strings.TrimSpace(profile.ProfileID)
 	profile.WorkspaceID = strings.TrimSpace(profile.WorkspaceID)
@@ -658,6 +683,46 @@ func (s *Store) UpsertAgentProfile(ctx context.Context, profile AgentProfile) er
 		return fmt.Errorf("upsert agent profile %q: %w", profile.Name, err)
 	}
 	return nil
+}
+
+func (s *Store) EnsureDefaultHelperProfile(ctx context.Context, workspaceID, harness, prompt string) (AgentProfile, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		return AgentProfile{}, fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
+	}
+	if _, err := s.GetSession(ctx, workspaceID); err != nil {
+		return AgentProfile{}, err
+	}
+	if existing, err := s.getExactAgentProfile(ctx, workspaceID, DefaultHelperProfileName); err == nil {
+		return existing, nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return AgentProfile{}, err
+	}
+	profileID, err := newAgentProfileID()
+	if err != nil {
+		return AgentProfile{}, err
+	}
+	profile := AgentProfile{ProfileID: profileID, WorkspaceID: workspaceID, Name: DefaultHelperProfileName, Harness: strings.TrimSpace(harness), Prompt: strings.TrimSpace(prompt), InvocationClass: "agent", DefaultsJSON: "{}"}
+	if err := s.UpsertAgentProfile(ctx, profile); err != nil {
+		return AgentProfile{}, err
+	}
+	return s.getExactAgentProfile(ctx, workspaceID, DefaultHelperProfileName)
+}
+
+func newAgentProfileID() (string, error) {
+	var data [16]byte
+	if _, err := rand.Read(data[:]); err != nil {
+		return "", fmt.Errorf("generate agent profile id: %w", err)
+	}
+	return "ap_" + hex.EncodeToString(data[:]), nil
+}
+
+func (s *Store) GetDefaultHelperProfile(ctx context.Context, workspaceID string) (AgentProfile, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		return AgentProfile{}, fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
+	}
+	return s.getExactAgentProfile(ctx, workspaceID, DefaultHelperProfileName)
 }
 
 func (s *Store) getExactAgentProfile(ctx context.Context, workspaceID, name string) (AgentProfile, error) {
@@ -1012,14 +1077,15 @@ func (s *Store) CreateSession(ctx context.Context, id, name, originRoot, cleanup
 	if name = strings.TrimSpace(name); name == "" {
 		return fmt.Errorf("%w: session name is required", ErrInvalidInput)
 	}
-	if originRoot = strings.TrimSpace(originRoot); originRoot == "" {
-		return fmt.Errorf("%w: origin root is required", ErrInvalidInput)
-	}
+	originRoot = strings.TrimSpace(originRoot)
 	if err := validateCleanupPolicy(cleanupPolicy); err != nil {
 		return err
 	}
 	if err := validateVCSPreference(vcsPreference); err != nil {
 		return err
+	}
+	if originRoot == "" {
+		return fmt.Errorf("%w: origin root is required", ErrInvalidInput)
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
@@ -1081,7 +1147,6 @@ func (s *Store) UpdateSessionStatus(ctx context.Context, id, status string) erro
 	if err != nil {
 		return err
 	}
-
 	if !canTransitionSessionStatus(session.Status, status) {
 		if session.Status == statusClosed {
 			return fmt.Errorf("%w: session id %q", ErrSessionClosed, id)
@@ -1804,16 +1869,7 @@ func querySessions(ctx context.Context, db DB, query string, args ...any) ([]Ses
 	out := make([]Session, 0)
 	for rows.Next() {
 		var item Session
-		if err := rows.Scan(
-			&item.ID,
-			&item.Name,
-			&item.Status,
-			&item.VCSPreference,
-			&item.OriginRoot,
-			&item.CleanupPolicy,
-			&item.CreatedAt,
-			&item.UpdatedAt,
-		); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.Status, &item.VCSPreference, &item.OriginRoot, &item.CleanupPolicy, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, item)

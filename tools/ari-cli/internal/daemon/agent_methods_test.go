@@ -131,6 +131,158 @@ func TestAgentSpawnUsesExecutionRootPathWhenProvided(t *testing.T) {
 	_ = callMethod[AgentStopResponse](t, registry, "agent.stop", AgentStopRequest{WorkspaceID: "sess-1", AgentID: spawnResp.AgentID})
 }
 
+func TestAgentSpawnInHomeWorkspaceUsesHelperProfile(t *testing.T) {
+	store := newAgentMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerAgentMethods(registry, store); err != nil {
+		t.Fatalf("registerAgentMethods returned error: %v", err)
+	}
+	home := t.TempDir()
+	if err := store.CreateSession(context.Background(), "home-id", "home", home, "manual", "auto"); err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if err := store.AddFolder(context.Background(), "home-id", home, "unknown", true); err != nil {
+		t.Fatalf("AddFolder returned error: %v", err)
+	}
+	if _, err := store.EnsureDefaultHelperProfile(context.Background(), "home-id", "codex", "Help Ari"); err != nil {
+		t.Fatalf("EnsureDefaultHelperProfile returned error: %v", err)
+	}
+
+	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{
+		WorkspaceID: "home-id",
+		Profile:     "helper",
+		Command:     "/bin/sh",
+		Args:        []string{"-c", "pwd"},
+	})
+	waitForAgentStatus(t, registry, "home-id", spawnResp.AgentID, "exited")
+	outputResp := callMethod[AgentOutputResponse](t, registry, "agent.output", AgentOutputRequest{WorkspaceID: "home-id", AgentID: spawnResp.AgentID})
+	if !strings.Contains(outputResp.Output, home) {
+		t.Fatalf("agent.output = %q, want home %q", outputResp.Output, home)
+	}
+	agentResp := callMethod[AgentGetResponse](t, registry, "agent.get", AgentGetRequest{WorkspaceID: "home-id", AgentID: spawnResp.AgentID})
+	if agentResp.Name != "helper" || agentResp.Harness != "codex" {
+		t.Fatalf("agent get = %#v, want helper/codex", agentResp)
+	}
+}
+
+func TestAgentSpawnMissingDefaultHelperReturnsSetupGuidance(t *testing.T) {
+	store := newAgentMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerAgentMethods(registry, store); err != nil {
+		t.Fatalf("registerAgentMethods returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "sess-1", t.TempDir())
+	err := callMethodError(registry, "agent.spawn", AgentSpawnRequest{WorkspaceID: "sess-1"})
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "helper_setup_required" {
+		t.Fatalf("error data = %#v, want helper_setup_required", data)
+	}
+}
+
+func TestAgentSpawnImplicitHelperDoesNotFallbackToGlobalProfile(t *testing.T) {
+	store := newAgentMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerAgentMethods(registry, store); err != nil {
+		t.Fatalf("registerAgentMethods returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "sess-1", t.TempDir())
+	if err := store.UpsertAgentProfile(context.Background(), globaldb.AgentProfile{ProfileID: "ap-global-helper", Name: "helper", Harness: "codex", Prompt: "global helper"}); err != nil {
+		t.Fatalf("UpsertAgentProfile global helper returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "agent.spawn", AgentSpawnRequest{WorkspaceID: "sess-1"})
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "helper_setup_required" {
+		t.Fatalf("error data = %#v, want helper_setup_required", data)
+	}
+}
+
+func TestAgentSpawnHelperLaunchPassesWorkspaceContextAsPrompt(t *testing.T) {
+	store := newAgentMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerAgentMethods(registry, store); err != nil {
+		t.Fatalf("registerAgentMethods returned error: %v", err)
+	}
+	projectRoot := t.TempDir()
+	if err := store.CreateSession(context.Background(), "sess-1", "alpha", projectRoot, "manual", "auto"); err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if err := store.AddFolder(context.Background(), "sess-1", projectRoot, "git", true); err != nil {
+		t.Fatalf("AddFolder returned error: %v", err)
+	}
+	if _, err := store.EnsureDefaultHelperProfile(context.Background(), "sess-1", "test-helper", helperPrompt()); err != nil {
+		t.Fatalf("EnsureDefaultHelperProfile returned error: %v", err)
+	}
+	argsPath := filepath.Join(t.TempDir(), "args.txt")
+	shim := writeArgsCommandShim(t, argsPath)
+	originalDefinition, hadOriginal := harnessDefinitions["test-helper"]
+	harnessDefinitions["test-helper"] = harnessDefinition{launcher: namedHarnessLauncher{binary: shim}}
+	t.Cleanup(func() {
+		if hadOriginal {
+			harnessDefinitions["test-helper"] = originalDefinition
+			return
+		}
+		delete(harnessDefinitions, "test-helper")
+	})
+
+	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{WorkspaceID: "sess-1", Args: []string{"Tell me about this project"}})
+	waitForAgentStatus(t, registry, "sess-1", spawnResp.AgentID, "exited")
+	body, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read shim args: %v", err)
+	}
+	got := string(body)
+	if !strings.Contains(got, "Scope: workspace alpha at ") || !strings.Contains(got, projectRoot) || !strings.Contains(got, "Tell me about this project") {
+		t.Fatalf("helper launch args = %q", got)
+	}
+}
+
+func TestAgentSpawnHomeHelperLaunchPassesWorkspaceContextAsPrompt(t *testing.T) {
+	store := newAgentMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerAgentMethods(registry, store); err != nil {
+		t.Fatalf("registerAgentMethods returned error: %v", err)
+	}
+	home := t.TempDir()
+	if err := store.CreateSession(context.Background(), "home-id", "home", home, "manual", "auto"); err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if err := store.AddFolder(context.Background(), "home-id", home, "unknown", true); err != nil {
+		t.Fatalf("AddFolder returned error: %v", err)
+	}
+	if _, err := store.EnsureDefaultHelperProfile(context.Background(), "home-id", "test-helper", helperPrompt()); err != nil {
+		t.Fatalf("EnsureDefaultHelperProfile returned error: %v", err)
+	}
+	argsPath := filepath.Join(t.TempDir(), "args.txt")
+	shim := writeArgsCommandShim(t, argsPath)
+	originalDefinition, hadOriginal := harnessDefinitions["test-helper"]
+	harnessDefinitions["test-helper"] = harnessDefinition{launcher: namedHarnessLauncher{binary: shim}}
+	t.Cleanup(func() {
+		if hadOriginal {
+			harnessDefinitions["test-helper"] = originalDefinition
+			return
+		}
+		delete(harnessDefinitions, "test-helper")
+	})
+
+	spawnResp := callMethod[AgentSpawnResponse](t, registry, "agent.spawn", AgentSpawnRequest{WorkspaceID: "home-id", Args: []string{"What is Ari?"}})
+	waitForAgentStatus(t, registry, "home-id", spawnResp.AgentID, "exited")
+	body, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read shim args: %v", err)
+	}
+	got := string(body)
+	if !strings.Contains(got, "Scope: workspace home at ") || !strings.Contains(got, home) || !strings.Contains(got, "What is Ari?") {
+		t.Fatalf("helper launch args = %q", got)
+	}
+}
+
 func TestAgentSpawnRejectsExecutionRootPathOutsideWorkspace(t *testing.T) {
 	store := newAgentMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
@@ -747,4 +899,24 @@ func writeNamedNoopCommandShim(t *testing.T, name string) string {
 		t.Fatalf("write shim: %v", err)
 	}
 	return path
+}
+
+func writeArgsCommandShim(t *testing.T, outputPath string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "args.sh")
+	body := "#!/bin/sh\nprintf '%s\n' \"$*\" > \"$1\"\n"
+	if err := os.WriteFile(path, []byte(body), 0o700); err != nil {
+		t.Fatalf("write shim: %v", err)
+	}
+	return pathWithOutputWrapper(t, path, outputPath)
+}
+
+func pathWithOutputWrapper(t *testing.T, commandPath, outputPath string) string {
+	t.Helper()
+	wrapper := filepath.Join(t.TempDir(), "args-wrapper.sh")
+	body := "#!/bin/sh\nexec \"" + commandPath + "\" \"" + outputPath + "\" \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(body), 0o700); err != nil {
+		t.Fatalf("write wrapper: %v", err)
+	}
+	return wrapper
 }

@@ -164,6 +164,21 @@ func (d *Daemon) registerWorkspaceMethods(registry *rpc.MethodRegistry, store *g
 				}
 				return WorkspaceCreateResponse{}, mapWorkspaceStoreError(err, sessionID)
 			}
+			helperHarness, err := d.readConfiguredDefaultHarness()
+			if err != nil {
+				if rollbackErr := store.DeleteSession(ctx, sessionID); rollbackErr != nil && !errors.Is(rollbackErr, globaldb.ErrNotFound) {
+					return WorkspaceCreateResponse{}, fmt.Errorf("rollback workspace create after helper harness read failure: %w", rollbackErr)
+				}
+				return WorkspaceCreateResponse{}, err
+			}
+			if helperHarness != "" {
+				if _, err := store.EnsureDefaultHelperProfile(ctx, sessionID, helperHarness, helperPrompt()); err != nil {
+					if rollbackErr := store.DeleteSession(ctx, sessionID); rollbackErr != nil && !errors.Is(rollbackErr, globaldb.ErrNotFound) {
+						return WorkspaceCreateResponse{}, fmt.Errorf("rollback workspace create after helper ensure failure: %w", rollbackErr)
+					}
+					return WorkspaceCreateResponse{}, err
+				}
+			}
 
 			session, err := store.GetSession(ctx, sessionID)
 			if err != nil {

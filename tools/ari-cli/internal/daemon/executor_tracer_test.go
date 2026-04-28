@@ -677,6 +677,70 @@ func TestAgentProfileCreateRejectsMissingName(t *testing.T) {
 	}
 }
 
+func TestDefaultHelperEnsureAndGetUseWorkspaceScopedHelper(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	seedSessionWithPrimaryFolder(t, store, "ws-2", t.TempDir())
+
+	created := callMethod[AgentProfileResponse](t, registry, "agent.profile.helper.ensure", DefaultHelperEnsureRequest{WorkspaceID: "ws-1", Harness: "codex", Prompt: "Help here"})
+	if created.Name != "helper" || created.WorkspaceID != "ws-1" || created.Harness != "codex" || created.Prompt != "Help here" {
+		t.Fatalf("created helper = %#v", created)
+	}
+	got := callMethod[AgentProfileResponse](t, registry, "agent.profile.helper.get", DefaultHelperGetRequest{WorkspaceID: "ws-1"})
+	if got.ProfileID != created.ProfileID {
+		t.Fatalf("got helper = %#v, want %#v", got, created)
+	}
+
+	err := callMethodError(registry, "agent.profile.helper.get", DefaultHelperGetRequest{WorkspaceID: "ws-2"})
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "helper_setup_required" {
+		t.Fatalf("error data = %#v, want helper_setup_required", data)
+	}
+}
+
+func TestDefaultHelperEnsureRejectsUnknownWorkspace(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "agent.profile.helper.ensure", DefaultHelperEnsureRequest{WorkspaceID: "missing", Harness: "codex"})
+	if err == nil {
+		t.Fatal("agent.profile.helper.ensure returned nil error for unknown workspace")
+	}
+}
+
+func TestAgentProfileResponsesDoNotExposeRoleClassification(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	created := callMethod[AgentProfileResponse](t, registry, "agent.profile.create", AgentProfileCreateRequest{Name: "helper", Harness: "codex"})
+	encoded, err := json.Marshal(created)
+	if err != nil {
+		t.Fatalf("marshal response: %v", err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if _, ok := fields["role"]; ok {
+		t.Fatalf("profile response exposed role: %s", encoded)
+	}
+	if _, ok := fields["kind"]; ok {
+		t.Fatalf("profile response exposed kind: %s", encoded)
+	}
+}
+
 func TestAgentProfileRunUsesInlineProfileDefinition(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()

@@ -60,6 +60,10 @@ func (d *Daemon) registerMethods(registry *rpc.MethodRegistry, store *globaldb.S
 		return fmt.Errorf("register daemon.stop: %w", err)
 	}
 
+	if err := d.registerInitMethods(registry, store); err != nil {
+		return err
+	}
+
 	if err := d.registerWorkspaceMethods(registry, store); err != nil {
 		return err
 	}
@@ -73,6 +77,14 @@ func (d *Daemon) registerMethods(registry *rpc.MethodRegistry, store *globaldb.S
 	}
 
 	if err := d.registerContextMethods(registry, store); err != nil {
+		return err
+	}
+
+	if err := d.registerAriToolMethods(registry, store); err != nil {
+		return err
+	}
+
+	if err := d.registerHelperTeachingMethods(registry, store); err != nil {
 		return err
 	}
 

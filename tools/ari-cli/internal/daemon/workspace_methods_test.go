@@ -17,7 +17,11 @@ import (
 func TestWorkspaceMethodsCreateAndGet(t *testing.T) {
 	store := newSessionMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
-	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"default_harness":"codex"}`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", configPath, "defaults", "test-version")
 
 	err := d.registerWorkspaceMethods(registry, store)
 	if err != nil {
@@ -49,6 +53,36 @@ func TestWorkspaceMethodsCreateAndGet(t *testing.T) {
 	}
 	if len(getResp.Folders) != 1 {
 		t.Fatalf("WorkspaceGetResponse folders len = %d, want 1", len(getResp.Folders))
+	}
+	help, err := store.GetDefaultHelperProfile(context.Background(), createResp.WorkspaceID)
+	if err != nil {
+		t.Fatalf("GetDefaultHelperProfile returned error: %v", err)
+	}
+	if help.Name != "helper" || help.WorkspaceID != createResp.WorkspaceID || help.Prompt != helperPrompt() {
+		t.Fatalf("project helper = %#v", help)
+	}
+}
+
+func TestWorkspaceCreateWithoutDefaultHarnessDoesNotCreateUnusableHelper(t *testing.T) {
+	store := newSessionMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configPath, []byte(`{}`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", configPath, "defaults", "test-version")
+	if err := d.registerWorkspaceMethods(registry, store); err != nil {
+		t.Fatalf("registerWorkspaceMethods returned error: %v", err)
+	}
+	repoRoot := t.TempDir()
+	if err := makeGitRoot(repoRoot); err != nil {
+		t.Fatalf("makeGitRoot returned error: %v", err)
+	}
+
+	createResp := callMethod[WorkspaceCreateResponse](t, registry, "workspace.create", WorkspaceCreateRequest{Name: "alpha", Folder: repoRoot, OriginRoot: t.TempDir(), CleanupPolicy: "manual"})
+	_, err := store.GetDefaultHelperProfile(context.Background(), createResp.WorkspaceID)
+	if !errors.Is(err, globaldb.ErrNotFound) {
+		t.Fatalf("GetDefaultHelperProfile error = %v, want ErrNotFound", err)
 	}
 }
 
@@ -358,6 +392,36 @@ func TestSessionCreateRollsBackWhenFolderInsertFails(t *testing.T) {
 	}
 }
 
+func TestSessionCreateRollsBackWhenHelperHarnessConfigIsInvalid(t *testing.T) {
+	store := newSessionMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"default_harness":"bad-harness"}`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", configPath, "defaults", "test-version")
+
+	err := d.registerWorkspaceMethods(registry, store)
+	if err != nil {
+		t.Fatalf("registerWorkspaceMethods returned error: %v", err)
+	}
+
+	repoRoot := t.TempDir()
+	if err := makeGitRoot(repoRoot); err != nil {
+		t.Fatalf("makeGitRoot returned error: %v", err)
+	}
+
+	err = callMethodError(registry, "workspace.create", WorkspaceCreateRequest{Name: "alpha", Folder: repoRoot, OriginRoot: t.TempDir(), CleanupPolicy: "manual", VCSPreference: "auto"})
+	if err == nil {
+		t.Fatal("workspace.create returned nil error for invalid helper harness config")
+	}
+
+	_, lookupErr := store.GetSessionByName(context.Background(), "alpha")
+	if !errors.Is(lookupErr, globaldb.ErrNotFound) {
+		t.Fatalf("GetSessionByName after failed create error = %v, want ErrNotFound", lookupErr)
+	}
+}
+
 func callMethod[T any](t *testing.T, registry *rpc.MethodRegistry, methodName string, params any) T {
 	t.Helper()
 
@@ -415,6 +479,23 @@ CREATE TABLE workspace_folders (
 	PRIMARY KEY (workspace_id, folder_path),
 	FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
 );
+CREATE TABLE agent_profiles (
+	profile_id TEXT PRIMARY KEY,
+	workspace_id TEXT,
+	name TEXT NOT NULL,
+	harness TEXT,
+	model TEXT,
+	prompt TEXT,
+	invocation_class TEXT,
+	defaults_json TEXT NOT NULL DEFAULT '{}',
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	UNIQUE(workspace_id, name),
+	FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+);
+CREATE UNIQUE INDEX agent_profiles_global_name_idx
+	ON agent_profiles(name)
+	WHERE workspace_id IS NULL;
 `); err != nil {
 		t.Fatalf("create schema: %v", err)
 	}
