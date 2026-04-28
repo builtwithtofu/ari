@@ -355,11 +355,11 @@ func ariProfileDraft(input any) (AriToolCallResponse, error) {
 	if err != nil {
 		return AriToolCallResponse{}, err
 	}
-	name := strings.TrimSpace(fmt.Sprint(body["name"]))
+	name := stringValue(body, "name")
 	if name == "" {
 		return AriToolCallResponse{}, ariToolError("missing_profile_name", "profile name is required")
 	}
-	harness := strings.TrimSpace(fmt.Sprint(body["harness"]))
+	harness := stringValue(body, "harness")
 	if harness != "" && !isSupportedHarness(harness) {
 		return AriToolCallResponse{}, ariToolError("invalid_profile_harness", "profile harness is unsupported")
 	}

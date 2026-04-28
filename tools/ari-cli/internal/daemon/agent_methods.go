@@ -154,7 +154,13 @@ func (d *Daemon) registerAgentMethods(registry *rpc.MethodRegistry, store *globa
 				profileName = globaldb.DefaultHelperProfileName
 			}
 			if profileName != "" {
-				profile, err := store.GetAgentProfile(ctx, sessionID, profileName)
+				var profile globaldb.AgentProfile
+				var err error
+				if profileName == globaldb.DefaultHelperProfileName {
+					profile, err = store.GetDefaultHelperProfile(ctx, sessionID)
+				} else {
+					profile, err = store.GetAgentProfile(ctx, sessionID, profileName)
+				}
 				if err != nil {
 					if errors.Is(err, globaldb.ErrNotFound) && profileName == globaldb.DefaultHelperProfileName {
 						return AgentSpawnResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "default helper profile is not set up for this workspace", map[string]any{"reason": "helper_setup_required", "workspace_id": sessionID})

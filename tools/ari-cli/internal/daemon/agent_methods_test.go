@@ -182,6 +182,25 @@ func TestAgentSpawnMissingDefaultHelperReturnsSetupGuidance(t *testing.T) {
 	}
 }
 
+func TestAgentSpawnImplicitHelperDoesNotFallbackToGlobalProfile(t *testing.T) {
+	store := newAgentMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerAgentMethods(registry, store); err != nil {
+		t.Fatalf("registerAgentMethods returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "sess-1", t.TempDir())
+	if err := store.UpsertAgentProfile(context.Background(), globaldb.AgentProfile{ProfileID: "ap-global-helper", Name: "helper", Harness: "codex", Prompt: "global helper"}); err != nil {
+		t.Fatalf("UpsertAgentProfile global helper returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "agent.spawn", AgentSpawnRequest{WorkspaceID: "sess-1"})
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "helper_setup_required" {
+		t.Fatalf("error data = %#v, want helper_setup_required", data)
+	}
+}
+
 func TestAgentSpawnHelperLaunchPassesWorkspaceContextAsPrompt(t *testing.T) {
 	store := newAgentMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()

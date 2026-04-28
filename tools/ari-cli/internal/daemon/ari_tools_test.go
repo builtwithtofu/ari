@@ -223,6 +223,23 @@ func TestAriApprovalsCanOnlyBeConsumedOnceConcurrently(t *testing.T) {
 	}
 }
 
+func TestAriProfileDraftTreatsMissingHarnessAsOptional(t *testing.T) {
+	resp, err := ariProfileDraft(map[string]any{"name": "reviewer"})
+	if err != nil {
+		t.Fatalf("ariProfileDraft returned error: %v", err)
+	}
+	if resp.Status != "draft" || resp.Output["name"] != "reviewer" || resp.Output["harness"] != "" {
+		t.Fatalf("draft response = %#v", resp)
+	}
+}
+
+func TestAriProfileDraftRejectsMissingName(t *testing.T) {
+	_, err := ariProfileDraft(map[string]any{"harness": "codex"})
+	if err == nil || !strings.Contains(err.Error(), "missing_profile_name") {
+		t.Fatalf("missing name error = %v, want missing_profile_name", err)
+	}
+}
+
 func TestAriDefaultsSetRejectsMissingWorkspace(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
