@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -53,12 +55,11 @@ func NewInitCmd() *cobra.Command {
 			if err := initEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
-			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
-			defer cancel()
-
 			selected := strings.TrimSpace(harness)
 			if selected == "" {
+				ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 				options, err := initOptionsRPC(ctx, cfg.Daemon.SocketPath)
+				cancel()
 				if err != nil {
 					return err
 				}
@@ -68,6 +69,8 @@ func NewInitCmd() *cobra.Command {
 				}
 			}
 
+			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
+			defer cancel()
 			response, err := initApplyRPC(ctx, cfg.Daemon.SocketPath, daemon.InitApplyRequest{Harness: selected})
 			if err != nil {
 				return err
@@ -107,9 +110,16 @@ func promptInitHarness(cmd initPromptOutput, options []daemon.InitHarnessOption)
 	if _, err := fmt.Fprint(cmd.OutOrStdout(), "Harness: "); err != nil {
 		return "", err
 	}
-	var choice int
-	if _, err := fmt.Fscan(cmd.InOrStdin(), &choice); err != nil {
-		return "", fmt.Errorf("read harness choice: %w", err)
+	scanner := bufio.NewScanner(cmd.InOrStdin())
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return "", fmt.Errorf("read harness choice: %w", err)
+		}
+		return "", fmt.Errorf("read harness choice: no input")
+	}
+	choice, err := strconv.Atoi(strings.TrimSpace(scanner.Text()))
+	if err != nil {
+		return "", fmt.Errorf("harness choice must be a number between 1 and %d", len(options))
 	}
 	if choice < 1 || choice > len(options) {
 		return "", fmt.Errorf("harness choice must be between 1 and %d", len(options))

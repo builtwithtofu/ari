@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/config"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
@@ -104,6 +105,49 @@ func TestInitInteractiveDefaultPromptReadsChoice(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "Default harness set: codex") {
 		t.Fatalf("output missing selected harness: %q", out.String())
+	}
+}
+
+func TestInitInteractivePromptRejectsNonNumericChoiceClearly(t *testing.T) {
+	root := NewRootCmd()
+	var out strings.Builder
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetIn(strings.NewReader("wat\n"))
+	_, err := promptInitHarness(root, []daemon.InitHarnessOption{{Name: "codex", Label: "codex"}})
+	if err == nil || !strings.Contains(err.Error(), "must be a number") {
+		t.Fatalf("prompt error = %v, want numeric guidance", err)
+	}
+}
+
+func TestInitInteractiveStartsApplyTimeoutAfterPrompt(t *testing.T) {
+	restore := replaceInitDeps(t)
+	defer restore()
+
+	initOptionsRPC = func(ctx context.Context, socketPath string) (daemon.InitOptionsResponse, error) {
+		_ = ctx
+		_ = socketPath
+		return daemon.InitOptionsResponse{Harnesses: []daemon.InitHarnessOption{{Name: "codex", Label: "codex"}}}, nil
+	}
+	initPromptHarness = func(cmdOut initPromptOutput, options []daemon.InitHarnessOption) (string, error) {
+		_ = cmdOut
+		_ = options
+		time.Sleep(6 * time.Second)
+		return "codex", nil
+	}
+	initApplyRPC = func(ctx context.Context, socketPath string, req daemon.InitApplyRequest) (daemon.InitApplyResponse, error) {
+		_ = socketPath
+		_ = req
+		select {
+		case <-ctx.Done():
+			return daemon.InitApplyResponse{}, ctx.Err()
+		default:
+		}
+		return daemon.InitApplyResponse{Initialized: true, DefaultHarness: "codex", DefaultHarnessSet: true}, nil
+	}
+
+	if _, err := executeRootCommandRaw("init"); err != nil {
+		t.Fatalf("ari init returned error: %v", err)
 	}
 }
 

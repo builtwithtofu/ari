@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -179,6 +180,46 @@ func TestAriToolsRejectForgedApprovalWithoutDaemonIssuedRecord(t *testing.T) {
 	req.Approval = forgedApprovalForToolRequest(t, req)
 	if err := callMethodError(registry, "ari.tool.call", req); err == nil || !strings.Contains(err.Error(), "approval_unknown") {
 		t.Fatalf("forged approval error = %v, want approval_unknown", err)
+	}
+}
+
+func TestAriApprovalsCanOnlyBeConsumedOnceConcurrently(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	home := ensureHomeWorkspaceForToolTest(t, store)
+	req := AriToolCallRequest{Name: "ari.defaults.set", Scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: home.ID, ProfileID: "ap-helper", ProfileName: "helper", ToolName: "ari.defaults.set", WithinDefaultScope: true}, Input: map[string]any{"default_harness": "codex"}}
+	req.Approval = storeIssuedApprovalForToolRequest(t, store, req, "tester")
+
+	const workers = 8
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	errs := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			errs <- validateAndConsumeAriApproval(context.Background(), store, req)
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+
+	successes := 0
+	reused := 0
+	for err := range errs {
+		if err == nil {
+			successes++
+			continue
+		}
+		if strings.Contains(err.Error(), "approval_reused") {
+			reused++
+			continue
+		}
+		t.Fatalf("unexpected consume error: %v", err)
+	}
+	if successes != 1 || reused != workers-1 {
+		t.Fatalf("consume results: successes=%d reused=%d", successes, reused)
 	}
 }
 

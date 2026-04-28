@@ -135,6 +135,32 @@ func TestEnsureDefaultHelperProfileDoesNotOverwriteExistingHelper(t *testing.T) 
 	}
 }
 
+func TestEnsureDefaultHelperProfileUsesUniqueProfileIDs(t *testing.T) {
+	store := newMigratedGlobalDBStore(t, "helper-profile-unique-ids")
+	ctx := context.Background()
+	if err := store.CreateSession(ctx, "a-b_c", "one", "/tmp/one", "manual", "auto"); err != nil {
+		t.Fatalf("CreateSession one returned error: %v", err)
+	}
+	if err := store.CreateSession(ctx, "a_b-c", "two", "/tmp/two", "manual", "auto"); err != nil {
+		t.Fatalf("CreateSession two returned error: %v", err)
+	}
+
+	first, err := store.EnsureDefaultHelperProfile(ctx, "a-b_c", "codex", "one")
+	if err != nil {
+		t.Fatalf("EnsureDefaultHelperProfile first returned error: %v", err)
+	}
+	second, err := store.EnsureDefaultHelperProfile(ctx, "a_b-c", "codex", "two")
+	if err != nil {
+		t.Fatalf("EnsureDefaultHelperProfile second returned error: %v", err)
+	}
+	if first.ProfileID == second.ProfileID {
+		t.Fatalf("helper profile IDs collided: %q", first.ProfileID)
+	}
+	if first.WorkspaceID != "a-b_c" || second.WorkspaceID != "a_b-c" {
+		t.Fatalf("helpers crossed workspace scopes: %#v %#v", first, second)
+	}
+}
+
 func TestGetDefaultHelperProfileDoesNotFallbackAcrossScopes(t *testing.T) {
 	store := newMigratedGlobalDBStore(t, "helper-profile-scope")
 	ctx := context.Background()

@@ -209,11 +209,38 @@ func validateAndConsumeAriApproval(ctx context.Context, store *globaldb.Store, r
 	if approval.RequestHash != hash {
 		return ariToolError("approval_wrong_hash", "approval request hash does not match tool call")
 	}
-	stored.Consumed = true
-	if err := storeAriApproval(ctx, store, stored); err != nil {
+	oldValue, newValue, err := encodeConsumedAriApproval(stored)
+	if err != nil {
 		return err
 	}
+	swapped, err := store.CompareAndSwapMeta(ctx, ariApprovalMetaKey(approval.ApprovalID), oldValue, newValue)
+	if err != nil {
+		return err
+	}
+	if !swapped {
+		latest, err := loadAriApproval(ctx, store, approval.ApprovalID)
+		if err != nil {
+			return err
+		}
+		if latest.Consumed {
+			return ariToolError("approval_reused", "approval has already been used")
+		}
+		return ariToolError("approval_mismatch", "approval changed before it could be consumed")
+	}
 	return nil
+}
+
+func encodeConsumedAriApproval(stored storedAriApproval) (string, string, error) {
+	oldValue, err := json.Marshal(stored)
+	if err != nil {
+		return "", "", err
+	}
+	stored.Consumed = true
+	newValue, err := json.Marshal(stored)
+	if err != nil {
+		return "", "", err
+	}
+	return string(oldValue), string(newValue), nil
 }
 
 func storeAriApproval(ctx context.Context, store *globaldb.Store, approval storedAriApproval) error {

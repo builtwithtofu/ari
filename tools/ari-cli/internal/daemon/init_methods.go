@@ -111,6 +111,9 @@ func (d *Daemon) applyInit(ctx context.Context, store *globaldb.Store, req InitA
 	if store == nil {
 		return InitApplyResponse{}, fmt.Errorf("globaldb store is required")
 	}
+	if err := patchJSONConfigString(d.configPath, "default_harness", harness); err != nil {
+		return InitApplyResponse{}, err
+	}
 	home, err := d.ensureHomeWorkspace(ctx, store)
 	if err != nil {
 		return InitApplyResponse{}, err
@@ -121,9 +124,6 @@ func (d *Daemon) applyInit(ctx context.Context, store *globaldb.Store, req InitA
 			return InitApplyResponse{}, err
 		}
 		homeHelperReady = true
-	}
-	if err := patchJSONConfigString(d.configPath, "default_harness", harness); err != nil {
-		return InitApplyResponse{}, err
 	}
 	return InitApplyResponse{Initialized: true, DefaultHarness: harness, DefaultHarnessSet: true, HomeWorkspaceReady: home != nil, HomeHelperReady: homeHelperReady}, nil
 }
@@ -156,7 +156,10 @@ func (d *Daemon) ensureHomeWorkspace(ctx context.Context, store *globaldb.Store)
 		return nil, err
 	}
 	for _, session := range sessions {
-		if session.Status != "closed" && session.OriginRoot == home {
+		if session.OriginRoot == home {
+			if session.Status == "closed" {
+				continue
+			}
 			return &session, nil
 		}
 	}
@@ -164,7 +167,8 @@ func (d *Daemon) ensureHomeWorkspace(ctx context.Context, store *globaldb.Store)
 	if err != nil {
 		return nil, fmt.Errorf("generate workspace id: %w", err)
 	}
-	if err := store.CreateSession(ctx, workspaceID, "home", home, "manual", "auto"); err != nil {
+	name := availableHomeWorkspaceName(sessions)
+	if err := store.CreateSession(ctx, workspaceID, name, home, "manual", "auto"); err != nil {
 		return nil, err
 	}
 	if err := store.AddFolder(ctx, workspaceID, home, "unknown", true); err != nil {
@@ -172,6 +176,22 @@ func (d *Daemon) ensureHomeWorkspace(ctx context.Context, store *globaldb.Store)
 		return nil, err
 	}
 	return store.GetSession(ctx, workspaceID)
+}
+
+func availableHomeWorkspaceName(sessions []globaldb.Session) string {
+	used := map[string]bool{}
+	for _, session := range sessions {
+		used[session.Name] = true
+	}
+	if !used["home"] {
+		return "home"
+	}
+	for index := 2; ; index++ {
+		name := fmt.Sprintf("home-%d", index)
+		if !used[name] {
+			return name
+		}
+	}
 }
 
 func (d *Daemon) readConfiguredDefaultHarness() (string, error) {

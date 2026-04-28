@@ -98,6 +98,40 @@ func TestInitApplyRejectsInvalidHarnessAndPreservesConfig(t *testing.T) {
 	}
 }
 
+func TestInitApplyWritesHarnessBeforeHomeWorkspaceFailure(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configPath, []byte(`{}`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	d := New("/tmp/ari.sock", "/tmp/ari.db", "/tmp/ari.pid", configPath, "test", "test-version")
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		t.Fatalf("home unavailable: %v", err)
+	}
+	if err := store.CreateSession(context.Background(), "closed-home", "home", home, "manual", "auto"); err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if err := store.UpdateSessionStatus(context.Background(), "closed-home", "closed"); err != nil {
+		t.Fatalf("UpdateSessionStatus returned error: %v", err)
+	}
+
+	resp, err := d.applyInit(context.Background(), store, InitApplyRequest{Harness: "codex"})
+	if err != nil {
+		t.Fatalf("applyInit returned error: %v", err)
+	}
+	if !resp.Initialized || !resp.HomeWorkspaceReady || !resp.HomeHelperReady {
+		t.Fatalf("applyInit response = %#v", resp)
+	}
+	var persisted map[string]string
+	if err := readJSONFile(configPath, &persisted); err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if persisted["default_harness"] != "codex" {
+		t.Fatalf("default_harness = %q, want codex", persisted["default_harness"])
+	}
+}
+
 func readJSONFile(path string, out any) error {
 	body, err := os.ReadFile(path)
 	if err != nil {

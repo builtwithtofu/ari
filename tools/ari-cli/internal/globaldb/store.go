@@ -2,7 +2,9 @@ package globaldb
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,6 +29,11 @@ ON CONFLICT(key) DO UPDATE SET
 
 	metaByKeyQuery = `SELECT value FROM daemon_meta WHERE key = ?`
 
+	compareAndSwapMetaQuery = `UPDATE daemon_meta
+SET value = ?
+WHERE key = ?
+  AND value = ?`
+
 	insertSessionQuery = `INSERT INTO workspaces (
 		workspace_id, name, status, vcs_preference, origin_root, cleanup_policy, created_at, updated_at
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
@@ -39,7 +46,7 @@ ON CONFLICT(key) DO UPDATE SET
 	origin_root,
 	cleanup_policy,
 	created_at,
-		updated_at
+	updated_at
 FROM workspaces
 WHERE workspace_id = ?`
 
@@ -51,7 +58,7 @@ WHERE workspace_id = ?`
 	origin_root,
 	cleanup_policy,
 	created_at,
-		updated_at
+	updated_at
 FROM workspaces
 WHERE name = ?`
 
@@ -63,7 +70,7 @@ WHERE name = ?`
 	origin_root,
 	cleanup_policy,
 	created_at,
-		updated_at
+	updated_at
 FROM workspaces
 ORDER BY created_at DESC, workspace_id ASC`
 
@@ -624,6 +631,22 @@ func (s *Store) GetMeta(ctx context.Context, key string) (string, error) {
 	return values[0], nil
 }
 
+func (s *Store) CompareAndSwapMeta(ctx context.Context, key, oldValue, newValue string) (bool, error) {
+	if key == "" {
+		return false, fmt.Errorf("%w: key is required", ErrInvalidInput)
+	}
+
+	result, err := s.db.ExecContext(ctx, compareAndSwapMetaQuery, newValue, key, oldValue)
+	if err != nil {
+		return false, fmt.Errorf("compare and swap meta %q: %w", key, err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("compare and swap meta %q: rows affected: %w", key, err)
+	}
+	return changed == 1, nil
+}
+
 func (s *Store) UpsertAgentProfile(ctx context.Context, profile AgentProfile) error {
 	profile.ProfileID = strings.TrimSpace(profile.ProfileID)
 	profile.WorkspaceID = strings.TrimSpace(profile.WorkspaceID)
@@ -675,12 +698,23 @@ func (s *Store) EnsureDefaultHelperProfile(ctx context.Context, workspaceID, har
 	} else if !errors.Is(err, ErrNotFound) {
 		return AgentProfile{}, err
 	}
-	profileID := "ap_helper_" + strings.ReplaceAll(workspaceID, "-", "_")
+	profileID, err := newAgentProfileID()
+	if err != nil {
+		return AgentProfile{}, err
+	}
 	profile := AgentProfile{ProfileID: profileID, WorkspaceID: workspaceID, Name: DefaultHelperProfileName, Harness: strings.TrimSpace(harness), Prompt: strings.TrimSpace(prompt), InvocationClass: "agent", DefaultsJSON: "{}"}
 	if err := s.UpsertAgentProfile(ctx, profile); err != nil {
 		return AgentProfile{}, err
 	}
 	return s.getExactAgentProfile(ctx, workspaceID, DefaultHelperProfileName)
+}
+
+func newAgentProfileID() (string, error) {
+	var data [16]byte
+	if _, err := rand.Read(data[:]); err != nil {
+		return "", fmt.Errorf("generate agent profile id: %w", err)
+	}
+	return "ap_" + hex.EncodeToString(data[:]), nil
 }
 
 func (s *Store) GetDefaultHelperProfile(ctx context.Context, workspaceID string) (AgentProfile, error) {
