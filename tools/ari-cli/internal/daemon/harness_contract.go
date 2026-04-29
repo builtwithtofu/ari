@@ -149,6 +149,7 @@ type HarnessAuthRemediation struct {
 
 type HarnessAuthStatus struct {
 	Harness          string                  `json:"harness"`
+	Name             string                  `json:"name,omitempty"`
 	AuthSlotID       string                  `json:"auth_slot_id,omitempty"`
 	Status           HarnessAuthState        `json:"status"`
 	Remediation      *HarnessAuthRemediation `json:"remediation,omitempty"`

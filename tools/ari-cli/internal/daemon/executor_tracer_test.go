@@ -412,8 +412,21 @@ func TestAuthStatusReportsMissingHarnessAsNotInstalled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("harnessAuthStatus returned error: %v", err)
 	}
-	if len(resp.Statuses) != 1 || resp.Statuses[0].Status != HarnessAuthNotInstalled {
+	var missingStatus HarnessAuthStatus
+	for _, status := range resp.Statuses {
+		if status.AuthSlotID == "missing-default" {
+			missingStatus = status
+		}
+	}
+	if missingStatus.Status != HarnessAuthNotInstalled {
 		t.Fatalf("statuses = %#v, want not_installed", resp.Statuses)
+	}
+	stored, err := store.GetAuthSlot(context.Background(), "missing-default")
+	if err != nil {
+		t.Fatalf("GetAuthSlot returned error: %v", err)
+	}
+	if stored.Status != string(HarnessAuthNotInstalled) {
+		t.Fatalf("stored status = %q, want not_installed", stored.Status)
 	}
 }
 
@@ -428,6 +441,248 @@ func TestAuthStatusRejectsUnknownRequestedSlot(t *testing.T) {
 	data := requireHandlerErrorData(t, err)
 	if data["reason"] != "unknown_auth_slot" {
 		t.Fatalf("error data = %#v, want unknown_auth_slot", data)
+	}
+}
+
+func TestAuthStatusPersistsProviderReadinessForStoredSlot(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return &capturingHarness{name: "test-harness", authStatuses: map[string]HarnessAuthState{"slot-work": HarnessAuthAuthenticated}}, nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	if err := store.UpsertAuthSlot(context.Background(), globaldb.AuthSlot{AuthSlotID: "slot-work", Harness: "test-harness", Label: "Work", Status: "auth_in_progress"}); err != nil {
+		t.Fatalf("UpsertAuthSlot returned error: %v", err)
+	}
+
+	resp := callMethod[HarnessAuthStatusResponse](t, registry, "auth.status", HarnessAuthStatusRequest{Slots: []HarnessAuthSlot{{AuthSlotID: "slot-work"}}})
+	if len(resp.Statuses) != 1 || resp.Statuses[0].Status != HarnessAuthAuthenticated {
+		t.Fatalf("statuses = %#v, want authenticated", resp.Statuses)
+	}
+	stored, err := store.GetAuthSlot(context.Background(), "slot-work")
+	if err != nil {
+		t.Fatalf("GetAuthSlot returned error: %v", err)
+	}
+	if stored.Status != string(HarnessAuthAuthenticated) {
+		t.Fatalf("stored status = %q, want authenticated", stored.Status)
+	}
+}
+
+func TestAuthStartUsesStoredSlotAndPersistsInProgress(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	var capturedSlot HarnessAuthSlot
+	var capturedMethod string
+	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return &capturingHarness{name: "test-harness", authStart: func(ctx context.Context, slot HarnessAuthSlot, method string) (HarnessAuthStatus, error) {
+			_ = ctx
+			capturedSlot = slot
+			capturedMethod = method
+			return HarnessAuthStatus{Harness: slot.Harness, AuthSlotID: slot.AuthSlotID, Status: HarnessAuthInProgress, Remediation: &HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, Method: method, VerificationURL: "https://provider.example/device", UserCode: "ABCD-EFGH", SecretOwnedBy: slot.Harness}, AriSecretStorage: HarnessAriSecretStorageNone}, nil
+		}}, nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	if err := store.UpsertAuthSlot(context.Background(), globaldb.AuthSlot{AuthSlotID: "slot-work", Harness: "test-harness", Label: "Work", ProviderLabel: "Provider Account", Status: "auth_required"}); err != nil {
+		t.Fatalf("UpsertAuthSlot returned error: %v", err)
+	}
+
+	resp := callMethod[HarnessAuthStartResponse](t, registry, "auth.start", HarnessAuthStartRequest{AuthSlotID: "slot-work", Method: "device_code"})
+	if capturedSlot.AuthSlotID != "slot-work" || capturedSlot.ProviderLabel != "Provider Account" || capturedMethod != "device_code" {
+		t.Fatalf("captured slot = %#v method = %q, want stored slot and requested method", capturedSlot, capturedMethod)
+	}
+	if resp.Status.Status != HarnessAuthInProgress || resp.Status.Remediation == nil || resp.Status.Remediation.UserCode != "ABCD-EFGH" || resp.Status.AriSecretStorage != HarnessAriSecretStorageNone {
+		t.Fatalf("status = %#v, want non-secret auth flow response", resp.Status)
+	}
+	stored, err := store.GetAuthSlot(context.Background(), "slot-work")
+	if err != nil {
+		t.Fatalf("GetAuthSlot returned error: %v", err)
+	}
+	if stored.Status != string(HarnessAuthInProgress) {
+		t.Fatalf("stored status = %q, want auth_in_progress", stored.Status)
+	}
+}
+
+func TestAuthStartRejectsUnknownSlotBeforeHarnessStart(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "auth.start", HarnessAuthStartRequest{AuthSlotID: "missing-slot", Method: "device_code"})
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "unknown_auth_slot" || data["start_invoked"] != false {
+		t.Fatalf("error data = %#v, want unknown_auth_slot before start", data)
+	}
+}
+
+func TestAuthCancelUsesStoredSlotAndPersistsCancelled(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	var capturedSlot HarnessAuthSlot
+	var capturedFlowID string
+	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return &capturingHarness{name: "test-harness", authCancel: func(ctx context.Context, slot HarnessAuthSlot, flowID string) (HarnessAuthStatus, error) {
+			_ = ctx
+			capturedSlot = slot
+			capturedFlowID = flowID
+			return HarnessAuthStatus{Harness: slot.Harness, AuthSlotID: slot.AuthSlotID, Status: HarnessAuthCancelled, AriSecretStorage: HarnessAriSecretStorageNone}, nil
+		}}, nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	if err := store.UpsertAuthSlot(context.Background(), globaldb.AuthSlot{AuthSlotID: "slot-work", Harness: "test-harness", Label: "Work", ProviderLabel: "Provider Account", Status: "auth_in_progress"}); err != nil {
+		t.Fatalf("UpsertAuthSlot returned error: %v", err)
+	}
+
+	resp := callMethod[HarnessAuthCancelResponse](t, registry, "auth.cancel", HarnessAuthCancelRequest{AuthSlotID: "slot-work", FlowID: "flow-123"})
+	if capturedSlot.AuthSlotID != "slot-work" || capturedSlot.ProviderLabel != "Provider Account" || capturedFlowID != "flow-123" {
+		t.Fatalf("captured slot = %#v flow = %q, want stored slot and requested flow", capturedSlot, capturedFlowID)
+	}
+	if resp.Status.Status != HarnessAuthCancelled || resp.Status.AriSecretStorage != HarnessAriSecretStorageNone {
+		t.Fatalf("status = %#v, want cancelled non-secret status", resp.Status)
+	}
+	stored, err := store.GetAuthSlot(context.Background(), "slot-work")
+	if err != nil {
+		t.Fatalf("GetAuthSlot returned error: %v", err)
+	}
+	if stored.Status != string(HarnessAuthCancelled) {
+		t.Fatalf("stored status = %q, want cancelled", stored.Status)
+	}
+}
+
+func TestAuthCancelRejectsUnknownSlotBeforeHarnessCancel(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "auth.cancel", HarnessAuthCancelRequest{AuthSlotID: "missing-slot", FlowID: "flow-123"})
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "unknown_auth_slot" || data["cancel_invoked"] != false {
+		t.Fatalf("error data = %#v, want unknown_auth_slot before cancel", data)
+	}
+}
+
+func TestAuthLogoutUsesStoredSlotAndPersistsAuthRequired(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	var capturedSlot HarnessAuthSlot
+	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return &capturingHarness{name: "test-harness", authLogout: func(ctx context.Context, slot HarnessAuthSlot) (HarnessAuthStatus, error) {
+			_ = ctx
+			capturedSlot = slot
+			return HarnessAuthStatus{Harness: slot.Harness, AuthSlotID: slot.AuthSlotID, Status: HarnessAuthRequired, AriSecretStorage: HarnessAriSecretStorageNone}, nil
+		}}, nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	if err := store.UpsertAuthSlot(context.Background(), globaldb.AuthSlot{AuthSlotID: "slot-work", Harness: "test-harness", Label: "Work", ProviderLabel: "Provider Account", Status: "authenticated"}); err != nil {
+		t.Fatalf("UpsertAuthSlot returned error: %v", err)
+	}
+
+	resp := callMethod[HarnessAuthLogoutResponse](t, registry, "auth.logout", HarnessAuthLogoutRequest{AuthSlotID: "slot-work"})
+	if capturedSlot.AuthSlotID != "slot-work" || capturedSlot.ProviderLabel != "Provider Account" {
+		t.Fatalf("captured slot = %#v, want stored slot metadata", capturedSlot)
+	}
+	if resp.Status.Status != HarnessAuthRequired || resp.Status.AriSecretStorage != HarnessAriSecretStorageNone {
+		t.Fatalf("status = %#v, want non-secret auth_required logout status", resp.Status)
+	}
+	stored, err := store.GetAuthSlot(context.Background(), "slot-work")
+	if err != nil {
+		t.Fatalf("GetAuthSlot returned error: %v", err)
+	}
+	if stored.Status != string(HarnessAuthRequired) {
+		t.Fatalf("stored status = %q, want auth_required", stored.Status)
+	}
+}
+
+func TestAuthLogoutRejectsUnknownSlotBeforeHarnessLogout(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "auth.logout", HarnessAuthLogoutRequest{AuthSlotID: "missing-slot"})
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "unknown_auth_slot" || data["logout_invoked"] != false {
+		t.Fatalf("error data = %#v, want unknown_auth_slot before logout", data)
+	}
+}
+
+func TestAuthLogoutUnsupportedHarnessReturnsProviderOwnedRemediation(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return newFakeHarness("test-harness", nil), nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	if err := store.UpsertAuthSlot(context.Background(), globaldb.AuthSlot{AuthSlotID: "slot-work", Harness: "test-harness", Label: "Work", Status: "authenticated"}); err != nil {
+		t.Fatalf("UpsertAuthSlot returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "auth.logout", HarnessAuthLogoutRequest{AuthSlotID: "slot-work"})
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "auth_logout_unsupported" || data["logout_invoked"] != false || data["ari_secret_storage"] != string(HarnessAriSecretStorageNone) {
+		t.Fatalf("error data = %#v, want unsupported logout without Ari secret storage", data)
+	}
+}
+
+func TestAuthLogoutReportsPartialSuccessWhenStatusPersistenceFails(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	ctx, cancel := context.WithCancel(context.Background())
+	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return &capturingHarness{name: "test-harness", authLogout: func(ctx context.Context, slot HarnessAuthSlot) (HarnessAuthStatus, error) {
+			_ = ctx
+			cancel()
+			return HarnessAuthStatus{Harness: slot.Harness, AuthSlotID: slot.AuthSlotID, Status: HarnessAuthRequired, AriSecretStorage: HarnessAriSecretStorageNone}, nil
+		}}, nil
+	})
+	if err := store.UpsertAuthSlot(context.Background(), globaldb.AuthSlot{AuthSlotID: "slot-work", Harness: "test-harness", Label: "Work", Status: "authenticated"}); err != nil {
+		t.Fatalf("UpsertAuthSlot returned error: %v", err)
+	}
+
+	_, err := d.harnessAuthLogout(ctx, store, HarnessAuthLogoutRequest{AuthSlotID: "slot-work"})
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "auth_logout_status_persist_failed" || data["logout_invoked"] != true || data["status"] != string(HarnessAuthRequired) || data["ari_secret_storage"] != string(HarnessAriSecretStorageNone) {
+		t.Fatalf("error data = %#v, want provider logout partial success with failed Ari status persistence", data)
 	}
 }
 
@@ -573,6 +828,9 @@ type capturingHarness struct {
 	name         string
 	captured     *ExecutorStartRequest
 	authStatuses map[string]HarnessAuthState
+	authStart    func(context.Context, HarnessAuthSlot, string) (HarnessAuthStatus, error)
+	authCancel   func(context.Context, HarnessAuthSlot, string) (HarnessAuthStatus, error)
+	authLogout   func(context.Context, HarnessAuthSlot) (HarnessAuthStatus, error)
 }
 
 func (e *capturingHarness) Descriptor() HarnessAdapterDescriptor {
@@ -598,6 +856,27 @@ func (e *capturingHarness) AuthStatus(ctx context.Context, slot HarnessAuthSlot)
 		status = configured
 	}
 	return HarnessAuthStatus{Harness: e.name, AuthSlotID: strings.TrimSpace(slot.AuthSlotID), Status: status, AriSecretStorage: HarnessAriSecretStorageNone}, nil
+}
+
+func (e *capturingHarness) AuthStart(ctx context.Context, slot HarnessAuthSlot, method string) (HarnessAuthStatus, error) {
+	if e.authStart != nil {
+		return e.authStart(ctx, slot, method)
+	}
+	return HarnessAuthStatus{}, fmt.Errorf("auth start not configured")
+}
+
+func (e *capturingHarness) AuthCancel(ctx context.Context, slot HarnessAuthSlot, flowID string) (HarnessAuthStatus, error) {
+	if e.authCancel != nil {
+		return e.authCancel(ctx, slot, flowID)
+	}
+	return HarnessAuthStatus{}, fmt.Errorf("auth cancel not configured")
+}
+
+func (e *capturingHarness) AuthLogout(ctx context.Context, slot HarnessAuthSlot) (HarnessAuthStatus, error) {
+	if e.authLogout != nil {
+		return e.authLogout(ctx, slot)
+	}
+	return HarnessAuthStatus{}, fmt.Errorf("auth logout not configured")
 }
 
 func (e *capturingHarness) Stop(ctx context.Context, runID string) error {
@@ -854,11 +1133,14 @@ func TestAuthSlotListReturnsMetadataWithoutSources(t *testing.T) {
 	}
 
 	resp := callMethod[AuthSlotListResponse](t, registry, "auth.slot.list", AuthSlotListRequest{Harness: "codex"})
-	if len(resp.Slots) != 1 {
-		t.Fatalf("slot count = %d, want 1", len(resp.Slots))
+	var personal AuthSlotResponse
+	for _, slot := range resp.Slots {
+		if slot.AuthSlotID == "codex-personal" {
+			personal = slot
+		}
 	}
-	if resp.Slots[0].AuthSlotID != "codex-personal" || resp.Slots[0].ProviderLabel != "ChatGPT Plus" || resp.Slots[0].CredentialOwner != "provider" {
-		t.Fatalf("slot = %#v, want redacted metadata", resp.Slots[0])
+	if personal.AuthSlotID != "codex-personal" || personal.ProviderLabel != "ChatGPT Plus" || personal.CredentialOwner != "provider" {
+		t.Fatalf("slots = %#v, want redacted metadata for codex-personal", resp.Slots)
 	}
 }
 
@@ -879,7 +1161,13 @@ func TestAuthStatusUsesStoredSlotsWhenNoSlotsRequested(t *testing.T) {
 	}
 
 	resp := callMethod[HarnessAuthStatusResponse](t, registry, "auth.status", HarnessAuthStatusRequest{})
-	if len(resp.Statuses) != 1 || resp.Statuses[0].AuthSlotID != "slot-two" || resp.Statuses[0].Status != HarnessAuthAuthenticated {
+	var slotStatus HarnessAuthStatus
+	for _, status := range resp.Statuses {
+		if status.AuthSlotID == "slot-two" {
+			slotStatus = status
+		}
+	}
+	if slotStatus.Status != HarnessAuthAuthenticated {
 		t.Fatalf("statuses = %#v, want stored slot status", resp.Statuses)
 	}
 }
@@ -1063,6 +1351,31 @@ func TestAgentProfileRunPassesSelectedAuthSlotToHarnessAndRun(t *testing.T) {
 	resp := callMethod[AgentProfileRunResponse](t, registry, "agent.profile.run", AgentProfileRunRequest{ProfileDefinition: &AgentProfile{Name: "dynamic", Harness: "test-harness", AuthSlotID: "codex-personal"}, Packet: packet})
 	if captured.AuthSlotID != "codex-personal" || resp.Run.AuthSlotID != "codex-personal" {
 		t.Fatalf("captured request = %#v run = %#v, want selected auth slot recorded", captured, resp.Run)
+	}
+}
+
+func TestAgentProfileRunUsesDefaultAuthSlotWhenProfileOmitsAuth(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	var captured ExecutorStartRequest
+	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = primaryFolder
+		_ = sink
+		return &capturingHarness{name: req.Executor, captured: &captured}, nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	if err := store.UpsertAuthSlot(context.Background(), globaldb.AuthSlot{AuthSlotID: "slot-default", Harness: "test-harness", Label: "Default", Status: "authenticated"}); err != nil {
+		t.Fatalf("UpsertAuthSlot returned error: %v", err)
+	}
+
+	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
+	resp := callMethod[AgentProfileRunResponse](t, registry, "agent.profile.run", AgentProfileRunRequest{ProfileDefinition: &AgentProfile{Name: "dynamic", Harness: "test-harness"}, Defaults: AgentRunDefaults{AuthSlotID: "slot-default"}, Packet: packet})
+	if captured.AuthSlotID != "slot-default" || resp.Run.AuthSlotID != "slot-default" {
+		t.Fatalf("captured request = %#v run = %#v, want default auth slot recorded", captured, resp.Run)
 	}
 }
 

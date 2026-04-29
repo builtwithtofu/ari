@@ -17,6 +17,8 @@ SELECT
   harness,
   model,
   prompt,
+  auth_slot_id,
+  auth_pool_json,
   invocation_class,
   defaults_json,
   created_at,
@@ -40,6 +42,8 @@ func (q *Queries) GetGlobalAgentProfileByName(ctx context.Context, arg GetGlobal
 		&i.Harness,
 		&i.Model,
 		&i.Prompt,
+		&i.AuthSlotID,
+		&i.AuthPoolJson,
 		&i.InvocationClass,
 		&i.DefaultsJson,
 		&i.CreatedAt,
@@ -56,6 +60,8 @@ SELECT
   harness,
   model,
   prompt,
+  auth_slot_id,
+  auth_pool_json,
   invocation_class,
   defaults_json,
   created_at,
@@ -80,6 +86,8 @@ func (q *Queries) GetWorkspaceAgentProfileByName(ctx context.Context, arg GetWor
 		&i.Harness,
 		&i.Model,
 		&i.Prompt,
+		&i.AuthSlotID,
+		&i.AuthPoolJson,
 		&i.InvocationClass,
 		&i.DefaultsJson,
 		&i.CreatedAt,
@@ -96,6 +104,8 @@ SELECT
   harness,
   model,
   prompt,
+  auth_slot_id,
+  auth_pool_json,
   invocation_class,
   defaults_json,
   created_at,
@@ -121,6 +131,8 @@ func (q *Queries) ListGlobalAgentProfiles(ctx context.Context) ([]AgentProfile, 
 			&i.Harness,
 			&i.Model,
 			&i.Prompt,
+			&i.AuthSlotID,
+			&i.AuthPoolJson,
 			&i.InvocationClass,
 			&i.DefaultsJson,
 			&i.CreatedAt,
@@ -147,6 +159,8 @@ SELECT
   harness,
   model,
   prompt,
+  auth_slot_id,
+  auth_pool_json,
   invocation_class,
   defaults_json,
   created_at,
@@ -176,6 +190,8 @@ func (q *Queries) ListWorkspaceAgentProfiles(ctx context.Context, arg ListWorksp
 			&i.Harness,
 			&i.Model,
 			&i.Prompt,
+			&i.AuthSlotID,
+			&i.AuthPoolJson,
 			&i.InvocationClass,
 			&i.DefaultsJson,
 			&i.CreatedAt,
@@ -202,17 +218,21 @@ INSERT INTO agent_profiles (
   harness,
   model,
   prompt,
+  auth_slot_id,
+  auth_pool_json,
   invocation_class,
   defaults_json,
   created_at,
   updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(profile_id) DO UPDATE SET
   workspace_id = excluded.workspace_id,
   name = excluded.name,
   harness = excluded.harness,
   model = excluded.model,
   prompt = excluded.prompt,
+  auth_slot_id = excluded.auth_slot_id,
+  auth_pool_json = excluded.auth_pool_json,
   invocation_class = excluded.invocation_class,
   defaults_json = excluded.defaults_json,
   updated_at = excluded.updated_at
@@ -225,6 +245,8 @@ type UpsertAgentProfileParams struct {
 	Harness         *string `json:"harness"`
 	Model           *string `json:"model"`
 	Prompt          *string `json:"prompt"`
+	AuthSlotID      *string `json:"auth_slot_id"`
+	AuthPoolJson    string  `json:"auth_pool_json"`
 	InvocationClass *string `json:"invocation_class"`
 	DefaultsJson    string  `json:"defaults_json"`
 	CreatedAt       string  `json:"created_at"`
@@ -239,6 +261,8 @@ func (q *Queries) UpsertAgentProfile(ctx context.Context, arg UpsertAgentProfile
 		arg.Harness,
 		arg.Model,
 		arg.Prompt,
+		arg.AuthSlotID,
+		arg.AuthPoolJson,
 		arg.InvocationClass,
 		arg.DefaultsJson,
 		arg.CreatedAt,

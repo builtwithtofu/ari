@@ -49,7 +49,7 @@ type CodexExecutor struct {
 }
 
 func NewCodexExecutor(cwd string) *CodexExecutor {
-	return newCodexExecutor(codexExecutorOptions{Executable: "codex", Cwd: cwd, StartTransport: startCodexAppServerTransport})
+	return newCodexExecutor(codexExecutorOptions{Executable: harnessExecutable("codex", EnvCodexExecutable), Cwd: cwd, StartTransport: startCodexAppServerTransport})
 }
 
 func NewCodexExecutorForTest(options codexExecutorOptions) *CodexExecutor {
@@ -80,7 +80,7 @@ func (e *CodexExecutor) AuthStatus(ctx context.Context, slot HarnessAuthSlot) (H
 		return HarnessAuthStatus{}, fmt.Errorf("executor is required")
 	}
 	if !authSlotIsDefaultForHarness(HarnessNameCodex, slot.AuthSlotID) {
-		return NewHarnessAuthRequired(HarnessNameCodex, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, Method: "provider_owned_slot_binding", SecretOwnedBy: HarnessNameCodex}), nil
+		return HarnessAuthStatus{}, &HarnessUnavailableError{Harness: HarnessNameCodex, Reason: "auth_slot_selection_unsupported", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
 	}
 	result, err := e.options.RunAuthCommand(ctx, e.options, []string{"login", "status"})
 	if err == nil && result.ExitCode != nil && *result.ExitCode == 0 {
@@ -101,6 +101,9 @@ func runCodexAuthCommand(ctx context.Context, options codexExecutorOptions, args
 	if err != nil {
 		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameCodex, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
 	}
+	if len(args) == 2 && args[0] == "login" && args[1] == "--device-auth" {
+		return runCodexDeviceAuthCommand(ctx, path, executable, options)
+	}
 	cmd := exec.CommandContext(ctx, path, args...)
 	cmd.Dir = strings.TrimSpace(options.Cwd)
 	var output strings.Builder
@@ -113,6 +116,64 @@ func runCodexAuthCommand(ctx context.Context, options codexExecutorOptions, args
 	err = cmd.Wait()
 	exitCode := cmd.ProcessState.ExitCode()
 	return commandRunResult{Output: []byte(output.String()), ProcessSample: &sample, ExitCode: &exitCode}, err
+}
+
+func runCodexDeviceAuthCommand(ctx context.Context, path, executable string, options codexExecutorOptions) (commandRunResult, error) {
+	cmd := exec.Command(path, "login", "--device-auth")
+	cmd.Dir = strings.TrimSpace(options.Cwd)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return commandRunResult{}, err
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return commandRunResult{}, err
+	}
+	if err := cmd.Start(); err != nil {
+		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameCodex, Reason: "start_failed", Executable: executable, Probe: executable + " login --device-auth", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: true}
+	}
+	sample := sampleLinuxProcessMetrics(ctx, AgentRun{PID: cmd.Process.Pid})
+	outputCh := make(chan string, 32)
+	readPipe := func(reader io.Reader) {
+		scanner := bufio.NewScanner(reader)
+		for scanner.Scan() {
+			outputCh <- scanner.Text() + "\n"
+		}
+	}
+	go readPipe(stdout)
+	go readPipe(stderr)
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- cmd.Wait() }()
+
+	var output strings.Builder
+	for {
+		select {
+		case line := <-outputCh:
+			output.WriteString(line)
+			flow := codexAuthFlowFromOutput([]byte(output.String()))
+			if flow.VerificationURL != "" && flow.UserCode != "" {
+				go func() {
+					for {
+						select {
+						case <-outputCh:
+						case <-waitCh:
+							return
+						}
+					}
+				}()
+				return commandRunResult{Output: []byte(output.String()), ProcessSample: &sample}, nil
+			}
+		case err := <-waitCh:
+			exitCode := -1
+			if cmd.ProcessState != nil {
+				exitCode = cmd.ProcessState.ExitCode()
+			}
+			return commandRunResult{Output: []byte(output.String()), ProcessSample: &sample, ExitCode: &exitCode}, err
+		case <-ctx.Done():
+			_ = cmd.Process.Kill()
+			return commandRunResult{Output: []byte(output.String()), ProcessSample: &sample}, ctx.Err()
+		}
+	}
 }
 
 func codexAuthFlowFromOutput(output []byte) HarnessAuthRemediation {
@@ -138,10 +199,24 @@ func (e *CodexExecutor) AuthStart(ctx context.Context, slot HarnessAuthSlot, met
 	if e == nil {
 		return HarnessAuthStatus{}, fmt.Errorf("executor is required")
 	}
-	if strings.TrimSpace(method) == "" {
+	if !authSlotIsDefaultForHarness(HarnessNameCodex, slot.AuthSlotID) {
+		return HarnessAuthStatus{}, &HarnessUnavailableError{Harness: HarnessNameCodex, Reason: "auth_slot_selection_unsupported", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
+	}
+	method = strings.TrimSpace(method)
+	if method == "" {
 		method = "device_code"
 	}
-	result, err := e.options.RunAuthCommand(ctx, e.options, []string{"login", "--device-auth"})
+	if method == "api_key" {
+		return NewHarnessAuthRequired(HarnessNameCodex, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, Method: "api_key_provider_setup", SecretOwnedBy: HarnessNameCodex}), nil
+	}
+	if method == "browser" {
+		return NewHarnessAuthRequired(HarnessNameCodex, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, Method: "client_provider_login", SecretOwnedBy: HarnessNameCodex}), nil
+	}
+	if method != "device_code" {
+		return HarnessAuthStatus{}, &HarnessUnavailableError{Harness: HarnessNameCodex, Reason: "auth_method_unsupported", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
+	}
+	args := []string{"login", "--device-auth"}
+	result, err := e.options.RunAuthCommand(ctx, e.options, args)
 	if err != nil {
 		return HarnessAuthStatus{}, err
 	}
@@ -151,6 +226,34 @@ func (e *CodexExecutor) AuthStart(ctx context.Context, slot HarnessAuthSlot, met
 		flow.SecretOwnedBy = HarnessNameCodex
 	}
 	return HarnessAuthStatus{Harness: HarnessNameCodex, AuthSlotID: strings.TrimSpace(slot.AuthSlotID), Status: HarnessAuthInProgress, Remediation: &flow, AriSecretStorage: HarnessAriSecretStorageNone}, nil
+}
+
+func (e *CodexExecutor) AuthLogout(ctx context.Context, slot HarnessAuthSlot) (HarnessAuthStatus, error) {
+	if ctx == nil {
+		return HarnessAuthStatus{}, fmt.Errorf("context is required")
+	}
+	if e == nil {
+		return HarnessAuthStatus{}, fmt.Errorf("executor is required")
+	}
+	if !authSlotIsDefaultForHarness(HarnessNameCodex, slot.AuthSlotID) {
+		return HarnessAuthStatus{}, &HarnessUnavailableError{Harness: HarnessNameCodex, Reason: "auth_slot_selection_unsupported", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
+	}
+	status, err := e.AuthStatus(ctx, slot)
+	if err != nil {
+		return HarnessAuthStatus{}, err
+	}
+	if status.Status != HarnessAuthAuthenticated {
+		status.Status = HarnessAuthRequired
+		return status, nil
+	}
+	result, err := e.options.RunAuthCommand(ctx, e.options, []string{"logout"})
+	if err != nil {
+		return HarnessAuthStatus{}, err
+	}
+	if result.ExitCode != nil && *result.ExitCode != 0 {
+		return HarnessAuthStatus{}, &HarnessUnavailableError{Harness: HarnessNameCodex, Reason: "auth_logout_failed", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: true}
+	}
+	return NewHarnessAuthRequired(HarnessNameCodex, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, Method: "device_code", SecretOwnedBy: HarnessNameCodex}), nil
 }
 
 func (e *CodexExecutor) Descriptor() HarnessAdapterDescriptor {

@@ -38,7 +38,7 @@ type ClaudeExecutor struct {
 }
 
 func NewClaudeExecutor(cwd string) *ClaudeExecutor {
-	return newClaudeExecutor(claudeExecutorOptions{Executable: "claude", Cwd: cwd, RunCommand: runClaudeCommand})
+	return newClaudeExecutor(claudeExecutorOptions{Executable: harnessExecutable("claude", EnvClaudeExecutable), Cwd: cwd, RunCommand: runClaudeCommand})
 }
 
 func NewClaudeExecutorForTest(options claudeExecutorOptions) *ClaudeExecutor {

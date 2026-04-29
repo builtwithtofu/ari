@@ -162,6 +162,8 @@ type AgentProfile struct {
 	Harness         string
 	Model           string
 	Prompt          string
+	AuthSlotID      string
+	AuthPoolJSON    string
 	InvocationClass string
 	DefaultsJSON    string
 	CreatedAt       time.Time
@@ -316,6 +318,7 @@ func (s *Store) UpsertAgentProfile(ctx context.Context, profile AgentProfile) er
 	profile.Name = strings.TrimSpace(profile.Name)
 	profile.Harness = strings.TrimSpace(profile.Harness)
 	profile.Model = strings.TrimSpace(profile.Model)
+	profile.AuthSlotID = strings.TrimSpace(profile.AuthSlotID)
 	profile.InvocationClass = strings.TrimSpace(profile.InvocationClass)
 	if profile.ProfileID == "" {
 		return fmt.Errorf("%w: profile id is required", ErrInvalidInput)
@@ -334,15 +337,21 @@ func (s *Store) UpsertAgentProfile(ctx context.Context, profile AgentProfile) er
 	if strings.TrimSpace(profile.DefaultsJSON) == "" {
 		profile.DefaultsJSON = "{}"
 	}
+	if strings.TrimSpace(profile.AuthPoolJSON) == "" {
+		profile.AuthPoolJSON = "{}"
+	}
 	if !json.Valid([]byte(profile.DefaultsJSON)) {
 		return fmt.Errorf("%w: profile defaults json is invalid", ErrInvalidInput)
+	}
+	if !json.Valid([]byte(profile.AuthPoolJSON)) {
+		return fmt.Errorf("%w: profile auth pool json is invalid", ErrInvalidInput)
 	}
 	now := time.Now().UTC()
 	if profile.CreatedAt.IsZero() {
 		profile.CreatedAt = now
 	}
 	profile.UpdatedAt = now
-	if err := s.sqlcQueries().UpsertAgentProfile(ctx, dbsqlc.UpsertAgentProfileParams{ProfileID: profile.ProfileID, WorkspaceID: optionalString(profile.WorkspaceID), Name: profile.Name, Harness: optionalString(profile.Harness), Model: optionalString(profile.Model), Prompt: optionalString(profile.Prompt), InvocationClass: optionalString(profile.InvocationClass), DefaultsJson: profile.DefaultsJSON, CreatedAt: profile.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: profile.UpdatedAt.Format(time.RFC3339Nano)}); err != nil {
+	if err := s.sqlcQueries().UpsertAgentProfile(ctx, dbsqlc.UpsertAgentProfileParams{ProfileID: profile.ProfileID, WorkspaceID: optionalString(profile.WorkspaceID), Name: profile.Name, Harness: optionalString(profile.Harness), Model: optionalString(profile.Model), Prompt: optionalString(profile.Prompt), AuthSlotID: optionalString(profile.AuthSlotID), AuthPoolJson: profile.AuthPoolJSON, InvocationClass: optionalString(profile.InvocationClass), DefaultsJson: profile.DefaultsJSON, CreatedAt: profile.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: profile.UpdatedAt.Format(time.RFC3339Nano)}); err != nil {
 		return fmt.Errorf("upsert agent profile %q: %w", profile.Name, err)
 	}
 	return nil
@@ -838,7 +847,7 @@ func optionalString(value string) *string {
 func agentProfileFromSQLC(row dbsqlc.AgentProfile) AgentProfile {
 	createdAt, _ := time.Parse(time.RFC3339Nano, row.CreatedAt)
 	updatedAt, _ := time.Parse(time.RFC3339Nano, row.UpdatedAt)
-	return AgentProfile{ProfileID: row.ProfileID, WorkspaceID: stringValue(row.WorkspaceID), Name: row.Name, Harness: stringValue(row.Harness), Model: stringValue(row.Model), Prompt: stringValue(row.Prompt), InvocationClass: stringValue(row.InvocationClass), DefaultsJSON: row.DefaultsJson, CreatedAt: createdAt, UpdatedAt: updatedAt}
+	return AgentProfile{ProfileID: row.ProfileID, WorkspaceID: stringValue(row.WorkspaceID), Name: row.Name, Harness: stringValue(row.Harness), Model: stringValue(row.Model), Prompt: stringValue(row.Prompt), AuthSlotID: stringValue(row.AuthSlotID), AuthPoolJSON: row.AuthPoolJson, InvocationClass: stringValue(row.InvocationClass), DefaultsJSON: row.DefaultsJson, CreatedAt: createdAt, UpdatedAt: updatedAt}
 }
 
 func authSlotFromSQLC(row dbsqlc.AuthSlot) AuthSlot {

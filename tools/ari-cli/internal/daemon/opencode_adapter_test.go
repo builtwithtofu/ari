@@ -137,6 +137,26 @@ func TestOpenCodeAuthStatusFailsClosedWithoutSlotHint(t *testing.T) {
 	}
 }
 
+func TestOpenCodeAuthStatusUsesNamedProviderSlotHint(t *testing.T) {
+	exitCode := 0
+	executor := NewOpenCodeExecutorForTest(opencodeExecutorOptions{Executable: "opencode", Cwd: "/repo", RunAuthCommand: func(ctx context.Context, opts opencodeExecutorOptions, args []string) (commandRunResult, error) {
+		_ = ctx
+		_ = opts
+		if strings.Join(args, " ") != "auth list" {
+			t.Fatalf("args = %q, want auth list", strings.Join(args, " "))
+		}
+		return commandRunResult{Output: []byte("anthropic not authenticated\nopenrouter authenticated\n"), ExitCode: &exitCode}, nil
+	}})
+
+	status, err := executor.AuthStatus(context.Background(), HarnessAuthSlot{AuthSlotID: "opencode-openrouter", Harness: HarnessNameOpenCode, Label: "OpenRouter"})
+	if err != nil {
+		t.Fatalf("AuthStatus returned error: %v", err)
+	}
+	if status.Status != HarnessAuthAuthenticated || status.AuthSlotID != "opencode-openrouter" {
+		t.Fatalf("status = %#v, want authenticated named OpenCode provider slot", status)
+	}
+}
+
 func TestOpenCodeExecutorRejectsMissingSessionID(t *testing.T) {
 	executor := NewOpenCodeExecutorForTest(opencodeExecutorOptions{Executable: "opencode", Cwd: "/repo", RunCommand: func(ctx context.Context, opts opencodeExecutorOptions, prompt string) (commandRunResult, error) {
 		return commandRunResult{Output: []byte(`{"type":"message.part.updated","properties":{"part":{"type":"text","text":"orphan"}}}`)}, nil

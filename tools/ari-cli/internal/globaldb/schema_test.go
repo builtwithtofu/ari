@@ -118,26 +118,33 @@ func TestBootstrapNormalizesRelativeDBPath(t *testing.T) {
 	}
 }
 
-func TestBootstrapAppliesDaemonMetaMigration(t *testing.T) {
+func TestBootstrapKeepsForwardMigrationHistory(t *testing.T) {
 	migrationsDir, err := atlasMigrationsDir()
 	if err != nil {
 		t.Fatalf("atlasMigrationsDir: %v", err)
 	}
 
-	baselinePath := filepath.Join(migrationsDir, "202602220901_init_globaldb.sql")
-	baselineContent, err := os.ReadFile(baselinePath)
+	for _, filename := range []string{
+		"202604012220_daemon_meta.sql",
+		"202604062200_session_to_workspace.sql",
+		"202604292210_auth_slots.sql",
+		"202605022130_profile_auth_bindings.sql",
+	} {
+		content, err := os.ReadFile(filepath.Join(migrationsDir, filename))
+		if err != nil {
+			t.Fatalf("read migration file %s: %v", filename, err)
+		}
+		if len(content) == 0 {
+			t.Fatalf("migration file %s is empty", filename)
+		}
+	}
+
+	authSlotSQL, err := os.ReadFile(filepath.Join(migrationsDir, "202604292210_auth_slots.sql"))
 	if err != nil {
-		t.Fatalf("read baseline migration file: %v", err)
+		t.Fatalf("read auth slot migration file: %v", err)
 	}
-	baselineSQL := string(baselineContent)
-	if !strings.Contains(baselineSQL, "CREATE TABLE IF NOT EXISTS workspaces") {
-		t.Fatalf("baseline migration SQL = %q, want workspaces table", baselineSQL)
-	}
-	if !strings.Contains(baselineSQL, "CREATE TABLE IF NOT EXISTS workspace_folders") {
-		t.Fatalf("baseline migration SQL = %q, want workspace_folders table", baselineSQL)
-	}
-	if !strings.Contains(baselineSQL, "CREATE TABLE IF NOT EXISTS daemon_meta") {
-		t.Fatalf("baseline migration SQL = %q, want daemon_meta table", baselineSQL)
+	if !strings.Contains(string(authSlotSQL), "CREATE TABLE auth_slots") {
+		t.Fatalf("auth slot migration SQL = %q, want auth_slots table", string(authSlotSQL))
 	}
 }
 

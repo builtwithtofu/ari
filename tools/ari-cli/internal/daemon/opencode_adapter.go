@@ -32,7 +32,7 @@ type OpenCodeExecutor struct {
 }
 
 func NewOpenCodeExecutor(cwd string) *OpenCodeExecutor {
-	return newOpenCodeExecutor(opencodeExecutorOptions{Executable: "opencode", Cwd: cwd, RunCommand: runOpenCodeCommand})
+	return newOpenCodeExecutor(opencodeExecutorOptions{Executable: harnessExecutable("opencode", EnvOpenCodeExecutable), Cwd: cwd, RunCommand: runOpenCodeCommand})
 }
 
 func NewOpenCodeExecutorForTest(options opencodeExecutorOptions) *OpenCodeExecutor {
@@ -58,9 +58,6 @@ func (e *OpenCodeExecutor) AuthStatus(ctx context.Context, slot HarnessAuthSlot)
 	}
 	if e == nil {
 		return HarnessAuthStatus{}, fmt.Errorf("executor is required")
-	}
-	if !authSlotIsDefaultForHarness(HarnessNameOpenCode, slot.AuthSlotID) {
-		return NewHarnessAuthRequired(HarnessNameOpenCode, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, Method: "provider_owned_slot_binding", SecretOwnedBy: HarnessNameOpenCode}), nil
 	}
 	result, err := e.options.RunAuthCommand(ctx, e.options, []string{"auth", "list"})
 	if err != nil {
@@ -298,18 +295,21 @@ func runOpenCodeAuthCommand(ctx context.Context, options opencodeExecutorOptions
 
 func opencodeAuthOutputReady(output []byte, slot HarnessAuthSlot) bool {
 	text := strings.ToLower(string(output))
-	if strings.Contains(text, "not authenticated") || strings.Contains(text, "no auth") {
-		return false
-	}
 	providerHint := opencodeAuthSlotHint(slot)
 	if providerHint == "" && strings.TrimSpace(slot.AuthSlotID) == "opencode-default" {
+		if strings.Contains(text, "not authenticated") || strings.Contains(text, "no auth") {
+			return false
+		}
 		return strings.TrimSpace(text) != ""
 	}
 	if providerHint == "" {
 		return false
 	}
-	if providerHint != "" && strings.Contains(text, providerHint) {
-		return true
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, providerHint) {
+			return !strings.Contains(line, "not authenticated") && !strings.Contains(line, "no auth")
+		}
 	}
 	return false
 }

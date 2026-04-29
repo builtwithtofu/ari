@@ -27,6 +27,8 @@ type AgentProfile struct {
 	Harness         *string `json:"harness"`
 	Model           *string `json:"model"`
 	Prompt          *string `json:"prompt"`
+	AuthSlotID      *string `json:"auth_slot_id"`
+	AuthPoolJson    string  `json:"auth_pool_json"`
 	InvocationClass *string `json:"invocation_class"`
 	DefaultsJson    string  `json:"defaults_json"`
 	CreatedAt       string  `json:"created_at"`

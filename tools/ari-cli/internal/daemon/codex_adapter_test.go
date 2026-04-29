@@ -127,7 +127,7 @@ func TestCodexAuthStartRelaysDeviceCodeWithoutSecrets(t *testing.T) {
 		return commandRunResult{Output: []byte("Open https://codex.example/device and enter code ABCD-EFGH\nlogin id auth_123\n"), ExitCode: &exitCode}, nil
 	}})
 
-	status, err := executor.AuthStart(context.Background(), HarnessAuthSlot{AuthSlotID: "codex-work", Harness: HarnessNameCodex}, "device_code")
+	status, err := executor.AuthStart(context.Background(), HarnessAuthSlot{AuthSlotID: "codex-default", Harness: HarnessNameCodex}, "device_code")
 	if err != nil {
 		t.Fatalf("AuthStart returned error: %v", err)
 	}
@@ -140,6 +140,176 @@ func TestCodexAuthStartRelaysDeviceCodeWithoutSecrets(t *testing.T) {
 	}
 	if strings.Contains(string(encoded), "access_token") || strings.Contains(string(encoded), "refresh_token") || strings.Contains(string(encoded), "api_key") {
 		t.Fatalf("auth start leaked token-like field: %s", encoded)
+	}
+}
+
+func TestCodexAuthStartRejectsUnsupportedNamedSlotBeforeProviderCommand(t *testing.T) {
+	called := false
+	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo", RunAuthCommand: func(ctx context.Context, opts codexExecutorOptions, args []string) (commandRunResult, error) {
+		_ = ctx
+		_ = opts
+		_ = args
+		called = true
+		return commandRunResult{}, nil
+	}})
+
+	_, err := executor.AuthStart(context.Background(), HarnessAuthSlot{AuthSlotID: "codex-work", Harness: HarnessNameCodex}, "device_code")
+	unavailable := &HarnessUnavailableError{}
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("AuthStart error = %T %[1]v, want HarnessUnavailableError", err)
+	}
+	if unavailable.Reason != "auth_slot_selection_unsupported" || unavailable.StartInvoked || called {
+		t.Fatalf("unavailable = %#v called = %v, want unsupported before provider command", unavailable, called)
+	}
+}
+
+func TestCodexAuthLogoutRejectsUnsupportedNamedSlotBeforeProviderCommand(t *testing.T) {
+	called := false
+	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo", RunAuthCommand: func(ctx context.Context, opts codexExecutorOptions, args []string) (commandRunResult, error) {
+		_ = ctx
+		_ = opts
+		_ = args
+		called = true
+		return commandRunResult{}, nil
+	}})
+
+	_, err := executor.AuthLogout(context.Background(), HarnessAuthSlot{AuthSlotID: "codex-work", Harness: HarnessNameCodex})
+	unavailable := &HarnessUnavailableError{}
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("AuthLogout error = %T %[1]v, want HarnessUnavailableError", err)
+	}
+	if unavailable.Reason != "auth_slot_selection_unsupported" || unavailable.StartInvoked || called {
+		t.Fatalf("unavailable = %#v called = %v, want unsupported before provider command", unavailable, called)
+	}
+}
+
+func TestCodexAuthLogoutInvokesProviderLogoutWhenAuthenticated(t *testing.T) {
+	exitCode := 0
+	var calls []string
+	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo", RunAuthCommand: func(ctx context.Context, opts codexExecutorOptions, args []string) (commandRunResult, error) {
+		_ = ctx
+		_ = opts
+		calls = append(calls, strings.Join(args, " "))
+		return commandRunResult{ExitCode: &exitCode}, nil
+	}})
+
+	status, err := executor.AuthLogout(context.Background(), HarnessAuthSlot{AuthSlotID: "codex-default", Harness: HarnessNameCodex})
+	if err != nil {
+		t.Fatalf("AuthLogout returned error: %v", err)
+	}
+	if got := strings.Join(calls, ","); got != "login status,logout" {
+		t.Fatalf("calls = %q, want login status then logout", got)
+	}
+	if status.Status != HarnessAuthRequired || status.Remediation == nil || status.Remediation.Method != "device_code" || status.AriSecretStorage != HarnessAriSecretStorageNone {
+		t.Fatalf("status = %#v, want provider-owned auth_required remediation", status)
+	}
+}
+
+func TestCodexAuthLogoutIsIdempotentWhenAlreadyLoggedOut(t *testing.T) {
+	statusExitCode := 1
+	var calls []string
+	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo", RunAuthCommand: func(ctx context.Context, opts codexExecutorOptions, args []string) (commandRunResult, error) {
+		_ = ctx
+		_ = opts
+		calls = append(calls, strings.Join(args, " "))
+		return commandRunResult{ExitCode: &statusExitCode}, nil
+	}})
+
+	status, err := executor.AuthLogout(context.Background(), HarnessAuthSlot{AuthSlotID: "codex-default", Harness: HarnessNameCodex})
+	if err != nil {
+		t.Fatalf("AuthLogout returned error: %v", err)
+	}
+	if got := strings.Join(calls, ","); got != "login status" {
+		t.Fatalf("calls = %q, want status only for idempotent logout", got)
+	}
+	if status.Status != HarnessAuthRequired || status.AriSecretStorage != HarnessAriSecretStorageNone {
+		t.Fatalf("status = %#v, want auth_required without provider logout command", status)
+	}
+}
+
+func TestCodexAuthLogoutReportsProviderFailureAfterLogoutCommand(t *testing.T) {
+	statusExitCode := 0
+	logoutExitCode := 42
+	var calls []string
+	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo", RunAuthCommand: func(ctx context.Context, opts codexExecutorOptions, args []string) (commandRunResult, error) {
+		_ = ctx
+		_ = opts
+		call := strings.Join(args, " ")
+		calls = append(calls, call)
+		if call == "logout" {
+			return commandRunResult{ExitCode: &logoutExitCode}, nil
+		}
+		return commandRunResult{ExitCode: &statusExitCode}, nil
+	}})
+
+	_, err := executor.AuthLogout(context.Background(), HarnessAuthSlot{AuthSlotID: "codex-default", Harness: HarnessNameCodex})
+	unavailable := &HarnessUnavailableError{}
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("AuthLogout error = %T %[1]v, want HarnessUnavailableError", err)
+	}
+	if got := strings.Join(calls, ","); got != "login status,logout" {
+		t.Fatalf("calls = %q, want status then failed logout", got)
+	}
+	if unavailable.Reason != "auth_logout_failed" || !unavailable.StartInvoked {
+		t.Fatalf("unavailable = %#v, want failed provider logout after invocation", unavailable)
+	}
+}
+
+func TestCodexAuthStartRejectsUnsupportedMethodBeforeProviderCommand(t *testing.T) {
+	called := false
+	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo", RunAuthCommand: func(ctx context.Context, opts codexExecutorOptions, args []string) (commandRunResult, error) {
+		_ = ctx
+		_ = opts
+		_ = args
+		called = true
+		return commandRunResult{}, nil
+	}})
+
+	_, err := executor.AuthStart(context.Background(), HarnessAuthSlot{AuthSlotID: "codex-default", Harness: HarnessNameCodex}, "sso")
+	unavailable := &HarnessUnavailableError{}
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("AuthStart error = %T %[1]v, want HarnessUnavailableError", err)
+	}
+	if unavailable.Reason != "auth_method_unsupported" || unavailable.StartInvoked || called {
+		t.Fatalf("unavailable = %#v called = %v, want unsupported method before provider command", unavailable, called)
+	}
+}
+
+func TestCodexAuthStartReturnsBrowserLoginClientHandoff(t *testing.T) {
+	called := false
+	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo", RunAuthCommand: func(ctx context.Context, opts codexExecutorOptions, args []string) (commandRunResult, error) {
+		_ = ctx
+		_ = opts
+		_ = args
+		called = true
+		return commandRunResult{}, nil
+	}})
+
+	status, err := executor.AuthStart(context.Background(), HarnessAuthSlot{AuthSlotID: "codex-default", Harness: HarnessNameCodex}, "browser")
+	if err != nil {
+		t.Fatalf("AuthStart returned error: %v", err)
+	}
+	if status.Status != HarnessAuthRequired || status.Remediation == nil || status.Remediation.Method != "client_provider_login" || called {
+		t.Fatalf("status = %#v called = %v, want client-side provider login handoff", status, called)
+	}
+}
+
+func TestCodexAuthStartReturnsProviderOwnedAPIKeyGuidance(t *testing.T) {
+	called := false
+	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo", RunAuthCommand: func(ctx context.Context, opts codexExecutorOptions, args []string) (commandRunResult, error) {
+		_ = ctx
+		_ = opts
+		_ = args
+		called = true
+		return commandRunResult{}, nil
+	}})
+
+	status, err := executor.AuthStart(context.Background(), HarnessAuthSlot{AuthSlotID: "codex-default", Harness: HarnessNameCodex}, "api_key")
+	if err != nil {
+		t.Fatalf("AuthStart returned error: %v", err)
+	}
+	if status.Status != HarnessAuthRequired || status.Remediation == nil || status.Remediation.Method != "api_key_provider_setup" || called {
+		t.Fatalf("status = %#v called = %v, want provider-owned API key guidance without command", status, called)
 	}
 }
 
