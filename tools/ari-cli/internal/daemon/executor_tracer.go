@@ -30,6 +30,7 @@ type AgentRun struct {
 	TaskID          string                `json:"task_id"`
 	Executor        string                `json:"executor"`
 	ProviderRunID   string                `json:"provider_run_id"`
+	AuthSlotID      string                `json:"auth_slot_id,omitempty"`
 	Status          string                `json:"status"`
 	ContextPacketID string                `json:"context_packet_id"`
 	StartedAt       string                `json:"started_at"`
@@ -55,6 +56,8 @@ type AgentProfile struct {
 	Harness         string                 `json:"harness"`
 	Model           string                 `json:"model,omitempty"`
 	Prompt          string                 `json:"prompt,omitempty"`
+	AuthSlotID      string                 `json:"auth_slot_id,omitempty"`
+	AuthPool        HarnessAuthPool        `json:"auth_pool,omitempty"`
 	InvocationClass HarnessInvocationClass `json:"invocation_class"`
 }
 
@@ -146,6 +149,36 @@ type TelemetryRollupRequest struct {
 
 type TelemetryRollupResponse struct {
 	Rollups []TelemetryRollup `json:"rollups"`
+}
+
+type HarnessAuthStatusRequest struct {
+	WorkspaceID string            `json:"workspace_id,omitempty"`
+	Slots       []HarnessAuthSlot `json:"slots,omitempty"`
+}
+
+type HarnessAuthStatusResponse struct {
+	Statuses []HarnessAuthStatus `json:"statuses"`
+}
+
+type AuthSlotListRequest struct {
+	Harness string `json:"harness,omitempty"`
+}
+
+type AuthSlotGetRequest struct {
+	AuthSlotID string `json:"auth_slot_id"`
+}
+
+type AuthSlotResponse struct {
+	AuthSlotID      string `json:"auth_slot_id"`
+	Harness         string `json:"harness"`
+	Label           string `json:"label"`
+	ProviderLabel   string `json:"provider_label,omitempty"`
+	CredentialOwner string `json:"credential_owner"`
+	Status          string `json:"status"`
+}
+
+type AuthSlotListResponse struct {
+	Slots []AuthSlotResponse `json:"slots"`
 }
 
 type TelemetryRollupGroup struct {
@@ -376,7 +409,134 @@ func (d *Daemon) registerExecutorMethods(registry *rpc.MethodRegistry, store *gl
 	}); err != nil {
 		return fmt.Errorf("register telemetry.rollup: %w", err)
 	}
+	if err := rpc.RegisterMethod(registry, rpc.Method[HarnessAuthStatusRequest, HarnessAuthStatusResponse]{
+		Name:        "auth.status",
+		Description: "Summarize provider-owned harness auth readiness without reading secrets",
+		Handler: func(ctx context.Context, req HarnessAuthStatusRequest) (HarnessAuthStatusResponse, error) {
+			return d.harnessAuthStatus(ctx, store, req)
+		},
+	}); err != nil {
+		return fmt.Errorf("register auth.status: %w", err)
+	}
+	if err := rpc.RegisterMethod(registry, rpc.Method[AuthSlotListRequest, AuthSlotListResponse]{
+		Name:        "auth.slot.list",
+		Description: "List Ari auth slot metadata without credential sources or secrets",
+		Handler: func(ctx context.Context, req AuthSlotListRequest) (AuthSlotListResponse, error) {
+			return listAuthSlots(ctx, store, req)
+		},
+	}); err != nil {
+		return fmt.Errorf("register auth.slot.list: %w", err)
+	}
+	if err := rpc.RegisterMethod(registry, rpc.Method[AuthSlotGetRequest, AuthSlotResponse]{
+		Name:        "auth.slot.get",
+		Description: "Get Ari auth slot metadata without credential sources or secrets",
+		Handler: func(ctx context.Context, req AuthSlotGetRequest) (AuthSlotResponse, error) {
+			return getAuthSlot(ctx, store, req)
+		},
+	}); err != nil {
+		return fmt.Errorf("register auth.slot.get: %w", err)
+	}
 	return nil
+}
+
+type harnessAuthStatuser interface {
+	AuthStatus(context.Context, HarnessAuthSlot) (HarnessAuthStatus, error)
+}
+
+func (d *Daemon) harnessAuthStatus(ctx context.Context, store *globaldb.Store, req HarnessAuthStatusRequest) (HarnessAuthStatusResponse, error) {
+	primaryFolder := ""
+	if strings.TrimSpace(req.WorkspaceID) != "" {
+		var err error
+		primaryFolder, err = lookupPrimaryFolder(ctx, store, req.WorkspaceID)
+		if err != nil {
+			return HarnessAuthStatusResponse{}, mapWorkspaceStoreError(err, req.WorkspaceID)
+		}
+	}
+	slots := req.Slots
+	storedSlots, err := store.ListAuthSlots(ctx, "")
+	if err != nil {
+		return HarnessAuthStatusResponse{}, err
+	}
+	storedByID := make(map[string]HarnessAuthSlot, len(storedSlots))
+	for _, stored := range storedSlots {
+		storedByID[stored.AuthSlotID] = harnessAuthSlotFromGlobal(stored)
+	}
+	if len(slots) == 0 {
+		for _, stored := range storedSlots {
+			slots = append(slots, harnessAuthSlotFromGlobal(stored))
+		}
+	} else {
+		validated := make([]HarnessAuthSlot, 0, len(slots))
+		for _, requested := range slots {
+			stored, ok := storedByID[strings.TrimSpace(requested.AuthSlotID)]
+			if !ok {
+				return HarnessAuthStatusResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "auth slot is not configured", map[string]any{"reason": "unknown_auth_slot", "auth_slot_id": strings.TrimSpace(requested.AuthSlotID)})
+			}
+			validated = append(validated, stored)
+		}
+		slots = validated
+	}
+	if len(slots) == 0 {
+		return HarnessAuthStatusResponse{Statuses: []HarnessAuthStatus{}}, nil
+	}
+	statuses := make([]HarnessAuthStatus, 0, len(slots))
+	for _, slot := range slots {
+		harness := strings.TrimSpace(slot.Harness)
+		factory, ok := d.harnessRegistry.Resolve(harness)
+		if !ok {
+			statuses = append(statuses, HarnessAuthStatus{Harness: harness, AuthSlotID: strings.TrimSpace(slot.AuthSlotID), Status: HarnessAuthUnknown, AriSecretStorage: HarnessAriSecretStorageNone})
+			continue
+		}
+		executor, err := factory(AgentRunStartRequest{Executor: harness}, primaryFolder, d.appendExecutorItems)
+		if err != nil {
+			statuses = append(statuses, NewHarnessAuthRequired(harness, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, SecretOwnedBy: harness}))
+			continue
+		}
+		statuser, ok := executor.(harnessAuthStatuser)
+		if !ok {
+			statuses = append(statuses, HarnessAuthStatus{Harness: harness, AuthSlotID: strings.TrimSpace(slot.AuthSlotID), Status: HarnessAuthUnknown, AriSecretStorage: HarnessAriSecretStorageNone})
+			continue
+		}
+		status, err := statuser.AuthStatus(ctx, slot)
+		if err != nil {
+			var unavailable *HarnessUnavailableError
+			if errors.As(err, &unavailable) {
+				statuses = append(statuses, HarnessAuthStatus{Harness: harness, AuthSlotID: strings.TrimSpace(slot.AuthSlotID), Status: HarnessAuthNotInstalled, AriSecretStorage: HarnessAriSecretStorageNone})
+				continue
+			}
+			return HarnessAuthStatusResponse{}, err
+		}
+		statuses = append(statuses, status)
+	}
+	return HarnessAuthStatusResponse{Statuses: statuses}, nil
+}
+
+func listAuthSlots(ctx context.Context, store *globaldb.Store, req AuthSlotListRequest) (AuthSlotListResponse, error) {
+	slots, err := store.ListAuthSlots(ctx, req.Harness)
+	if err != nil {
+		return AuthSlotListResponse{}, err
+	}
+	resp := AuthSlotListResponse{Slots: make([]AuthSlotResponse, 0, len(slots))}
+	for _, slot := range slots {
+		resp.Slots = append(resp.Slots, authSlotResponseFromGlobal(slot))
+	}
+	return resp, nil
+}
+
+func getAuthSlot(ctx context.Context, store *globaldb.Store, req AuthSlotGetRequest) (AuthSlotResponse, error) {
+	slot, err := store.GetAuthSlot(ctx, req.AuthSlotID)
+	if err != nil {
+		return AuthSlotResponse{}, mapWorkspaceStoreError(err, req.AuthSlotID)
+	}
+	return authSlotResponseFromGlobal(slot), nil
+}
+
+func authSlotResponseFromGlobal(slot globaldb.AuthSlot) AuthSlotResponse {
+	return AuthSlotResponse{AuthSlotID: slot.AuthSlotID, Harness: slot.Harness, Label: slot.Label, ProviderLabel: slot.ProviderLabel, CredentialOwner: slot.CredentialOwner, Status: slot.Status}
+}
+
+func harnessAuthSlotFromGlobal(slot globaldb.AuthSlot) HarnessAuthSlot {
+	return HarnessAuthSlot{AuthSlotID: slot.AuthSlotID, Harness: slot.Harness, Label: slot.Label, ProviderLabel: slot.ProviderLabel, CredentialOwner: HarnessCredentialOwner(slot.CredentialOwner), Status: HarnessAuthState(slot.Status)}
 }
 
 func createStoredAgentProfile(ctx context.Context, store *globaldb.Store, req AgentProfileCreateRequest) (AgentProfileResponse, error) {
@@ -637,6 +797,13 @@ func (d *Daemon) startAgentRun(ctx context.Context, store *globaldb.Store, req A
 	if err != nil {
 		return AgentRunStartResponse{}, mapHarnessRunError(err)
 	}
+	if len(profile) > 0 {
+		selected, err := resolveProfileAuthSlot(ctx, store, executor, req.Executor, profile[0])
+		if err != nil {
+			return AgentRunStartResponse{}, mapHarnessRunError(err)
+		}
+		profile[0].AuthSlotID = selected
+	}
 	if _, err := store.GetSession(ctx, req.Packet.WorkspaceID); err != nil {
 		return AgentRunStartResponse{}, mapWorkspaceStoreError(err, req.Packet.WorkspaceID)
 	}
@@ -660,6 +827,51 @@ func (d *Daemon) startAgentRun(ctx context.Context, store *globaldb.Store, req A
 		return AgentRunStartResponse{}, err
 	}
 	return AgentRunStartResponse{Run: run, Items: items}, nil
+}
+
+func resolveProfileAuthSlot(ctx context.Context, store *globaldb.Store, executor Executor, harness string, profile AgentProfile) (string, error) {
+	if strings.TrimSpace(profile.AuthSlotID) == "" && len(profile.AuthPool.SlotIDs) == 0 {
+		return "", nil
+	}
+	statuser, ok := executor.(harnessAuthStatuser)
+	if !ok {
+		return "", &HarnessUnavailableError{Harness: harness, Reason: "auth_slot_selection_unsupported", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
+	}
+	slotIDs := []string{}
+	if strings.TrimSpace(profile.AuthSlotID) != "" {
+		slotIDs = append(slotIDs, strings.TrimSpace(profile.AuthSlotID))
+	} else {
+		for _, slotID := range profile.AuthPool.SlotIDs {
+			if strings.TrimSpace(slotID) != "" {
+				slotIDs = append(slotIDs, strings.TrimSpace(slotID))
+			}
+		}
+	}
+	slots := make([]HarnessAuthSlot, 0, len(slotIDs))
+	for _, slotID := range slotIDs {
+		stored, err := store.GetAuthSlot(ctx, slotID)
+		if err != nil {
+			if errors.Is(err, globaldb.ErrNotFound) {
+				return "", &HarnessUnavailableError{Harness: harness, Reason: "unknown_auth_slot", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
+			}
+			return "", err
+		}
+		slot := harnessAuthSlotFromGlobal(stored)
+		if strings.TrimSpace(slot.Harness) != strings.TrimSpace(harness) {
+			return "", &HarnessUnavailableError{Harness: harness, Reason: "auth_slot_harness_mismatch", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
+		}
+		status, err := statuser.AuthStatus(ctx, slot)
+		if err != nil {
+			return "", err
+		}
+		slot.Status = status.Status
+		slots = append(slots, slot)
+	}
+	selected, _, err := ResolveHarnessAuthSlot(HarnessAuthSelection{ProfileSlotID: profile.AuthSlotID, ProfilePool: profile.AuthPool, Harness: harness}, slots)
+	if err != nil {
+		return "", &HarnessUnavailableError{Harness: harness, Reason: "auth_slot_not_ready", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
+	}
+	return selected.AuthSlotID, nil
 }
 
 func mapHarnessRunError(err error) error {
@@ -734,6 +946,7 @@ func StartExecutorRunResult(ctx context.Context, executor Executor, packet Conte
 		}
 		call.Model = strings.TrimSpace(profile[0].Model)
 		call.Prompt = strings.TrimSpace(profile[0].Prompt)
+		call.AuthSlotID = strings.TrimSpace(profile[0].AuthSlotID)
 		if profile[0].InvocationClass != "" {
 			call.InvocationClass = profile[0].InvocationClass
 		}

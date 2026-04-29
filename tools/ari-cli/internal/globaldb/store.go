@@ -22,271 +22,6 @@ var (
 )
 
 const (
-	upsertMetaQuery = `INSERT INTO daemon_meta (key, value)
-VALUES (?, ?)
-ON CONFLICT(key) DO UPDATE SET
-	value = excluded.value`
-
-	metaByKeyQuery = `SELECT value FROM daemon_meta WHERE key = ?`
-
-	compareAndSwapMetaQuery = `UPDATE daemon_meta
-SET value = ?
-WHERE key = ?
-  AND value = ?`
-
-	insertSessionQuery = `INSERT INTO workspaces (
-		workspace_id, name, status, vcs_preference, origin_root, cleanup_policy, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-
-	sessionByIDQuery = `SELECT
-		workspace_id,
-		name,
-	status,
-	vcs_preference,
-	origin_root,
-	cleanup_policy,
-	created_at,
-	updated_at
-FROM workspaces
-WHERE workspace_id = ?`
-
-	sessionByNameQuery = `SELECT
-		workspace_id,
-	name,
-	status,
-	vcs_preference,
-	origin_root,
-	cleanup_policy,
-	created_at,
-	updated_at
-FROM workspaces
-WHERE name = ?`
-
-	listSessionsQuery = `SELECT
-		workspace_id,
-	name,
-	status,
-	vcs_preference,
-	origin_root,
-	cleanup_policy,
-	created_at,
-	updated_at
-FROM workspaces
-ORDER BY created_at DESC, workspace_id ASC`
-
-	updateSessionStatusQuery = `UPDATE workspaces
-SET status = ?, updated_at = ?
-WHERE workspace_id = ?`
-
-	deleteSessionQuery = `DELETE FROM workspaces WHERE workspace_id = ?`
-
-	insertSessionFolderQuery = `INSERT INTO workspace_folders (
-		workspace_id, folder_path, vcs_type, is_primary, added_at
-) VALUES (?, ?, ?, ?, ?)`
-
-	deleteSessionFolderQuery = `DELETE FROM workspace_folders
-WHERE workspace_id = ?
-  AND folder_path = ?
-  AND (SELECT COUNT(*) FROM workspace_folders WHERE workspace_id = ?) > 1`
-
-	promotePrimaryFolderQuery = `UPDATE workspace_folders
-SET is_primary = CASE
-	WHEN folder_path = ? THEN 1
-	ELSE 0
-END
-WHERE workspace_id = ?`
-
-	listSessionFoldersQuery = `SELECT
-		workspace_id,
-		folder_path,
-	vcs_type,
-	is_primary,
-	added_at
-FROM workspace_folders
-WHERE workspace_id = ?
-ORDER BY added_at ASC, folder_path ASC`
-
-	workspaceOwnersByFolderPathQuery = `SELECT
-		workspace_folders.workspace_id,
-		workspaces.status
-FROM workspace_folders
-JOIN workspaces ON workspaces.workspace_id = workspace_folders.workspace_id
-WHERE workspace_folders.folder_path = ?
-ORDER BY workspace_folders.workspace_id ASC`
-
-	insertCommandQuery = `INSERT INTO commands (
-		command_id,
-		workspace_id,
-	command,
-	args,
-	status,
-	exit_code,
-	started_at,
-	finished_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-
-	commandByIDQuery = `SELECT
-		command_id,
-		workspace_id,
-	command,
-	args,
-	status,
-	exit_code,
-	started_at,
-	finished_at
-FROM commands
-WHERE workspace_id = ? AND command_id = ?`
-
-	listCommandsBySessionQuery = `SELECT
-		command_id,
-		workspace_id,
-	command,
-	args,
-	status,
-	exit_code,
-	started_at,
-	finished_at
-FROM commands
-WHERE workspace_id = ?
-ORDER BY started_at DESC, command_id ASC`
-
-	updateCommandStatusQuery = `UPDATE commands
-SET status = ?,
-	exit_code = ?,
-	finished_at = ?
-WHERE workspace_id = ? AND command_id = ?`
-
-	markRunningCommandsLostQuery = `UPDATE commands
-SET status = 'lost'
-WHERE status = 'running'`
-
-	insertWorkspaceCommandDefinitionQuery = `INSERT INTO workspace_command_definitions (
-		command_id,
-		workspace_id,
-		name,
-		command,
-		args,
-		created_at,
-		updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?)`
-
-	workspaceCommandDefinitionByIDQuery = `SELECT
-		command_id,
-		workspace_id,
-		name,
-		command,
-		args,
-		created_at,
-		updated_at
-FROM workspace_command_definitions
-WHERE workspace_id = ? AND command_id = ?`
-
-	workspaceCommandDefinitionByNameQuery = `SELECT
-		command_id,
-		workspace_id,
-		name,
-		command,
-		args,
-		created_at,
-		updated_at
-FROM workspace_command_definitions
-WHERE workspace_id = ? AND name = ?`
-
-	listWorkspaceCommandDefinitionsBySessionQuery = `SELECT
-		command_id,
-		workspace_id,
-		name,
-		command,
-		args,
-		created_at,
-		updated_at
-FROM workspace_command_definitions
-WHERE workspace_id = ?
-ORDER BY created_at DESC, command_id ASC`
-
-	deleteWorkspaceCommandDefinitionByIDQuery = `DELETE FROM workspace_command_definitions
-WHERE workspace_id = ? AND command_id = ?`
-
-	insertAgentQuery = `INSERT INTO agents (
-		agent_id,
-		workspace_id,
-	name,
-	command,
-	args,
-	status,
-	exit_code,
-	started_at,
-	stopped_at,
-	harness,
-	harness_resumable_id,
-	harness_metadata,
-	invocation_class
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-
-	agentByIDQuery = `SELECT
-		agent_id,
-		workspace_id,
-	name,
-	command,
-	args,
-	status,
-	exit_code,
-	started_at,
-	stopped_at,
-	harness,
-	harness_resumable_id,
-	harness_metadata,
-	invocation_class
-FROM agents
-WHERE workspace_id = ? AND agent_id = ?`
-
-	agentByNameQuery = `SELECT
-		agent_id,
-		workspace_id,
-	name,
-	command,
-	args,
-	status,
-	exit_code,
-	started_at,
-	stopped_at,
-	harness,
-	harness_resumable_id,
-	harness_metadata,
-	invocation_class
-FROM agents
-WHERE workspace_id = ? AND name = ?`
-
-	listAgentsBySessionQuery = `SELECT
-		agent_id,
-		workspace_id,
-	name,
-	command,
-	args,
-	status,
-	exit_code,
-	started_at,
-	stopped_at,
-	harness,
-	harness_resumable_id,
-	harness_metadata,
-	invocation_class
-FROM agents
-WHERE workspace_id = ?
-ORDER BY started_at DESC, agent_id ASC`
-
-	updateAgentStatusQuery = `UPDATE agents
-SET status = ?,
-	exit_code = ?,
-	stopped_at = ?
-WHERE workspace_id = ? AND agent_id = ?`
-
-	markRunningAgentsLostQuery = `UPDATE agents
-SET status = 'lost'
-WHERE status = 'running'`
-)
-
-const (
 	statusActive    = "active"
 	statusSuspended = "suspended"
 	statusClosed    = "closed"
@@ -415,76 +150,8 @@ type UpdateAgentStatusParams struct {
 	StoppedAt   *string
 }
 
-type Rows interface {
-	Next() bool
-	Scan(dest ...any) error
-	Err() error
-	Close() error
-}
-
-type DB interface {
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-	QueryContext(ctx context.Context, query string, args ...any) (Rows, error)
-	WithImmediateTransaction(ctx context.Context, fn func(DB) error) error
-}
-
-type sqlDBAdapter struct {
-	db *sql.DB
-}
-
-func (a *sqlDBAdapter) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
-	return a.db.ExecContext(ctx, query, args...)
-}
-
-func (a *sqlDBAdapter) QueryContext(ctx context.Context, query string, args ...any) (Rows, error) {
-	return a.db.QueryContext(ctx, query, args...)
-}
-
-func (a *sqlDBAdapter) WithImmediateTransaction(ctx context.Context, fn func(DB) error) error {
-	conn, err := a.db.Conn(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = conn.Close()
-	}()
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return err
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_, _ = conn.ExecContext(ctx, "ROLLBACK")
-		}
-	}()
-	if err := fn(&sqlConnAdapter{conn: conn}); err != nil {
-		return err
-	}
-	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
-		return err
-	}
-	committed = true
-	return nil
-}
-
-type sqlConnAdapter struct {
-	conn *sql.Conn
-}
-
-func (a *sqlConnAdapter) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
-	return a.conn.ExecContext(ctx, query, args...)
-}
-
-func (a *sqlConnAdapter) QueryContext(ctx context.Context, query string, args ...any) (Rows, error) {
-	return a.conn.QueryContext(ctx, query, args...)
-}
-
-func (a *sqlConnAdapter) WithImmediateTransaction(ctx context.Context, fn func(DB) error) error {
-	return fn(a)
-}
-
 type Store struct {
-	db   DB
+	db   *sql.DB
 	sqlc *dbsqlc.Queries
 }
 
@@ -502,6 +169,18 @@ type AgentProfile struct {
 }
 
 const DefaultHelperProfileName = "helper"
+
+type AuthSlot struct {
+	AuthSlotID      string
+	Harness         string
+	Label           string
+	ProviderLabel   string
+	CredentialOwner string
+	Status          string
+	MetadataJSON    string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
 
 type FinalResponse struct {
 	FinalResponseID   string
@@ -584,23 +263,11 @@ type AgentRunTelemetryRollup struct {
 	OrphanState   string
 }
 
-func NewStore(db DB) (*Store, error) {
-	if db == nil {
-		return nil, fmt.Errorf("%w: db is required", ErrInvalidInput)
-	}
-	return &Store{db: db}, nil
-}
-
 func NewSQLStore(db *sql.DB) (*Store, error) {
 	if db == nil {
 		return nil, fmt.Errorf("%w: db is required", ErrInvalidInput)
 	}
-	store, err := NewStore(&sqlDBAdapter{db: db})
-	if err != nil {
-		return nil, err
-	}
-	store.sqlc = dbsqlc.New(db)
-	return store, nil
+	return &Store{db: db, sqlc: dbsqlc.New(db)}, nil
 }
 
 func (s *Store) SetMeta(ctx context.Context, key, value string) error {
@@ -608,7 +275,7 @@ func (s *Store) SetMeta(ctx context.Context, key, value string) error {
 		return fmt.Errorf("%w: key is required", ErrInvalidInput)
 	}
 
-	if _, err := s.db.ExecContext(ctx, upsertMetaQuery, key, value); err != nil {
+	if err := s.sqlcQueries().UpsertMeta(ctx, dbsqlc.UpsertMetaParams{Key: key, Value: value}); err != nil {
 		return fmt.Errorf("set meta %q: %w", key, err)
 	}
 
@@ -620,15 +287,15 @@ func (s *Store) GetMeta(ctx context.Context, key string) (string, error) {
 		return "", fmt.Errorf("%w: key is required", ErrInvalidInput)
 	}
 
-	values, err := queryMetaValues(ctx, s.db, metaByKeyQuery, key)
+	value, err := s.sqlcQueries().GetMetaValue(ctx, dbsqlc.GetMetaValueParams{Key: key})
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", fmt.Errorf("%w: key %q", ErrNotFound, key)
+		}
 		return "", err
 	}
-	if len(values) == 0 {
-		return "", fmt.Errorf("%w: key %q", ErrNotFound, key)
-	}
 
-	return values[0], nil
+	return value, nil
 }
 
 func (s *Store) CompareAndSwapMeta(ctx context.Context, key, oldValue, newValue string) (bool, error) {
@@ -636,13 +303,9 @@ func (s *Store) CompareAndSwapMeta(ctx context.Context, key, oldValue, newValue 
 		return false, fmt.Errorf("%w: key is required", ErrInvalidInput)
 	}
 
-	result, err := s.db.ExecContext(ctx, compareAndSwapMetaQuery, newValue, key, oldValue)
+	changed, err := s.sqlcQueries().CompareAndSwapMeta(ctx, dbsqlc.CompareAndSwapMetaParams{Value: newValue, Key: key, Value_2: oldValue})
 	if err != nil {
 		return false, fmt.Errorf("compare and swap meta %q: %w", key, err)
-	}
-	changed, err := result.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("compare and swap meta %q: rows affected: %w", key, err)
 	}
 	return changed == 1, nil
 }
@@ -679,7 +342,7 @@ func (s *Store) UpsertAgentProfile(ctx context.Context, profile AgentProfile) er
 		profile.CreatedAt = now
 	}
 	profile.UpdatedAt = now
-	if err := s.sqlcQueries().UpsertAgentProfile(ctx, dbsqlc.UpsertAgentProfileParams{ProfileID: profile.ProfileID, WorkspaceID: sqlNullString(profile.WorkspaceID), Name: profile.Name, Harness: sqlNullString(profile.Harness), Model: sqlNullString(profile.Model), Prompt: sqlNullString(profile.Prompt), InvocationClass: sqlNullString(profile.InvocationClass), DefaultsJson: profile.DefaultsJSON, CreatedAt: profile.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: profile.UpdatedAt.Format(time.RFC3339Nano)}); err != nil {
+	if err := s.sqlcQueries().UpsertAgentProfile(ctx, dbsqlc.UpsertAgentProfileParams{ProfileID: profile.ProfileID, WorkspaceID: optionalString(profile.WorkspaceID), Name: profile.Name, Harness: optionalString(profile.Harness), Model: optionalString(profile.Model), Prompt: optionalString(profile.Prompt), InvocationClass: optionalString(profile.InvocationClass), DefaultsJson: profile.DefaultsJSON, CreatedAt: profile.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: profile.UpdatedAt.Format(time.RFC3339Nano)}); err != nil {
 		return fmt.Errorf("upsert agent profile %q: %w", profile.Name, err)
 	}
 	return nil
@@ -727,7 +390,7 @@ func (s *Store) GetDefaultHelperProfile(ctx context.Context, workspaceID string)
 
 func (s *Store) getExactAgentProfile(ctx context.Context, workspaceID, name string) (AgentProfile, error) {
 	if strings.TrimSpace(workspaceID) != "" {
-		profile, err := s.sqlcQueries().GetWorkspaceAgentProfileByName(ctx, dbsqlc.GetWorkspaceAgentProfileByNameParams{WorkspaceID: sqlNullString(workspaceID), Name: name})
+		profile, err := s.sqlcQueries().GetWorkspaceAgentProfileByName(ctx, dbsqlc.GetWorkspaceAgentProfileByNameParams{WorkspaceID: optionalString(workspaceID), Name: name})
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return AgentProfile{}, ErrNotFound
@@ -736,7 +399,7 @@ func (s *Store) getExactAgentProfile(ctx context.Context, workspaceID, name stri
 		}
 		return agentProfileFromSQLC(profile), nil
 	}
-	profile, err := s.sqlcQueries().GetGlobalAgentProfileByName(ctx, name)
+	profile, err := s.sqlcQueries().GetGlobalAgentProfileByName(ctx, dbsqlc.GetGlobalAgentProfileByNameParams{Name: name})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return AgentProfile{}, ErrNotFound
@@ -753,7 +416,7 @@ func (s *Store) GetAgentProfile(ctx context.Context, workspaceID, name string) (
 		return AgentProfile{}, fmt.Errorf("%w: profile name is required", ErrInvalidInput)
 	}
 	if workspaceID != "" {
-		profile, err := s.sqlcQueries().GetWorkspaceAgentProfileByName(ctx, dbsqlc.GetWorkspaceAgentProfileByNameParams{WorkspaceID: sqlNullString(workspaceID), Name: name})
+		profile, err := s.sqlcQueries().GetWorkspaceAgentProfileByName(ctx, dbsqlc.GetWorkspaceAgentProfileByNameParams{WorkspaceID: optionalString(workspaceID), Name: name})
 		if err == nil {
 			return agentProfileFromSQLC(profile), nil
 		}
@@ -761,7 +424,7 @@ func (s *Store) GetAgentProfile(ctx context.Context, workspaceID, name string) (
 			return AgentProfile{}, fmt.Errorf("query workspace agent profile: %w", err)
 		}
 	}
-	profile, err := s.sqlcQueries().GetGlobalAgentProfileByName(ctx, name)
+	profile, err := s.sqlcQueries().GetGlobalAgentProfileByName(ctx, dbsqlc.GetGlobalAgentProfileByNameParams{Name: name})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return AgentProfile{}, ErrNotFound
@@ -778,7 +441,7 @@ func (s *Store) ListAgentProfiles(ctx context.Context, workspaceID string) ([]Ag
 	if workspaceID == "" {
 		rows, err = s.sqlcQueries().ListGlobalAgentProfiles(ctx)
 	} else {
-		rows, err = s.sqlcQueries().ListWorkspaceAgentProfiles(ctx, sqlNullString(workspaceID))
+		rows, err = s.sqlcQueries().ListWorkspaceAgentProfiles(ctx, dbsqlc.ListWorkspaceAgentProfilesParams{WorkspaceID: optionalString(workspaceID)})
 	}
 	if err != nil {
 		return nil, fmt.Errorf("list agent profiles: %w", err)
@@ -788,6 +451,132 @@ func (s *Store) ListAgentProfiles(ctx context.Context, workspaceID string) ([]Ag
 		profiles = append(profiles, agentProfileFromSQLC(row))
 	}
 	return profiles, nil
+}
+
+func (s *Store) UpsertAuthSlot(ctx context.Context, slot AuthSlot) error {
+	slot.AuthSlotID = strings.TrimSpace(slot.AuthSlotID)
+	slot.Harness = strings.TrimSpace(slot.Harness)
+	slot.Label = strings.TrimSpace(slot.Label)
+	slot.ProviderLabel = strings.TrimSpace(slot.ProviderLabel)
+	slot.CredentialOwner = strings.TrimSpace(slot.CredentialOwner)
+	slot.Status = strings.TrimSpace(slot.Status)
+	if slot.AuthSlotID == "" {
+		return fmt.Errorf("%w: auth slot id is required", ErrInvalidInput)
+	}
+	if slot.Harness == "" {
+		return fmt.Errorf("%w: auth slot harness is required", ErrInvalidInput)
+	}
+	if slot.Label == "" {
+		return fmt.Errorf("%w: auth slot label is required", ErrInvalidInput)
+	}
+	if slot.CredentialOwner == "" {
+		slot.CredentialOwner = "provider"
+	}
+	if slot.CredentialOwner != "provider" {
+		return fmt.Errorf("%w: auth slot credential owner must be provider", ErrInvalidInput)
+	}
+	if slot.Status == "" {
+		slot.Status = "unknown"
+	}
+	if !validAuthSlotStatus(slot.Status) {
+		return fmt.Errorf("%w: invalid auth slot status %q", ErrInvalidInput, slot.Status)
+	}
+	if strings.TrimSpace(slot.MetadataJSON) == "" {
+		slot.MetadataJSON = "{}"
+	}
+	if !json.Valid([]byte(slot.MetadataJSON)) {
+		return fmt.Errorf("%w: auth slot metadata json is invalid", ErrInvalidInput)
+	}
+	if authSlotMetadataContainsSourceFields(slot.MetadataJSON) {
+		return fmt.Errorf("%w: auth slot metadata must not include credential source fields", ErrInvalidInput)
+	}
+	now := time.Now().UTC()
+	if existing, err := s.GetAuthSlot(ctx, slot.AuthSlotID); err == nil && !existing.CreatedAt.IsZero() {
+		slot.CreatedAt = existing.CreatedAt
+	} else if err != nil && !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	if slot.CreatedAt.IsZero() {
+		slot.CreatedAt = now
+	}
+	slot.UpdatedAt = now
+	if err := s.sqlcQueries().UpsertAuthSlot(ctx, dbsqlc.UpsertAuthSlotParams{AuthSlotID: slot.AuthSlotID, Harness: slot.Harness, Label: slot.Label, ProviderLabel: optionalString(slot.ProviderLabel), CredentialOwner: slot.CredentialOwner, Status: slot.Status, MetadataJson: slot.MetadataJSON, CreatedAt: slot.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: slot.UpdatedAt.Format(time.RFC3339Nano)}); err != nil {
+		return fmt.Errorf("upsert auth slot %q: %w", slot.AuthSlotID, err)
+	}
+	return nil
+}
+
+func (s *Store) GetAuthSlot(ctx context.Context, authSlotID string) (AuthSlot, error) {
+	authSlotID = strings.TrimSpace(authSlotID)
+	if authSlotID == "" {
+		return AuthSlot{}, fmt.Errorf("%w: auth slot id is required", ErrInvalidInput)
+	}
+	row, err := s.sqlcQueries().GetAuthSlot(ctx, dbsqlc.GetAuthSlotParams{AuthSlotID: authSlotID})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return AuthSlot{}, ErrNotFound
+		}
+		return AuthSlot{}, fmt.Errorf("query auth slot %q: %w", authSlotID, err)
+	}
+	return authSlotFromSQLC(row), nil
+}
+
+func (s *Store) ListAuthSlots(ctx context.Context, harness string) ([]AuthSlot, error) {
+	harness = strings.TrimSpace(harness)
+	var rows []dbsqlc.AuthSlot
+	var err error
+	if harness == "" {
+		rows, err = s.sqlcQueries().ListAuthSlots(ctx)
+	} else {
+		rows, err = s.sqlcQueries().ListAuthSlotsByHarness(ctx, dbsqlc.ListAuthSlotsByHarnessParams{Harness: harness})
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list auth slots: %w", err)
+	}
+	slots := make([]AuthSlot, 0, len(rows))
+	for _, row := range rows {
+		slots = append(slots, authSlotFromSQLC(row))
+	}
+	return slots, nil
+}
+
+func validAuthSlotStatus(status string) bool {
+	switch status {
+	case "authenticated", "auth_required", "auth_in_progress", "auth_failed", "cancelled", "unknown", "not_installed":
+		return true
+	default:
+		return false
+	}
+}
+
+func authSlotMetadataContainsSourceFields(raw string) bool {
+	var metadata any
+	if err := json.Unmarshal([]byte(raw), &metadata); err != nil {
+		return true
+	}
+	return authSlotMetadataValueContainsSourceFields(metadata)
+}
+
+func authSlotMetadataValueContainsSourceFields(value any) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			normalized := strings.ToLower(strings.TrimSpace(key))
+			if normalized == "source" || normalized == "source_ref" || normalized == "credential_source" || normalized == "credential_source_ref" {
+				return true
+			}
+			if authSlotMetadataValueContainsSourceFields(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if authSlotMetadataValueContainsSourceFields(child) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *Store) UpsertFinalResponse(ctx context.Context, response FinalResponse) error {
@@ -827,11 +616,11 @@ func (s *Store) UpsertFinalResponse(ctx context.Context, response FinalResponse)
 	if response.CreatedAt.IsZero() {
 		response.CreatedAt = now
 	}
-	updatedAt := sql.NullString{}
+	var updatedAt *string
 	if response.UpdatedAt != nil {
-		updatedAt = sql.NullString{String: response.UpdatedAt.UTC().Format(time.RFC3339Nano), Valid: true}
+		updatedAt = ptrString(response.UpdatedAt.UTC().Format(time.RFC3339Nano))
 	}
-	if err := s.sqlcQueries().UpsertFinalResponse(ctx, dbsqlc.UpsertFinalResponseParams{FinalResponseID: response.FinalResponseID, RunID: response.RunID, WorkspaceID: response.WorkspaceID, TaskID: response.TaskID, ContextPacketID: response.ContextPacketID, ProfileID: sqlNullString(response.ProfileID), Status: response.Status, Text: response.Text, EvidenceLinks: response.EvidenceLinksJSON, CreatedAt: response.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: updatedAt}); err != nil {
+	if err := s.sqlcQueries().UpsertFinalResponse(ctx, dbsqlc.UpsertFinalResponseParams{FinalResponseID: response.FinalResponseID, RunID: response.RunID, WorkspaceID: response.WorkspaceID, TaskID: response.TaskID, ContextPacketID: response.ContextPacketID, ProfileID: optionalString(response.ProfileID), Status: response.Status, Text: response.Text, EvidenceLinks: response.EvidenceLinksJSON, CreatedAt: response.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: updatedAt}); err != nil {
 		return fmt.Errorf("upsert final response %q: %w", response.FinalResponseID, err)
 	}
 	return nil
@@ -842,7 +631,7 @@ func (s *Store) GetFinalResponseByRunID(ctx context.Context, runID string) (Fina
 	if runID == "" {
 		return FinalResponse{}, fmt.Errorf("%w: run id is required", ErrInvalidInput)
 	}
-	row, err := s.sqlcQueries().GetFinalResponseByRunID(ctx, runID)
+	row, err := s.sqlcQueries().GetFinalResponseByRunID(ctx, dbsqlc.GetFinalResponseByRunIDParams{RunID: runID})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return FinalResponse{}, ErrNotFound
@@ -857,7 +646,7 @@ func (s *Store) GetFinalResponseByID(ctx context.Context, finalResponseID string
 	if finalResponseID == "" {
 		return FinalResponse{}, fmt.Errorf("%w: final response id is required", ErrInvalidInput)
 	}
-	row, err := s.sqlcQueries().GetFinalResponseByID(ctx, finalResponseID)
+	row, err := s.sqlcQueries().GetFinalResponseByID(ctx, dbsqlc.GetFinalResponseByIDParams{FinalResponseID: finalResponseID})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return FinalResponse{}, ErrNotFound
@@ -872,7 +661,7 @@ func (s *Store) ListFinalResponses(ctx context.Context, workspaceID string) ([]F
 	if workspaceID == "" {
 		return nil, fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
 	}
-	rows, err := s.sqlcQueries().ListFinalResponsesByWorkspace(ctx, workspaceID)
+	rows, err := s.sqlcQueries().ListFinalResponsesByWorkspace(ctx, dbsqlc.ListFinalResponsesByWorkspaceParams{WorkspaceID: workspaceID})
 	if err != nil {
 		return nil, fmt.Errorf("list final responses: %w", err)
 	}
@@ -939,7 +728,7 @@ func (s *Store) UpsertAgentRunTelemetry(ctx context.Context, telemetry AgentRunT
 	if telemetry.UpdatedAt.IsZero() {
 		telemetry.UpdatedAt = now
 	}
-	params := dbsqlc.UpsertAgentRunTelemetryParams{RunID: telemetry.RunID, WorkspaceID: telemetry.WorkspaceID, TaskID: telemetry.TaskID, ProfileID: sqlNullString(telemetry.ProfileID), ProfileName: sqlNullString(telemetry.ProfileName), Harness: telemetry.Harness, Model: telemetry.Model, InvocationClass: telemetry.InvocationClass, Status: telemetry.Status, InputTokensKnown: boolInt64(telemetry.InputTokensKnown), InputTokens: sqlNullInt64(telemetry.InputTokens), OutputTokensKnown: boolInt64(telemetry.OutputTokensKnown), OutputTokens: sqlNullInt64(telemetry.OutputTokens), EstimatedCostKnown: boolInt64(telemetry.EstimatedCostKnown), EstimatedCostMicros: sqlNullInt64(telemetry.EstimatedCostMicros), DurationMsKnown: boolInt64(telemetry.DurationMSKnown), DurationMs: sqlNullInt64(telemetry.DurationMS), ExitCodeKnown: boolInt64(telemetry.ExitCodeKnown), ExitCode: sqlNullInt64(telemetry.ExitCode), OwnedByAri: boolInt64(telemetry.OwnedByAri), PidKnown: boolInt64(telemetry.PIDKnown), Pid: sqlNullInt64(telemetry.PID), CpuTimeMsKnown: boolInt64(telemetry.CPUTimeMSKnown), CpuTimeMs: sqlNullInt64(telemetry.CPUTimeMS), MemoryRssBytesPeakKnown: boolInt64(telemetry.MemoryRSSBytesPeakKnown), MemoryRssBytesPeak: sqlNullInt64(telemetry.MemoryRSSBytesPeak), ChildProcessesPeakKnown: boolInt64(telemetry.ChildProcessesPeakKnown), ChildProcessesPeak: sqlNullInt64(telemetry.ChildProcessesPeak), PortsJson: telemetry.PortsJSON, OrphanState: telemetry.OrphanState, CreatedAt: telemetry.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: telemetry.UpdatedAt.Format(time.RFC3339Nano)}
+	params := dbsqlc.UpsertAgentRunTelemetryParams{RunID: telemetry.RunID, WorkspaceID: telemetry.WorkspaceID, TaskID: telemetry.TaskID, ProfileID: optionalString(telemetry.ProfileID), ProfileName: optionalString(telemetry.ProfileName), Harness: telemetry.Harness, Model: telemetry.Model, InvocationClass: telemetry.InvocationClass, Status: telemetry.Status, InputTokensKnown: boolInt64(telemetry.InputTokensKnown), InputTokens: telemetry.InputTokens, OutputTokensKnown: boolInt64(telemetry.OutputTokensKnown), OutputTokens: telemetry.OutputTokens, EstimatedCostKnown: boolInt64(telemetry.EstimatedCostKnown), EstimatedCostMicros: telemetry.EstimatedCostMicros, DurationMsKnown: boolInt64(telemetry.DurationMSKnown), DurationMs: telemetry.DurationMS, ExitCodeKnown: boolInt64(telemetry.ExitCodeKnown), ExitCode: telemetry.ExitCode, OwnedByAri: boolInt64(telemetry.OwnedByAri), PidKnown: boolInt64(telemetry.PIDKnown), Pid: telemetry.PID, CpuTimeMsKnown: boolInt64(telemetry.CPUTimeMSKnown), CpuTimeMs: telemetry.CPUTimeMS, MemoryRssBytesPeakKnown: boolInt64(telemetry.MemoryRSSBytesPeakKnown), MemoryRssBytesPeak: telemetry.MemoryRSSBytesPeak, ChildProcessesPeakKnown: boolInt64(telemetry.ChildProcessesPeakKnown), ChildProcessesPeak: telemetry.ChildProcessesPeak, PortsJson: telemetry.PortsJSON, OrphanState: telemetry.OrphanState, CreatedAt: telemetry.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: telemetry.UpdatedAt.Format(time.RFC3339Nano)}
 	if err := s.sqlcQueries().UpsertAgentRunTelemetry(ctx, params); err != nil {
 		return fmt.Errorf("upsert agent run telemetry %q: %w", telemetry.RunID, err)
 	}
@@ -951,14 +740,14 @@ func (s *Store) RollupAgentRunTelemetry(ctx context.Context, workspaceID string)
 	if workspaceID == "" {
 		return nil, fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
 	}
-	rows, err := s.sqlcQueries().ListAgentRunTelemetryByWorkspace(ctx, workspaceID)
+	rows, err := s.sqlcQueries().ListAgentRunTelemetryByWorkspace(ctx, dbsqlc.ListAgentRunTelemetryByWorkspaceParams{WorkspaceID: workspaceID})
 	if err != nil {
 		return nil, fmt.Errorf("list agent run telemetry: %w", err)
 	}
 	byGroup := map[AgentRunTelemetryGroup]*AgentRunTelemetryRollup{}
 	order := []AgentRunTelemetryGroup{}
 	for _, row := range rows {
-		group := AgentRunTelemetryGroup{ProfileID: row.ProfileID.String, ProfileName: row.ProfileName.String, Harness: row.Harness, Model: row.Model, InvocationClass: row.InvocationClass}
+		group := AgentRunTelemetryGroup{ProfileID: stringValue(row.ProfileID), ProfileName: stringValue(row.ProfileName), Harness: row.Harness, Model: row.Model, InvocationClass: row.InvocationClass}
 		rollup := byGroup[group]
 		if rollup == nil {
 			rollup = &AgentRunTelemetryRollup{Group: group}
@@ -1007,15 +796,8 @@ func boolInt64(value bool) int64 {
 	return 0
 }
 
-func sqlNullInt64(value *int64) sql.NullInt64 {
-	if value == nil {
-		return sql.NullInt64{}
-	}
-	return sql.NullInt64{Int64: *value, Valid: true}
-}
-
-func addKnownInt64(total *KnownInt64, known int64, value sql.NullInt64) {
-	if known == 0 || !value.Valid {
+func addKnownInt64(total *KnownInt64, known int64, value *int64) {
+	if known == 0 || value == nil {
 		return
 	}
 	if total.Value == nil {
@@ -1023,15 +805,15 @@ func addKnownInt64(total *KnownInt64, known int64, value sql.NullInt64) {
 		total.Value = &zero
 	}
 	total.Known = true
-	*total.Value += value.Int64
+	*total.Value += *value
 }
 
-func maxKnownInt64(total *KnownInt64, known int64, value sql.NullInt64) {
-	if known == 0 || !value.Valid {
+func maxKnownInt64(total *KnownInt64, known int64, value *int64) {
+	if known == 0 || value == nil {
 		return
 	}
-	if total.Value == nil || value.Int64 > *total.Value {
-		v := value.Int64
+	if total.Value == nil || *value > *total.Value {
+		v := *value
 		total.Value = &v
 	}
 	total.Known = true
@@ -1041,33 +823,108 @@ func (s *Store) sqlcQueries() *dbsqlc.Queries {
 	if s.sqlc != nil {
 		return s.sqlc
 	}
-	adapter, ok := s.db.(*sqlDBAdapter)
-	if !ok {
-		panic("sqlc queries require SQL store")
-	}
-	s.sqlc = dbsqlc.New(adapter.db)
+	s.sqlc = dbsqlc.New(s.db)
 	return s.sqlc
 }
 
-func sqlNullString(value string) sql.NullString {
+func optionalString(value string) *string {
 	value = strings.TrimSpace(value)
-	return sql.NullString{String: value, Valid: value != ""}
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 func agentProfileFromSQLC(row dbsqlc.AgentProfile) AgentProfile {
 	createdAt, _ := time.Parse(time.RFC3339Nano, row.CreatedAt)
 	updatedAt, _ := time.Parse(time.RFC3339Nano, row.UpdatedAt)
-	return AgentProfile{ProfileID: row.ProfileID, WorkspaceID: row.WorkspaceID.String, Name: row.Name, Harness: row.Harness.String, Model: row.Model.String, Prompt: row.Prompt.String, InvocationClass: row.InvocationClass.String, DefaultsJSON: row.DefaultsJson, CreatedAt: createdAt, UpdatedAt: updatedAt}
+	return AgentProfile{ProfileID: row.ProfileID, WorkspaceID: stringValue(row.WorkspaceID), Name: row.Name, Harness: stringValue(row.Harness), Model: stringValue(row.Model), Prompt: stringValue(row.Prompt), InvocationClass: stringValue(row.InvocationClass), DefaultsJSON: row.DefaultsJson, CreatedAt: createdAt, UpdatedAt: updatedAt}
+}
+
+func authSlotFromSQLC(row dbsqlc.AuthSlot) AuthSlot {
+	createdAt, _ := time.Parse(time.RFC3339Nano, row.CreatedAt)
+	updatedAt, _ := time.Parse(time.RFC3339Nano, row.UpdatedAt)
+	return AuthSlot{AuthSlotID: row.AuthSlotID, Harness: row.Harness, Label: row.Label, ProviderLabel: stringValue(row.ProviderLabel), CredentialOwner: row.CredentialOwner, Status: row.Status, MetadataJSON: row.MetadataJson, CreatedAt: createdAt, UpdatedAt: updatedAt}
 }
 
 func finalResponseFromSQLC(row dbsqlc.FinalResponse) FinalResponse {
 	createdAt, _ := time.Parse(time.RFC3339Nano, row.CreatedAt)
 	var updatedAt *time.Time
-	if row.UpdatedAt.Valid {
-		parsed, _ := time.Parse(time.RFC3339Nano, row.UpdatedAt.String)
+	if row.UpdatedAt != nil {
+		parsed, _ := time.Parse(time.RFC3339Nano, *row.UpdatedAt)
 		updatedAt = &parsed
 	}
-	return FinalResponse{FinalResponseID: row.FinalResponseID, RunID: row.RunID, WorkspaceID: row.WorkspaceID, TaskID: row.TaskID, ContextPacketID: row.ContextPacketID, ProfileID: row.ProfileID.String, Status: row.Status, Text: row.Text, EvidenceLinksJSON: row.EvidenceLinks, CreatedAt: createdAt, UpdatedAt: updatedAt}
+	return FinalResponse{FinalResponseID: row.FinalResponseID, RunID: row.RunID, WorkspaceID: row.WorkspaceID, TaskID: row.TaskID, ContextPacketID: row.ContextPacketID, ProfileID: stringValue(row.ProfileID), Status: row.Status, Text: row.Text, EvidenceLinksJSON: row.EvidenceLinks, CreatedAt: createdAt, UpdatedAt: updatedAt}
+}
+
+func ptrString(value string) *string { return &value }
+
+func stringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func (s *Store) withImmediateQueries(ctx context.Context, fn func(*dbsqlc.Queries) error) error {
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = conn.ExecContext(ctx, "ROLLBACK")
+		}
+	}()
+	if err := fn(dbsqlc.New(conn)); err != nil {
+		return err
+	}
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
+func optionalInt(value *int) *int64 {
+	if value == nil {
+		return nil
+	}
+	out := int64(*value)
+	return &out
+}
+
+func intPtrFromInt64(value *int64) *int {
+	if value == nil {
+		return nil
+	}
+	out := int(*value)
+	return &out
+}
+
+func sessionFromSQLC(row dbsqlc.Workspace) Session {
+	return Session{ID: row.WorkspaceID, Name: row.Name, Status: row.Status, VCSPreference: row.VcsPreference, OriginRoot: row.OriginRoot, CleanupPolicy: row.CleanupPolicy, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+}
+
+func sessionFolderFromSQLC(row dbsqlc.WorkspaceFolder) SessionFolder {
+	return SessionFolder{WorkspaceID: row.WorkspaceID, FolderPath: row.FolderPath, VCSType: row.VcsType, IsPrimary: row.IsPrimary != 0, AddedAt: row.AddedAt}
+}
+
+func commandFromSQLC(row dbsqlc.Command) Command {
+	return Command{CommandID: row.CommandID, WorkspaceID: row.WorkspaceID, Command: row.Command, Args: row.Args, Status: row.Status, ExitCode: intPtrFromInt64(row.ExitCode), StartedAt: row.StartedAt, FinishedAt: row.FinishedAt}
+}
+
+func workspaceCommandDefinitionFromSQLC(row dbsqlc.WorkspaceCommandDefinition) WorkspaceCommandDefinition {
+	return WorkspaceCommandDefinition{CommandID: row.CommandID, WorkspaceID: row.WorkspaceID, Name: row.Name, Command: row.Command, Args: row.Args, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+}
+
+func agentFromSQLC(row dbsqlc.Agent) Agent {
+	return Agent{AgentID: row.AgentID, WorkspaceID: row.WorkspaceID, Name: row.Name, Command: row.Command, Args: row.Args, Status: row.Status, ExitCode: intPtrFromInt64(row.ExitCode), StartedAt: row.StartedAt, StoppedAt: row.StoppedAt, Harness: row.Harness, HarnessResumableID: row.HarnessResumableID, HarnessMetadata: row.HarnessMetadata, InvocationClass: row.InvocationClass}
 }
 
 func (s *Store) CreateSession(ctx context.Context, id, name, originRoot, cleanupPolicy, vcsPreference string) error {
@@ -1089,7 +946,7 @@ func (s *Store) CreateSession(ctx context.Context, id, name, originRoot, cleanup
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := s.db.ExecContext(ctx, insertSessionQuery, id, name, statusActive, vcsPreference, originRoot, cleanupPolicy, now, now); err != nil {
+	if err := s.sqlcQueries().CreateWorkspace(ctx, dbsqlc.CreateWorkspaceParams{WorkspaceID: id, Name: name, Status: statusActive, VcsPreference: vcsPreference, OriginRoot: originRoot, CleanupPolicy: cleanupPolicy, CreatedAt: now, UpdatedAt: now}); err != nil {
 		return fmt.Errorf("create session %q: %w", id, err)
 	}
 
@@ -1101,15 +958,15 @@ func (s *Store) GetSession(ctx context.Context, id string) (*Session, error) {
 		return nil, fmt.Errorf("%w: session id is required", ErrInvalidInput)
 	}
 
-	sessions, err := querySessions(ctx, s.db, sessionByIDQuery, id)
+	row, err := s.sqlcQueries().GetWorkspaceByID(ctx, dbsqlc.GetWorkspaceByIDParams{WorkspaceID: id})
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("%w: session id %q", ErrNotFound, id)
+		}
 		return nil, err
 	}
-	if len(sessions) == 0 {
-		return nil, fmt.Errorf("%w: session id %q", ErrNotFound, id)
-	}
-
-	return &sessions[0], nil
+	session := sessionFromSQLC(row)
+	return &session, nil
 }
 
 func (s *Store) GetSessionByName(ctx context.Context, name string) (*Session, error) {
@@ -1117,19 +974,27 @@ func (s *Store) GetSessionByName(ctx context.Context, name string) (*Session, er
 		return nil, fmt.Errorf("%w: session name is required", ErrInvalidInput)
 	}
 
-	sessions, err := querySessions(ctx, s.db, sessionByNameQuery, name)
+	row, err := s.sqlcQueries().GetWorkspaceByName(ctx, dbsqlc.GetWorkspaceByNameParams{Name: name})
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("%w: session name %q", ErrNotFound, name)
+		}
 		return nil, err
 	}
-	if len(sessions) == 0 {
-		return nil, fmt.Errorf("%w: session name %q", ErrNotFound, name)
-	}
-
-	return &sessions[0], nil
+	session := sessionFromSQLC(row)
+	return &session, nil
 }
 
 func (s *Store) ListSessions(ctx context.Context) ([]Session, error) {
-	return querySessions(ctx, s.db, listSessionsQuery)
+	rows, err := s.sqlcQueries().ListWorkspaces(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Session, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, sessionFromSQLC(row))
+	}
+	return out, nil
 }
 
 func (s *Store) UpdateSessionStatus(ctx context.Context, id, status string) error {
@@ -1155,14 +1020,9 @@ func (s *Store) UpdateSessionStatus(ctx context.Context, id, status string) erro
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	result, err := s.db.ExecContext(ctx, updateSessionStatusQuery, status, now, id)
+	rowsAffected, err := s.sqlcQueries().UpdateWorkspaceStatus(ctx, dbsqlc.UpdateWorkspaceStatusParams{Status: status, UpdatedAt: now, WorkspaceID: id})
 	if err != nil {
 		return fmt.Errorf("update session status %q: %w", id, err)
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("update session status %q rows affected: %w", id, err)
 	}
 	if rowsAffected == 0 {
 		return fmt.Errorf("%w: session id %q", ErrNotFound, id)
@@ -1176,14 +1036,9 @@ func (s *Store) DeleteSession(ctx context.Context, id string) error {
 		return fmt.Errorf("%w: session id is required", ErrInvalidInput)
 	}
 
-	result, err := s.db.ExecContext(ctx, deleteSessionQuery, id)
+	rowsAffected, err := s.sqlcQueries().DeleteWorkspace(ctx, dbsqlc.DeleteWorkspaceParams{WorkspaceID: id})
 	if err != nil {
 		return fmt.Errorf("delete session %q: %w", id, err)
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("delete session %q rows affected: %w", id, err)
 	}
 	if rowsAffected == 0 {
 		return fmt.Errorf("%w: session id %q", ErrNotFound, id)
@@ -1206,8 +1061,8 @@ func (s *Store) AddFolder(ctx context.Context, sessionID, folderPath, vcsType st
 		return fmt.Errorf("%w: invalid vcs type %q", ErrInvalidInput, vcsType)
 	}
 
-	return s.db.WithImmediateTransaction(ctx, func(tx DB) error {
-		return addFolderInTransaction(ctx, tx, sessionID, folderPath, vcsType, isPrimary)
+	return s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
+		return addFolderInTransaction(ctx, queries, sessionID, folderPath, vcsType, isPrimary)
 	})
 }
 
@@ -1227,14 +1082,9 @@ func (s *Store) RemoveFolder(ctx context.Context, sessionID, folderPath string) 
 		return fmt.Errorf("%w: session id %q", ErrSessionClosed, sessionID)
 	}
 
-	result, err := s.db.ExecContext(ctx, deleteSessionFolderQuery, sessionID, folderPath, sessionID)
+	rowsAffected, err := s.sqlcQueries().DeleteWorkspaceFolderIfNotLast(ctx, dbsqlc.DeleteWorkspaceFolderIfNotLastParams{WorkspaceID: sessionID, FolderPath: folderPath, WorkspaceID_2: sessionID})
 	if err != nil {
 		return fmt.Errorf("remove session folder %q: %w", folderPath, err)
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("remove session folder %q rows affected: %w", folderPath, err)
 	}
 	if rowsAffected == 0 {
 		folders, listErr := s.ListFolders(ctx, sessionID)
@@ -1267,7 +1117,7 @@ func (s *Store) RemoveFolder(ctx context.Context, sessionID, folderPath string) 
 		}
 	}
 	if !hasPrimary {
-		if _, err := s.db.ExecContext(ctx, promotePrimaryFolderQuery, folders[0].FolderPath, sessionID); err != nil {
+		if err := s.sqlcQueries().PromotePrimaryWorkspaceFolder(ctx, dbsqlc.PromotePrimaryWorkspaceFolderParams{FolderPath: folders[0].FolderPath, WorkspaceID: sessionID}); err != nil {
 			return fmt.Errorf("promote session primary folder %q: %w", folders[0].FolderPath, err)
 		}
 	}
@@ -1286,43 +1136,30 @@ func (s *Store) ListFolders(ctx context.Context, sessionID string) ([]SessionFol
 	}
 	_ = session
 
-	rows, err := s.db.QueryContext(ctx, listSessionFoldersQuery, sessionID)
+	rows, err := s.sqlcQueries().ListWorkspaceFolders(ctx, dbsqlc.ListWorkspaceFoldersParams{WorkspaceID: sessionID})
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		_ = rows.Close()
-	}()
-
-	var out []SessionFolder
-	for rows.Next() {
-		var item SessionFolder
-		var isPrimary int
-		if err := rows.Scan(&item.WorkspaceID, &item.FolderPath, &item.VCSType, &isPrimary, &item.AddedAt); err != nil {
-			return nil, err
-		}
-		item.IsPrimary = isPrimary != 0
-		out = append(out, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+	out := make([]SessionFolder, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, sessionFolderFromSQLC(row))
 	}
 
 	return out, nil
 }
 
-func addFolderInTransaction(ctx context.Context, db DB, sessionID, folderPath, vcsType string, isPrimary bool) error {
-	sessions, err := querySessions(ctx, db, sessionByIDQuery, sessionID)
+func addFolderInTransaction(ctx context.Context, queries *dbsqlc.Queries, sessionID, folderPath, vcsType string, isPrimary bool) error {
+	row, err := queries.GetWorkspaceByID(ctx, dbsqlc.GetWorkspaceByIDParams{WorkspaceID: sessionID})
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: session id %q", ErrNotFound, sessionID)
+		}
 		return err
 	}
-	if len(sessions) == 0 {
-		return fmt.Errorf("%w: session id %q", ErrNotFound, sessionID)
-	}
-	if sessions[0].Status == statusClosed {
+	if row.Status == statusClosed {
 		return fmt.Errorf("%w: session id %q", ErrSessionClosed, sessionID)
 	}
-	owners, err := workspaceOwnersByFolderPath(ctx, db, folderPath)
+	owners, err := workspaceOwnersByFolderPath(ctx, queries, folderPath)
 	if err != nil {
 		return err
 	}
@@ -1338,12 +1175,12 @@ func addFolderInTransaction(ctx context.Context, db DB, sessionID, folderPath, v
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := db.ExecContext(ctx, insertSessionFolderQuery, sessionID, folderPath, vcsType, primary, now); err != nil {
+	if err := queries.CreateWorkspaceFolder(ctx, dbsqlc.CreateWorkspaceFolderParams{WorkspaceID: sessionID, FolderPath: folderPath, VcsType: vcsType, IsPrimary: int64(primary), AddedAt: now}); err != nil {
 		return fmt.Errorf("add session folder %q: %w", folderPath, err)
 	}
 
 	if isPrimary {
-		if _, err := db.ExecContext(ctx, promotePrimaryFolderQuery, folderPath, sessionID); err != nil {
+		if err := queries.PromotePrimaryWorkspaceFolder(ctx, dbsqlc.PromotePrimaryWorkspaceFolderParams{FolderPath: folderPath, WorkspaceID: sessionID}); err != nil {
 			return fmt.Errorf("promote session primary folder %q: %w", folderPath, err)
 		}
 	}
@@ -1356,26 +1193,20 @@ type workspaceFolderOwner struct {
 	Status      string
 }
 
-func workspaceOwnersByFolderPath(ctx context.Context, db DB, folderPath string) ([]workspaceFolderOwner, error) {
+func workspaceOwnersByFolderPath(ctx context.Context, queries *dbsqlc.Queries, folderPath string) ([]workspaceFolderOwner, error) {
 	folderPath = strings.TrimSpace(folderPath)
 	if folderPath == "" {
 		return nil, fmt.Errorf("%w: folder path is required", ErrInvalidInput)
 	}
 
-	rows, err := db.QueryContext(ctx, workspaceOwnersByFolderPathQuery, folderPath)
+	rows, err := queries.ListWorkspaceOwnersByFolderPath(ctx, dbsqlc.ListWorkspaceOwnersByFolderPathParams{FolderPath: folderPath})
 	if err != nil {
 		return nil, fmt.Errorf("lookup workspaces by folder path %q: %w", folderPath, err)
 	}
-	defer func() {
-		_ = rows.Close()
-	}()
 
-	owners := make([]workspaceFolderOwner, 0)
-	for rows.Next() {
-		var owner workspaceFolderOwner
-		if err := rows.Scan(&owner.WorkspaceID, &owner.Status); err != nil {
-			return nil, fmt.Errorf("scan workspace by folder path %q: %w", folderPath, err)
-		}
+	owners := make([]workspaceFolderOwner, 0, len(rows))
+	for _, row := range rows {
+		owner := workspaceFolderOwner{WorkspaceID: row.WorkspaceID, Status: row.Status}
 		owner.WorkspaceID = strings.TrimSpace(owner.WorkspaceID)
 		owner.Status = strings.TrimSpace(owner.Status)
 		if owner.WorkspaceID == "" {
@@ -1385,9 +1216,6 @@ func workspaceOwnersByFolderPath(ctx context.Context, db DB, folderPath string) 
 			return nil, fmt.Errorf("%w: folder %q owner %q has empty workspace status", ErrInvalidInput, folderPath, owner.WorkspaceID)
 		}
 		owners = append(owners, owner)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("lookup workspace by folder path %q rows: %w", folderPath, err)
 	}
 
 	return owners, nil
@@ -1419,18 +1247,7 @@ func (s *Store) CreateCommand(ctx context.Context, params CreateCommandParams) e
 		params.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
 
-	if _, err := s.db.ExecContext(
-		ctx,
-		insertCommandQuery,
-		params.CommandID,
-		params.WorkspaceID,
-		params.Command,
-		params.Args,
-		params.Status,
-		params.ExitCode,
-		params.StartedAt,
-		params.FinishedAt,
-	); err != nil {
+	if err := s.sqlcQueries().CreateCommand(ctx, dbsqlc.CreateCommandParams{CommandID: params.CommandID, WorkspaceID: params.WorkspaceID, Command: params.Command, Args: params.Args, Status: params.Status, ExitCode: optionalInt(params.ExitCode), StartedAt: params.StartedAt, FinishedAt: params.FinishedAt}); err != nil {
 		return fmt.Errorf("create command %q: %w", params.CommandID, err)
 	}
 
@@ -1445,15 +1262,15 @@ func (s *Store) GetCommand(ctx context.Context, sessionID, commandID string) (*C
 		return nil, fmt.Errorf("%w: command id is required", ErrInvalidInput)
 	}
 
-	commands, err := queryCommands(ctx, s.db, commandByIDQuery, sessionID, commandID)
+	row, err := s.sqlcQueries().GetCommandByID(ctx, dbsqlc.GetCommandByIDParams{WorkspaceID: sessionID, CommandID: commandID})
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("%w: command id %q for session %q", ErrNotFound, commandID, sessionID)
+		}
 		return nil, err
 	}
-	if len(commands) == 0 {
-		return nil, fmt.Errorf("%w: command id %q for session %q", ErrNotFound, commandID, sessionID)
-	}
-
-	return &commands[0], nil
+	command := commandFromSQLC(row)
+	return &command, nil
 }
 
 func (s *Store) ListCommands(ctx context.Context, sessionID string) ([]Command, error) {
@@ -1461,7 +1278,15 @@ func (s *Store) ListCommands(ctx context.Context, sessionID string) ([]Command, 
 		return nil, fmt.Errorf("%w: session id is required", ErrInvalidInput)
 	}
 
-	return queryCommands(ctx, s.db, listCommandsBySessionQuery, sessionID)
+	rows, err := s.sqlcQueries().ListCommandsByWorkspace(ctx, dbsqlc.ListCommandsByWorkspaceParams{WorkspaceID: sessionID})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Command, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, commandFromSQLC(row))
+	}
+	return out, nil
 }
 
 func (s *Store) UpdateCommandStatus(ctx context.Context, params UpdateCommandStatusParams) error {
@@ -1478,14 +1303,9 @@ func (s *Store) UpdateCommandStatus(ctx context.Context, params UpdateCommandSta
 		return fmt.Errorf("%w: invalid command status %q", ErrInvalidInput, params.Status)
 	}
 
-	result, err := s.db.ExecContext(ctx, updateCommandStatusQuery, params.Status, params.ExitCode, params.FinishedAt, params.WorkspaceID, params.CommandID)
+	rowsAffected, err := s.sqlcQueries().UpdateCommandStatus(ctx, dbsqlc.UpdateCommandStatusParams{Status: params.Status, ExitCode: optionalInt(params.ExitCode), FinishedAt: params.FinishedAt, WorkspaceID: params.WorkspaceID, CommandID: params.CommandID})
 	if err != nil {
 		return fmt.Errorf("update command status %q: %w", params.CommandID, err)
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("update command status %q rows affected: %w", params.CommandID, err)
 	}
 	if rowsAffected == 0 {
 		return fmt.Errorf("%w: command id %q for session %q", ErrNotFound, params.CommandID, params.WorkspaceID)
@@ -1495,7 +1315,7 @@ func (s *Store) UpdateCommandStatus(ctx context.Context, params UpdateCommandSta
 }
 
 func (s *Store) MarkRunningCommandsLost(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, markRunningCommandsLostQuery); err != nil {
+	if err := s.sqlcQueries().MarkRunningCommandsLost(ctx); err != nil {
 		return fmt.Errorf("mark running commands lost: %w", err)
 	}
 
@@ -1530,45 +1350,35 @@ func (s *Store) CreateWorkspaceCommandDefinition(ctx context.Context, params Cre
 		return fmt.Errorf("%w: command args must be a json string array", ErrInvalidInput)
 	}
 
-	return s.db.WithImmediateTransaction(ctx, func(tx DB) error {
-		return createWorkspaceCommandDefinitionInTransaction(ctx, tx, params)
+	return s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
+		return createWorkspaceCommandDefinitionInTransaction(ctx, queries, params)
 	})
 }
 
-func createWorkspaceCommandDefinitionInTransaction(ctx context.Context, db DB, params CreateWorkspaceCommandDefinitionParams) error {
-	sessions, err := querySessions(ctx, db, sessionByIDQuery, params.WorkspaceID)
+func createWorkspaceCommandDefinitionInTransaction(ctx context.Context, queries *dbsqlc.Queries, params CreateWorkspaceCommandDefinitionParams) error {
+	workspace, err := queries.GetWorkspaceByID(ctx, dbsqlc.GetWorkspaceByIDParams{WorkspaceID: params.WorkspaceID})
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: session id %q", ErrNotFound, params.WorkspaceID)
+		}
 		return err
 	}
-	if len(sessions) == 0 {
-		return fmt.Errorf("%w: session id %q", ErrNotFound, params.WorkspaceID)
-	}
-	if sessions[0].Status == statusClosed {
+	if workspace.Status == statusClosed {
 		return fmt.Errorf("%w: session id %q", ErrSessionClosed, params.WorkspaceID)
 	}
-	if existingByID, err := getWorkspaceCommandDefinition(ctx, db, params.WorkspaceID, params.Name); err == nil && existingByID != nil {
+	if existingByID, err := getWorkspaceCommandDefinition(ctx, queries, params.WorkspaceID, params.Name); err == nil && existingByID != nil {
 		return fmt.Errorf("%w: command name %q collides with existing command id", ErrInvalidInput, params.Name)
 	} else if err != nil && !errors.Is(err, ErrNotFound) {
 		return err
 	}
-	if existingByName, err := getWorkspaceCommandDefinitionByName(ctx, db, params.WorkspaceID, params.CommandID); err == nil && existingByName != nil {
+	if existingByName, err := getWorkspaceCommandDefinitionByName(ctx, queries, params.WorkspaceID, params.CommandID); err == nil && existingByName != nil {
 		return fmt.Errorf("%w: command id %q collides with existing command name", ErrInvalidInput, params.CommandID)
 	} else if err != nil && !errors.Is(err, ErrNotFound) {
 		return err
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := db.ExecContext(
-		ctx,
-		insertWorkspaceCommandDefinitionQuery,
-		params.CommandID,
-		params.WorkspaceID,
-		params.Name,
-		params.Command,
-		params.Args,
-		now,
-		now,
-	); err != nil {
+	if err := queries.CreateWorkspaceCommandDefinition(ctx, dbsqlc.CreateWorkspaceCommandDefinitionParams{CommandID: params.CommandID, WorkspaceID: params.WorkspaceID, Name: params.Name, Command: params.Command, Args: params.Args, CreatedAt: now, UpdatedAt: now}); err != nil {
 		if isConstraintError(err) {
 			return fmt.Errorf("%w: command definition %q already exists in workspace", ErrInvalidInput, params.CommandID)
 		}
@@ -1594,19 +1404,19 @@ func (s *Store) GetWorkspaceCommandDefinition(ctx context.Context, sessionID, co
 		return nil, fmt.Errorf("%w: command id is required", ErrInvalidInput)
 	}
 
-	return getWorkspaceCommandDefinition(ctx, s.db, sessionID, commandID)
+	return getWorkspaceCommandDefinition(ctx, s.sqlcQueries(), sessionID, commandID)
 }
 
-func getWorkspaceCommandDefinition(ctx context.Context, db DB, sessionID, commandID string) (*WorkspaceCommandDefinition, error) {
-	defs, err := queryWorkspaceCommandDefinitions(ctx, db, workspaceCommandDefinitionByIDQuery, sessionID, commandID)
+func getWorkspaceCommandDefinition(ctx context.Context, queries *dbsqlc.Queries, sessionID, commandID string) (*WorkspaceCommandDefinition, error) {
+	row, err := queries.GetWorkspaceCommandDefinitionByID(ctx, dbsqlc.GetWorkspaceCommandDefinitionByIDParams{WorkspaceID: sessionID, CommandID: commandID})
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("%w: command id %q for session %q", ErrNotFound, commandID, sessionID)
+		}
 		return nil, err
 	}
-	if len(defs) == 0 {
-		return nil, fmt.Errorf("%w: command id %q for session %q", ErrNotFound, commandID, sessionID)
-	}
-
-	return &defs[0], nil
+	def := workspaceCommandDefinitionFromSQLC(row)
+	return &def, nil
 }
 
 func (s *Store) GetWorkspaceCommandDefinitionByName(ctx context.Context, sessionID, name string) (*WorkspaceCommandDefinition, error) {
@@ -1617,19 +1427,19 @@ func (s *Store) GetWorkspaceCommandDefinitionByName(ctx context.Context, session
 		return nil, fmt.Errorf("%w: command name is required", ErrInvalidInput)
 	}
 
-	return getWorkspaceCommandDefinitionByName(ctx, s.db, sessionID, name)
+	return getWorkspaceCommandDefinitionByName(ctx, s.sqlcQueries(), sessionID, name)
 }
 
-func getWorkspaceCommandDefinitionByName(ctx context.Context, db DB, sessionID, name string) (*WorkspaceCommandDefinition, error) {
-	defs, err := queryWorkspaceCommandDefinitions(ctx, db, workspaceCommandDefinitionByNameQuery, sessionID, name)
+func getWorkspaceCommandDefinitionByName(ctx context.Context, queries *dbsqlc.Queries, sessionID, name string) (*WorkspaceCommandDefinition, error) {
+	row, err := queries.GetWorkspaceCommandDefinitionByName(ctx, dbsqlc.GetWorkspaceCommandDefinitionByNameParams{WorkspaceID: sessionID, Name: name})
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("%w: command name %q for session %q", ErrNotFound, name, sessionID)
+		}
 		return nil, err
 	}
-	if len(defs) == 0 {
-		return nil, fmt.Errorf("%w: command name %q for session %q", ErrNotFound, name, sessionID)
-	}
-
-	return &defs[0], nil
+	def := workspaceCommandDefinitionFromSQLC(row)
+	return &def, nil
 }
 
 func (s *Store) ListWorkspaceCommandDefinitions(ctx context.Context, sessionID string) ([]WorkspaceCommandDefinition, error) {
@@ -1637,7 +1447,15 @@ func (s *Store) ListWorkspaceCommandDefinitions(ctx context.Context, sessionID s
 		return nil, fmt.Errorf("%w: session id is required", ErrInvalidInput)
 	}
 
-	return queryWorkspaceCommandDefinitions(ctx, s.db, listWorkspaceCommandDefinitionsBySessionQuery, sessionID)
+	rows, err := s.sqlcQueries().ListWorkspaceCommandDefinitionsByWorkspace(ctx, dbsqlc.ListWorkspaceCommandDefinitionsByWorkspaceParams{WorkspaceID: sessionID})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]WorkspaceCommandDefinition, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, workspaceCommandDefinitionFromSQLC(row))
+	}
+	return out, nil
 }
 
 func (s *Store) DeleteWorkspaceCommandDefinition(ctx context.Context, sessionID, commandID string) error {
@@ -1648,14 +1466,9 @@ func (s *Store) DeleteWorkspaceCommandDefinition(ctx context.Context, sessionID,
 		return fmt.Errorf("%w: command id is required", ErrInvalidInput)
 	}
 
-	result, err := s.db.ExecContext(ctx, deleteWorkspaceCommandDefinitionByIDQuery, sessionID, commandID)
+	rowsAffected, err := s.sqlcQueries().DeleteWorkspaceCommandDefinitionByID(ctx, dbsqlc.DeleteWorkspaceCommandDefinitionByIDParams{WorkspaceID: sessionID, CommandID: commandID})
 	if err != nil {
 		return fmt.Errorf("delete workspace command definition %q: %w", commandID, err)
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("delete workspace command definition %q rows affected: %w", commandID, err)
 	}
 	if rowsAffected == 0 {
 		return fmt.Errorf("%w: command id %q for session %q", ErrNotFound, commandID, sessionID)
@@ -1726,23 +1539,7 @@ func (s *Store) CreateAgent(ctx context.Context, params CreateAgentParams) error
 		return fmt.Errorf("%w: invalid invocation class %q", ErrInvalidInput, params.InvocationClass)
 	}
 
-	if _, err := s.db.ExecContext(
-		ctx,
-		insertAgentQuery,
-		params.AgentID,
-		params.WorkspaceID,
-		params.Name,
-		params.Command,
-		params.Args,
-		params.Status,
-		params.ExitCode,
-		params.StartedAt,
-		params.StoppedAt,
-		params.Harness,
-		params.HarnessResumableID,
-		params.HarnessMetadata,
-		params.InvocationClass,
-	); err != nil {
+	if err := s.sqlcQueries().CreateAgent(ctx, dbsqlc.CreateAgentParams{AgentID: params.AgentID, WorkspaceID: params.WorkspaceID, Name: params.Name, Command: params.Command, Args: params.Args, Status: params.Status, ExitCode: optionalInt(params.ExitCode), StartedAt: params.StartedAt, StoppedAt: params.StoppedAt, Harness: params.Harness, HarnessResumableID: params.HarnessResumableID, HarnessMetadata: params.HarnessMetadata, InvocationClass: params.InvocationClass}); err != nil {
 		return fmt.Errorf("create agent %q: %w", params.AgentID, err)
 	}
 
@@ -1757,15 +1554,15 @@ func (s *Store) GetAgent(ctx context.Context, sessionID, agentID string) (*Agent
 		return nil, fmt.Errorf("%w: agent id is required", ErrInvalidInput)
 	}
 
-	agents, err := queryAgents(ctx, s.db, agentByIDQuery, sessionID, agentID)
+	row, err := s.sqlcQueries().GetAgentByID(ctx, dbsqlc.GetAgentByIDParams{WorkspaceID: sessionID, AgentID: agentID})
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("%w: agent id %q for session %q", ErrNotFound, agentID, sessionID)
+		}
 		return nil, err
 	}
-	if len(agents) == 0 {
-		return nil, fmt.Errorf("%w: agent id %q for session %q", ErrNotFound, agentID, sessionID)
-	}
-
-	return &agents[0], nil
+	agent := agentFromSQLC(row)
+	return &agent, nil
 }
 
 func (s *Store) GetAgentByName(ctx context.Context, sessionID, name string) (*Agent, error) {
@@ -1776,15 +1573,15 @@ func (s *Store) GetAgentByName(ctx context.Context, sessionID, name string) (*Ag
 		return nil, fmt.Errorf("%w: agent name is required", ErrInvalidInput)
 	}
 
-	agents, err := queryAgents(ctx, s.db, agentByNameQuery, sessionID, name)
+	row, err := s.sqlcQueries().GetAgentByName(ctx, dbsqlc.GetAgentByNameParams{WorkspaceID: sessionID, Name: optionalString(name)})
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("%w: agent name %q for session %q", ErrNotFound, name, sessionID)
+		}
 		return nil, err
 	}
-	if len(agents) == 0 {
-		return nil, fmt.Errorf("%w: agent name %q for session %q", ErrNotFound, name, sessionID)
-	}
-
-	return &agents[0], nil
+	agent := agentFromSQLC(row)
+	return &agent, nil
 }
 
 func (s *Store) ListAgents(ctx context.Context, sessionID string) ([]Agent, error) {
@@ -1792,7 +1589,15 @@ func (s *Store) ListAgents(ctx context.Context, sessionID string) ([]Agent, erro
 		return nil, fmt.Errorf("%w: session id is required", ErrInvalidInput)
 	}
 
-	return queryAgents(ctx, s.db, listAgentsBySessionQuery, sessionID)
+	rows, err := s.sqlcQueries().ListAgentsByWorkspace(ctx, dbsqlc.ListAgentsByWorkspaceParams{WorkspaceID: sessionID})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Agent, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, agentFromSQLC(row))
+	}
+	return out, nil
 }
 
 func (s *Store) UpdateAgentStatus(ctx context.Context, params UpdateAgentStatusParams) error {
@@ -1809,14 +1614,9 @@ func (s *Store) UpdateAgentStatus(ctx context.Context, params UpdateAgentStatusP
 		return fmt.Errorf("%w: invalid agent status %q", ErrInvalidInput, params.Status)
 	}
 
-	result, err := s.db.ExecContext(ctx, updateAgentStatusQuery, params.Status, params.ExitCode, params.StoppedAt, params.WorkspaceID, params.AgentID)
+	rowsAffected, err := s.sqlcQueries().UpdateAgentStatus(ctx, dbsqlc.UpdateAgentStatusParams{Status: params.Status, ExitCode: optionalInt(params.ExitCode), StoppedAt: params.StoppedAt, WorkspaceID: params.WorkspaceID, AgentID: params.AgentID})
 	if err != nil {
 		return fmt.Errorf("update agent status %q: %w", params.AgentID, err)
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("update agent status %q rows affected: %w", params.AgentID, err)
 	}
 	if rowsAffected == 0 {
 		return fmt.Errorf("%w: agent id %q for session %q", ErrNotFound, params.AgentID, params.WorkspaceID)
@@ -1826,162 +1626,11 @@ func (s *Store) UpdateAgentStatus(ctx context.Context, params UpdateAgentStatusP
 }
 
 func (s *Store) MarkRunningAgentsLost(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, markRunningAgentsLostQuery); err != nil {
+	if err := s.sqlcQueries().MarkRunningAgentsLost(ctx); err != nil {
 		return fmt.Errorf("mark running agents lost: %w", err)
 	}
 
 	return nil
-}
-
-func queryMetaValues(ctx context.Context, db DB, query string, args ...any) ([]string, error) {
-	rows, err := db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		_ = rows.Close()
-	}()
-
-	out := make([]string, 0)
-	for rows.Next() {
-		var value string
-		if err := rows.Scan(&value); err != nil {
-			return nil, err
-		}
-		out = append(out, value)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return out, nil
-}
-
-func querySessions(ctx context.Context, db DB, query string, args ...any) ([]Session, error) {
-	rows, err := db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		_ = rows.Close()
-	}()
-
-	out := make([]Session, 0)
-	for rows.Next() {
-		var item Session
-		if err := rows.Scan(&item.ID, &item.Name, &item.Status, &item.VCSPreference, &item.OriginRoot, &item.CleanupPolicy, &item.CreatedAt, &item.UpdatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return out, nil
-}
-
-func queryCommands(ctx context.Context, db DB, query string, args ...any) ([]Command, error) {
-	rows, err := db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		_ = rows.Close()
-	}()
-
-	out := make([]Command, 0)
-	for rows.Next() {
-		var item Command
-		if err := rows.Scan(
-			&item.CommandID,
-			&item.WorkspaceID,
-			&item.Command,
-			&item.Args,
-			&item.Status,
-			&item.ExitCode,
-			&item.StartedAt,
-			&item.FinishedAt,
-		); err != nil {
-			return nil, err
-		}
-		out = append(out, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return out, nil
-}
-
-func queryAgents(ctx context.Context, db DB, query string, args ...any) ([]Agent, error) {
-	rows, err := db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		_ = rows.Close()
-	}()
-
-	out := make([]Agent, 0)
-	for rows.Next() {
-		var item Agent
-		if err := rows.Scan(
-			&item.AgentID,
-			&item.WorkspaceID,
-			&item.Name,
-			&item.Command,
-			&item.Args,
-			&item.Status,
-			&item.ExitCode,
-			&item.StartedAt,
-			&item.StoppedAt,
-			&item.Harness,
-			&item.HarnessResumableID,
-			&item.HarnessMetadata,
-			&item.InvocationClass,
-		); err != nil {
-			return nil, err
-		}
-		out = append(out, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return out, nil
-}
-
-func queryWorkspaceCommandDefinitions(ctx context.Context, db DB, query string, args ...any) ([]WorkspaceCommandDefinition, error) {
-	rows, err := db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		_ = rows.Close()
-	}()
-
-	out := make([]WorkspaceCommandDefinition, 0)
-	for rows.Next() {
-		var item WorkspaceCommandDefinition
-		if err := rows.Scan(
-			&item.CommandID,
-			&item.WorkspaceID,
-			&item.Name,
-			&item.Command,
-			&item.Args,
-			&item.CreatedAt,
-			&item.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		out = append(out, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return out, nil
 }
 
 func isValidSessionStatus(status string) bool {

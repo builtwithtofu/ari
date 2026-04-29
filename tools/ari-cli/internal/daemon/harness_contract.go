@@ -21,6 +21,7 @@ type HarnessCall struct {
 	SourceProfileID     string                 `json:"source_profile_id,omitempty"`
 	Model               string                 `json:"model,omitempty"`
 	Prompt              string                 `json:"prompt,omitempty"`
+	AuthSlotID          string                 `json:"auth_slot_id,omitempty"`
 	InvocationClass     HarnessInvocationClass `json:"invocation_class"`
 	Capability          HarnessCapability      `json:"capability"`
 	ContextPacketID     string                 `json:"context_packet_id"`
@@ -81,9 +82,30 @@ type HarnessRuntimeEvent struct {
 	ProviderKind string          `json:"provider_kind,omitempty"`
 }
 
+// Canonical Ari-owned runtime event kinds. Adapters map provider protocols into
+// these kinds so public callers do not depend on provider event names.
+const (
+	HarnessEventLifecycle  HarnessRuntimeEventKind = "lifecycle"
+	HarnessEventAgentText  HarnessRuntimeEventKind = "agent_text"
+	HarnessEventTool       HarnessRuntimeEventKind = "tool"
+	HarnessEventFileChange HarnessRuntimeEventKind = "file_change"
+	HarnessEventApproval   HarnessRuntimeEventKind = "approval"
+	HarnessEventError      HarnessRuntimeEventKind = "error"
+	HarnessEventUsage      HarnessRuntimeEventKind = "usage"
+	HarnessEventDebug      HarnessRuntimeEventKind = "debug"
+
+	HarnessLifecycleRunStarted  = "run_started"
+	HarnessLifecycleTurnStarted = "turn_started"
+	HarnessLifecycleCompleted   = "completed"
+	HarnessLifecycleFailed      = "failed"
+)
+
+type HarnessRuntimeEventKind string
+
 type HarnessFinalResponseSeed struct {
-	Status string `json:"status"`
-	Text   string `json:"text,omitempty"`
+	Status          string `json:"status"`
+	Text            string `json:"text,omitempty"`
+	EvidenceEventID string `json:"evidence_event_id,omitempty"`
 }
 
 type HarnessTelemetrySeed struct {
@@ -91,6 +113,177 @@ type HarnessTelemetrySeed struct {
 	InputTokens            *int64 `json:"input_tokens"`
 	OutputTokens           *int64 `json:"output_tokens"`
 	MeasuredTokenTelemetry bool   `json:"measured_token_telemetry"`
+}
+
+type (
+	HarnessAuthState           string
+	HarnessCredentialOwner     string
+	HarnessAriSecretStorage    string
+	HarnessAuthRemediationKind string
+)
+
+const (
+	HarnessAuthAuthenticated HarnessAuthState = "authenticated"
+	HarnessAuthRequired      HarnessAuthState = "auth_required"
+	HarnessAuthInProgress    HarnessAuthState = "auth_in_progress"
+	HarnessAuthFailed        HarnessAuthState = "auth_failed"
+	HarnessAuthCancelled     HarnessAuthState = "cancelled"
+	HarnessAuthUnknown       HarnessAuthState = "unknown"
+	HarnessAuthNotInstalled  HarnessAuthState = "not_installed"
+
+	HarnessCredentialOwnerProvider HarnessCredentialOwner = "provider"
+
+	HarnessAriSecretStorageNone HarnessAriSecretStorage = "none"
+
+	HarnessAuthRemediationProviderAuthFlow HarnessAuthRemediationKind = "provider_auth_flow"
+)
+
+type HarnessAuthRemediation struct {
+	Kind            HarnessAuthRemediationKind `json:"kind"`
+	FlowID          string                     `json:"flow_id,omitempty"`
+	Method          string                     `json:"method,omitempty"`
+	VerificationURL string                     `json:"verification_url,omitempty"`
+	UserCode        string                     `json:"user_code,omitempty"`
+	SecretOwnedBy   string                     `json:"secret_owned_by"`
+}
+
+type HarnessAuthStatus struct {
+	Harness          string                  `json:"harness"`
+	AuthSlotID       string                  `json:"auth_slot_id,omitempty"`
+	Status           HarnessAuthState        `json:"status"`
+	Remediation      *HarnessAuthRemediation `json:"remediation,omitempty"`
+	AriSecretStorage HarnessAriSecretStorage `json:"ari_secret_storage"`
+}
+
+type HarnessAuthSlot struct {
+	AuthSlotID      string                 `json:"auth_slot_id"`
+	Harness         string                 `json:"harness"`
+	Label           string                 `json:"label"`
+	ProviderLabel   string                 `json:"provider_label,omitempty"`
+	CredentialOwner HarnessCredentialOwner `json:"credential_owner"`
+	Status          HarnessAuthState       `json:"status"`
+}
+
+type HarnessAuthPoolStrategy string
+
+const HarnessAuthPoolFailover HarnessAuthPoolStrategy = "failover"
+
+type HarnessAuthPool struct {
+	SlotIDs  []string                `json:"slot_ids"`
+	Strategy HarnessAuthPoolStrategy `json:"strategy"`
+}
+
+type HarnessAuthSelection struct {
+	RequestSlotID   string
+	ProfileSlotID   string
+	ProfilePool     HarnessAuthPool
+	WorkspaceSlotID string
+	WorkspacePool   HarnessAuthPool
+	Harness         string
+}
+
+func NewHarnessAuthRequired(harness, slotID string, remediation HarnessAuthRemediation) HarnessAuthStatus {
+	if strings.TrimSpace(remediation.SecretOwnedBy) == "" {
+		remediation.SecretOwnedBy = strings.TrimSpace(harness)
+	}
+	return HarnessAuthStatus{Harness: strings.TrimSpace(harness), AuthSlotID: strings.TrimSpace(slotID), Status: HarnessAuthRequired, Remediation: &remediation, AriSecretStorage: HarnessAriSecretStorageNone}
+}
+
+func ResolveHarnessAuthSlot(selection HarnessAuthSelection, slots []HarnessAuthSlot) (HarnessAuthSlot, HarnessAuthStatus, error) {
+	target := strings.TrimSpace(selection.RequestSlotID)
+	if target == "" {
+		target = strings.TrimSpace(selection.ProfileSlotID)
+	}
+	if target == "" {
+		target = strings.TrimSpace(selection.WorkspaceSlotID)
+	}
+	harness := strings.TrimSpace(selection.Harness)
+	if target == "" {
+		if selected, status, ok, err := resolveHarnessAuthPool(selection.ProfilePool, harness, slots); ok || err != nil {
+			return selected, status, err
+		}
+		if selected, status, ok, err := resolveHarnessAuthPool(selection.WorkspacePool, harness, slots); ok || err != nil {
+			return selected, status, err
+		}
+	}
+	for _, slot := range slots {
+		if target != "" && strings.TrimSpace(slot.AuthSlotID) != target {
+			continue
+		}
+		if target == "" && harness != "" && strings.TrimSpace(slot.Harness) != harness {
+			continue
+		}
+		if slot.Status == HarnessAuthAuthenticated {
+			return slot, HarnessAuthStatus{Harness: slot.Harness, AuthSlotID: slot.AuthSlotID, Status: slot.Status, AriSecretStorage: HarnessAriSecretStorageNone}, nil
+		}
+		status := NewHarnessAuthRequired(slot.Harness, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, SecretOwnedBy: slot.Harness})
+		status.Status = slot.Status
+		return slot, status, fmt.Errorf("auth slot %s is not ready", slot.AuthSlotID)
+	}
+	return HarnessAuthSlot{}, HarnessAuthStatus{Harness: harness, Status: HarnessAuthRequired, AriSecretStorage: HarnessAriSecretStorageNone}, fmt.Errorf("auth slot is not available")
+}
+
+func resolveHarnessAuthPool(pool HarnessAuthPool, harness string, slots []HarnessAuthSlot) (HarnessAuthSlot, HarnessAuthStatus, bool, error) {
+	if pool.Strategy != HarnessAuthPoolFailover || len(pool.SlotIDs) == 0 {
+		return HarnessAuthSlot{}, HarnessAuthStatus{}, false, nil
+	}
+	var firstUnavailableSlot HarnessAuthSlot
+	var firstUnavailableStatus HarnessAuthStatus
+	for i, slotID := range pool.SlotIDs {
+		slotID = strings.TrimSpace(slotID)
+		if slotID == "" {
+			continue
+		}
+		slot, ok := findHarnessAuthSlot(slots, slotID, harness)
+		if !ok {
+			status := HarnessAuthStatus{Harness: harness, AuthSlotID: slotID, Status: HarnessAuthRequired, AriSecretStorage: HarnessAriSecretStorageNone}
+			return HarnessAuthSlot{AuthSlotID: slotID, Harness: harness, CredentialOwner: HarnessCredentialOwnerProvider, Status: HarnessAuthRequired}, status, true, fmt.Errorf("auth slot %s is not configured", slotID)
+		}
+		if slot.Status == HarnessAuthAuthenticated {
+			return slot, HarnessAuthStatus{Harness: slot.Harness, AuthSlotID: slot.AuthSlotID, Status: slot.Status, AriSecretStorage: HarnessAriSecretStorageNone}, true, nil
+		}
+		status := NewHarnessAuthRequired(slot.Harness, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, SecretOwnedBy: slot.Harness})
+		status.Status = slot.Status
+		if i == 0 {
+			firstUnavailableSlot = slot
+			firstUnavailableStatus = status
+		}
+		if !harnessAuthStateAllowsPreStartFailover(slot.Status) {
+			return slot, status, true, fmt.Errorf("auth slot %s is not ready", slot.AuthSlotID)
+		}
+	}
+	if strings.TrimSpace(firstUnavailableSlot.AuthSlotID) != "" {
+		return firstUnavailableSlot, firstUnavailableStatus, true, fmt.Errorf("auth pool has no ready slots")
+	}
+	return HarnessAuthSlot{}, HarnessAuthStatus{Harness: harness, Status: HarnessAuthRequired, AriSecretStorage: HarnessAriSecretStorageNone}, true, fmt.Errorf("auth pool has no slots")
+}
+
+func findHarnessAuthSlot(slots []HarnessAuthSlot, slotID, harness string) (HarnessAuthSlot, bool) {
+	for _, slot := range slots {
+		if strings.TrimSpace(slot.AuthSlotID) != slotID {
+			continue
+		}
+		if harness != "" && strings.TrimSpace(slot.Harness) != harness {
+			continue
+		}
+		return slot, true
+	}
+	return HarnessAuthSlot{}, false
+}
+
+func harnessAuthStateAllowsPreStartFailover(status HarnessAuthState) bool {
+	switch status {
+	case HarnessAuthNotInstalled:
+		return true
+	default:
+		return false
+	}
+}
+
+func authSlotIsDefaultForHarness(harness, slotID string) bool {
+	harness = strings.TrimSpace(harness)
+	slotID = strings.TrimSpace(slotID)
+	return slotID == "" || slotID == harness+"-default"
 }
 
 type HarnessAdapterDescriptor struct {
@@ -308,7 +501,7 @@ func StartHarnessCallResult(ctx context.Context, executor Executor, call Harness
 		},
 		Items:         items,
 		Events:        harnessRuntimeEventsFromItems(run, items),
-		FinalResponse: harnessFinalResponseFromItems(descriptor, items),
+		FinalResponse: harnessFinalResponseFromItems(run, descriptor, items),
 		Telemetry:     harnessTelemetryFromItems(call, items),
 	}, nil
 }
@@ -319,7 +512,7 @@ func harnessTelemetryFromItems(call HarnessCall, items []TimelineItem) HarnessTe
 		seed.Model = "unknown"
 	}
 	for _, item := range items {
-		if strings.TrimSpace(item.Kind) != "telemetry" {
+		if strings.TrimSpace(item.Kind) != string(HarnessEventUsage) && strings.TrimSpace(item.Kind) != "telemetry" {
 			continue
 		}
 		if value, ok := metadataInt64(item.Metadata, "input_tokens"); ok {
@@ -356,13 +549,13 @@ func metadataInt64(metadata map[string]any, key string) (int64, bool) {
 	}
 }
 
-func harnessFinalResponseFromItems(descriptor HarnessAdapterDescriptor, items []TimelineItem) *HarnessFinalResponseSeed {
+func harnessFinalResponseFromItems(run AgentRun, descriptor HarnessAdapterDescriptor, items []TimelineItem) *HarnessFinalResponseSeed {
 	if !harnessCapabilitiesContain(descriptor.Capabilities, HarnessCapabilityFinalResponse) {
 		return nil
 	}
 	for i := len(items) - 1; i >= 0; i-- {
 		item := items[i]
-		if strings.TrimSpace(item.Kind) != "agent_text" {
+		if strings.TrimSpace(item.Kind) != string(HarnessEventAgentText) {
 			continue
 		}
 		text := strings.TrimSpace(item.Text)
@@ -373,7 +566,7 @@ func harnessFinalResponseFromItems(descriptor HarnessAdapterDescriptor, items []
 		if status == "" {
 			status = "completed"
 		}
-		return &HarnessFinalResponseSeed{Status: status, Text: text}
+		return &HarnessFinalResponseSeed{Status: status, Text: text, EvidenceEventID: fmt.Sprintf("%s:event-%d", run.AgentRunID, i+1)}
 	}
 	return nil
 }
@@ -416,14 +609,8 @@ func harnessCallStatusFromAgentRun(run AgentRun) HarnessCallStatus {
 func harnessRuntimeEventsFromItems(run AgentRun, items []TimelineItem) []HarnessRuntimeEvent {
 	events := make([]HarnessRuntimeEvent, 0, len(items))
 	for i, item := range items {
-		kind := "output.delta"
-		if item.Kind == "lifecycle" {
-			kind = "run.started"
-			if item.Status == "completed" || item.Status == "failed" {
-				kind = "run." + item.Status
-			}
-		}
-		payload, err := json.Marshal(map[string]any{"metadata": item.Metadata, "status": item.Status, "text": item.Text})
+		kind := normalizedHarnessEventKind(item.Kind)
+		payload, err := normalizedHarnessEventPayload(kind, item)
 		if err != nil {
 			panic(fmt.Sprintf("encode harness runtime event payload: %v", err))
 		}
@@ -431,7 +618,7 @@ func harnessRuntimeEventsFromItems(run AgentRun, items []TimelineItem) []Harness
 			EventID:      fmt.Sprintf("%s:event-%d", run.AgentRunID, i+1),
 			RunID:        run.AgentRunID,
 			SessionID:    run.AgentRunID,
-			Kind:         kind,
+			Kind:         string(kind),
 			Sequence:     item.Sequence,
 			CreatedAt:    time.Now().UTC(),
 			Payload:      payload,
@@ -441,12 +628,96 @@ func harnessRuntimeEventsFromItems(run AgentRun, items []TimelineItem) []Harness
 	return events
 }
 
+func normalizedHarnessEventKind(kind string) HarnessRuntimeEventKind {
+	switch strings.TrimSpace(kind) {
+	case string(HarnessEventLifecycle):
+		return HarnessEventLifecycle
+	case string(HarnessEventAgentText), "terminal_output":
+		return HarnessEventAgentText
+	case string(HarnessEventTool):
+		return HarnessEventTool
+	case string(HarnessEventFileChange):
+		return HarnessEventFileChange
+	case string(HarnessEventApproval):
+		return HarnessEventApproval
+	case string(HarnessEventError):
+		return HarnessEventError
+	case string(HarnessEventUsage), "telemetry":
+		return HarnessEventUsage
+	case string(HarnessEventDebug):
+		return HarnessEventDebug
+	default:
+		return HarnessEventAgentText
+	}
+}
+
+func normalizedHarnessEventPayload(kind HarnessRuntimeEventKind, item TimelineItem) (json.RawMessage, error) {
+	payload := map[string]any{}
+	switch kind {
+	case HarnessEventLifecycle:
+		payload["status"] = trimOrDefault(item.Status, HarnessLifecycleRunStarted)
+		if reason := stringMetadata(item.Metadata, "reason"); reason != "" {
+			payload["reason"] = reason
+		}
+	case HarnessEventAgentText:
+		payload["text"] = strings.TrimSpace(item.Text)
+		payload["final"] = boolMetadata(item.Metadata, "final")
+	case HarnessEventUsage:
+		payload["input_tokens"] = knownIntPayload(item.Metadata, "input_tokens")
+		payload["output_tokens"] = knownIntPayload(item.Metadata, "output_tokens")
+		cost := knownIntPayload(item.Metadata, "estimated_cost")
+		cost["estimated"] = boolMetadata(item.Metadata, "cost_estimated")
+		payload["estimated_cost"] = cost
+	case HarnessEventError:
+		payload["code"] = trimOrDefault(stringMetadata(item.Metadata, "code"), "provider_error")
+		payload["message"] = strings.TrimSpace(item.Text)
+		payload["retryable"] = boolMetadata(item.Metadata, "retryable")
+	default:
+		payload["status"] = strings.TrimSpace(item.Status)
+		payload["text"] = strings.TrimSpace(item.Text)
+	}
+	encoded, err := json.Marshal(payload)
+	return encoded, err
+}
+
+func knownIntPayload(metadata map[string]any, key string) map[string]any {
+	if value, ok := metadataInt64(metadata, key); ok {
+		return map[string]any{"known": true, "value": value}
+	}
+	return map[string]any{"known": false}
+}
+
+func boolMetadata(metadata map[string]any, key string) bool {
+	value, ok := metadata[key]
+	if !ok {
+		return false
+	}
+	parsed, ok := value.(bool)
+	return ok && parsed
+}
+
+func stringMetadata(metadata map[string]any, key string) string {
+	value, ok := metadata[key].(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}
+
+func trimOrDefault(value, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
 func startHarnessCallAfterCapabilityCheck(ctx context.Context, executor Executor, call HarnessCall, descriptor HarnessAdapterDescriptor) (AgentRun, []TimelineItem, error) {
 	ariRunID, err := newAriULID()
 	if err != nil {
 		return AgentRun{}, nil, err
 	}
-	providerRun, err := executor.Start(ctx, ExecutorStartRequest{WorkspaceID: call.WorkspaceID, RunID: ariRunID, ContextPacket: string(call.Input), SourceProfileID: call.SourceProfileID, Model: call.Model, Prompt: call.Prompt, InvocationClass: call.InvocationClass})
+	providerRun, err := executor.Start(ctx, ExecutorStartRequest{WorkspaceID: call.WorkspaceID, RunID: ariRunID, ContextPacket: string(call.Input), SourceProfileID: call.SourceProfileID, Model: call.Model, Prompt: call.Prompt, AuthSlotID: call.AuthSlotID, InvocationClass: call.InvocationClass})
 	if err != nil {
 		return AgentRun{}, nil, err
 	}
@@ -460,6 +731,7 @@ func startHarnessCallAfterCapabilityCheck(ctx context.Context, executor Executor
 		TaskID:          call.TaskID,
 		Executor:        providerRun.Executor,
 		ProviderRunID:   providerRun.ProviderRunID,
+		AuthSlotID:      call.AuthSlotID,
 		Status:          executorRunStatusFromItems(items),
 		ContextPacketID: call.ContextPacketID,
 		StartedAt:       time.Now().UTC().Format(time.RFC3339Nano),

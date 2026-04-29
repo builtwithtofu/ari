@@ -7,7 +7,6 @@ package dbsqlc
 
 import (
 	"context"
-	"database/sql"
 )
 
 const getFinalResponseByID = `-- name: GetFinalResponseByID :one
@@ -28,8 +27,12 @@ WHERE final_response_id = ?
 LIMIT 1
 `
 
-func (q *Queries) GetFinalResponseByID(ctx context.Context, finalResponseID string) (FinalResponse, error) {
-	row := q.db.QueryRowContext(ctx, getFinalResponseByID, finalResponseID)
+type GetFinalResponseByIDParams struct {
+	FinalResponseID string `json:"final_response_id"`
+}
+
+func (q *Queries) GetFinalResponseByID(ctx context.Context, arg GetFinalResponseByIDParams) (FinalResponse, error) {
+	row := q.db.QueryRowContext(ctx, getFinalResponseByID, arg.FinalResponseID)
 	var i FinalResponse
 	err := row.Scan(
 		&i.FinalResponseID,
@@ -65,8 +68,12 @@ WHERE run_id = ?
 LIMIT 1
 `
 
-func (q *Queries) GetFinalResponseByRunID(ctx context.Context, runID string) (FinalResponse, error) {
-	row := q.db.QueryRowContext(ctx, getFinalResponseByRunID, runID)
+type GetFinalResponseByRunIDParams struct {
+	RunID string `json:"run_id"`
+}
+
+func (q *Queries) GetFinalResponseByRunID(ctx context.Context, arg GetFinalResponseByRunIDParams) (FinalResponse, error) {
+	row := q.db.QueryRowContext(ctx, getFinalResponseByRunID, arg.RunID)
 	var i FinalResponse
 	err := row.Scan(
 		&i.FinalResponseID,
@@ -102,8 +109,12 @@ WHERE workspace_id = ?
 ORDER BY created_at DESC, final_response_id ASC
 `
 
-func (q *Queries) ListFinalResponsesByWorkspace(ctx context.Context, workspaceID string) ([]FinalResponse, error) {
-	rows, err := q.db.QueryContext(ctx, listFinalResponsesByWorkspace, workspaceID)
+type ListFinalResponsesByWorkspaceParams struct {
+	WorkspaceID string `json:"workspace_id"`
+}
+
+func (q *Queries) ListFinalResponsesByWorkspace(ctx context.Context, arg ListFinalResponsesByWorkspaceParams) ([]FinalResponse, error) {
+	rows, err := q.db.QueryContext(ctx, listFinalResponsesByWorkspace, arg.WorkspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -159,17 +170,17 @@ ON CONFLICT(run_id) DO UPDATE SET
 `
 
 type UpsertFinalResponseParams struct {
-	FinalResponseID string         `json:"final_response_id"`
-	RunID           string         `json:"run_id"`
-	WorkspaceID     string         `json:"workspace_id"`
-	TaskID          string         `json:"task_id"`
-	ContextPacketID string         `json:"context_packet_id"`
-	ProfileID       sql.NullString `json:"profile_id"`
-	Status          string         `json:"status"`
-	Text            string         `json:"text"`
-	EvidenceLinks   string         `json:"evidence_links"`
-	CreatedAt       string         `json:"created_at"`
-	UpdatedAt       sql.NullString `json:"updated_at"`
+	FinalResponseID string  `json:"final_response_id"`
+	RunID           string  `json:"run_id"`
+	WorkspaceID     string  `json:"workspace_id"`
+	TaskID          string  `json:"task_id"`
+	ContextPacketID string  `json:"context_packet_id"`
+	ProfileID       *string `json:"profile_id"`
+	Status          string  `json:"status"`
+	Text            string  `json:"text"`
+	EvidenceLinks   string  `json:"evidence_links"`
+	CreatedAt       string  `json:"created_at"`
+	UpdatedAt       *string `json:"updated_at"`
 }
 
 func (q *Queries) UpsertFinalResponse(ctx context.Context, arg UpsertFinalResponseParams) error {

@@ -7,7 +7,6 @@ package dbsqlc
 
 import (
 	"context"
-	"database/sql"
 )
 
 const getGlobalAgentProfileByName = `-- name: GetGlobalAgentProfileByName :one
@@ -27,8 +26,12 @@ WHERE workspace_id IS NULL AND name = ?
 LIMIT 1
 `
 
-func (q *Queries) GetGlobalAgentProfileByName(ctx context.Context, name string) (AgentProfile, error) {
-	row := q.db.QueryRowContext(ctx, getGlobalAgentProfileByName, name)
+type GetGlobalAgentProfileByNameParams struct {
+	Name string `json:"name"`
+}
+
+func (q *Queries) GetGlobalAgentProfileByName(ctx context.Context, arg GetGlobalAgentProfileByNameParams) (AgentProfile, error) {
+	row := q.db.QueryRowContext(ctx, getGlobalAgentProfileByName, arg.Name)
 	var i AgentProfile
 	err := row.Scan(
 		&i.ProfileID,
@@ -63,8 +66,8 @@ LIMIT 1
 `
 
 type GetWorkspaceAgentProfileByNameParams struct {
-	WorkspaceID sql.NullString `json:"workspace_id"`
-	Name        string         `json:"name"`
+	WorkspaceID *string `json:"workspace_id"`
+	Name        string  `json:"name"`
 }
 
 func (q *Queries) GetWorkspaceAgentProfileByName(ctx context.Context, arg GetWorkspaceAgentProfileByNameParams) (AgentProfile, error) {
@@ -153,8 +156,12 @@ WHERE workspace_id = ?
 ORDER BY name ASC, profile_id ASC
 `
 
-func (q *Queries) ListWorkspaceAgentProfiles(ctx context.Context, workspaceID sql.NullString) ([]AgentProfile, error) {
-	rows, err := q.db.QueryContext(ctx, listWorkspaceAgentProfiles, workspaceID)
+type ListWorkspaceAgentProfilesParams struct {
+	WorkspaceID *string `json:"workspace_id"`
+}
+
+func (q *Queries) ListWorkspaceAgentProfiles(ctx context.Context, arg ListWorkspaceAgentProfilesParams) ([]AgentProfile, error) {
+	rows, err := q.db.QueryContext(ctx, listWorkspaceAgentProfiles, arg.WorkspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -212,16 +219,16 @@ ON CONFLICT(profile_id) DO UPDATE SET
 `
 
 type UpsertAgentProfileParams struct {
-	ProfileID       string         `json:"profile_id"`
-	WorkspaceID     sql.NullString `json:"workspace_id"`
-	Name            string         `json:"name"`
-	Harness         sql.NullString `json:"harness"`
-	Model           sql.NullString `json:"model"`
-	Prompt          sql.NullString `json:"prompt"`
-	InvocationClass sql.NullString `json:"invocation_class"`
-	DefaultsJson    string         `json:"defaults_json"`
-	CreatedAt       string         `json:"created_at"`
-	UpdatedAt       string         `json:"updated_at"`
+	ProfileID       string  `json:"profile_id"`
+	WorkspaceID     *string `json:"workspace_id"`
+	Name            string  `json:"name"`
+	Harness         *string `json:"harness"`
+	Model           *string `json:"model"`
+	Prompt          *string `json:"prompt"`
+	InvocationClass *string `json:"invocation_class"`
+	DefaultsJson    string  `json:"defaults_json"`
+	CreatedAt       string  `json:"created_at"`
+	UpdatedAt       string  `json:"updated_at"`
 }
 
 func (q *Queries) UpsertAgentProfile(ctx context.Context, arg UpsertAgentProfileParams) error {

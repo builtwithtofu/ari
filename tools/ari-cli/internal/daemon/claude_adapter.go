@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
@@ -12,10 +13,11 @@ import (
 )
 
 type claudeExecutorOptions struct {
-	Executable string
-	Cwd        string
-	Model      string
-	RunCommand claudeCommandRunner
+	Executable     string
+	Cwd            string
+	Model          string
+	RunCommand     claudeCommandRunner
+	RunAuthCommand claudeAuthCommandRunner
 }
 
 type commandRunResult struct {
@@ -24,7 +26,10 @@ type commandRunResult struct {
 	ExitCode      *int
 }
 
-type claudeCommandRunner func(context.Context, claudeExecutorOptions, string) (commandRunResult, error)
+type (
+	claudeCommandRunner     func(context.Context, claudeExecutorOptions, string) (commandRunResult, error)
+	claudeAuthCommandRunner func(context.Context, claudeExecutorOptions, []string) (commandRunResult, error)
+)
 
 type ClaudeExecutor struct {
 	options claudeExecutorOptions
@@ -47,7 +52,33 @@ func newClaudeExecutor(options claudeExecutorOptions) *ClaudeExecutor {
 	if options.RunCommand == nil {
 		options.RunCommand = runClaudeCommand
 	}
+	if options.RunAuthCommand == nil {
+		options.RunAuthCommand = runClaudeAuthCommand
+	}
 	return &ClaudeExecutor{options: options, runs: map[string][]TimelineItem{}}
+}
+
+func (e *ClaudeExecutor) AuthStatus(ctx context.Context, slot HarnessAuthSlot) (HarnessAuthStatus, error) {
+	if ctx == nil {
+		return HarnessAuthStatus{}, fmt.Errorf("context is required")
+	}
+	if e == nil {
+		return HarnessAuthStatus{}, fmt.Errorf("executor is required")
+	}
+	if !authSlotIsDefaultForHarness(HarnessNameClaude, slot.AuthSlotID) {
+		return NewHarnessAuthRequired(HarnessNameClaude, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, Method: "provider_owned_slot_binding", SecretOwnedBy: HarnessNameClaude}), nil
+	}
+	result, err := e.options.RunAuthCommand(ctx, e.options, []string{"auth", "status", "--json"})
+	if err != nil {
+		var unavailable *HarnessUnavailableError
+		if errors.As(err, &unavailable) {
+			return HarnessAuthStatus{}, err
+		}
+	}
+	if result.ExitCode != nil && *result.ExitCode == 0 && claudeAuthOutputAuthenticated(result.Output) {
+		return HarnessAuthStatus{Harness: HarnessNameClaude, AuthSlotID: strings.TrimSpace(slot.AuthSlotID), Status: HarnessAuthAuthenticated, AriSecretStorage: HarnessAriSecretStorageNone}, nil
+	}
+	return NewHarnessAuthRequired(HarnessNameClaude, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, Method: "provider_config", SecretOwnedBy: HarnessNameClaude}), nil
 }
 
 func (e *ClaudeExecutor) Descriptor() HarnessAdapterDescriptor {
@@ -60,6 +91,9 @@ func (e *ClaudeExecutor) Start(ctx context.Context, req ExecutorStartRequest) (E
 	}
 	if e == nil {
 		return ExecutorRun{}, fmt.Errorf("executor is required")
+	}
+	if !authSlotIsDefaultForHarness(HarnessNameClaude, req.AuthSlotID) {
+		return ExecutorRun{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "auth_slot_selection_unsupported", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
 	}
 	workspaceID := strings.TrimSpace(req.WorkspaceID)
 	if workspaceID == "" {
@@ -188,4 +222,47 @@ func runClaudeCommand(ctx context.Context, options claudeExecutorOptions, prompt
 		return commandRunResult{}, fmt.Errorf("run claude headless: %w: %s", err, strings.TrimSpace(output.String()))
 	}
 	return commandRunResult{Output: []byte(output.String()), ProcessSample: &sample, ExitCode: &exitCode}, nil
+}
+
+func runClaudeAuthCommand(ctx context.Context, options claudeExecutorOptions, args []string) (commandRunResult, error) {
+	executable := strings.TrimSpace(options.Executable)
+	if executable == "" {
+		executable = "claude"
+	}
+	path, err := exec.LookPath(executable)
+	if err != nil {
+		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
+	}
+	cmd := exec.CommandContext(ctx, path, args...)
+	cmd.Dir = strings.TrimSpace(options.Cwd)
+	var output strings.Builder
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	if err := cmd.Start(); err != nil {
+		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "start_failed", Executable: executable, Probe: executable + " " + strings.Join(args, " "), RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: true}
+	}
+	sample := sampleLinuxProcessMetrics(ctx, AgentRun{PID: cmd.Process.Pid})
+	err = cmd.Wait()
+	exitCode := cmd.ProcessState.ExitCode()
+	return commandRunResult{Output: []byte(output.String()), ProcessSample: &sample, ExitCode: &exitCode}, err
+}
+
+func claudeAuthOutputAuthenticated(output []byte) bool {
+	trimmed := bytes.TrimSpace(output)
+	if len(trimmed) == 0 {
+		return true
+	}
+	var status map[string]any
+	if err := json.Unmarshal(trimmed, &status); err != nil {
+		return !bytes.Contains(bytes.ToLower(trimmed), []byte("not authenticated"))
+	}
+	for _, key := range []string{"authenticated", "logged_in", "loggedIn", "valid"} {
+		if value, ok := status[key].(bool); ok && value {
+			return true
+		}
+	}
+	if value, ok := status["status"].(string); ok {
+		return strings.EqualFold(strings.TrimSpace(value), "authenticated")
+	}
+	return false
 }

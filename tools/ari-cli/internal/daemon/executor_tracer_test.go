@@ -285,14 +285,149 @@ func TestStartHarnessCallResultReturnsUnknownTelemetrySeed(t *testing.T) {
 	if got := strings.Join(result.AgentRun.Capabilities, ","); got != "agent.run.from_context,context_packet,timeline_items" {
 		t.Fatalf("capabilities = %q, want normalized descriptor capabilities", got)
 	}
-	if len(result.Events) != 1 || result.Events[0].Kind != "output.delta" || !strings.Contains(string(result.Events[0].Payload), "done") {
-		t.Fatalf("events = %#v, want output payload containing timeline text", result.Events)
+	if len(result.Events) != 1 || result.Events[0].Kind != string(HarnessEventAgentText) || !strings.Contains(string(result.Events[0].Payload), "done") {
+		t.Fatalf("events = %#v, want normalized agent text payload containing timeline text", result.Events)
 	}
 	if result.SessionRef.AriSessionID != result.AgentRun.AgentRunID {
 		t.Fatalf("session ref = %#v, want Ari run id %q", result.SessionRef, result.AgentRun.AgentRunID)
 	}
 	if err := result.SessionRef.Validate(); err != nil {
 		t.Fatalf("session ref = %#v, validate error = %v", result.SessionRef, err)
+	}
+}
+
+func TestStartHarnessCallResultBuildsCanonicalEventsAndTelemetry(t *testing.T) {
+	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
+	executor := newFinalResponseHarness("fake", []TimelineItem{
+		{ID: "ti_start", Kind: string(HarnessEventLifecycle), Status: HarnessLifecycleTurnStarted, Sequence: 1},
+		{ID: "ti_text", Kind: string(HarnessEventAgentText), Text: "working", Metadata: map[string]any{"final": false}, Sequence: 2},
+		{ID: "ti_usage", Kind: string(HarnessEventUsage), Metadata: map[string]any{"input_tokens": int64(0), "output_tokens": int64(5), "estimated_cost": int64(2), "cost_estimated": true}, Sequence: 3},
+		{ID: "ti_error", Kind: string(HarnessEventError), Status: "failed", Text: "redacted failure", Metadata: map[string]any{"code": "provider_error", "retryable": false}, Sequence: 4},
+		{ID: "ti_final", Kind: string(HarnessEventAgentText), Text: "final answer", Metadata: map[string]any{"final": true}, Sequence: 5},
+	})
+	call, err := NewAgentRunHarnessCall(packet, nil)
+	if err != nil {
+		t.Fatalf("NewAgentRunHarnessCall returned error: %v", err)
+	}
+	call.Input = []byte(renderContextPacket(packet))
+	call.Model = "model-1"
+
+	result, err := StartHarnessCallResult(context.Background(), executor, call)
+	if err != nil {
+		t.Fatalf("StartHarnessCallResult returned error: %v", err)
+	}
+	gotKinds := make([]string, 0, len(result.Events))
+	for _, event := range result.Events {
+		gotKinds = append(gotKinds, event.Kind)
+		if strings.Contains(string(event.Payload), "threadId") || strings.Contains(string(event.Payload), "turnId") || strings.Contains(string(event.Payload), "access_token") {
+			t.Fatalf("event payload leaked provider-specific or token-like fields: %s", event.Payload)
+		}
+	}
+	if strings.Join(gotKinds, ",") != "lifecycle,agent_text,usage,error,agent_text" {
+		t.Fatalf("event kinds = %q, want canonical Ari-owned event kinds", strings.Join(gotKinds, ","))
+	}
+	if result.Events[2].Sequence != 3 || !strings.Contains(string(result.Events[2].Payload), `"input_tokens":{"known":true,"value":0}`) || !strings.Contains(string(result.Events[2].Payload), `"estimated":true`) || !strings.Contains(string(result.Events[2].Payload), `"estimated_cost":{"estimated":true,"known":true,"value":2}`) {
+		t.Fatalf("usage event = %#v payload=%s, want known zero distinct from unknown and estimated cost marker", result.Events[2], result.Events[2].Payload)
+	}
+	if result.FinalResponse == nil || result.FinalResponse.Text != "final answer" || result.FinalResponse.EvidenceEventID != result.Events[4].EventID {
+		t.Fatalf("final response = %#v, want provenance linked to final event", result.FinalResponse)
+	}
+	if result.Telemetry.InputTokens == nil || *result.Telemetry.InputTokens != 0 || result.Telemetry.OutputTokens == nil || *result.Telemetry.OutputTokens != 5 || !result.Telemetry.MeasuredTokenTelemetry {
+		t.Fatalf("telemetry = %#v, want known zero input tokens and measured output tokens", result.Telemetry)
+	}
+}
+
+func TestHarnessAuthStatusRedactsProviderOwnedRemediation(t *testing.T) {
+	status := NewHarnessAuthRequired("codex", "slot-work", HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, FlowID: "auth_123", Method: "device_code", VerificationURL: "https://example.test/device", UserCode: "ABCD-EFGH", SecretOwnedBy: "codex"})
+	if status.Status != HarnessAuthRequired || status.AriSecretStorage != HarnessAriSecretStorageNone || status.Remediation == nil || status.Remediation.SecretOwnedBy != "codex" {
+		t.Fatalf("status = %#v, want provider-owned auth-required remediation without Ari secret storage", status)
+	}
+	encoded, err := json.Marshal(status)
+	if err != nil {
+		t.Fatalf("marshal auth status: %v", err)
+	}
+	if strings.Contains(string(encoded), "access_token") || strings.Contains(string(encoded), "refresh_token") || strings.Contains(string(encoded), "api_key") {
+		t.Fatalf("auth status leaked token-like field: %s", encoded)
+	}
+}
+
+func TestHarnessAuthStatusOmitsRemediationWhenAuthenticated(t *testing.T) {
+	status := HarnessAuthStatus{Harness: "codex", AuthSlotID: "slot-work", Status: HarnessAuthAuthenticated, AriSecretStorage: HarnessAriSecretStorageNone}
+	encoded, err := json.Marshal(status)
+	if err != nil {
+		t.Fatalf("marshal auth status: %v", err)
+	}
+	if strings.Contains(string(encoded), "remediation") {
+		t.Fatalf("authenticated auth status included remediation: %s", encoded)
+	}
+}
+
+func TestHarnessAuthSlotSelectionFailsClosed(t *testing.T) {
+	slots := []HarnessAuthSlot{{AuthSlotID: "codex-work", Harness: "codex", Label: "Work", CredentialOwner: HarnessCredentialOwnerProvider, Status: HarnessAuthAuthenticated}, {AuthSlotID: "codex-personal", Harness: "codex", Label: "Personal", CredentialOwner: HarnessCredentialOwnerProvider, Status: HarnessAuthRequired}}
+	selected, status, err := ResolveHarnessAuthSlot(HarnessAuthSelection{RequestSlotID: "codex-personal", Harness: "codex"}, slots)
+	if err == nil || selected.AuthSlotID != "codex-personal" || status.Status != HarnessAuthRequired {
+		t.Fatalf("selected=%#v status=%#v err=%v, want selected unavailable slot to fail closed", selected, status, err)
+	}
+	if status.AuthSlotID != "codex-personal" || status.Remediation == nil || status.Remediation.SecretOwnedBy != "codex" {
+		t.Fatalf("status = %#v, want remediation for selected slot only", status)
+	}
+}
+
+func TestHarnessAuthPoolFailoverSelectsSecondSlotOnlyForSafePreStartUnavailable(t *testing.T) {
+	slots := []HarnessAuthSlot{{AuthSlotID: "codex-work", Harness: "codex", Label: "Work", CredentialOwner: HarnessCredentialOwnerProvider, Status: HarnessAuthNotInstalled}, {AuthSlotID: "codex-personal", Harness: "codex", Label: "Personal", CredentialOwner: HarnessCredentialOwnerProvider, Status: HarnessAuthAuthenticated}}
+	selected, status, err := ResolveHarnessAuthSlot(HarnessAuthSelection{ProfilePool: HarnessAuthPool{SlotIDs: []string{"codex-work", "codex-personal"}, Strategy: HarnessAuthPoolFailover}, Harness: "codex"}, slots)
+	if err != nil {
+		t.Fatalf("ResolveHarnessAuthSlot returned error: %v", err)
+	}
+	if selected.AuthSlotID != "codex-personal" || status.Status != HarnessAuthAuthenticated {
+		t.Fatalf("selected=%#v status=%#v, want failover to authenticated second slot", selected, status)
+	}
+}
+
+func TestHarnessAuthPoolDoesNotFailoverForInteractiveAuthRequired(t *testing.T) {
+	slots := []HarnessAuthSlot{{AuthSlotID: "codex-work", Harness: "codex", Label: "Work", CredentialOwner: HarnessCredentialOwnerProvider, Status: HarnessAuthRequired}, {AuthSlotID: "codex-personal", Harness: "codex", Label: "Personal", CredentialOwner: HarnessCredentialOwnerProvider, Status: HarnessAuthAuthenticated}}
+	selected, status, err := ResolveHarnessAuthSlot(HarnessAuthSelection{ProfilePool: HarnessAuthPool{SlotIDs: []string{"codex-work", "codex-personal"}, Strategy: HarnessAuthPoolFailover}, Harness: "codex"}, slots)
+	if err == nil || selected.AuthSlotID != "codex-work" || status.Status != HarnessAuthRequired {
+		t.Fatalf("selected=%#v status=%#v err=%v, want first auth_required slot to fail closed", selected, status, err)
+	}
+}
+
+func TestAuthStatusReportsMissingHarnessAsNotInstalled(t *testing.T) {
+	registry := NewHarnessRegistry()
+	if err := registry.Register("missing-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return &missingAuthHarness{}, nil
+	}); err != nil {
+		t.Fatalf("register harness: %v", err)
+	}
+	daemon := &Daemon{harnessRegistry: registry}
+	store := newCommandMethodTestStore(t)
+	if err := store.UpsertAuthSlot(context.Background(), globaldb.AuthSlot{AuthSlotID: "missing-default", Harness: "missing-harness", Label: "Missing", Status: "unknown"}); err != nil {
+		t.Fatalf("UpsertAuthSlot returned error: %v", err)
+	}
+
+	resp, err := daemon.harnessAuthStatus(context.Background(), store, HarnessAuthStatusRequest{})
+	if err != nil {
+		t.Fatalf("harnessAuthStatus returned error: %v", err)
+	}
+	if len(resp.Statuses) != 1 || resp.Statuses[0].Status != HarnessAuthNotInstalled {
+		t.Fatalf("statuses = %#v, want not_installed", resp.Statuses)
+	}
+}
+
+func TestAuthStatusRejectsUnknownRequestedSlot(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	err := callMethodError(registry, "auth.status", HarnessAuthStatusRequest{Slots: []HarnessAuthSlot{{AuthSlotID: "synthetic", Harness: "codex"}}})
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "unknown_auth_slot" {
+		t.Fatalf("error data = %#v, want unknown_auth_slot", data)
 	}
 }
 
@@ -325,6 +460,12 @@ func TestStartExecutorRunRejectsMissingPacketIdentity(t *testing.T) {
 type spyExecutor struct {
 	capabilities []HarnessCapability
 	started      bool
+}
+
+type missingAuthHarness struct{ spyExecutor }
+
+func (missingAuthHarness) AuthStatus(context.Context, HarnessAuthSlot) (HarnessAuthStatus, error) {
+	return HarnessAuthStatus{}, &HarnessUnavailableError{Harness: "missing-harness", Reason: "missing_executable", Executable: "missing-harness", Probe: "missing-harness --version", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
 }
 
 func (e *spyExecutor) Descriptor() HarnessAdapterDescriptor {
@@ -429,8 +570,9 @@ func (e *fakeHarness) Stop(ctx context.Context, runID string) error {
 }
 
 type capturingHarness struct {
-	name     string
-	captured *ExecutorStartRequest
+	name         string
+	captured     *ExecutorStartRequest
+	authStatuses map[string]HarnessAuthState
 }
 
 func (e *capturingHarness) Descriptor() HarnessAdapterDescriptor {
@@ -447,6 +589,15 @@ func (e *capturingHarness) Start(ctx context.Context, req ExecutorStartRequest) 
 func (e *capturingHarness) Items(ctx context.Context, runID string) ([]TimelineItem, error) {
 	_ = ctx
 	return []TimelineItem{{ID: runID + ":item-1", RunID: runID, Kind: "agent_text", Status: "completed", Sequence: 1}}, nil
+}
+
+func (e *capturingHarness) AuthStatus(ctx context.Context, slot HarnessAuthSlot) (HarnessAuthStatus, error) {
+	_ = ctx
+	status := HarnessAuthAuthenticated
+	if configured, ok := e.authStatuses[strings.TrimSpace(slot.AuthSlotID)]; ok {
+		status = configured
+	}
+	return HarnessAuthStatus{Harness: e.name, AuthSlotID: strings.TrimSpace(slot.AuthSlotID), Status: status, AriSecretStorage: HarnessAriSecretStorageNone}, nil
 }
 
 func (e *capturingHarness) Stop(ctx context.Context, runID string) error {
@@ -492,6 +643,9 @@ func TestAgentRunMethodRejectsFakeExecutor(t *testing.T) {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	if err := store.UpsertAuthSlot(context.Background(), globaldb.AuthSlot{AuthSlotID: "codex-personal", Harness: "test-harness", Label: "Personal", ProviderLabel: "ChatGPT Plus", Status: "authenticated"}); err != nil {
+		t.Fatalf("UpsertAuthSlot returned error: %v", err)
+	}
 
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 	err := callMethodError(registry, "agent.run", AgentRunStartRequest{
@@ -516,6 +670,14 @@ func TestAgentRunMethodUsesInjectedHarnessFactory(t *testing.T) {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	for _, slot := range []globaldb.AuthSlot{
+		{AuthSlotID: "slot-one", Harness: "test-harness", Label: "One", Status: "not_installed"},
+		{AuthSlotID: "slot-two", Harness: "test-harness", Label: "Two", Status: "authenticated"},
+	} {
+		if err := store.UpsertAuthSlot(context.Background(), slot); err != nil {
+			t.Fatalf("UpsertAuthSlot(%s) returned error: %v", slot.AuthSlotID, err)
+		}
+	}
 
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 	resp := callMethod[AgentRunStartResponse](t, registry, "agent.run", AgentRunStartRequest{Executor: "test-harness", Packet: packet})
@@ -538,6 +700,9 @@ func TestAgentProfileRunUsesProfileHarness(t *testing.T) {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	if err := store.UpsertAuthSlot(context.Background(), globaldb.AuthSlot{AuthSlotID: "codex-personal", Harness: "test-harness", Label: "Personal", ProviderLabel: "ChatGPT Plus", Status: "authenticated"}); err != nil {
+		t.Fatalf("UpsertAuthSlot returned error: %v", err)
+	}
 
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 	resp := callMethod[AgentProfileRunResponse](t, registry, "agent.profile.run", AgentProfileRunRequest{Profile: "executor", Packet: packet})
@@ -677,6 +842,48 @@ func TestAgentProfileCreateRejectsMissingName(t *testing.T) {
 	}
 }
 
+func TestAuthSlotListReturnsMetadataWithoutSources(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	if err := store.UpsertAuthSlot(context.Background(), globaldb.AuthSlot{AuthSlotID: "codex-personal", Harness: "codex", Label: "Personal", ProviderLabel: "ChatGPT Plus", Status: "authenticated"}); err != nil {
+		t.Fatalf("UpsertAuthSlot returned error: %v", err)
+	}
+
+	resp := callMethod[AuthSlotListResponse](t, registry, "auth.slot.list", AuthSlotListRequest{Harness: "codex"})
+	if len(resp.Slots) != 1 {
+		t.Fatalf("slot count = %d, want 1", len(resp.Slots))
+	}
+	if resp.Slots[0].AuthSlotID != "codex-personal" || resp.Slots[0].ProviderLabel != "ChatGPT Plus" || resp.Slots[0].CredentialOwner != "provider" {
+		t.Fatalf("slot = %#v, want redacted metadata", resp.Slots[0])
+	}
+}
+
+func TestAuthStatusUsesStoredSlotsWhenNoSlotsRequested(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = primaryFolder
+		_ = sink
+		return &capturingHarness{name: req.Executor, authStatuses: map[string]HarnessAuthState{"slot-two": HarnessAuthAuthenticated}}, nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	if err := store.UpsertAuthSlot(context.Background(), globaldb.AuthSlot{AuthSlotID: "slot-two", Harness: "test-harness", Label: "Second", Status: "unknown"}); err != nil {
+		t.Fatalf("UpsertAuthSlot returned error: %v", err)
+	}
+
+	resp := callMethod[HarnessAuthStatusResponse](t, registry, "auth.status", HarnessAuthStatusRequest{})
+	if len(resp.Statuses) != 1 || resp.Statuses[0].AuthSlotID != "slot-two" || resp.Statuses[0].Status != HarnessAuthAuthenticated {
+		t.Fatalf("statuses = %#v, want stored slot status", resp.Statuses)
+	}
+}
+
 func TestDefaultHelperEnsureAndGetUseWorkspaceScopedHelper(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
@@ -754,6 +961,14 @@ func TestAgentProfileRunUsesInlineProfileDefinition(t *testing.T) {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	for _, slot := range []globaldb.AuthSlot{
+		{AuthSlotID: "slot-one", Harness: "test-harness", Label: "One", Status: "not_installed"},
+		{AuthSlotID: "slot-two", Harness: "test-harness", Label: "Two", Status: "authenticated"},
+	} {
+		if err := store.UpsertAuthSlot(context.Background(), slot); err != nil {
+			t.Fatalf("UpsertAuthSlot(%s) returned error: %v", slot.AuthSlotID, err)
+		}
+	}
 
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 	resp := callMethod[AgentProfileRunResponse](t, registry, "agent.profile.run", AgentProfileRunRequest{ProfileDefinition: &AgentProfile{Name: "dynamic", Harness: "test-harness"}, Packet: packet})
@@ -823,6 +1038,83 @@ func TestAgentProfileRunPassesProfileMetadataToHarness(t *testing.T) {
 	_ = callMethod[AgentProfileRunResponse](t, registry, "agent.profile.run", AgentProfileRunRequest{ProfileDefinition: &AgentProfile{Name: "dynamic", Harness: "test-harness", Model: "explicit-model"}, Defaults: AgentRunDefaults{Model: "default-model", Prompt: "default-prompt"}, Packet: packet})
 	if captured.SourceProfileID != "dynamic" || captured.Model != "explicit-model" || captured.Prompt != "default-prompt" || captured.InvocationClass != HarnessInvocationAgent {
 		t.Fatalf("captured request = %#v, want profile/default metadata at harness boundary", captured)
+	}
+}
+
+func TestAgentProfileRunPassesSelectedAuthSlotToHarnessAndRun(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	var captured ExecutorStartRequest
+	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = primaryFolder
+		_ = sink
+		return &capturingHarness{name: req.Executor, captured: &captured}, nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	if err := store.UpsertAuthSlot(context.Background(), globaldb.AuthSlot{AuthSlotID: "codex-personal", Harness: "test-harness", Label: "Personal", ProviderLabel: "ChatGPT Plus", Status: "authenticated"}); err != nil {
+		t.Fatalf("UpsertAuthSlot returned error: %v", err)
+	}
+
+	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
+	resp := callMethod[AgentProfileRunResponse](t, registry, "agent.profile.run", AgentProfileRunRequest{ProfileDefinition: &AgentProfile{Name: "dynamic", Harness: "test-harness", AuthSlotID: "codex-personal"}, Packet: packet})
+	if captured.AuthSlotID != "codex-personal" || resp.Run.AuthSlotID != "codex-personal" {
+		t.Fatalf("captured request = %#v run = %#v, want selected auth slot recorded", captured, resp.Run)
+	}
+}
+
+func TestAgentProfileRunAuthPoolRecordsSafeFailoverSlot(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	var captured ExecutorStartRequest
+	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = primaryFolder
+		_ = sink
+		return &capturingHarness{name: req.Executor, captured: &captured, authStatuses: map[string]HarnessAuthState{"slot-one": HarnessAuthNotInstalled, "slot-two": HarnessAuthAuthenticated}}, nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	for _, slot := range []globaldb.AuthSlot{
+		{AuthSlotID: "slot-one", Harness: "test-harness", Label: "One", Status: "not_installed"},
+		{AuthSlotID: "slot-two", Harness: "test-harness", Label: "Two", Status: "authenticated"},
+	} {
+		if err := store.UpsertAuthSlot(context.Background(), slot); err != nil {
+			t.Fatalf("UpsertAuthSlot(%s) returned error: %v", slot.AuthSlotID, err)
+		}
+	}
+
+	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
+	resp := callMethod[AgentProfileRunResponse](t, registry, "agent.profile.run", AgentProfileRunRequest{ProfileDefinition: &AgentProfile{Name: "dynamic", Harness: "test-harness", AuthPool: HarnessAuthPool{SlotIDs: []string{"slot-one", "slot-two"}, Strategy: HarnessAuthPoolFailover}}, Packet: packet})
+	if captured.AuthSlotID != "slot-two" || resp.Run.AuthSlotID != "slot-two" {
+		t.Fatalf("captured request = %#v run = %#v, want safe failover slot recorded", captured, resp.Run)
+	}
+}
+
+func TestAgentProfileRunRejectsUnstoredAuthSlot(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return &capturingHarness{name: "test-harness"}, nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+
+	err := callMethodError(registry, "agent.profile.run", AgentProfileRunRequest{ProfileDefinition: &AgentProfile{Name: "dynamic", Harness: "test-harness", AuthSlotID: "missing-slot"}, Packet: ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}})
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "unknown_auth_slot" || data["start_invoked"] != false {
+		t.Fatalf("error data = %#v, want unknown_auth_slot before start", data)
 	}
 }
 

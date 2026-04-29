@@ -150,6 +150,7 @@ func NewRootCmd() *cobra.Command {
 	rootCmd.AddCommand(NewProfileCmd())
 	rootCmd.AddCommand(NewFinalResponseCmd())
 	rootCmd.AddCommand(NewTelemetryCmd())
+	rootCmd.AddCommand(NewAuthCmd())
 
 	return rootCmd
 }
