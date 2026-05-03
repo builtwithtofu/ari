@@ -52,7 +52,7 @@ var (
 )
 
 func NewCommandCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "command", Short: "Manage workspace command definitions"}
+	cmd := &cobra.Command{Use: "command", Short: "Manage workspace command definitions", Hidden: true}
 	cmd.AddCommand(newWorkspaceCommandCreateCmd())
 	cmd.AddCommand(newWorkspaceCommandListCmd())
 	cmd.AddCommand(newWorkspaceCommandShowCmd())

@@ -86,6 +86,14 @@ var (
 		var response daemon.WorkspaceRemoveFolderResponse
 		return rpcClient.Call(ctx, "workspace.remove_folder", req, &response)
 	}
+	workspaceContextSetRPC = func(ctx context.Context, socketPath string, req daemon.ContextSetRequest) (daemon.ContextSetResponse, error) {
+		rpcClient := client.New(socketPath)
+		var response daemon.ContextSetResponse
+		if err := rpcClient.Call(ctx, "context.set", req, &response); err != nil {
+			return daemon.ContextSetResponse{}, err
+		}
+		return response, nil
+	}
 )
 
 func NewWorkspaceCmd() *cobra.Command {
@@ -97,6 +105,7 @@ func NewWorkspaceCmd() *cobra.Command {
 	cmd.AddCommand(newWorkspaceSuspendCmd())
 	cmd.AddCommand(newWorkspaceResumeCmd())
 	cmd.AddCommand(newWorkspaceSetCmd())
+	cmd.AddCommand(newWorkspaceUseCmd())
 	cmd.AddCommand(newWorkspaceCurrentCmd())
 	cmd.AddCommand(newWorkspaceSwitchCmd())
 	cmd.AddCommand(newWorkspaceClearCmd())
@@ -105,11 +114,48 @@ func NewWorkspaceCmd() *cobra.Command {
 	return cmd
 }
 
+func newWorkspaceUseCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "use <id-or-name>",
+		Short: "Use active workspace",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := configuredDaemonConfig()
+			if err != nil {
+				return err
+			}
+			if err := workspaceEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
+				return err
+			}
+			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
+			defer cancel()
+			workspaceID, err := resolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, args[0])
+			if err != nil {
+				return err
+			}
+			workspace, err := workspaceGetRPC(ctx, cfg.Daemon.SocketPath, workspaceID)
+			if err != nil {
+				return mapSessionRPCError(err)
+			}
+			if strings.EqualFold(strings.TrimSpace(workspace.Status), "closed") {
+				return userFacingError{message: "Workspace is closed"}
+			}
+			resp, err := workspaceContextSetRPC(ctx, cfg.Daemon.SocketPath, daemon.ContextSetRequest{WorkspaceID: workspaceID})
+			if err != nil {
+				return mapSessionRPCError(err)
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Active workspace set: %s\n", resp.Current.WorkspaceID)
+			return err
+		},
+	}
+}
+
 func newWorkspaceSetCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "set <id-or-name>",
-		Short: "Set active workspace",
-		Args:  cobra.ExactArgs(1),
+		Use:    "set <id-or-name>",
+		Short:  "Set active workspace",
+		Hidden: true,
+		Args:   cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := configuredDaemonConfig()
 			if err != nil {
@@ -136,8 +182,9 @@ func newWorkspaceSetCmd() *cobra.Command {
 
 func newWorkspaceCurrentCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "current",
-		Short: "Show active workspace",
+		Use:    "current",
+		Short:  "Show active workspace",
+		Hidden: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			sessionID, err := config.ReadActiveWorkspace()
 			if err != nil {
@@ -154,8 +201,9 @@ func newWorkspaceCurrentCmd() *cobra.Command {
 
 func newWorkspaceClearCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "clear",
-		Short: "Clear active workspace",
+		Use:    "clear",
+		Short:  "Clear active workspace",
+		Hidden: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := config.WriteActiveWorkspace(""); err != nil {
 				return err
@@ -172,8 +220,9 @@ func newWorkspaceClearCmd() *cobra.Command {
 
 func newWorkspaceSwitchCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "switch",
-		Short: "Switch active workspace",
+		Use:    "switch",
+		Short:  "Switch active workspace",
+		Hidden: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := configuredDaemonConfig()
 			if err != nil {

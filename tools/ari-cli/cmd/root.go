@@ -19,6 +19,7 @@ type rootRunDeps struct {
 	resolveWorkspaceFromCWD func(context.Context, string, string) (daemon.WorkspaceGetResponse, error)
 	agentListRPC            func(context.Context, string, string) (daemon.AgentListResponse, error)
 	workspaceActivityRPC    func(context.Context, string, string) (daemon.WorkspaceActivityResponse, error)
+	dashboardRPC            func(context.Context, string, string) (daemon.DashboardGetResponse, error)
 	runWorkspaceAttach      func(*cobra.Command, []string) error
 }
 
@@ -35,6 +36,14 @@ var rootDeps = rootRunDeps{
 		var response daemon.WorkspaceActivityResponse
 		if err := rpcClient.Call(ctx, "workspace.activity", daemon.WorkspaceActivityRequest{WorkspaceID: workspaceID}, &response); err != nil {
 			return daemon.WorkspaceActivityResponse{}, err
+		}
+		return response, nil
+	},
+	dashboardRPC: func(ctx context.Context, socketPath, cwd string) (daemon.DashboardGetResponse, error) {
+		rpcClient := client.New(socketPath)
+		var response daemon.DashboardGetResponse
+		if err := rpcClient.Call(ctx, "dashboard.get", daemon.DashboardGetRequest{CWD: cwd}, &response); err != nil {
+			return daemon.DashboardGetResponse{}, err
 		}
 		return response, nil
 	},
@@ -71,40 +80,26 @@ var rootRunNonInteractive = func(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	workspace, err := rootDeps.resolveWorkspaceFromCWD(ctx, cfg.Daemon.SocketPath, cwd)
-	if err != nil {
-		if isWorkspaceCWDNoMatch(err) {
-			_, writeErr := fmt.Fprintln(cmd.OutOrStdout(), "No workspace matches current directory.")
-			if writeErr != nil {
-				return writeErr
-			}
-			_, writeErr = fmt.Fprintln(cmd.OutOrStdout(), "Hint: Run `ari workspace create <name>` in this project.")
-			if writeErr != nil {
-				return writeErr
-			}
-			return userFacingError{message: "No workspace matches current directory"}
-		}
-		return err
-	}
-
-	activity, err := rootDeps.workspaceActivityRPC(ctx, cfg.Daemon.SocketPath, workspace.WorkspaceID)
+	dashboard, err := rootDeps.dashboardRPC(ctx, cfg.Daemon.SocketPath, cwd)
 	if err != nil {
 		return mapSessionRPCError(err)
 	}
+	return renderDashboard(cmd, dashboard)
+}
 
+func renderDashboard(cmd *cobra.Command, dashboard daemon.DashboardGetResponse) error {
+	activity := dashboard.Activity
 	if _, err := fmt.Fprintln(cmd.OutOrStdout(), "Ari workspace dashboard"); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Workspace: %s\n", workspace.Name); err != nil {
+	workspaceName := activity.WorkspaceName
+	if workspaceName == "" {
+		workspaceName = activity.WorkspaceID
+	}
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Active workspace: %s\n", workspaceName); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "ID: %s\n", workspace.WorkspaceID); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Status: %s\n", workspace.Status); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Origin: %s\n", workspace.OriginRoot); err != nil {
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "ID: %s\n", activity.WorkspaceID); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Agents: %d\n", len(activity.Agents)); err != nil {
@@ -122,6 +117,27 @@ var rootRunNonInteractive = func(cmd *cobra.Command, _ []string) error {
 	if len(activity.Proofs) > 0 {
 		proof := activity.Proofs[0]
 		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Latest proof: %s %s\n", proof.Status, proof.Command); err != nil {
+			return err
+		}
+	}
+	for _, action := range dashboard.ResumeActions {
+		label := action.Label
+		if label == "" {
+			label = action.SourceID
+		}
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Resume: %s %s\n", action.Kind, label); err != nil {
+			return err
+		}
+	}
+	for _, membership := range dashboard.CWDMemberships {
+		if membership.Active {
+			continue
+		}
+		name := membership.Name
+		if name == "" {
+			name = membership.WorkspaceID
+		}
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "CWD workspace: %s\n", name); err != nil {
 			return err
 		}
 	}
@@ -151,8 +167,19 @@ func NewRootCmd() *cobra.Command {
 	rootCmd.AddCommand(NewFinalResponseCmd())
 	rootCmd.AddCommand(NewTelemetryCmd())
 	rootCmd.AddCommand(NewAuthCmd())
+	rootCmd.AddCommand(newStatusCmd())
+	rootCmd.AddCommand(NewAPICmd())
 
 	return rootCmd
+}
+
+func newStatusCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Show Ari dashboard status",
+		Args:  cobra.NoArgs,
+		RunE:  rootRunNonInteractive,
+	}
 }
 
 func Execute() {

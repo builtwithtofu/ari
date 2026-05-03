@@ -89,8 +89,8 @@ func TestWorkspaceActivityProjectsCommandsAgentsProofsAndVCS(t *testing.T) {
 	if resp.Attention.Level != "action-required" {
 		t.Fatalf("attention level = %q, want action-required", resp.Attention.Level)
 	}
-	if len(resp.Attention.Items) != 1 || resp.Attention.Items[0].SourceID != "proof_cmd-1" {
-		t.Fatalf("attention items = %#v, want failed proof item", resp.Attention.Items)
+	if len(resp.Attention.Items) != 2 || resp.Attention.Items[0].SourceID != "proof_cmd-1" || resp.Attention.Items[1].SourceID != "ag-1" {
+		t.Fatalf("attention items = %#v, want failed proof and running agent items", resp.Attention.Items)
 	}
 }
 
@@ -139,6 +139,152 @@ func TestWorkspaceActivityOrdersExecutorRunsDeterministically(t *testing.T) {
 	}
 	if resp.Agents[0].ID != "a-run" || resp.Agents[1].ID != "z-run" {
 		t.Fatalf("agents = %#v, want a-run then z-run", resp.Agents)
+	}
+}
+
+func TestWorkspaceActivityAttentionIncludesRunningAgents(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	harness := "codex"
+	if err := store.CreateAgent(context.Background(), globaldb.CreateAgentParams{
+		AgentID:     "ag-running",
+		WorkspaceID: "ws-1",
+		Command:     "codex",
+		Args:        `[]`,
+		Status:      "running",
+		StartedAt:   "2026-04-25T00:00:01Z",
+		Harness:     &harness,
+	}); err != nil {
+		t.Fatalf("CreateAgent returned error: %v", err)
+	}
+
+	resp := callMethod[WorkspaceActivityResponse](t, registry, "workspace.activity", WorkspaceActivityRequest{WorkspaceID: "ws-1"})
+	if resp.Attention.Level != "running" {
+		t.Fatalf("attention level = %q, want running", resp.Attention.Level)
+	}
+	if len(resp.Attention.Items) != 1 {
+		t.Fatalf("attention items len = %d, want 1", len(resp.Attention.Items))
+	}
+	item := resp.Attention.Items[0]
+	if item.Kind != "agent_running" || item.SourceID != "ag-running" {
+		t.Fatalf("attention item = %#v, want running agent item", item)
+	}
+}
+
+func TestWorkspaceActivityAttentionIncludesAuthRequired(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	if err := store.UpsertAuthSlot(context.Background(), globaldb.AuthSlot{AuthSlotID: "codex-default", Harness: "codex", Label: "default", Status: "auth_required"}); err != nil {
+		t.Fatalf("UpsertAuthSlot returned error: %v", err)
+	}
+	if err := store.UpsertAgentProfile(context.Background(), globaldb.AgentProfile{ProfileID: "ap-helper", WorkspaceID: "ws-1", Name: "helper", Harness: "codex", AuthSlotID: "codex-default"}); err != nil {
+		t.Fatalf("UpsertAgentProfile returned error: %v", err)
+	}
+
+	resp := callMethod[WorkspaceActivityResponse](t, registry, "workspace.activity", WorkspaceActivityRequest{WorkspaceID: "ws-1"})
+	if resp.Attention.Level != "auth" {
+		t.Fatalf("attention level = %q, want auth", resp.Attention.Level)
+	}
+	if len(resp.Attention.Items) != 1 {
+		t.Fatalf("attention items len = %d, want 1", len(resp.Attention.Items))
+	}
+	item := resp.Attention.Items[0]
+	if item.Kind != "auth_required" || item.SourceID != "codex-default" {
+		t.Fatalf("attention item = %#v, want auth-required item", item)
+	}
+}
+
+func TestWorkspaceActivityAttentionTreatsBrokenAuthAsActionRequired(t *testing.T) {
+	for _, status := range []string{"auth_failed", "not_installed"} {
+		t.Run(status, func(t *testing.T) {
+			store := newCommandMethodTestStore(t)
+			registry := rpc.NewMethodRegistry()
+			d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+			if err := d.registerMethods(registry, store); err != nil {
+				t.Fatalf("registerMethods returned error: %v", err)
+			}
+			seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+			if err := store.UpsertAuthSlot(context.Background(), globaldb.AuthSlot{AuthSlotID: "codex-default", Harness: "codex", Label: "default", Status: status}); err != nil {
+				t.Fatalf("UpsertAuthSlot returned error: %v", err)
+			}
+			if err := store.UpsertAgentProfile(context.Background(), globaldb.AgentProfile{ProfileID: "ap-helper", WorkspaceID: "ws-1", Name: "helper", Harness: "codex", AuthSlotID: "codex-default"}); err != nil {
+				t.Fatalf("UpsertAgentProfile returned error: %v", err)
+			}
+
+			resp := callMethod[WorkspaceActivityResponse](t, registry, "workspace.activity", WorkspaceActivityRequest{WorkspaceID: "ws-1"})
+			if resp.Attention.Level != "action-required" {
+				t.Fatalf("attention level = %q, want action-required", resp.Attention.Level)
+			}
+		})
+	}
+}
+
+func TestWorkspaceActivityAttentionIncludesMixedSourcesWithHighestLevel(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	if err := store.CreateCommand(context.Background(), globaldb.CreateCommandParams{CommandID: "cmd-fail", WorkspaceID: "ws-1", Command: "just test", Args: `[]`, Status: "exited", ExitCode: intPtr(1), StartedAt: "2026-04-25T00:00:00Z"}); err != nil {
+		t.Fatalf("CreateCommand returned error: %v", err)
+	}
+	if err := store.UpsertAuthSlot(context.Background(), globaldb.AuthSlot{AuthSlotID: "codex-default", Harness: "codex", Label: "default", Status: "auth_required"}); err != nil {
+		t.Fatalf("UpsertAuthSlot returned error: %v", err)
+	}
+	if err := store.UpsertAgentProfile(context.Background(), globaldb.AgentProfile{ProfileID: "ap-helper", WorkspaceID: "ws-1", Name: "helper", Harness: "codex", AuthSlotID: "codex-default"}); err != nil {
+		t.Fatalf("UpsertAgentProfile returned error: %v", err)
+	}
+	if err := store.CreateAgent(context.Background(), globaldb.CreateAgentParams{AgentID: "ag-running", WorkspaceID: "ws-1", Command: "codex", Args: `[]`, Status: "running", StartedAt: "2026-04-25T00:00:01Z"}); err != nil {
+		t.Fatalf("CreateAgent returned error: %v", err)
+	}
+
+	resp := callMethod[WorkspaceActivityResponse](t, registry, "workspace.activity", WorkspaceActivityRequest{WorkspaceID: "ws-1"})
+	if resp.Attention.Level != "action-required" {
+		t.Fatalf("attention level = %q, want action-required", resp.Attention.Level)
+	}
+	want := map[string]string{"proof_failed": "proof_cmd-fail", "auth_required": "codex-default", "agent_running": "ag-running"}
+	for _, item := range resp.Attention.Items {
+		if want[item.Kind] == item.SourceID {
+			delete(want, item.Kind)
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("attention items = %#v, missing %v", resp.Attention.Items, want)
+	}
+}
+
+func TestWorkspaceActivityIgnoresUnreferencedAuthSlots(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	if err := store.UpsertAuthSlot(context.Background(), globaldb.AuthSlot{AuthSlotID: "unused-slot", Harness: "codex", Label: "unused", Status: "auth_required"}); err != nil {
+		t.Fatalf("UpsertAuthSlot returned error: %v", err)
+	}
+
+	resp := callMethod[WorkspaceActivityResponse](t, registry, "workspace.activity", WorkspaceActivityRequest{WorkspaceID: "ws-1"})
+	if resp.Attention.Level != "none" || len(resp.Attention.Items) != 0 {
+		t.Fatalf("attention = %#v, want no workspace auth attention from unreferenced slot", resp.Attention)
 	}
 }
 

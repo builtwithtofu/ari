@@ -32,7 +32,7 @@ var (
 )
 
 func NewFinalResponseCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "final-response", Short: "Read final response artifacts"}
+	cmd := &cobra.Command{Use: "final-response", Short: "Read final response artifacts", Hidden: true}
 	cmd.AddCommand(newFinalResponseShowCmd())
 	cmd.AddCommand(newFinalResponseListCmd())
 	cmd.AddCommand(newFinalResponseExportCmd())

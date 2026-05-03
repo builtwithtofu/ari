@@ -1044,6 +1044,89 @@ func TestWorkspaceSetCurrentAndClear(t *testing.T) {
 	}
 }
 
+func TestWorkspaceUseSetsDaemonActiveContext(t *testing.T) {
+	originalGet := workspaceGetRPC
+	originalList := workspaceListRPC
+	originalContextSet := workspaceContextSetRPC
+	t.Cleanup(func() {
+		workspaceGetRPC = originalGet
+		workspaceListRPC = originalList
+		workspaceContextSetRPC = originalContextSet
+	})
+	workspaceGetRPC = func(_ context.Context, _ string, workspaceID string) (daemon.WorkspaceGetResponse, error) {
+		if workspaceID == "ws-123" {
+			return daemon.WorkspaceGetResponse{WorkspaceID: "ws-123", Name: "alpha", Status: "active"}, nil
+		}
+		return daemon.WorkspaceGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "workspace not found"}
+	}
+	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{{WorkspaceID: "ws-123", Name: "alpha", Status: "active"}}}, nil
+	}
+	workspaceContextSetRPC = func(ctx context.Context, socketPath string, req daemon.ContextSetRequest) (daemon.ContextSetResponse, error) {
+		_ = ctx
+		_ = socketPath
+		if req.WorkspaceID != "ws-123" {
+			t.Fatalf("context.set workspace = %q, want ws-123", req.WorkspaceID)
+		}
+		return daemon.ContextSetResponse{Current: daemon.ActiveWorkspaceContext{WorkspaceID: "ws-123", Version: "v1"}}, nil
+	}
+
+	out, err := executeRootCommand("workspace", "use", "alpha")
+	if err != nil {
+		t.Fatalf("execute workspace use: %v", err)
+	}
+	if !strings.Contains(out, "Active workspace set: ws-123") {
+		t.Fatalf("workspace use output = %q, want daemon context confirmation", out)
+	}
+}
+
+func TestWorkspaceUseRejectsClosedWorkspace(t *testing.T) {
+	originalGet := workspaceGetRPC
+	originalList := workspaceListRPC
+	originalContextSet := workspaceContextSetRPC
+	t.Cleanup(func() {
+		workspaceGetRPC = originalGet
+		workspaceListRPC = originalList
+		workspaceContextSetRPC = originalContextSet
+	})
+	workspaceGetRPC = func(_ context.Context, _ string, workspaceID string) (daemon.WorkspaceGetResponse, error) {
+		if workspaceID == "ws-closed" {
+			return daemon.WorkspaceGetResponse{WorkspaceID: "ws-closed", Name: "alpha", Status: "closed"}, nil
+		}
+		return daemon.WorkspaceGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "workspace not found"}
+	}
+	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{{WorkspaceID: "ws-closed", Name: "alpha", Status: "closed"}}}, nil
+	}
+	workspaceContextSetRPC = func(context.Context, string, daemon.ContextSetRequest) (daemon.ContextSetResponse, error) {
+		t.Fatal("workspace use should not call context.set for a closed workspace")
+		return daemon.ContextSetResponse{}, nil
+	}
+
+	_, err := executeRootCommand("workspace", "use", "alpha")
+	if err == nil {
+		t.Fatal("workspace use returned nil error for closed workspace")
+	}
+	if err.Error() != "Workspace is closed" {
+		t.Fatalf("workspace use error = %q, want closed workspace error", err.Error())
+	}
+}
+
+func TestWorkspaceHelpHidesLegacyActiveContextCommands(t *testing.T) {
+	out, err := executeRootCommandRaw("workspace", "--help")
+	if err != nil {
+		t.Fatalf("execute workspace help returned error: %v", err)
+	}
+	for _, hidden := range []string{"set", "current", "clear", "switch"} {
+		if strings.Contains(out, "\n  "+hidden+" ") {
+			t.Fatalf("workspace help = %q, want legacy active-context command %q hidden", out, hidden)
+		}
+	}
+	if !strings.Contains(out, "\n  use ") {
+		t.Fatalf("workspace help = %q, want daemon context use command visible", out)
+	}
+}
+
 func TestWorkspaceCloseClearsMatchingActiveWorkspace(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

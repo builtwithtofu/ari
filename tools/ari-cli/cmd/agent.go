@@ -321,7 +321,7 @@ var (
 )
 
 func NewAgentCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "agent", Short: "Manage workspace agents"}
+	cmd := &cobra.Command{Use: "agent", Short: "Manage workspace agents", Hidden: true}
 	cmd.AddCommand(newAgentSpawnCmd())
 	cmd.AddCommand(newAgentListCmd())
 	cmd.AddCommand(newAgentShowCmd())

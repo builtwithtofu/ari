@@ -41,7 +41,7 @@ var (
 )
 
 func NewProfileCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "profile", Short: "Manage Ari agent profiles"}
+	cmd := &cobra.Command{Use: "profile", Short: "Manage Ari agent profiles", Hidden: true}
 	cmd.AddCommand(newProfileCreateCmd())
 	cmd.AddCommand(newProfileListCmd())
 	cmd.AddCommand(newProfileShowCmd())

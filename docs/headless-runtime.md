@@ -44,9 +44,10 @@ Helpers teach, explain, diagnose, compare, draft, route, summarize, and request 
 
 ```bash
 ari init --harness codex
-ari agent spawn --workspace home -- "What is Ari and what should I learn next?"
 ari workspace create my-app
-ari agent spawn --workspace my-app -- "Tell me about this project."
+ari workspace use my-app
+ari status
+ari api workspace.list --params '{}'
 ```
 
 `ari init` asks only for the default harness in this slice. It does not install or authenticate Codex, Claude Code, OpenCode, or other external tools. Preferred model setup, provider catalogs, broad MCP marketplaces, proactive coaching, and automatic model-release detection are deferred.

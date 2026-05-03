@@ -306,6 +306,9 @@ func (d *Daemon) registerWorkspaceMethods(registry *rpc.MethodRegistry, store *g
 			if err := store.UpdateSessionStatus(ctx, sessionID, "closed"); err != nil {
 				return WorkspaceCloseResponse{}, mapWorkspaceStoreError(err, sessionID)
 			}
+			if err := clearActiveWorkspaceContextIfMatches(ctx, store, sessionID); err != nil {
+				return WorkspaceCloseResponse{}, err
+			}
 			return WorkspaceCloseResponse{Status: "closed"}, nil
 		},
 	}); err != nil {
