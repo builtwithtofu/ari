@@ -238,7 +238,11 @@ func resolveHarnessAuthPool(pool HarnessAuthPool, harness string, slots []Harnes
 		slot, ok := findHarnessAuthSlot(slots, slotID, harness)
 		if !ok {
 			status := HarnessAuthStatus{Harness: harness, AuthSlotID: slotID, Status: HarnessAuthRequired, AriSecretStorage: HarnessAriSecretStorageNone}
-			return HarnessAuthSlot{AuthSlotID: slotID, Harness: harness, CredentialOwner: HarnessCredentialOwnerProvider, Status: HarnessAuthRequired}, status, true, fmt.Errorf("auth slot %s is not configured", slotID)
+			if strings.TrimSpace(firstUnavailableSlot.AuthSlotID) == "" {
+				firstUnavailableSlot = HarnessAuthSlot{AuthSlotID: slotID, Harness: harness, CredentialOwner: HarnessCredentialOwnerProvider, Status: HarnessAuthRequired}
+				firstUnavailableStatus = status
+			}
+			continue
 		}
 		if slot.Status == HarnessAuthAuthenticated {
 			return slot, HarnessAuthStatus{Harness: slot.Harness, AuthSlotID: slot.AuthSlotID, Status: slot.Status, AriSecretStorage: HarnessAriSecretStorageNone}, true, nil

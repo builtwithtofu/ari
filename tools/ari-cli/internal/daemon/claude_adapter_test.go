@@ -90,6 +90,26 @@ func TestClaudeAuthStatusReturnsProviderConfigRemediation(t *testing.T) {
 	}
 }
 
+func TestClaudeAuthLogoutRunsProviderLogout(t *testing.T) {
+	exitCode := 0
+	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunAuthCommand: func(ctx context.Context, opts claudeExecutorOptions, args []string) (commandRunResult, error) {
+		_ = ctx
+		_ = opts
+		if strings.Join(args, " ") != "auth logout" {
+			t.Fatalf("args = %q, want auth logout", strings.Join(args, " "))
+		}
+		return commandRunResult{ExitCode: &exitCode}, nil
+	}})
+
+	status, err := executor.AuthLogout(context.Background(), HarnessAuthSlot{AuthSlotID: "claude-default", Harness: HarnessNameClaude})
+	if err != nil {
+		t.Fatalf("AuthLogout returned error: %v", err)
+	}
+	if status.Status != HarnessAuthRequired || status.AriSecretStorage != HarnessAriSecretStorageNone {
+		t.Fatalf("status = %#v, want auth_required after provider logout", status)
+	}
+}
+
 func TestClaudeExecutorRejectsMissingSessionID(t *testing.T) {
 	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunCommand: func(ctx context.Context, opts claudeExecutorOptions, prompt string) (commandRunResult, error) {
 		return commandRunResult{Output: []byte(`{"result":"Done"}`)}, nil

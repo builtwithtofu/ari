@@ -384,6 +384,17 @@ func TestHarnessAuthPoolFailoverSelectsSecondSlotOnlyForSafePreStartUnavailable(
 	}
 }
 
+func TestHarnessAuthPoolFailoverSkipsMissingSlot(t *testing.T) {
+	slots := []HarnessAuthSlot{{AuthSlotID: "codex-personal", Harness: "codex", Label: "Personal", CredentialOwner: HarnessCredentialOwnerProvider, Status: HarnessAuthAuthenticated}}
+	selected, status, err := ResolveHarnessAuthSlot(HarnessAuthSelection{ProfilePool: HarnessAuthPool{SlotIDs: []string{"codex-work", "codex-personal"}, Strategy: HarnessAuthPoolFailover}, Harness: "codex"}, slots)
+	if err != nil {
+		t.Fatalf("ResolveHarnessAuthSlot returned error: %v", err)
+	}
+	if selected.AuthSlotID != "codex-personal" || status.Status != HarnessAuthAuthenticated {
+		t.Fatalf("selected=%#v status=%#v, want failover past missing slot", selected, status)
+	}
+}
+
 func TestHarnessAuthPoolDoesNotFailoverForInteractiveAuthRequired(t *testing.T) {
 	slots := []HarnessAuthSlot{{AuthSlotID: "codex-work", Harness: "codex", Label: "Work", CredentialOwner: HarnessCredentialOwnerProvider, Status: HarnessAuthRequired}, {AuthSlotID: "codex-personal", Harness: "codex", Label: "Personal", CredentialOwner: HarnessCredentialOwnerProvider, Status: HarnessAuthAuthenticated}}
 	selected, status, err := ResolveHarnessAuthSlot(HarnessAuthSelection{ProfilePool: HarnessAuthPool{SlotIDs: []string{"codex-work", "codex-personal"}, Strategy: HarnessAuthPoolFailover}, Harness: "codex"}, slots)
@@ -427,6 +438,35 @@ func TestAuthStatusReportsMissingHarnessAsNotInstalled(t *testing.T) {
 	}
 	if stored.Status != string(HarnessAuthNotInstalled) {
 		t.Fatalf("stored status = %q, want not_installed", stored.Status)
+	}
+}
+
+func TestAuthStatusDoesNotPersistSelectionUnsupportedAsNotInstalled(t *testing.T) {
+	registry := NewHarnessRegistry()
+	if err := registry.Register("codex", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo"}), nil
+	}); err != nil {
+		t.Fatalf("register harness: %v", err)
+	}
+	daemon := &Daemon{harnessRegistry: registry}
+	store := newCommandMethodTestStore(t)
+	if err := store.UpsertAuthSlot(context.Background(), globaldb.AuthSlot{AuthSlotID: "codex-work", Harness: "codex", Label: "Work", Status: "unknown"}); err != nil {
+		t.Fatalf("UpsertAuthSlot returned error: %v", err)
+	}
+
+	_, err := daemon.harnessAuthStatus(context.Background(), store, HarnessAuthStatusRequest{})
+	if err == nil {
+		t.Fatal("harnessAuthStatus returned nil error, want slot selection unsupported")
+	}
+	stored, getErr := store.GetAuthSlot(context.Background(), "codex-work")
+	if getErr != nil {
+		t.Fatalf("GetAuthSlot returned error: %v", getErr)
+	}
+	if stored.Status == string(HarnessAuthNotInstalled) {
+		t.Fatalf("stored status = %q, want unsupported selection not persisted as not_installed", stored.Status)
 	}
 }
 

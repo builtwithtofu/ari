@@ -72,6 +72,27 @@ func (e *OpenCodeExecutor) AuthStatus(ctx context.Context, slot HarnessAuthSlot)
 	return NewHarnessAuthRequired(HarnessNameOpenCode, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, Method: "provider_login", SecretOwnedBy: HarnessNameOpenCode}), nil
 }
 
+func (e *OpenCodeExecutor) AuthLogout(ctx context.Context, slot HarnessAuthSlot) (HarnessAuthStatus, error) {
+	if ctx == nil {
+		return HarnessAuthStatus{}, fmt.Errorf("context is required")
+	}
+	if e == nil {
+		return HarnessAuthStatus{}, fmt.Errorf("executor is required")
+	}
+	args := []string{"auth", "logout"}
+	if provider := opencodeAuthSlotHint(slot); provider != "" {
+		args = append(args, "--provider", provider)
+	}
+	result, err := e.options.RunAuthCommand(ctx, e.options, args)
+	if err != nil {
+		return HarnessAuthStatus{}, err
+	}
+	if result.ExitCode != nil && *result.ExitCode != 0 {
+		return HarnessAuthStatus{}, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "auth_logout_failed", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: true}
+	}
+	return NewHarnessAuthRequired(HarnessNameOpenCode, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, Method: "provider_login", SecretOwnedBy: HarnessNameOpenCode}), nil
+}
+
 func (e *OpenCodeExecutor) Descriptor() HarnessAdapterDescriptor {
 	return HarnessAdapterDescriptor{Name: HarnessNameOpenCode, Capabilities: []HarnessCapability{HarnessCapabilityAgentRunFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems, HarnessCapabilityFinalResponse, HarnessCapabilityMeasuredTokenTelemetry}}
 }

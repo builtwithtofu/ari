@@ -257,8 +257,8 @@ func TestAuthProviderLoginArgsCanPassExplicitOpenCodeProviderOnly(t *testing.T) 
 
 func TestOpenCodeLoginMethodsUseRealMethodLabels(t *testing.T) {
 	options := openCodeLoginMethods([]openCodeAuthMethod{{Type: "oauth", Label: "ChatGPT Pro/Plus (browser)"}, {Type: "api", Label: "Manually enter API Key"}})
-	if len(options) != 2 || options[0].Method != "ChatGPT Pro/Plus (browser)" || options[1].Method != "Manually enter API Key" {
-		t.Fatalf("options = %#v, want labels as method selectors", options)
+	if len(options) != 2 || options[0].Method != "oauth" || options[0].Label != "ChatGPT Pro/Plus (browser)" || options[1].Method != "api" || options[1].Label != "Manually enter API Key" {
+		t.Fatalf("options = %#v, want provider method types with display labels", options)
 	}
 }
 

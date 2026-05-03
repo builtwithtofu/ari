@@ -723,7 +723,7 @@ func (d *Daemon) harnessAuthStatus(ctx context.Context, store *globaldb.Store, r
 		status, err := statuser.AuthStatus(ctx, slot)
 		if err != nil {
 			var unavailable *HarnessUnavailableError
-			if errors.As(err, &unavailable) {
+			if errors.As(err, &unavailable) && unavailable.Reason == "missing_executable" {
 				status := HarnessAuthStatus{Harness: harness, AuthSlotID: strings.TrimSpace(slot.AuthSlotID), Status: HarnessAuthNotInstalled, AriSecretStorage: HarnessAriSecretStorageNone}
 				status.Name = authStatusName(slot, harness)
 				if err := storePersistAuthStatus(ctx, store, storedByID, slot.AuthSlotID, status.Status); err != nil {

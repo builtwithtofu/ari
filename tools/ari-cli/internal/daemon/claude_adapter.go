@@ -81,6 +81,26 @@ func (e *ClaudeExecutor) AuthStatus(ctx context.Context, slot HarnessAuthSlot) (
 	return NewHarnessAuthRequired(HarnessNameClaude, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, Method: "provider_config", SecretOwnedBy: HarnessNameClaude}), nil
 }
 
+func (e *ClaudeExecutor) AuthLogout(ctx context.Context, slot HarnessAuthSlot) (HarnessAuthStatus, error) {
+	if ctx == nil {
+		return HarnessAuthStatus{}, fmt.Errorf("context is required")
+	}
+	if e == nil {
+		return HarnessAuthStatus{}, fmt.Errorf("executor is required")
+	}
+	if !authSlotIsDefaultForHarness(HarnessNameClaude, slot.AuthSlotID) {
+		return HarnessAuthStatus{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "auth_slot_selection_unsupported", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
+	}
+	result, err := e.options.RunAuthCommand(ctx, e.options, []string{"auth", "logout"})
+	if err != nil {
+		return HarnessAuthStatus{}, err
+	}
+	if result.ExitCode != nil && *result.ExitCode != 0 {
+		return HarnessAuthStatus{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "auth_logout_failed", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: true}
+	}
+	return NewHarnessAuthRequired(HarnessNameClaude, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, Method: "provider_config", SecretOwnedBy: HarnessNameClaude}), nil
+}
+
 func (e *ClaudeExecutor) Descriptor() HarnessAdapterDescriptor {
 	return HarnessAdapterDescriptor{Name: HarnessNameClaude, Capabilities: []HarnessCapability{HarnessCapabilityAgentRunFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems, HarnessCapabilityFinalResponse, HarnessCapabilityMeasuredTokenTelemetry}}
 }

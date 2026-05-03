@@ -303,11 +303,12 @@ func authLoginMethods(harness string) []authLoginMethod {
 func openCodeLoginMethods(methods []openCodeAuthMethod) []authLoginMethod {
 	options := make([]authLoginMethod, 0, len(methods))
 	for _, method := range methods {
+		methodType := strings.TrimSpace(method.Type)
 		label := strings.TrimSpace(method.Label)
-		if label == "" {
+		if methodType == "" || label == "" {
 			continue
 		}
-		options = append(options, authLoginMethod{Method: label, Label: label})
+		options = append(options, authLoginMethod{Method: methodType, Label: label})
 	}
 	return options
 }
@@ -325,19 +326,21 @@ func fetchOpenCodeAuthMethods(ctx context.Context) (map[string][]openCodeAuthMet
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, daemon.HarnessExecutable("opencode", daemon.EnvOpenCodeExecutable), "serve", "--port", "0", "--hostname", "127.0.0.1")
-	pipe, err := command.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
-	command.Stderr = command.Stdout
+	pipeReader, pipeWriter := io.Pipe()
+	command.Stdout = pipeWriter
+	command.Stderr = pipeWriter
 	if err := command.Start(); err != nil {
+		_ = pipeWriter.Close()
+		_ = pipeReader.Close()
 		return nil, err
 	}
 	defer func() {
 		_ = command.Process.Kill()
 		_ = command.Wait()
+		_ = pipeWriter.Close()
+		_ = pipeReader.Close()
 	}()
-	serverURL, err := readOpenCodeServerURL(ctx, pipe)
+	serverURL, err := readOpenCodeServerURL(ctx, pipeReader)
 	if err != nil {
 		return nil, err
 	}

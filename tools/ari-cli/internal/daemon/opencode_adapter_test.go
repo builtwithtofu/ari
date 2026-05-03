@@ -157,6 +157,26 @@ func TestOpenCodeAuthStatusUsesNamedProviderSlotHint(t *testing.T) {
 	}
 }
 
+func TestOpenCodeAuthLogoutRunsProviderLogout(t *testing.T) {
+	exitCode := 0
+	executor := NewOpenCodeExecutorForTest(opencodeExecutorOptions{Executable: "opencode", Cwd: "/repo", RunAuthCommand: func(ctx context.Context, opts opencodeExecutorOptions, args []string) (commandRunResult, error) {
+		_ = ctx
+		_ = opts
+		if strings.Join(args, " ") != "auth logout --provider openrouter" {
+			t.Fatalf("args = %q, want auth logout --provider openrouter", strings.Join(args, " "))
+		}
+		return commandRunResult{ExitCode: &exitCode}, nil
+	}})
+
+	status, err := executor.AuthLogout(context.Background(), HarnessAuthSlot{AuthSlotID: "opencode-openrouter", Harness: HarnessNameOpenCode, Label: "OpenRouter"})
+	if err != nil {
+		t.Fatalf("AuthLogout returned error: %v", err)
+	}
+	if status.Status != HarnessAuthRequired || status.AriSecretStorage != HarnessAriSecretStorageNone {
+		t.Fatalf("status = %#v, want auth_required after provider logout", status)
+	}
+}
+
 func TestOpenCodeExecutorRejectsMissingSessionID(t *testing.T) {
 	executor := NewOpenCodeExecutorForTest(opencodeExecutorOptions{Executable: "opencode", Cwd: "/repo", RunCommand: func(ctx context.Context, opts opencodeExecutorOptions, prompt string) (commandRunResult, error) {
 		return commandRunResult{Output: []byte(`{"type":"message.part.updated","properties":{"part":{"type":"text","text":"orphan"}}}`)}, nil
