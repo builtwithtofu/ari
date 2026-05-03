@@ -90,6 +90,24 @@ func TestClaudeAuthStatusReturnsProviderConfigRemediation(t *testing.T) {
 	}
 }
 
+func TestClaudeAuthStatusTreatsEmptyOutputAsAuthRequired(t *testing.T) {
+	exitCode := 0
+	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunAuthCommand: func(ctx context.Context, opts claudeExecutorOptions, args []string) (commandRunResult, error) {
+		_ = ctx
+		_ = opts
+		_ = args
+		return commandRunResult{Output: nil, ExitCode: &exitCode}, nil
+	}})
+
+	status, err := executor.AuthStatus(context.Background(), HarnessAuthSlot{AuthSlotID: "claude-default", Harness: HarnessNameClaude})
+	if err != nil {
+		t.Fatalf("AuthStatus returned error: %v", err)
+	}
+	if status.Status != HarnessAuthRequired || status.AriSecretStorage != HarnessAriSecretStorageNone {
+		t.Fatalf("status = %#v, want auth_required for empty provider output", status)
+	}
+}
+
 func TestClaudeAuthLogoutRunsProviderLogout(t *testing.T) {
 	exitCode := 0
 	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunAuthCommand: func(ctx context.Context, opts claudeExecutorOptions, args []string) (commandRunResult, error) {

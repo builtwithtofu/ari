@@ -336,7 +336,7 @@ func opencodeAuthOutputReady(output []byte, slot HarnessAuthSlot) bool {
 }
 
 func opencodeAuthSlotHint(slot HarnessAuthSlot) string {
-	for _, value := range []string{slot.Label, slot.AuthSlotID} {
+	for _, value := range []string{slot.ProviderLabel, slot.Label, slot.AuthSlotID} {
 		value = strings.ToLower(strings.TrimSpace(value))
 		for _, prefix := range []string{"opencode-", "opencode ", "open code "} {
 			value = strings.TrimPrefix(value, prefix)

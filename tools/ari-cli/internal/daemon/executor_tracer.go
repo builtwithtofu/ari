@@ -1131,10 +1131,14 @@ func resolveProfileAuthSlot(ctx context.Context, store *globaldb.Store, executor
 		}
 	}
 	slots := make([]HarnessAuthSlot, 0, len(slotIDs))
+	isPoolSelection := strings.TrimSpace(profile.AuthSlotID) == ""
 	for _, slotID := range slotIDs {
 		stored, err := store.GetAuthSlot(ctx, slotID)
 		if err != nil {
 			if errors.Is(err, globaldb.ErrNotFound) {
+				if isPoolSelection {
+					continue
+				}
 				return "", &HarnessUnavailableError{Harness: harness, Reason: "unknown_auth_slot", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
 			}
 			return "", err

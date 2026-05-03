@@ -270,7 +270,7 @@ func runClaudeAuthCommand(ctx context.Context, options claudeExecutorOptions, ar
 func claudeAuthOutputAuthenticated(output []byte) bool {
 	trimmed := bytes.TrimSpace(output)
 	if len(trimmed) == 0 {
-		return true
+		return false
 	}
 	var status map[string]any
 	if err := json.Unmarshal(trimmed, &status); err != nil {

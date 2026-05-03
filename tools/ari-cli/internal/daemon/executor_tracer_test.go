@@ -1449,6 +1449,31 @@ func TestAgentProfileRunAuthPoolRecordsSafeFailoverSlot(t *testing.T) {
 	}
 }
 
+func TestAgentProfileRunAuthPoolSkipsMissingDBSlot(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	var captured ExecutorStartRequest
+	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = primaryFolder
+		_ = sink
+		return &capturingHarness{name: req.Executor, captured: &captured, authStatuses: map[string]HarnessAuthState{"slot-two": HarnessAuthAuthenticated}}, nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	if err := store.UpsertAuthSlot(context.Background(), globaldb.AuthSlot{AuthSlotID: "slot-two", Harness: "test-harness", Label: "Two", Status: "authenticated"}); err != nil {
+		t.Fatalf("UpsertAuthSlot returned error: %v", err)
+	}
+
+	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
+	resp := callMethod[AgentProfileRunResponse](t, registry, "agent.profile.run", AgentProfileRunRequest{ProfileDefinition: &AgentProfile{Name: "dynamic", Harness: "test-harness", AuthPool: HarnessAuthPool{SlotIDs: []string{"slot-one", "slot-two"}, Strategy: HarnessAuthPoolFailover}}, Packet: packet})
+	if captured.AuthSlotID != "slot-two" || resp.Run.AuthSlotID != "slot-two" {
+		t.Fatalf("captured request = %#v run = %#v, want failover past missing DB slot", captured, resp.Run)
+	}
+}
+
 func TestAgentProfileRunRejectsUnstoredAuthSlot(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()

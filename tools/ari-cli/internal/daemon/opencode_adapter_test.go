@@ -157,6 +157,26 @@ func TestOpenCodeAuthStatusUsesNamedProviderSlotHint(t *testing.T) {
 	}
 }
 
+func TestOpenCodeAuthStatusUsesProviderLabelHint(t *testing.T) {
+	exitCode := 0
+	executor := NewOpenCodeExecutorForTest(opencodeExecutorOptions{Executable: "opencode", Cwd: "/repo", RunAuthCommand: func(ctx context.Context, opts opencodeExecutorOptions, args []string) (commandRunResult, error) {
+		_ = ctx
+		_ = opts
+		if strings.Join(args, " ") != "auth list" {
+			t.Fatalf("args = %q, want auth list", strings.Join(args, " "))
+		}
+		return commandRunResult{Output: []byte("anthropic not authenticated\nopenai authenticated\n"), ExitCode: &exitCode}, nil
+	}})
+
+	status, err := executor.AuthStatus(context.Background(), HarnessAuthSlot{AuthSlotID: "opencode-default", Harness: HarnessNameOpenCode, Label: "default", ProviderLabel: "openai"})
+	if err != nil {
+		t.Fatalf("AuthStatus returned error: %v", err)
+	}
+	if status.Status != HarnessAuthAuthenticated || status.AuthSlotID != "opencode-default" {
+		t.Fatalf("status = %#v, want ProviderLabel-selected OpenCode provider slot", status)
+	}
+}
+
 func TestOpenCodeAuthLogoutRunsProviderLogout(t *testing.T) {
 	exitCode := 0
 	executor := NewOpenCodeExecutorForTest(opencodeExecutorOptions{Executable: "opencode", Cwd: "/repo", RunAuthCommand: func(ctx context.Context, opts opencodeExecutorOptions, args []string) (commandRunResult, error) {
@@ -169,6 +189,26 @@ func TestOpenCodeAuthLogoutRunsProviderLogout(t *testing.T) {
 	}})
 
 	status, err := executor.AuthLogout(context.Background(), HarnessAuthSlot{AuthSlotID: "opencode-openrouter", Harness: HarnessNameOpenCode, Label: "OpenRouter"})
+	if err != nil {
+		t.Fatalf("AuthLogout returned error: %v", err)
+	}
+	if status.Status != HarnessAuthRequired || status.AriSecretStorage != HarnessAriSecretStorageNone {
+		t.Fatalf("status = %#v, want auth_required after provider logout", status)
+	}
+}
+
+func TestOpenCodeAuthLogoutUsesProviderLabel(t *testing.T) {
+	exitCode := 0
+	executor := NewOpenCodeExecutorForTest(opencodeExecutorOptions{Executable: "opencode", Cwd: "/repo", RunAuthCommand: func(ctx context.Context, opts opencodeExecutorOptions, args []string) (commandRunResult, error) {
+		_ = ctx
+		_ = opts
+		if strings.Join(args, " ") != "auth logout --provider openai" {
+			t.Fatalf("args = %q, want auth logout --provider openai", strings.Join(args, " "))
+		}
+		return commandRunResult{ExitCode: &exitCode}, nil
+	}})
+
+	status, err := executor.AuthLogout(context.Background(), HarnessAuthSlot{AuthSlotID: "opencode-default", Harness: HarnessNameOpenCode, Label: "default", ProviderLabel: "openai"})
 	if err != nil {
 		t.Fatalf("AuthLogout returned error: %v", err)
 	}
