@@ -1,38 +1,24 @@
 # Ari
 
-> **Headless agentic runtime for software development.**
+> **Attachable headless workspace runtime for LLM-assisted development.**
 
 ---
 
 ## What is Ari?
 
-Ari is an agentic runtime, an engine that powers intelligent software development workflows.
+Ari is a local control plane for LLM workspaces. It keeps agents, commands, process output, context, proofs, and attention state alive behind a daemon so clients can detach, reattach, inspect, and compose workflows.
 
-**Core concepts:**
-- **Work isolation**: Multiple agents can work on the same project without collision
-- **DAG of branching work**: Not just linear tasks, fork, merge, and parallelize
-- **Protocol-based**: JSON event stream for any client to consume
-- **CLI is the first client**: Proving the engine works
+The product model is closer to a Docker daemon plus tmux for LLM-assisted development than to a single chat UI. The CLI is the first client; future GUI, TUI, MCP, remote, and automation clients should build on the same daemon API.
 
-Every project you touch with Ari becomes a **world**. A living, structured representation of what exists, what was decided, what is planned, and what remains unknown. The world grows as you work. It persists between sessions. It can be handed to a new collaborator, picked up after months away, or interrogated when you've forgotten why something was built the way it was.
+Core concepts:
 
----
+- **Headless first**: every product operation belongs behind the daemon API before it appears in a UI.
+- **Workspace runtime**: work is organized around one-or-more-folder workspaces, not legacy plan DAGs.
+- **Background persistence**: agents and commands can keep running after a client exits.
+- **Attachable clients**: clients render, prompt, format, and compose daemon operations for users.
+- **Attention state**: idle agents, blockers, approvals, failed commands, and completions should bubble up from runtime facts.
 
-## Current State (v0)
-
-**What's working:**
-- Event-based protocol (17 event types)
-- Agent loop (research, question, refine)
-- DAG-based plan execution
-- World persistence (SQLite)
-- CLI commands: `init`, `plan`, `build`, `review`, `ask`
-- Headless mode (`--headless` flag for machine consumption)
-
-**What's planned:**
-- Work isolation for parallel agent tasks
-- Multiple clients (TUI, IDE plugins, web)
-- Full stdin/JSON protocol mode
-- Vector-based semantic search
+See `docs/ep/ari-workspace-runtime.md` for the durable direction and `docs/adr/` for accepted architecture decisions.
 
 ---
 
@@ -44,7 +30,7 @@ Run all project tooling through Nix so local behavior matches CI:
 # Full verification gate
 nix develop -c just verify
 
-# Targeted Go test runs
+# Targeted Go test runs from tools/ari-cli/
 nix develop -c go test ./...
 ```
 
@@ -75,16 +61,18 @@ ARI_OPENCODE_EXECUTABLE=/path/to/opencode \
 
 Fixture tests are the default adapter contract tests. `agent-smoke` is a credential-free local binary check. Authenticated model-call integration tests are intentionally separate and must stay opt-in.
 
+---
+
 ## Agent runtime surfaces
 
-The current Go runtime exposes profile-driven local agent runs through JSON-RPC and CLI commands under `tools/ari-cli/`.
+The current Go runtime exposes profile-driven local agent runs through daemon JSON-RPC and CLI commands under `tools/ari-cli/`.
 
 - Ari is headless first: the daemon/API owns product behavior and state; CLI and future UI surfaces are clients.
 - Onboarding: `ari init` renders the daemon-owned `init.state`, `init.options`, and `init.apply` flow. The only day-one choice is the default harness.
-- Workspaces: the daemon owns workspace creation and resolution. Init creates a normal `$HOME` workspace as a starter landing place when possible.
+- Workspaces: the daemon owns workspace creation and resolution. A workspace contains one or more folders, and a folder can belong to multiple workspaces.
 - Helpers: each workspace can have an ordinary profile named `helper`. Home and project helpers share one helper contract; scope comes from workspace context, not from a profile role/type field.
 - Ari tools: helper-visible settings/profile/self-check/run-forensics actions are daemon-owned tool calls with scoped metadata. Writes require explicit, single-use approval markers.
-- Profiles: `ari profile create|list|show|defaults` maps to `agent.profile.create|get|list`.
+- Profiles: `ari profile create|list|show|defaults` maps to daemon profile methods.
 - Temporary visibility: `ari agent list` hides temporary agents; `ari agent list --show-temporary` includes them with a `CLASS` label.
 - Final responses: `ari final-response show --run-id <run>` reads the first-class final-response artifact, while `ari final-response export --run-id <run>` prints only shareable final text without transcript, hidden context, or provider-private metadata.
 - Telemetry: `ari telemetry rollup --workspace-id <workspace>` reports local run counts and known/unknown token, cost, duration, and process facts without guessing missing values.
@@ -97,27 +85,26 @@ The current Go runtime exposes profile-driven local agent runs through JSON-RPC 
 ┌─────────────────────────────────────────────────────────┐
 │                        Clients                          │
 │    ┌──────┐  ┌──────┐  ┌─────────┐  ┌───────────────┐  │
-│    │ CLI  │  │ TUI  │  │ IDE     │  │ Web/Remote    │  │
+│    │ CLI  │  │ TUI  │  │ GUI/IDE │  │ Remote/Agents │  │
 │    └──┬───┘  └──┬───┘  └────┬────┘  └───────┬───────┘  │
 └───────┼─────────┼───────────┼───────────────┼──────────┘
         │         │           │               │
         ▼         ▼           ▼               ▼
 ┌─────────────────────────────────────────────────────────┐
-│              JSON Event Protocol (JSONL)                │
-│         agent_start, plan_created, task_progress,       │
-│         question_asked, file_written, build_complete... │
+│             Daemon API / JSON-RPC boundary              │
+│        product operations, projections, attention       │
 └───────────────────────────┬─────────────────────────────┘
                             │
                             ▼
 ┌─────────────────────────────────────────────────────────┐
-│                      Ari Runtime                        │
+│                       Ari Daemon                        │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐  │
-│  │ Agent Loop  │  │ Plan DAG    │  │ World Store     │  │
+│  │ Workspaces  │  │ Agents/PTYs │  │ Runtime Store   │  │
 │  └─────────────┘  └─────────────┘  └─────────────────┘  │
 └─────────────────────────────────────────────────────────┘
 ```
 
-The runtime is headless by design. The CLI is just the first client. Visualization, rendering, prompts, and UI are client concerns; product behavior belongs behind daemon JSON-RPC/service methods first. Ari works in CI, in Docker, over SSH, piped between processes, or driven by other agents.
+The runtime is headless by design. Product behavior belongs behind daemon service methods first. Clients may expose a subset of methods and compose them into better workflows, but they do not own Ari runtime state.
 
 ---
 
@@ -136,25 +123,13 @@ Ari asks before she acts. Helpers teach, explain, diagnose, draft, route, and re
 
 ---
 
-## Headless Mode
+## Current documentation
 
-For machine-readable output, use `--headless`:
-
-```bash
-# Stream events as JSONL
-ari build --plan <id> --headless > events.jsonl
-```
-
-**Note:** Only `build` supports headless mode currently. Other commands require interactive input.
-
----
-
-## The north star
-
-Most tools optimize for *output*, more code, faster, with less friction.
-
-Ari optimizes for *understanding*.
-
-The bet is that the bottleneck in building things isn't writing code. It's navigating the world of ideas well enough to write the right code, in the right place, for the right reasons. Ari exists to close that gap, not by automating away the thinking, but by giving you a guide who can hold the map while you explore the terrain.
-
-A world well understood is a world well built.
+- `docs/ep/ari-workspace-runtime.md` — product direction.
+- `docs/adr/0001-headless-daemon-api-authority.md` — daemon API authority.
+- `docs/adr/0002-workspace-as-runtime-unit.md` — workspace runtime unit.
+- `docs/protocol-spec.md` — daemon API and attach boundary.
+- `docs/workspace-lifecycle.md` — workspace lifecycle and folder membership.
+- `docs/plan-schema.md` — task/context concepts replacing legacy plan-DAG framing.
+- `docs/headless-runtime.md` — headless runtime and helper model.
+- `docs/tool-projection.md` — projection contract.

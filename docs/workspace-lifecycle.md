@@ -1,221 +1,59 @@
-# Session Lifecycle (Ariadne v0)
+# Workspace lifecycle
 
-This document defines session operations, state transitions, and human-in-the-loop behavior for Ariadne v0. Sessions represent active work contexts within a project.
+Workspace is Ari's primary durable runtime unit.
 
-## Session Operations
+See also:
 
-Sessions are tmux-like work contexts that persist across CLI invocations. Each session tracks an operation DAG and current execution state.
+- `docs/adr/0002-workspace-as-runtime-unit.md`
+- `docs/ep/ari-workspace-runtime.md`
 
-| Command | Description |
-|---------|-------------|
-| `ari sessions` | List all active sessions with status |
-| `ari attach <session-id>` | Attach to a running session's context |
-| `ari status` | Show overview of all sessions across projects |
-| `ari kill <session-id>` | Terminate an active session |
-| `ari resume <session-id>` | Resume from last completed step boundary |
+## Definition
 
-### Operation Descriptions
+A workspace is a named runtime context over one or more folders.
 
-- **list**: Query the global registry for sessions matching current project or all projects with `--all`. Output includes session ID, status, elapsed time, and current operation.
-- **attach**: Switch CLI context to a running session. Subsequent commands operate within that session's operation DAG until detached.
-- **detach**: Implicit when running commands without `--session` flag or when switching projects. Sessions remain active in background.
-- **kill**: Mark session as terminated. Operation DAG is preserved for recovery. Active operations are cancelled gracefully.
-- **resume**: Continue execution from the last completed step. Used after failures or explicit pauses.
+- A workspace may contain a single project folder.
+- A workspace may contain multiple folders for microsessions or related work.
+- A folder may belong to multiple workspaces.
+- Workspace identity is not the same thing as repository identity.
 
-## State Transitions
+The workspace is where Ari gathers the facts a user returns to: agents, commands, processes, context, proofs, final responses, and attention state.
 
-Sessions follow the v0 execution contract state machine. Each session has a status that drives available operations.
+## Lifecycle
 
-### Session Status Values
+Workspace lifecycle operations are daemon-owned. Clients render and compose them.
 
-| Status | Description | Next States |
-|--------|-------------|-------------|
-| `running` | Actively executing steps | `waiting`, `completed`, `failed` |
-| `waiting_approval` | Blocked on human approval | `running`, `rejected` |
-| `completed` | All steps finished successfully | Terminal |
-| `rejected` | Human rejected the work | Terminal |
-| `failed` | Execution error, resumable | `running` (via resume) |
-| `killed` | Explicitly terminated by user | Terminal |
+Core lifecycle concepts:
 
-### State Transition Diagram
+- create a workspace;
+- list workspaces;
+- show workspace details;
+- add or remove folders;
+- close, suspend, or resume runtime activity where supported;
+- resolve a workspace from explicit IDs, names, or current folder context according to daemon rules.
 
-```
-running ──────────────────> waiting_approval ──[approve]──> running
-   │                              │
-   │                         [reject]
-   │                              │
-   │                              v
-   │                          rejected
-   │
-   ├──[error]──> failed ──[resume]──> running
-   │                  │
-   │                  └──[non-resumable]──> killed
-   │
-   ├──[kill]───────────────────────> killed
-   │
-   └──[complete]───────────────────> completed
-```
+## Folder membership
 
-### Step-Level Status Alignment
+Folder membership is many-to-many:
 
-Within a session, individual steps follow their own status progression aligned with plan schema:
+- one workspace can reference many folders;
+- one folder can be referenced by many workspaces.
 
-```
-planned -> waiting_approval -> approved -> executing -> completed
-                 |                |
-                 v                v
-             rejected          failed -> resumed -> executing
-```
+This supports different LLM work contexts over overlapping files. For example, a user may keep a broad project workspace and create a narrower microsession workspace that includes only folders relevant to a focused investigation.
 
-## Deterministic HITL Behavior
+## Runtime state
 
-Human-in-the-loop interactions are **non-blocking** and command-driven. No interactive prompts are used.
+Workspace-scoped runtime state may include:
 
-### Approval Commands
+- active and historical agent runs;
+- command and process records;
+- retained process output;
+- context packets and projection results;
+- proof summaries and timeline items;
+- approvals, blockers, idle state, completions, and other attention signals;
+- final responses and shareable artifacts.
 
-| Command | Description |
-|---------|-------------|
-| `ari approve <op-id>` | Approve a gated operation |
-| `ari reject <op-id> --feedback "..."` | Reject with feedback |
+Not every runtime fact must be displayed by every client. A GUI may compose a few daemon calls into a dashboard, while the CLI may expose lower-level commands for inspection and automation.
 
-### CI/Non-Interactive Mode
+## Legacy terminology
 
-In CI or when `--non-interactive` is set:
-- Unresolved approval gates return **exit code 3** (approval required)
-- No blocking wait for user input
-- Scripts can poll `ari status --format json` to detect `waiting_approval` state
-
-### Approval Flow
-
-```
-1. Agent reaches HUMAN_INPUT step
-2. Session status -> waiting_approval
-3. CLI exits with code 3 (if non-interactive)
-4. Human runs: ari approve <op-id> OR ari reject <op-id> --feedback "..."
-5. Session status -> running (approve) or rejected (reject)
-6. Agent continues or halts based on decision
-```
-
-### Feedback Handling
-
-When rejected, the feedback string is stored in the operation record and made available to agents:
-
-```bash
-ari reject op-abc123 --feedback "Missing rate limiting on auth endpoint"
-```
-
-Agents query feedback via `ari op show <op-id> --feedback` to understand rejection reasons.
-
-## Storage Boundary
-
-Session storage in this document reflects legacy planning-engine behavior and is not active in the daemon-first runtime.
-
-### Storage Mode Policy
-
-- **Daemon config path**: `~/.ari/config.json`
-- **Daemon socket path**: `daemon.socket_path` (default `~/.ari/daemon.sock`)
-- **Project/session storage model**: deferred to S2 and later slices
-
-Ari reads daemon runtime config from `~/.ari/config.json`.
-
-```json
-{
-  "daemon": {
-    "socket_path": "~/.ari/daemon.sock"
-  },
-  "log_level": "info"
-}
-```
-
-### Global State (SQLite)
-
-Path: `~/.ari/ari.db` (planned runtime path; full session schema lands in S2)
-
-The global registry tracks sessions across all projects for cross-project visibility and telemetry.
-
-```sql
-CREATE TABLE sessions (
-    id TEXT PRIMARY KEY,
-    project_id TEXT REFERENCES projects(id),
-    op_id TEXT,
-    status TEXT,
-    started_at TEXT,
-    ended_at TEXT
-);
-```
-
-### Project-Local State (JSON)
-
-Path: `<project>/.ari/` (opt-in only)
-
-Project-local state is file-based, never SQLite. This keeps project artifacts git-syncable and human-readable.
-
-```
-.ari/
-├── ops/                      # Operation DAG (jj-style recovery)
-│   ├── op-{hash}.json
-│   └── ...
-├── views/                    # Content-addressed snapshots
-├── current-op                # Current operation ID
-├── plans/                    # Markdown plans
-├── project.json              # Project config
-├── agents.json               # Agent definitions
-└── providers.json            # Provider config
-```
-
-### Session Record Example
-
-```json
-{
-  "session_id": "sess-7f3a9b2c",
-  "project_id": "proj-auth-service",
-  "project_path": "/home/user/projects/auth-service",
-  "op_id": "op-e8d4f1a2",
-  "status": "waiting_approval",
-  "current_step": "step-004",
-  "started_at": "2026-02-22T14:30:00Z",
-  "updated_at": "2026-02-22T14:45:22Z",
-  "agent": "theseus",
-  "goal": "Add rate limiting to authentication endpoints"
-}
-```
-
-## Recovery Contract
-
-Sessions support full recovery from any interruption point.
-
-### Recovery Guarantees
-
-1. **Operation log is append-only**: No data loss on crash
-2. **Resume from step boundary**: `ari resume <session-id>` continues from last completed step
-3. **Non-resumable marking**: Steps with external side effects that cannot be retried are marked `failed_non_resumable`
-
-### Resume Behavior
-
-```bash
-# Session failed at step-003
-ari sessions
-#> sess-7f3a9b2c  failed  23m ago  "Add rate limiting"
-
-# Resume from last checkpoint
-ari resume sess-7f3a9b2c
-
-# Execution continues from step-003
-# If step-003 is marked failed_non_resumable, user is informed
-```
-
-## v0/v1 Boundaries
-
-### Included in v0
-
-- Session list, attach, kill, resume
-- Deterministic approve/reject commands
-- Global SQLite session registry
-- Operation DAG recovery model
-
-### Deferred to v1+
-
-- `ari projects` command family for multi-project management
-- Cross-project dependency tracking
-- Session migration between projects
-- Overlay filesystem isolation
+Older Ariadne documents described sessions and plan DAGs as primary concepts. That framing is historical. Current docs should use Ari/workspace/runtime language unless referring to legacy artifacts explicitly.
