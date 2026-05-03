@@ -241,6 +241,7 @@ func workspaceMembershipsForPath(ctx context.Context, store *globaldb.Store, req
 		return WorkspaceMembershipsForPathResponse{}, err
 	}
 	memberships := make([]WorkspaceMembership, 0)
+	membershipByWorkspace := map[string]int{}
 	for _, workspace := range workspaces {
 		folders, err := store.ListFolders(ctx, workspace.ID)
 		if err != nil {
@@ -254,7 +255,15 @@ func workspaceMembershipsForPath(ctx context.Context, store *globaldb.Store, req
 			if !pathContains(folderPath, normalized) {
 				continue
 			}
-			memberships = append(memberships, WorkspaceMembership{WorkspaceID: workspace.ID, Name: workspace.Name, Status: workspace.Status, FolderPath: folderPath, PrimaryFolder: folder.IsPrimary, Active: workspace.ID == current.WorkspaceID})
+			membership := WorkspaceMembership{WorkspaceID: workspace.ID, Name: workspace.Name, Status: workspace.Status, FolderPath: folderPath, PrimaryFolder: folder.IsPrimary, Active: workspace.ID == current.WorkspaceID}
+			if existingIndex, ok := membershipByWorkspace[workspace.ID]; ok {
+				if pathDepth(membership.FolderPath) > pathDepth(memberships[existingIndex].FolderPath) {
+					memberships[existingIndex] = membership
+				}
+				continue
+			}
+			membershipByWorkspace[workspace.ID] = len(memberships)
+			memberships = append(memberships, membership)
 		}
 	}
 	sort.SliceStable(memberships, func(i, j int) bool {
@@ -267,6 +276,14 @@ func workspaceMembershipsForPath(ctx context.Context, store *globaldb.Store, req
 		return memberships[i].WorkspaceID < memberships[j].WorkspaceID
 	})
 	return WorkspaceMembershipsForPathResponse{Path: normalized, Memberships: memberships}, nil
+}
+
+func pathDepth(path string) int {
+	path = filepath.Clean(path)
+	if path == string(filepath.Separator) || path == "." {
+		return 0
+	}
+	return len(strings.Split(path, string(filepath.Separator)))
 }
 
 func pathContains(root, target string) bool {

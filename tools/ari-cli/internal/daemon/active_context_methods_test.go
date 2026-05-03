@@ -76,6 +76,30 @@ func TestWorkspaceMembershipsForPathListsContainingWorkspacesAndMarksActive(t *t
 	}
 }
 
+func TestWorkspaceMembershipsForPathDeduplicatesWorkspaceByClosestFolder(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	root := t.TempDir()
+	nestedRoot := filepath.Join(root, "project")
+	seedSessionWithPrimaryFolder(t, store, "ws-1", root)
+	if err := store.AddFolder(context.Background(), "ws-1", nestedRoot, "jj", false); err != nil {
+		t.Fatalf("AddFolder returned error: %v", err)
+	}
+
+	resp := callMethod[WorkspaceMembershipsForPathResponse](t, registry, "workspace.memberships_for_path", WorkspaceMembershipsForPathRequest{Path: filepath.Join(nestedRoot, "deeper")})
+	if len(resp.Memberships) != 1 {
+		t.Fatalf("memberships len = %d, want one membership per workspace: %#v", len(resp.Memberships), resp.Memberships)
+	}
+	if resp.Memberships[0].FolderPath != nestedRoot {
+		t.Fatalf("membership folder = %q, want closest folder %q", resp.Memberships[0].FolderPath, nestedRoot)
+	}
+}
+
 func TestDashboardGetUsesActiveContextAndIncludesCwdMemberships(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()

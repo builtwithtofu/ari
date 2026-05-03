@@ -206,6 +206,32 @@ func TestWorkspaceActivityAttentionIncludesAuthRequired(t *testing.T) {
 	}
 }
 
+func TestWorkspaceActivityAttentionTreatsBrokenAuthAsActionRequired(t *testing.T) {
+	for _, status := range []string{"auth_failed", "not_installed"} {
+		t.Run(status, func(t *testing.T) {
+			store := newCommandMethodTestStore(t)
+			registry := rpc.NewMethodRegistry()
+			d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+			if err := d.registerMethods(registry, store); err != nil {
+				t.Fatalf("registerMethods returned error: %v", err)
+			}
+			seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+			if err := store.UpsertAuthSlot(context.Background(), globaldb.AuthSlot{AuthSlotID: "codex-default", Harness: "codex", Label: "default", Status: status}); err != nil {
+				t.Fatalf("UpsertAuthSlot returned error: %v", err)
+			}
+			if err := store.UpsertAgentProfile(context.Background(), globaldb.AgentProfile{ProfileID: "ap-helper", WorkspaceID: "ws-1", Name: "helper", Harness: "codex", AuthSlotID: "codex-default"}); err != nil {
+				t.Fatalf("UpsertAgentProfile returned error: %v", err)
+			}
+
+			resp := callMethod[WorkspaceActivityResponse](t, registry, "workspace.activity", WorkspaceActivityRequest{WorkspaceID: "ws-1"})
+			if resp.Attention.Level != "action-required" {
+				t.Fatalf("attention level = %q, want action-required", resp.Attention.Level)
+			}
+		})
+	}
+}
+
 func TestWorkspaceActivityAttentionIncludesMixedSourcesWithHighestLevel(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()

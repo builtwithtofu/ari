@@ -245,6 +245,10 @@ func attentionFromActivity(proofs []ProofResultSummary, agents []AgentActivity, 
 			message = message + " " + strings.TrimSpace(slot.Label)
 		}
 		items = append(items, AttentionItem{Kind: kind, SourceID: slot.AuthSlotID, Message: strings.TrimSpace(message)})
+		if kind == "auth_failed" || kind == "auth_not_installed" {
+			level = "action-required"
+			continue
+		}
 		if level == "none" || level == "running" {
 			level = "auth"
 		}
