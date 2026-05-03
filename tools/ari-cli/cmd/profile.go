@@ -17,7 +17,7 @@ var (
 	profileCreateRPC           = func(ctx context.Context, socketPath string, req daemon.AgentProfileCreateRequest) (daemon.AgentProfileResponse, error) {
 		rpcClient := client.New(socketPath)
 		var response daemon.AgentProfileResponse
-		if err := rpcClient.Call(ctx, "agent.profile.create", req, &response); err != nil {
+		if err := rpcClient.Call(ctx, "profile.create", req, &response); err != nil {
 			return daemon.AgentProfileResponse{}, err
 		}
 		return response, nil
@@ -25,7 +25,7 @@ var (
 	profileGetRPC = func(ctx context.Context, socketPath string, req daemon.AgentProfileGetRequest) (daemon.AgentProfileResponse, error) {
 		rpcClient := client.New(socketPath)
 		var response daemon.AgentProfileResponse
-		if err := rpcClient.Call(ctx, "agent.profile.get", req, &response); err != nil {
+		if err := rpcClient.Call(ctx, "profile.get", req, &response); err != nil {
 			return daemon.AgentProfileResponse{}, err
 		}
 		return response, nil
@@ -33,7 +33,7 @@ var (
 	profileListRPC = func(ctx context.Context, socketPath string, req daemon.AgentProfileListRequest) (daemon.AgentProfileListResponse, error) {
 		rpcClient := client.New(socketPath)
 		var response daemon.AgentProfileListResponse
-		if err := rpcClient.Call(ctx, "agent.profile.list", req, &response); err != nil {
+		if err := rpcClient.Call(ctx, "profile.list", req, &response); err != nil {
 			return daemon.AgentProfileListResponse{}, err
 		}
 		return response, nil
@@ -41,7 +41,7 @@ var (
 )
 
 func NewProfileCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "profile", Short: "Manage Ari agent profiles", Hidden: true}
+	cmd := &cobra.Command{Use: "profile", Short: "Manage Ari profiles", Hidden: true}
 	cmd.AddCommand(newProfileCreateCmd())
 	cmd.AddCommand(newProfileListCmd())
 	cmd.AddCommand(newProfileShowCmd())
@@ -53,7 +53,7 @@ func newProfileDefaultsCmd() *cobra.Command {
 	var harness, model, invocationClass string
 	cmd := &cobra.Command{
 		Use:   "defaults",
-		Short: "Set top-level agent profile defaults",
+		Short: "Set top-level profile defaults",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_ = args
 			if err := validateProfileDefaultsInput(harness, invocationClass); err != nil {
@@ -115,7 +115,7 @@ func newProfileCreateCmd() *cobra.Command {
 	var workspaceID, harness, model, prompt, invocationClass string
 	cmd := &cobra.Command{
 		Use:   "create <name>",
-		Short: "Create or update an agent profile",
+		Short: "Create or update a profile",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := configuredDaemonConfig()
@@ -146,7 +146,7 @@ func newProfileShowCmd() *cobra.Command {
 	var workspaceID string
 	cmd := &cobra.Command{
 		Use:   "show <name>",
-		Short: "Show an agent profile",
+		Short: "Show a profile",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := configuredDaemonConfig()
@@ -173,7 +173,7 @@ func newProfileListCmd() *cobra.Command {
 	var workspaceID string
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List agent profiles",
+		Short: "List profiles",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_ = args
 			cfg, err := configuredDaemonConfig()

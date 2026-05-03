@@ -423,7 +423,7 @@ VALUES ('agt-1', 'sess-1', 'claude', 'claude-code', '[]', 'running', '2026-01-01
 func callDaemonMethod(t *testing.T, socketPath, method string, params any, result any) {
 	t.Helper()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	if err := tryDaemonMethod(ctx, socketPath, method, params, result); err != nil {

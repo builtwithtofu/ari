@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -843,12 +844,10 @@ func executeRootCommand(args ...string) (string, error) {
 
 func executeRootCommandWithContext(ctx context.Context, args ...string) (string, error) {
 	originalCommandEnsure := commandEnsureDaemonRunning
-	originalAgentEnsure := agentEnsureDaemonRunning
 	originalSessionEnsure := workspaceEnsureDaemonRunning
 	originalSessionGet := workspaceGetRPC
 	originalSessionList := workspaceListRPC
 	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
-	agentEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	workspaceEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 
 	cwd := "."
@@ -856,7 +855,7 @@ func executeRootCommandWithContext(ctx context.Context, args ...string) (string,
 		cwd = wd
 	}
 
-	if len(args) > 0 && (args[0] == "command" || args[0] == "exec" || args[0] == "agent") {
+	if len(args) > 0 && (args[0] == "command" || args[0] == "exec") {
 		workspaceGetRPC = func(_ context.Context, _ string, idOrName string) (daemon.WorkspaceGetResponse, error) {
 			resolved := strings.TrimSpace(idOrName)
 			if resolved == "" {
@@ -875,7 +874,6 @@ func executeRootCommandWithContext(ctx context.Context, args ...string) (string,
 	}
 	defer func() {
 		commandEnsureDaemonRunning = originalCommandEnsure
-		agentEnsureDaemonRunning = originalAgentEnsure
 		workspaceEnsureDaemonRunning = originalSessionEnsure
 		workspaceGetRPC = originalSessionGet
 		workspaceListRPC = originalSessionList
@@ -902,6 +900,43 @@ func executeRootCommandRaw(args ...string) (string, error) {
 	return out.String(), err
 }
 
+func executeRootCommandWithInput(stdin string, args ...string) (string, error) {
+	originalWorkspaceEnsure := workspaceEnsureDaemonRunning
+	workspaceEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	defer func() { workspaceEnsureDaemonRunning = originalWorkspaceEnsure }()
+
+	root := NewRootCmd()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetIn(strings.NewReader(stdin))
+	root.SetContext(context.Background())
+	root.SetArgs(args)
+
+	oldStdin := os.Stdin
+	read, write, err := os.Pipe()
+	if err != nil {
+		return "", err
+	}
+	if _, err := io.WriteString(write, stdin); err != nil {
+		_ = read.Close()
+		_ = write.Close()
+		return "", err
+	}
+	if err := write.Close(); err != nil {
+		_ = read.Close()
+		return "", err
+	}
+	os.Stdin = read
+	defer func() {
+		os.Stdin = oldStdin
+		_ = read.Close()
+	}()
+
+	err = root.Execute()
+	return out.String(), err
+}
+
 func TestCommandListReturnsEnsureDaemonError(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	originalEnsure := commandEnsureDaemonRunning
@@ -918,25 +953,6 @@ func TestCommandListReturnsEnsureDaemonError(t *testing.T) {
 	}
 	if err.Error() != "daemon ensure failed" {
 		t.Fatalf("command list error = %q, want %q", err.Error(), "daemon ensure failed")
-	}
-}
-
-func TestAgentListReturnsEnsureDaemonError(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	originalEnsure := agentEnsureDaemonRunning
-	agentEnsureDaemonRunning = func(context.Context, *config.Config) error {
-		return userFacingError{message: "daemon ensure failed"}
-	}
-	t.Cleanup(func() {
-		agentEnsureDaemonRunning = originalEnsure
-	})
-
-	_, err := executeRootCommandRaw("agent", "list", "--workspace", "alpha")
-	if err == nil {
-		t.Fatal("agent list returned nil error")
-	}
-	if err.Error() != "daemon ensure failed" {
-		t.Fatalf("agent list error = %q, want %q", err.Error(), "daemon ensure failed")
 	}
 }
 

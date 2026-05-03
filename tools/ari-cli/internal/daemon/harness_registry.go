@@ -15,28 +15,28 @@ func NewHarnessRegistry() *HarnessRegistry {
 
 func NewDefaultHarnessRegistry() *HarnessRegistry {
 	registry := NewHarnessRegistry()
-	if err := registry.Register(HarnessNameCodex, func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	if err := registry.Register(HarnessNameCodex, func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = sink
 		return NewCodexExecutor(primaryFolder), nil
 	}); err != nil {
 		panic(fmt.Sprintf("register default Codex harness: %v", err))
 	}
-	if err := registry.Register(HarnessNameClaude, func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	if err := registry.Register(HarnessNameClaude, func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = sink
 		return NewClaudeExecutor(primaryFolder), nil
 	}); err != nil {
 		panic(fmt.Sprintf("register default Claude harness: %v", err))
 	}
-	if err := registry.Register(HarnessNameOpenCode, func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	if err := registry.Register(HarnessNameOpenCode, func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = sink
 		return NewOpenCodeExecutor(primaryFolder), nil
 	}); err != nil {
 		panic(fmt.Sprintf("register default OpenCode harness: %v", err))
 	}
-	if err := registry.Register(HarnessNamePTY, func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	if err := registry.Register(HarnessNamePTY, func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		return NewPTYExecutorWithSink(req.Command, req.Args, primaryFolder, sink), nil
 	}); err != nil {
 		panic(fmt.Sprintf("register default PTY harness: %v", err))

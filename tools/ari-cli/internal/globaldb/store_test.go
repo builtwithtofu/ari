@@ -7,7 +7,7 @@ import (
 )
 
 func TestSetMetaRoundTripUsesUpsertQuery(t *testing.T) {
-	store := newMigratedGlobalDBStore(t, "meta-store")
+	store := newGlobalDBTestStore(t, "meta-store")
 
 	if err := store.SetMeta(context.Background(), "version", "0.3.0-dev"); err != nil {
 		t.Fatalf("SetMeta returned error: %v", err)
@@ -25,7 +25,7 @@ func TestSetMetaRoundTripUsesUpsertQuery(t *testing.T) {
 }
 
 func TestGetMetaReturnsStoredValue(t *testing.T) {
-	store := newMigratedGlobalDBStore(t, "meta-store")
+	store := newGlobalDBTestStore(t, "meta-store")
 	if err := store.SetMeta(context.Background(), "version", "0.3.0-dev"); err != nil {
 		t.Fatalf("SetMeta returned error: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestGetMetaReturnsStoredValue(t *testing.T) {
 }
 
 func TestGetMetaReturnsNotFoundSentinel(t *testing.T) {
-	store := newMigratedGlobalDBStore(t, "meta-store")
+	store := newGlobalDBTestStore(t, "meta-store")
 
 	_, err := store.GetMeta(context.Background(), "missing")
 	if err == nil {
@@ -52,7 +52,7 @@ func TestGetMetaReturnsNotFoundSentinel(t *testing.T) {
 }
 
 func TestMetaMethodsRequireKey(t *testing.T) {
-	store := newMigratedGlobalDBStore(t, "meta-store")
+	store := newGlobalDBTestStore(t, "meta-store")
 
 	_, err := store.GetMeta(context.Background(), "")
 	if err == nil {

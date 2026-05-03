@@ -9,25 +9,22 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb/dbsqlc"
 )
 
 var (
-	ErrInvalidInput  = errors.New("invalid globaldb input")
-	ErrNotFound      = errors.New("globaldb record not found")
-	ErrSessionClosed = errors.New("workspace is closed")
-	ErrLastFolder    = errors.New("cannot remove last workspace folder")
+	ErrInvalidInput = errors.New("invalid globaldb input")
+	ErrNotFound     = errors.New("globaldb record not found")
+	ErrLastFolder   = errors.New("cannot remove last workspace folder")
 )
 
 const (
-	statusActive    = "active"
-	statusSuspended = "suspended"
-	statusClosed    = "closed"
-
-	cleanupPolicyManual  = "manual"
-	cleanupPolicyOnClose = "on_close"
+	statusActive        = "active"
+	statusSuspended     = "suspended"
+	cleanupPolicyManual = "manual"
 
 	vcsTypeGit     = "git"
 	vcsTypeJJ      = "jj"
@@ -151,8 +148,9 @@ type UpdateAgentStatusParams struct {
 }
 
 type Store struct {
-	db   *sql.DB
-	sqlc *dbsqlc.Queries
+	db             *sql.DB
+	sqlc           *dbsqlc.Queries
+	agentMessageMu sync.Mutex
 }
 
 type AgentProfile struct {
@@ -187,6 +185,7 @@ type AuthSlot struct {
 type FinalResponse struct {
 	FinalResponseID   string
 	RunID             string
+	SessionID         string
 	WorkspaceID       string
 	TaskID            string
 	ContextPacketID   string
@@ -205,6 +204,7 @@ type KnownInt64 struct {
 
 type AgentRunTelemetry struct {
 	RunID                   string
+	SessionID               string
 	WorkspaceID             string
 	TaskID                  string
 	ProfileID               string
@@ -264,6 +264,12 @@ type AgentRunTelemetryRollup struct {
 	PortsJSON     string
 	OrphanState   string
 }
+
+type (
+	AgentSessionTelemetry       = AgentRunTelemetry
+	AgentSessionTelemetryGroup  = AgentRunTelemetryGroup
+	AgentSessionTelemetryRollup = AgentRunTelemetryRollup
+)
 
 func NewSQLStore(db *sql.DB) (*Store, error) {
 	if db == nil {
@@ -406,7 +412,7 @@ func (s *Store) getExactAgentProfile(ctx context.Context, workspaceID, name stri
 			}
 			return AgentProfile{}, fmt.Errorf("query exact workspace agent profile: %w", err)
 		}
-		return agentProfileFromSQLC(profile), nil
+		return agentProfileFromWorkspaceNameRow(profile), nil
 	}
 	profile, err := s.sqlcQueries().GetGlobalAgentProfileByName(ctx, dbsqlc.GetGlobalAgentProfileByNameParams{Name: name})
 	if err != nil {
@@ -415,7 +421,7 @@ func (s *Store) getExactAgentProfile(ctx context.Context, workspaceID, name stri
 		}
 		return AgentProfile{}, fmt.Errorf("query exact global agent profile: %w", err)
 	}
-	return agentProfileFromSQLC(profile), nil
+	return agentProfileFromGlobalNameRow(profile), nil
 }
 
 func (s *Store) GetAgentProfile(ctx context.Context, workspaceID, name string) (AgentProfile, error) {
@@ -427,7 +433,7 @@ func (s *Store) GetAgentProfile(ctx context.Context, workspaceID, name string) (
 	if workspaceID != "" {
 		profile, err := s.sqlcQueries().GetWorkspaceAgentProfileByName(ctx, dbsqlc.GetWorkspaceAgentProfileByNameParams{WorkspaceID: optionalString(workspaceID), Name: name})
 		if err == nil {
-			return agentProfileFromSQLC(profile), nil
+			return agentProfileFromWorkspaceNameRow(profile), nil
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
 			return AgentProfile{}, fmt.Errorf("query workspace agent profile: %w", err)
@@ -440,24 +446,30 @@ func (s *Store) GetAgentProfile(ctx context.Context, workspaceID, name string) (
 		}
 		return AgentProfile{}, fmt.Errorf("query global agent profile: %w", err)
 	}
-	return agentProfileFromSQLC(profile), nil
+	return agentProfileFromGlobalNameRow(profile), nil
 }
 
 func (s *Store) ListAgentProfiles(ctx context.Context, workspaceID string) ([]AgentProfile, error) {
 	workspaceID = strings.TrimSpace(workspaceID)
-	var rows []dbsqlc.AgentProfile
 	var err error
+	var profiles []AgentProfile
 	if workspaceID == "" {
-		rows, err = s.sqlcQueries().ListGlobalAgentProfiles(ctx)
+		rows, listErr := s.sqlcQueries().ListGlobalAgentProfiles(ctx)
+		err = listErr
+		profiles = make([]AgentProfile, 0, len(rows))
+		for _, row := range rows {
+			profiles = append(profiles, agentProfileFromGlobalListRow(row))
+		}
 	} else {
-		rows, err = s.sqlcQueries().ListWorkspaceAgentProfiles(ctx, dbsqlc.ListWorkspaceAgentProfilesParams{WorkspaceID: optionalString(workspaceID)})
+		rows, listErr := s.sqlcQueries().ListWorkspaceAgentProfiles(ctx, dbsqlc.ListWorkspaceAgentProfilesParams{WorkspaceID: optionalString(workspaceID)})
+		err = listErr
+		profiles = make([]AgentProfile, 0, len(rows))
+		for _, row := range rows {
+			profiles = append(profiles, agentProfileFromWorkspaceListRow(row))
+		}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("list agent profiles: %w", err)
-	}
-	profiles := make([]AgentProfile, 0, len(rows))
-	for _, row := range rows {
-		profiles = append(profiles, agentProfileFromSQLC(row))
 	}
 	return profiles, nil
 }
@@ -591,6 +603,13 @@ func authSlotMetadataValueContainsSourceFields(value any) bool {
 func (s *Store) UpsertFinalResponse(ctx context.Context, response FinalResponse) error {
 	response.FinalResponseID = strings.TrimSpace(response.FinalResponseID)
 	response.RunID = strings.TrimSpace(response.RunID)
+	if response.RunID == "" {
+		response.RunID = strings.TrimSpace(response.SessionID)
+	}
+	response.SessionID = strings.TrimSpace(response.SessionID)
+	if response.RunID == "" {
+		response.RunID = response.SessionID
+	}
 	response.WorkspaceID = strings.TrimSpace(response.WorkspaceID)
 	response.TaskID = strings.TrimSpace(response.TaskID)
 	response.ContextPacketID = strings.TrimSpace(response.ContextPacketID)
@@ -650,6 +669,10 @@ func (s *Store) GetFinalResponseByRunID(ctx context.Context, runID string) (Fina
 	return finalResponseFromSQLC(row), nil
 }
 
+func (s *Store) GetFinalResponseBySessionID(ctx context.Context, sessionID string) (FinalResponse, error) {
+	return s.GetFinalResponseByRunID(ctx, sessionID)
+}
+
 func (s *Store) GetFinalResponseByID(ctx context.Context, finalResponseID string) (FinalResponse, error) {
 	finalResponseID = strings.TrimSpace(finalResponseID)
 	if finalResponseID == "" {
@@ -692,6 +715,9 @@ func validFinalResponseStatus(status string) bool {
 
 func (s *Store) UpsertAgentRunTelemetry(ctx context.Context, telemetry AgentRunTelemetry) error {
 	telemetry.RunID = strings.TrimSpace(telemetry.RunID)
+	if telemetry.RunID == "" {
+		telemetry.RunID = strings.TrimSpace(telemetry.SessionID)
+	}
 	telemetry.WorkspaceID = strings.TrimSpace(telemetry.WorkspaceID)
 	telemetry.TaskID = strings.TrimSpace(telemetry.TaskID)
 	telemetry.ProfileID = strings.TrimSpace(telemetry.ProfileID)
@@ -798,6 +824,14 @@ func (s *Store) RollupAgentRunTelemetry(ctx context.Context, workspaceID string)
 	return rollups, nil
 }
 
+func (s *Store) UpsertAgentSessionTelemetry(ctx context.Context, telemetry AgentSessionTelemetry) error {
+	return s.UpsertAgentRunTelemetry(ctx, telemetry)
+}
+
+func (s *Store) RollupAgentSessionTelemetry(ctx context.Context, workspaceID string) ([]AgentSessionTelemetryRollup, error) {
+	return s.RollupAgentRunTelemetry(ctx, workspaceID)
+}
+
 func boolInt64(value bool) int64 {
 	if value {
 		return 1
@@ -844,10 +878,26 @@ func optionalString(value string) *string {
 	return &value
 }
 
-func agentProfileFromSQLC(row dbsqlc.AgentProfile) AgentProfile {
-	createdAt, _ := time.Parse(time.RFC3339Nano, row.CreatedAt)
-	updatedAt, _ := time.Parse(time.RFC3339Nano, row.UpdatedAt)
-	return AgentProfile{ProfileID: row.ProfileID, WorkspaceID: stringValue(row.WorkspaceID), Name: row.Name, Harness: stringValue(row.Harness), Model: stringValue(row.Model), Prompt: stringValue(row.Prompt), AuthSlotID: stringValue(row.AuthSlotID), AuthPoolJSON: row.AuthPoolJson, InvocationClass: stringValue(row.InvocationClass), DefaultsJSON: row.DefaultsJson, CreatedAt: createdAt, UpdatedAt: updatedAt}
+func agentProfileFromWorkspaceNameRow(row dbsqlc.GetWorkspaceAgentProfileByNameRow) AgentProfile {
+	return agentProfileFromFields(row.ProfileID, row.WorkspaceID, row.Name, row.Harness, row.Model, row.Prompt, row.AuthSlotID, row.AuthPoolJson, row.InvocationClass, row.DefaultsJson, row.CreatedAt, row.UpdatedAt)
+}
+
+func agentProfileFromGlobalNameRow(row dbsqlc.GetGlobalAgentProfileByNameRow) AgentProfile {
+	return agentProfileFromFields(row.ProfileID, row.WorkspaceID, row.Name, row.Harness, row.Model, row.Prompt, row.AuthSlotID, row.AuthPoolJson, row.InvocationClass, row.DefaultsJson, row.CreatedAt, row.UpdatedAt)
+}
+
+func agentProfileFromWorkspaceListRow(row dbsqlc.ListWorkspaceAgentProfilesRow) AgentProfile {
+	return agentProfileFromFields(row.ProfileID, row.WorkspaceID, row.Name, row.Harness, row.Model, row.Prompt, row.AuthSlotID, row.AuthPoolJson, row.InvocationClass, row.DefaultsJson, row.CreatedAt, row.UpdatedAt)
+}
+
+func agentProfileFromGlobalListRow(row dbsqlc.ListGlobalAgentProfilesRow) AgentProfile {
+	return agentProfileFromFields(row.ProfileID, row.WorkspaceID, row.Name, row.Harness, row.Model, row.Prompt, row.AuthSlotID, row.AuthPoolJson, row.InvocationClass, row.DefaultsJson, row.CreatedAt, row.UpdatedAt)
+}
+
+func agentProfileFromFields(profileID string, workspaceID *string, name string, harness *string, model *string, prompt *string, authSlotID *string, authPoolJSON string, invocationClass *string, defaultsJSON string, createdAtValue string, updatedAtValue string) AgentProfile {
+	createdAt, _ := time.Parse(time.RFC3339Nano, createdAtValue)
+	updatedAt, _ := time.Parse(time.RFC3339Nano, updatedAtValue)
+	return AgentProfile{ProfileID: profileID, WorkspaceID: stringValue(workspaceID), Name: name, Harness: stringValue(harness), Model: stringValue(model), Prompt: stringValue(prompt), AuthSlotID: stringValue(authSlotID), AuthPoolJSON: authPoolJSON, InvocationClass: stringValue(invocationClass), DefaultsJSON: defaultsJSON, CreatedAt: createdAt, UpdatedAt: updatedAt}
 }
 
 func authSlotFromSQLC(row dbsqlc.AuthSlot) AuthSlot {
@@ -863,7 +913,7 @@ func finalResponseFromSQLC(row dbsqlc.FinalResponse) FinalResponse {
 		parsed, _ := time.Parse(time.RFC3339Nano, *row.UpdatedAt)
 		updatedAt = &parsed
 	}
-	return FinalResponse{FinalResponseID: row.FinalResponseID, RunID: row.RunID, WorkspaceID: row.WorkspaceID, TaskID: row.TaskID, ContextPacketID: row.ContextPacketID, ProfileID: stringValue(row.ProfileID), Status: row.Status, Text: row.Text, EvidenceLinksJSON: row.EvidenceLinks, CreatedAt: createdAt, UpdatedAt: updatedAt}
+	return FinalResponse{FinalResponseID: row.FinalResponseID, RunID: row.RunID, SessionID: row.RunID, WorkspaceID: row.WorkspaceID, TaskID: row.TaskID, ContextPacketID: row.ContextPacketID, ProfileID: stringValue(row.ProfileID), Status: row.Status, Text: row.Text, EvidenceLinksJSON: row.EvidenceLinks, CreatedAt: createdAt, UpdatedAt: updatedAt}
 }
 
 func ptrString(value string) *string { return &value }
@@ -1022,9 +1072,6 @@ func (s *Store) UpdateSessionStatus(ctx context.Context, id, status string) erro
 		return err
 	}
 	if !canTransitionSessionStatus(session.Status, status) {
-		if session.Status == statusClosed {
-			return fmt.Errorf("%w: session id %q", ErrSessionClosed, id)
-		}
 		return fmt.Errorf("%w: invalid session transition %q -> %q", ErrInvalidInput, session.Status, status)
 	}
 
@@ -1083,14 +1130,6 @@ func (s *Store) RemoveFolder(ctx context.Context, sessionID, folderPath string) 
 		return fmt.Errorf("%w: folder path is required", ErrInvalidInput)
 	}
 
-	session, err := s.GetSession(ctx, sessionID)
-	if err != nil {
-		return err
-	}
-	if session.Status == statusClosed {
-		return fmt.Errorf("%w: session id %q", ErrSessionClosed, sessionID)
-	}
-
 	rowsAffected, err := s.sqlcQueries().DeleteWorkspaceFolderIfNotLast(ctx, dbsqlc.DeleteWorkspaceFolderIfNotLastParams{WorkspaceID: sessionID, FolderPath: folderPath, WorkspaceID_2: sessionID})
 	if err != nil {
 		return fmt.Errorf("remove session folder %q: %w", folderPath, err)
@@ -1139,11 +1178,9 @@ func (s *Store) ListFolders(ctx context.Context, sessionID string) ([]SessionFol
 		return nil, fmt.Errorf("%w: session id is required", ErrInvalidInput)
 	}
 
-	session, err := s.GetSession(ctx, sessionID)
-	if err != nil {
+	if _, err := s.GetSession(ctx, sessionID); err != nil {
 		return nil, err
 	}
-	_ = session
 
 	rows, err := s.sqlcQueries().ListWorkspaceFolders(ctx, dbsqlc.ListWorkspaceFoldersParams{WorkspaceID: sessionID})
 	if err != nil {
@@ -1158,22 +1195,19 @@ func (s *Store) ListFolders(ctx context.Context, sessionID string) ([]SessionFol
 }
 
 func addFolderInTransaction(ctx context.Context, queries *dbsqlc.Queries, sessionID, folderPath, vcsType string, isPrimary bool) error {
-	row, err := queries.GetWorkspaceByID(ctx, dbsqlc.GetWorkspaceByIDParams{WorkspaceID: sessionID})
+	_, err := queries.GetWorkspaceByID(ctx, dbsqlc.GetWorkspaceByIDParams{WorkspaceID: sessionID})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("%w: session id %q", ErrNotFound, sessionID)
 		}
 		return err
 	}
-	if row.Status == statusClosed {
-		return fmt.Errorf("%w: session id %q", ErrSessionClosed, sessionID)
-	}
 	owners, err := workspaceOwnersByFolderPath(ctx, queries, folderPath)
 	if err != nil {
 		return err
 	}
 	for _, owner := range owners {
-		if owner.WorkspaceID != sessionID && owner.Status != statusClosed {
+		if owner.WorkspaceID != sessionID {
 			return fmt.Errorf("%w: folder %q already belongs to workspace %q", ErrInvalidInput, folderPath, owner.WorkspaceID)
 		}
 	}
@@ -1365,15 +1399,12 @@ func (s *Store) CreateWorkspaceCommandDefinition(ctx context.Context, params Cre
 }
 
 func createWorkspaceCommandDefinitionInTransaction(ctx context.Context, queries *dbsqlc.Queries, params CreateWorkspaceCommandDefinitionParams) error {
-	workspace, err := queries.GetWorkspaceByID(ctx, dbsqlc.GetWorkspaceByIDParams{WorkspaceID: params.WorkspaceID})
+	_, err := queries.GetWorkspaceByID(ctx, dbsqlc.GetWorkspaceByIDParams{WorkspaceID: params.WorkspaceID})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("%w: session id %q", ErrNotFound, params.WorkspaceID)
 		}
 		return err
-	}
-	if workspace.Status == statusClosed {
-		return fmt.Errorf("%w: session id %q", ErrSessionClosed, params.WorkspaceID)
 	}
 	if existingByID, err := getWorkspaceCommandDefinition(ctx, queries, params.WorkspaceID, params.Name); err == nil && existingByID != nil {
 		return fmt.Errorf("%w: command name %q collides with existing command id", ErrInvalidInput, params.Name)
@@ -1644,7 +1675,7 @@ func (s *Store) MarkRunningAgentsLost(ctx context.Context) error {
 
 func isValidSessionStatus(status string) bool {
 	switch status {
-	case statusActive, statusSuspended, statusClosed:
+	case statusActive, statusSuspended:
 		return true
 	default:
 		return false
@@ -1653,16 +1684,14 @@ func isValidSessionStatus(status string) bool {
 
 func canTransitionSessionStatus(from, to string) bool {
 	if from == to {
-		return from != statusClosed
+		return true
 	}
 
 	switch from {
 	case statusActive:
-		return to == statusSuspended || to == statusClosed
+		return to == statusSuspended
 	case statusSuspended:
-		return to == statusActive || to == statusClosed
-	case statusClosed:
-		return false
+		return to == statusActive
 	default:
 		return false
 	}
@@ -1674,7 +1703,7 @@ func validateCleanupPolicy(cleanupPolicy string) error {
 		return fmt.Errorf("%w: cleanup policy is required", ErrInvalidInput)
 	}
 
-	if cleanupPolicy != cleanupPolicyManual && cleanupPolicy != cleanupPolicyOnClose {
+	if cleanupPolicy != cleanupPolicyManual {
 		return fmt.Errorf("%w: invalid cleanup policy %q", ErrInvalidInput, cleanupPolicy)
 	}
 

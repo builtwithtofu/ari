@@ -96,15 +96,7 @@ func (d *Daemon) registerMethods(registry *rpc.MethodRegistry, store *globaldb.S
 		return err
 	}
 
-	if err := d.registerAgentMethods(registry, store); err != nil {
-		return err
-	}
-
 	if err := d.registerExecutorMethods(registry, store); err != nil {
-		return err
-	}
-
-	if err := d.registerAttachMethods(registry, store); err != nil {
 		return err
 	}
 

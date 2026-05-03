@@ -26,6 +26,7 @@ type TimelineItem struct {
 	ID          string         `json:"id"`
 	WorkspaceID string         `json:"workspace_id,omitempty"`
 	RunID       string         `json:"run_id,omitempty"`
+	SessionID   string         `json:"session_id,omitempty"`
 	SourceKind  string         `json:"source_kind"`
 	SourceID    string         `json:"source_id"`
 	Kind        string         `json:"kind"`
@@ -119,33 +120,25 @@ func (d *Daemon) workspaceTimeline(ctx context.Context, store *globaldb.Store, w
 		sequence++
 	}
 
-	agents, err := store.ListAgents(ctx, workspaceID)
-	if err != nil {
-		return nil, mapAgentStoreError(err, workspaceID)
-	}
-	for _, agent := range agents {
-		if output := strings.TrimSpace(agentSummaryOutput(d, agent.AgentID)); output != "" {
-			items = append(items, TimelineItem{
-				ID:          agent.AgentID + ":output",
-				WorkspaceID: agent.WorkspaceID,
-				RunID:       agent.AgentID,
-				SourceKind:  "agent",
-				SourceID:    agent.AgentID,
-				Kind:        "terminal_output",
-				Status:      agent.Status,
-				Sequence:    sequence,
-				CreatedAt:   agent.StartedAt,
-				Text:        output,
-			})
-			sequence++
-		}
-	}
 	for _, item := range d.executorTimelineItems(workspaceID) {
+		item = normalizeAgentSessionTimelineItem(item)
 		item.Sequence = sequence
 		items = append(items, item)
 		sequence++
 	}
 	return items, nil
+}
+
+func normalizeAgentSessionTimelineItem(item TimelineItem) TimelineItem {
+	switch item.SourceKind {
+	case "executor", "agent_session":
+		item.SourceKind = "agent_session"
+	}
+	switch item.Kind {
+	case "agent_text", "terminal_output":
+		item.Kind = "run_log_message"
+	}
+	return item
 }
 
 func (d *Daemon) executorTimelineItems(workspaceID string) []TimelineItem {
@@ -178,6 +171,7 @@ func (d *Daemon) executorTimelineItems(workspaceID string) []TimelineItem {
 type ExecutorStartRequest struct {
 	WorkspaceID     string
 	RunID           string
+	SessionID       string
 	ContextPacket   string
 	SourceProfileID string
 	Model           string
@@ -187,13 +181,15 @@ type ExecutorStartRequest struct {
 }
 
 type ExecutorRun struct {
-	RunID           string
-	Executor        string
-	ProviderRunID   string
-	PID             int
-	ExitCode        *int
-	ProcessSample   *ProcessMetricsSample
-	CapabilityNames []string
+	RunID             string
+	SessionID         string
+	Executor          string
+	ProviderSessionID string
+	ProviderRunID     string
+	PID               int
+	ExitCode          *int
+	ProcessSample     *ProcessMetricsSample
+	CapabilityNames   []string
 }
 
 type Executor interface {
@@ -212,7 +208,7 @@ type PTYExecutor struct {
 }
 
 func (e *PTYExecutor) Descriptor() HarnessAdapterDescriptor {
-	return HarnessAdapterDescriptor{Name: "pty", Capabilities: []HarnessCapability{HarnessCapabilityAgentRunFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems}}
+	return HarnessAdapterDescriptor{Name: "pty", Capabilities: []HarnessCapability{HarnessCapabilityAgentSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems}}
 }
 
 func NewPTYExecutor(command string, args []string, dir string) *PTYExecutor {
@@ -257,6 +253,10 @@ func (e *PTYExecutor) Start(ctx context.Context, req ExecutorStartRequest) (Exec
 	go func() {
 		result, waitErr := proc.Wait()
 		output := strings.TrimSpace(string(proc.OutputSnapshot()))
+		for deadline := time.Now().Add(200 * time.Millisecond); output == "" && time.Now().Before(deadline); {
+			time.Sleep(10 * time.Millisecond)
+			output = strings.TrimSpace(string(proc.OutputSnapshot()))
+		}
 		status := "completed"
 		if waitErr != nil || result.Signaled || result.ExitCode != 0 {
 			status = "failed"
@@ -267,12 +267,14 @@ func (e *PTYExecutor) Start(ctx context.Context, req ExecutorStartRequest) (Exec
 		e.mu.Unlock()
 		if e.sink != nil {
 			sinkItem := exitItem
+			sinkItem.ID = ariRunID + ":output"
 			sinkItem.RunID = ariRunID
+			sinkItem.SessionID = ariRunID
 			sinkItem.SourceID = ariRunID
 			e.sink(ariRunID, []TimelineItem{sinkItem})
 		}
 	}()
-	return ExecutorRun{RunID: runID, Executor: "pty", ProviderRunID: runID, PID: proc.PID(), CapabilityNames: []string{"timeline", "pty"}}, nil
+	return ExecutorRun{RunID: runID, SessionID: runID, Executor: "pty", ProviderSessionID: runID, ProviderRunID: runID, PID: proc.PID(), CapabilityNames: []string{"timeline", "pty"}}, nil
 }
 
 func (e *PTYExecutor) Items(ctx context.Context, runID string) ([]TimelineItem, error) {

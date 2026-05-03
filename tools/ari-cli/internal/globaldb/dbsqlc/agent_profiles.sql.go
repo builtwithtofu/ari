@@ -32,9 +32,24 @@ type GetGlobalAgentProfileByNameParams struct {
 	Name string `json:"name"`
 }
 
-func (q *Queries) GetGlobalAgentProfileByName(ctx context.Context, arg GetGlobalAgentProfileByNameParams) (AgentProfile, error) {
+type GetGlobalAgentProfileByNameRow struct {
+	ProfileID       string  `json:"profile_id"`
+	WorkspaceID     *string `json:"workspace_id"`
+	Name            string  `json:"name"`
+	Harness         *string `json:"harness"`
+	Model           *string `json:"model"`
+	Prompt          *string `json:"prompt"`
+	AuthSlotID      *string `json:"auth_slot_id"`
+	AuthPoolJson    string  `json:"auth_pool_json"`
+	InvocationClass *string `json:"invocation_class"`
+	DefaultsJson    string  `json:"defaults_json"`
+	CreatedAt       string  `json:"created_at"`
+	UpdatedAt       string  `json:"updated_at"`
+}
+
+func (q *Queries) GetGlobalAgentProfileByName(ctx context.Context, arg GetGlobalAgentProfileByNameParams) (GetGlobalAgentProfileByNameRow, error) {
 	row := q.db.QueryRowContext(ctx, getGlobalAgentProfileByName, arg.Name)
-	var i AgentProfile
+	var i GetGlobalAgentProfileByNameRow
 	err := row.Scan(
 		&i.ProfileID,
 		&i.WorkspaceID,
@@ -76,9 +91,24 @@ type GetWorkspaceAgentProfileByNameParams struct {
 	Name        string  `json:"name"`
 }
 
-func (q *Queries) GetWorkspaceAgentProfileByName(ctx context.Context, arg GetWorkspaceAgentProfileByNameParams) (AgentProfile, error) {
+type GetWorkspaceAgentProfileByNameRow struct {
+	ProfileID       string  `json:"profile_id"`
+	WorkspaceID     *string `json:"workspace_id"`
+	Name            string  `json:"name"`
+	Harness         *string `json:"harness"`
+	Model           *string `json:"model"`
+	Prompt          *string `json:"prompt"`
+	AuthSlotID      *string `json:"auth_slot_id"`
+	AuthPoolJson    string  `json:"auth_pool_json"`
+	InvocationClass *string `json:"invocation_class"`
+	DefaultsJson    string  `json:"defaults_json"`
+	CreatedAt       string  `json:"created_at"`
+	UpdatedAt       string  `json:"updated_at"`
+}
+
+func (q *Queries) GetWorkspaceAgentProfileByName(ctx context.Context, arg GetWorkspaceAgentProfileByNameParams) (GetWorkspaceAgentProfileByNameRow, error) {
 	row := q.db.QueryRowContext(ctx, getWorkspaceAgentProfileByName, arg.WorkspaceID, arg.Name)
-	var i AgentProfile
+	var i GetWorkspaceAgentProfileByNameRow
 	err := row.Scan(
 		&i.ProfileID,
 		&i.WorkspaceID,
@@ -115,15 +145,30 @@ WHERE workspace_id IS NULL
 ORDER BY name ASC, profile_id ASC
 `
 
-func (q *Queries) ListGlobalAgentProfiles(ctx context.Context) ([]AgentProfile, error) {
+type ListGlobalAgentProfilesRow struct {
+	ProfileID       string  `json:"profile_id"`
+	WorkspaceID     *string `json:"workspace_id"`
+	Name            string  `json:"name"`
+	Harness         *string `json:"harness"`
+	Model           *string `json:"model"`
+	Prompt          *string `json:"prompt"`
+	AuthSlotID      *string `json:"auth_slot_id"`
+	AuthPoolJson    string  `json:"auth_pool_json"`
+	InvocationClass *string `json:"invocation_class"`
+	DefaultsJson    string  `json:"defaults_json"`
+	CreatedAt       string  `json:"created_at"`
+	UpdatedAt       string  `json:"updated_at"`
+}
+
+func (q *Queries) ListGlobalAgentProfiles(ctx context.Context) ([]ListGlobalAgentProfilesRow, error) {
 	rows, err := q.db.QueryContext(ctx, listGlobalAgentProfiles)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []AgentProfile{}
+	items := []ListGlobalAgentProfilesRow{}
 	for rows.Next() {
-		var i AgentProfile
+		var i ListGlobalAgentProfilesRow
 		if err := rows.Scan(
 			&i.ProfileID,
 			&i.WorkspaceID,
@@ -174,15 +219,30 @@ type ListWorkspaceAgentProfilesParams struct {
 	WorkspaceID *string `json:"workspace_id"`
 }
 
-func (q *Queries) ListWorkspaceAgentProfiles(ctx context.Context, arg ListWorkspaceAgentProfilesParams) ([]AgentProfile, error) {
+type ListWorkspaceAgentProfilesRow struct {
+	ProfileID       string  `json:"profile_id"`
+	WorkspaceID     *string `json:"workspace_id"`
+	Name            string  `json:"name"`
+	Harness         *string `json:"harness"`
+	Model           *string `json:"model"`
+	Prompt          *string `json:"prompt"`
+	AuthSlotID      *string `json:"auth_slot_id"`
+	AuthPoolJson    string  `json:"auth_pool_json"`
+	InvocationClass *string `json:"invocation_class"`
+	DefaultsJson    string  `json:"defaults_json"`
+	CreatedAt       string  `json:"created_at"`
+	UpdatedAt       string  `json:"updated_at"`
+}
+
+func (q *Queries) ListWorkspaceAgentProfiles(ctx context.Context, arg ListWorkspaceAgentProfilesParams) ([]ListWorkspaceAgentProfilesRow, error) {
 	rows, err := q.db.QueryContext(ctx, listWorkspaceAgentProfiles, arg.WorkspaceID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []AgentProfile{}
+	items := []ListWorkspaceAgentProfilesRow{}
 	for rows.Next() {
-		var i AgentProfile
+		var i ListWorkspaceAgentProfilesRow
 		if err := rows.Scan(
 			&i.ProfileID,
 			&i.WorkspaceID,

@@ -86,8 +86,8 @@ func TestHelperContextProjectIncludesWorkflowLearningsFromAriStateAndArtifacts(t
 	if err := store.UpsertFinalResponse(context.Background(), globaldb.FinalResponse{FinalResponseID: "fr-1", RunID: "run-1", WorkspaceID: "project-1", TaskID: "task-1", ContextPacketID: "cp-1", Status: "failed", Text: "Build failed because gofmt found files", CreatedAt: finishedAt}); err != nil {
 		t.Fatalf("UpsertFinalResponse returned error: %v", err)
 	}
-	if err := store.UpsertAgentRunTelemetry(context.Background(), globaldb.AgentRunTelemetry{RunID: "run-1", WorkspaceID: "project-1", TaskID: "task-1", ProfileID: "ap-helper", ProfileName: "helper", Harness: "codex", Model: "gpt", InvocationClass: "agent", Status: "failed", ExitCodeKnown: true, ExitCode: int64Ptr(1), CreatedAt: finishedAt, UpdatedAt: finishedAt}); err != nil {
-		t.Fatalf("UpsertAgentRunTelemetry returned error: %v", err)
+	if err := store.UpsertAgentSessionTelemetry(context.Background(), globaldb.AgentSessionTelemetry{RunID: "run-1", WorkspaceID: "project-1", TaskID: "task-1", ProfileID: "ap-helper", ProfileName: "helper", Harness: "codex", Model: "gpt", InvocationClass: "agent", Status: "failed", ExitCodeKnown: true, ExitCode: int64Ptr(1), CreatedAt: finishedAt, UpdatedAt: finishedAt}); err != nil {
+		t.Fatalf("UpsertAgentSessionTelemetry returned error: %v", err)
 	}
 	if err := store.CreateCommand(context.Background(), globaldb.CreateCommandParams{CommandID: "cmd-verify", WorkspaceID: "project-1", Command: "just", Args: `["verify"]`, Status: "exited", ExitCode: intPtr(1), StartedAt: "2026-04-28T00:00:00Z"}); err != nil {
 		t.Fatalf("CreateCommand returned error: %v", err)

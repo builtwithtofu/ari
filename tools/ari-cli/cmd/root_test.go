@@ -73,12 +73,13 @@ func TestRootRunUsesInteractivePath(t *testing.T) {
 	replaceRootDeps(t, rootRunDeps{isInteractiveTerminal: func(cmd *cobra.Command) bool {
 		_ = cmd
 		return true
-	}, runWorkspaceAttach: func(cmd *cobra.Command, args []string) error {
+	}})
+	rootRunInteractive = func(cmd *cobra.Command, args []string) error {
 		_ = cmd
 		_ = args
 		interactiveCalled = true
 		return nil
-	}})
+	}
 	rootRunNonInteractive = func(cmd *cobra.Command, args []string) error {
 		_ = cmd
 		_ = args
@@ -95,42 +96,6 @@ func TestRootRunUsesInteractivePath(t *testing.T) {
 	}
 	if nonInteractiveCalled {
 		t.Fatal("non-interactive path called, want false")
-	}
-}
-
-func TestRootRunInteractiveDelegatesToWorkspaceAttachPath(t *testing.T) {
-	originalInteractive := rootRunInteractive
-	t.Cleanup(func() {
-		rootRunInteractive = originalInteractive
-	})
-
-	called := false
-	replaceRootDeps(t, rootRunDeps{runWorkspaceAttach: func(cmd *cobra.Command, args []string) error {
-		_ = cmd
-		if len(args) != 0 {
-			t.Fatalf("args length = %d, want 0", len(args))
-		}
-		called = true
-		return nil
-	}})
-
-	if err := rootRunInteractive(&cobra.Command{}, nil); err != nil {
-		t.Fatalf("rootRunInteractive returned error: %v", err)
-	}
-	if !called {
-		t.Fatal("rootRunWorkspaceAttach called = false, want true")
-	}
-}
-
-func TestRootRunInteractiveFallsBackWithoutErrorWhenAttachNotImplemented(t *testing.T) {
-	replaceRootDeps(t, rootRunDeps{runWorkspaceAttach: func(cmd *cobra.Command, args []string) error {
-		_ = cmd
-		_ = args
-		return nil
-	}})
-
-	if err := rootRunInteractive(&cobra.Command{}, nil); err != nil {
-		t.Fatalf("rootRunInteractive returned error: %v", err)
 	}
 }
 
@@ -165,12 +130,6 @@ func TestRootRunNonInteractiveRendersWorkspaceDashboard(t *testing.T) {
 		_ = cwd
 		t.Fatal("dashboard path must not resolve workspace from cwd")
 		return daemon.WorkspaceGetResponse{}, nil
-	}
-	deps.agentListRPC = func(ctx context.Context, socketPath, sessionID string) (daemon.AgentListResponse, error) {
-		_ = ctx
-		_ = socketPath
-		_ = sessionID
-		return daemon.AgentListResponse{Agents: []daemon.AgentSummary{{AgentID: "a1"}, {AgentID: "a2"}}}, nil
 	}
 	deps.workspaceActivityRPC = func(ctx context.Context, socketPath, workspaceID string) (daemon.WorkspaceActivityResponse, error) {
 		_ = ctx
@@ -268,10 +227,10 @@ func TestStatusUsesDaemonDashboardActiveContext(t *testing.T) {
 				WorkspaceID:   "ws-active",
 				WorkspaceName: "active workspace",
 				VCS:           daemon.DiffSummary{Backend: "jj", ChangedFiles: 2},
-				Attention:     daemon.AttentionSummary{Level: "running", Items: []daemon.AttentionItem{{Kind: "agent_running", SourceID: "ag-1", Message: "codex"}}},
+				Attention:     daemon.AttentionSummary{Level: "running", Items: []daemon.AttentionItem{{Kind: "agent_sessionning", SourceID: "ag-1", Message: "codex"}}},
 				Agents:        []daemon.AgentActivity{{ID: "ag-1", Status: "running", Executor: "codex"}},
 			},
-			ResumeActions:  []daemon.ResumeAction{{ID: "resume:agent:ag-1", Kind: "attach_agent", WorkspaceID: "ws-active", SourceID: "ag-1", Label: "codex"}},
+			ResumeActions:  []daemon.ResumeAction{{ID: "resume:session:ag-1", Kind: "resume_session", WorkspaceID: "ws-active", SourceID: "ag-1", Label: "codex"}},
 			CWDMemberships: []daemon.WorkspaceMembership{{WorkspaceID: "ws-cwd", Name: "cwd workspace", FolderPath: "/tmp/cwd", Active: false}},
 		}, nil
 	}
@@ -281,7 +240,7 @@ func TestStatusUsesDaemonDashboardActiveContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute status returned error: %v", err)
 	}
-	for _, want := range []string{"Active workspace: active workspace", "ID: ws-active", "Attention: running (1 items)", "Resume: attach_agent codex", "CWD workspace: cwd workspace"} {
+	for _, want := range []string{"Active workspace: active workspace", "ID: ws-active", "Attention: running (1 items)", "Resume session: codex", "CWD workspace: cwd workspace"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("status output = %q, want %q", out, want)
 		}
@@ -326,12 +285,6 @@ func TestRootRunNonInteractiveCountsActivityAgents(t *testing.T) {
 		t.Fatal("dashboard path must not resolve workspace from cwd")
 		return daemon.WorkspaceGetResponse{}, nil
 	}
-	deps.agentListRPC = func(ctx context.Context, socketPath, sessionID string) (daemon.AgentListResponse, error) {
-		_ = ctx
-		_ = socketPath
-		_ = sessionID
-		return daemon.AgentListResponse{}, nil
-	}
 	deps.workspaceActivityRPC = func(ctx context.Context, socketPath, workspaceID string) (daemon.WorkspaceActivityResponse, error) {
 		_ = ctx
 		_ = socketPath
@@ -352,6 +305,32 @@ func TestRootRunNonInteractiveCountsActivityAgents(t *testing.T) {
 	}
 	if !strings.Contains(out, "Agents: 2") {
 		t.Fatalf("output = %q, want activity agent count", out)
+	}
+}
+
+func TestStatusRendersMessageWorkflowProjection(t *testing.T) {
+	deps := rootDeps
+	deps.isInteractiveTerminal = func(cmd *cobra.Command) bool { _ = cmd; return false }
+	deps.configuredDaemonConfig = func() (*config.Config, error) {
+		return &config.Config{Daemon: config.DaemonConfig{SocketPath: "/tmp/daemon.sock"}}, nil
+	}
+	deps.ensureDaemonRunning = func(ctx context.Context, cfg *config.Config) error { _ = ctx; _ = cfg; return nil }
+	deps.dashboardRPC = func(ctx context.Context, socketPath, cwd string) (daemon.DashboardGetResponse, error) {
+		_ = ctx
+		_ = socketPath
+		_ = cwd
+		return daemon.DashboardGetResponse{Activity: daemon.WorkspaceActivityResponse{WorkspaceID: "ws-1", WorkspaceName: "workspace", Attention: daemon.AttentionSummary{Level: "running", Items: []daemon.AttentionItem{{Kind: "agent_waiting", SourceID: "run-1", Message: "executor"}, {Kind: "ephemeral_running", SourceID: "call-1-run", Message: "reviewer"}}}, Agents: []daemon.AgentActivity{{ID: "run-1", Status: "waiting", Executor: "codex"}, {ID: "call-1-run", Status: "running", Executor: "opencode", Usage: "ephemeral", SourceSessionID: "run-1"}}, ContextExcerpts: []daemon.ContextExcerptActivity{{ContextExcerptID: "excerpt-1", SelectorType: "last_n", ItemCount: 5, TargetAgentID: "reviewer"}}, AgentMessages: []daemon.AgentMessageActivity{{AgentMessageID: "dm-1", Status: "delivered", SourceSessionID: "run-1", TargetAgentID: "reviewer", ContextExcerptCount: 1}}}}, nil
+	}
+	replaceRootDeps(t, deps)
+
+	out, err := executeRootCommandRaw("status")
+	if err != nil {
+		t.Fatalf("execute status returned error: %v", err)
+	}
+	for _, want := range []string{"Waiting sessions: 1", "Running ephemeral calls: 1", "Agent messages: 1", "Context excerpts: 1", "Context excerpt: excerpt-1 last_n 5 -> reviewer", "Agent message: dm-1 delivered run-1 -> reviewer"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("status output = %q, want %q", out, want)
+		}
 	}
 }
 

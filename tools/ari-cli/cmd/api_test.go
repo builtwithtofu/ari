@@ -29,13 +29,13 @@ func TestAPICallsDaemonMethodWithJSONParams(t *testing.T) {
 		if method != "workspace.list" {
 			t.Fatalf("method = %q, want workspace.list", method)
 		}
-		if string(params) != `{"include_closed":false}` {
-			t.Fatalf("params = %s, want include_closed false", params)
+		if string(params) != `{"limit":10}` {
+			t.Fatalf("params = %s, want limit param", params)
 		}
 		return json.RawMessage(`{"workspaces":[{"workspace_id":"ws-1","name":"alpha"}]}`), nil
 	}
 
-	out, err := executeRootCommandRaw("api", "workspace.list", "--params", `{"include_closed":false}`)
+	out, err := executeRootCommandRaw("api", "workspace.list", "--params", `{"limit":10}`)
 	if err != nil {
 		t.Fatalf("execute api returned error: %v", err)
 	}

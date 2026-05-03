@@ -17,10 +17,8 @@ type rootRunDeps struct {
 	configuredDaemonConfig  func() (*config.Config, error)
 	ensureDaemonRunning     func(context.Context, *config.Config) error
 	resolveWorkspaceFromCWD func(context.Context, string, string) (daemon.WorkspaceGetResponse, error)
-	agentListRPC            func(context.Context, string, string) (daemon.AgentListResponse, error)
 	workspaceActivityRPC    func(context.Context, string, string) (daemon.WorkspaceActivityResponse, error)
 	dashboardRPC            func(context.Context, string, string) (daemon.DashboardGetResponse, error)
-	runWorkspaceAttach      func(*cobra.Command, []string) error
 }
 
 var rootDeps = rootRunDeps{
@@ -30,7 +28,6 @@ var rootDeps = rootRunDeps{
 	configuredDaemonConfig:  configuredDaemonConfig,
 	ensureDaemonRunning:     ensureDaemonRunning,
 	resolveWorkspaceFromCWD: resolveWorkspaceFromCWD,
-	agentListRPC:            agentListRPC,
 	workspaceActivityRPC: func(ctx context.Context, socketPath, workspaceID string) (daemon.WorkspaceActivityResponse, error) {
 		rpcClient := client.New(socketPath)
 		var response daemon.WorkspaceActivityResponse
@@ -47,7 +44,6 @@ var rootDeps = rootRunDeps{
 		}
 		return response, nil
 	},
-	runWorkspaceAttach: runWorkspaceAttachEntrypoint,
 }
 
 var rootRunInteractive = func(cmd *cobra.Command, _ []string) error {
@@ -55,7 +51,7 @@ var rootRunInteractive = func(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("root command is required")
 	}
 
-	return rootDeps.runWorkspaceAttach(cmd, nil)
+	return rootRunNonInteractive(cmd, nil)
 }
 
 var rootRunNonInteractive = func(cmd *cobra.Command, _ []string) error {
@@ -111,6 +107,38 @@ func renderDashboard(cmd *cobra.Command, dashboard daemon.DashboardGetResponse) 
 	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Processes: %d\n", len(activity.Processes)); err != nil {
 		return err
 	}
+	waitingSessions := 0
+	runningEphemeral := 0
+	for _, agent := range activity.Agents {
+		if agent.Status == "waiting" {
+			waitingSessions++
+		}
+		if agent.Usage == "ephemeral" && agent.Status == "running" {
+			runningEphemeral++
+		}
+	}
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Waiting sessions: %d\n", waitingSessions); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Running ephemeral calls: %d\n", runningEphemeral); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Context excerpts: %d\n", len(activity.ContextExcerpts)); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Agent messages: %d\n", len(activity.AgentMessages)); err != nil {
+		return err
+	}
+	for _, excerpt := range activity.ContextExcerpts {
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Context excerpt: %s %s %d -> %s\n", excerpt.ContextExcerptID, excerpt.SelectorType, excerpt.ItemCount, excerpt.TargetAgentID); err != nil {
+			return err
+		}
+	}
+	for _, message := range activity.AgentMessages {
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Agent message: %s %s %s -> %s\n", message.AgentMessageID, message.Status, message.SourceSessionID, message.TargetAgentID); err != nil {
+			return err
+		}
+	}
 	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Attention: %s (%d items)\n", activity.Attention.Level, len(activity.Attention.Items)); err != nil {
 		return err
 	}
@@ -125,7 +153,7 @@ func renderDashboard(cmd *cobra.Command, dashboard daemon.DashboardGetResponse) 
 		if label == "" {
 			label = action.SourceID
 		}
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Resume: %s %s\n", action.Kind, label); err != nil {
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Resume session: %s\n", label); err != nil {
 			return err
 		}
 	}
@@ -162,7 +190,7 @@ func NewRootCmd() *cobra.Command {
 	rootCmd.AddCommand(NewWorkspaceCmd())
 	rootCmd.AddCommand(NewCommandCmd())
 	rootCmd.AddCommand(NewExecCmd())
-	rootCmd.AddCommand(NewAgentCmd())
+	rootCmd.AddCommand(NewAgentsCmd())
 	rootCmd.AddCommand(NewProfileCmd())
 	rootCmd.AddCommand(NewFinalResponseCmd())
 	rootCmd.AddCommand(NewTelemetryCmd())

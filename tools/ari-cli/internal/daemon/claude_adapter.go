@@ -89,20 +89,20 @@ func (e *ClaudeExecutor) AuthLogout(ctx context.Context, slot HarnessAuthSlot) (
 		return HarnessAuthStatus{}, fmt.Errorf("executor is required")
 	}
 	if !authSlotIsDefaultForHarness(HarnessNameClaude, slot.AuthSlotID) {
-		return HarnessAuthStatus{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "auth_slot_selection_unsupported", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
+		return HarnessAuthStatus{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "auth_slot_selection_unsupported", RequiredCapability: HarnessCapabilityAgentSessionFromContext, StartInvoked: false}
 	}
 	result, err := e.options.RunAuthCommand(ctx, e.options, []string{"auth", "logout"})
 	if err != nil {
 		return HarnessAuthStatus{}, err
 	}
 	if result.ExitCode != nil && *result.ExitCode != 0 {
-		return HarnessAuthStatus{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "auth_logout_failed", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: true}
+		return HarnessAuthStatus{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "auth_logout_failed", RequiredCapability: HarnessCapabilityAgentSessionFromContext, StartInvoked: true}
 	}
 	return NewHarnessAuthRequired(HarnessNameClaude, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, Method: "provider_config", SecretOwnedBy: HarnessNameClaude}), nil
 }
 
 func (e *ClaudeExecutor) Descriptor() HarnessAdapterDescriptor {
-	return HarnessAdapterDescriptor{Name: HarnessNameClaude, Capabilities: []HarnessCapability{HarnessCapabilityAgentRunFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems, HarnessCapabilityFinalResponse, HarnessCapabilityMeasuredTokenTelemetry}}
+	return HarnessAdapterDescriptor{Name: HarnessNameClaude, Capabilities: []HarnessCapability{HarnessCapabilityAgentSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems, HarnessCapabilityFinalResponse, HarnessCapabilityMeasuredTokenTelemetry}}
 }
 
 func (e *ClaudeExecutor) Start(ctx context.Context, req ExecutorStartRequest) (ExecutorRun, error) {
@@ -113,7 +113,7 @@ func (e *ClaudeExecutor) Start(ctx context.Context, req ExecutorStartRequest) (E
 		return ExecutorRun{}, fmt.Errorf("executor is required")
 	}
 	if !authSlotIsDefaultForHarness(HarnessNameClaude, req.AuthSlotID) {
-		return ExecutorRun{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "auth_slot_selection_unsupported", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
+		return ExecutorRun{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "auth_slot_selection_unsupported", RequiredCapability: HarnessCapabilityAgentSessionFromContext, StartInvoked: false}
 	}
 	workspaceID := strings.TrimSpace(req.WorkspaceID)
 	if workspaceID == "" {
@@ -139,7 +139,7 @@ func (e *ClaudeExecutor) Start(ctx context.Context, req ExecutorStartRequest) (E
 	e.mu.Lock()
 	e.runs[sessionID] = items
 	e.mu.Unlock()
-	return ExecutorRun{RunID: sessionID, Executor: HarnessNameClaude, ProviderRunID: sessionID, ExitCode: commandResult.ExitCode, ProcessSample: commandResult.ProcessSample, CapabilityNames: harnessCapabilitiesToStrings(e.Descriptor().Capabilities)}, nil
+	return ExecutorRun{RunID: sessionID, SessionID: sessionID, Executor: HarnessNameClaude, ProviderSessionID: sessionID, ProviderRunID: sessionID, ExitCode: commandResult.ExitCode, ProcessSample: commandResult.ProcessSample, CapabilityNames: harnessCapabilitiesToStrings(e.Descriptor().Capabilities)}, nil
 }
 
 func (e *ClaudeExecutor) Items(ctx context.Context, runID string) ([]TimelineItem, error) {
@@ -219,7 +219,7 @@ func runClaudeCommand(ctx context.Context, options claudeExecutorOptions, prompt
 	}
 	path, err := exec.LookPath(executable)
 	if err != nil {
-		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
+		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityAgentSessionFromContext, StartInvoked: false}
 	}
 	cmd := exec.CommandContext(ctx, path, claudeArgs(options)...)
 	cmd.Dir = strings.TrimSpace(options.Cwd)
@@ -235,7 +235,7 @@ func runClaudeCommand(ctx context.Context, options claudeExecutorOptions, prompt
 	}
 	_, _ = io.WriteString(stdin, prompt)
 	_ = stdin.Close()
-	sample := sampleLinuxProcessMetrics(ctx, AgentRun{PID: cmd.Process.Pid})
+	sample := sampleLinuxProcessMetrics(ctx, AgentSession{PID: cmd.Process.Pid})
 	err = cmd.Wait()
 	exitCode := cmd.ProcessState.ExitCode()
 	if err != nil {
@@ -251,7 +251,7 @@ func runClaudeAuthCommand(ctx context.Context, options claudeExecutorOptions, ar
 	}
 	path, err := exec.LookPath(executable)
 	if err != nil {
-		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
+		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityAgentSessionFromContext, StartInvoked: false}
 	}
 	cmd := exec.CommandContext(ctx, path, args...)
 	cmd.Dir = strings.TrimSpace(options.Cwd)
@@ -259,9 +259,9 @@ func runClaudeAuthCommand(ctx context.Context, options claudeExecutorOptions, ar
 	cmd.Stdout = &output
 	cmd.Stderr = &output
 	if err := cmd.Start(); err != nil {
-		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "start_failed", Executable: executable, Probe: executable + " " + strings.Join(args, " "), RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: true}
+		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "start_failed", Executable: executable, Probe: executable + " " + strings.Join(args, " "), RequiredCapability: HarnessCapabilityAgentSessionFromContext, StartInvoked: true}
 	}
-	sample := sampleLinuxProcessMetrics(ctx, AgentRun{PID: cmd.Process.Pid})
+	sample := sampleLinuxProcessMetrics(ctx, AgentSession{PID: cmd.Process.Pid})
 	err = cmd.Wait()
 	exitCode := cmd.ProcessState.ExitCode()
 	return commandRunResult{Output: []byte(output.String()), ProcessSample: &sample, ExitCode: &exitCode}, err

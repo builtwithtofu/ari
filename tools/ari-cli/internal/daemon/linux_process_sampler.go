@@ -34,7 +34,7 @@ type linuxProcStat struct {
 	RSSPages int64
 }
 
-func sampleLinuxProcessMetrics(ctx context.Context, run AgentRun) ProcessMetricsSample {
+func sampleLinuxProcessMetrics(ctx context.Context, run AgentSession) ProcessMetricsSample {
 	_ = ctx
 	if runtime.GOOS != "linux" {
 		return unsupportedProcessMetrics("unsupported")
@@ -90,7 +90,7 @@ func unsupportedProcessMetrics(confidence string) ProcessMetricsSample {
 	return ProcessMetricsSample{OwnedByAri: false, PID: unknownProcessMetric(confidence), CPUTimeMS: unknownProcessMetric(confidence), MemoryRSSBytesPeak: unknownProcessMetric(confidence), ChildProcessesPeak: unknownProcessMetric(confidence), Ports: []ProcessPortObservation{}, OrphanState: confidence, ExitCode: unknownProcessMetric(confidence)}
 }
 
-func exitCodeMetric(run AgentRun) ProcessMetricValue {
+func exitCodeMetric(run AgentSession) ProcessMetricValue {
 	if run.ExitCode == nil {
 		return unknownProcessMetric("unavailable")
 	}

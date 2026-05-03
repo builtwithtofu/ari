@@ -63,9 +63,7 @@ var (
 		}
 		return response, nil
 	}
-	commandResolveAgentSelector = resolveAgentSelector
-	commandAgentSendRPC         = agentSendRPC
-	oneOffCommandMaxDuration    = 24 * time.Hour
+	oneOffCommandMaxDuration = 24 * time.Hour
 )
 
 func NewExecCmd() *cobra.Command {
@@ -80,7 +78,6 @@ func NewExecCmd() *cobra.Command {
 
 func newCommandRunCmd() *cobra.Command {
 	var sessionRef string
-	var agentSelector string
 	cmd := &cobra.Command{
 		Use:   "run [--workspace <id-or-name>] -- <command> [args...]",
 		Short: "Run command in workspace",
@@ -114,11 +111,10 @@ func newCommandRunCmd() *cobra.Command {
 				return err
 			}
 
-			return runOneOffCommandAndForwardOutput(cmd, cfg, target.WorkspaceID, args[0], args[1:], agentSelector)
+			return runOneOffCommand(cmd, cfg, target.WorkspaceID, args[0], args[1:])
 		},
 	}
 	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
-	cmd.Flags().StringVar(&agentSelector, "agent", "0", "Target agent id/name/index for output forwarding (defaults to 0)")
 	return cmd
 }
 
@@ -329,7 +325,7 @@ func commandSessionReference(overrideSession string) (string, error) {
 	return resolveWorkspaceReference(overrideSession, commandReadActiveSession)
 }
 
-func runOneOffCommandAndForwardOutput(cmd *cobra.Command, cfg *config.Config, workspaceID, command string, args []string, agentSelector string) error {
+func runOneOffCommand(cmd *cobra.Command, cfg *config.Config, workspaceID, command string, args []string) error {
 	if cmd == nil {
 		return fmt.Errorf("exec run: command is required")
 	}
@@ -349,11 +345,6 @@ func runOneOffCommandAndForwardOutput(cmd *cobra.Command, cfg *config.Config, wo
 	}
 	runCtx, runCancel := context.WithTimeout(parentCtx, oneOffCommandMaxDuration)
 	defer runCancel()
-
-	agentID, err := commandResolveAgentSelector(runCtx, cfg.Daemon.SocketPath, workspaceID, agentSelector)
-	if err != nil {
-		return err
-	}
 
 	startCtx, startCancel := context.WithTimeout(runCtx, 5*time.Second)
 	defer startCancel()
@@ -382,26 +373,11 @@ func runOneOffCommandAndForwardOutput(cmd *cobra.Command, cfg *config.Config, wo
 	if err != nil {
 		return mapCommandRPCError(err)
 	}
-	if strings.TrimSpace(outputResp.Output) == "" {
-		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Command produced no output; nothing forwarded to agent %q.\n", agentID)
-		if err != nil {
-			return err
-		}
-		return commandTerminalError(terminalState)
+	if strings.TrimSpace(outputResp.Output) != "" {
+		_, err = fmt.Fprint(cmd.OutOrStdout(), outputResp.Output)
+	} else {
+		_, err = fmt.Fprintln(cmd.OutOrStdout(), "Command produced no output.")
 	}
-
-	sendCtx, sendCancel := context.WithTimeout(runCtx, 5*time.Second)
-	defer sendCancel()
-	_, err = commandAgentSendRPC(sendCtx, cfg.Daemon.SocketPath, daemon.AgentSendRequest{
-		WorkspaceID: workspaceID,
-		AgentID:     agentID,
-		Input:       outputResp.Output,
-	})
-	if err != nil {
-		return mapAgentRPCError(err)
-	}
-
-	_, err = fmt.Fprintf(cmd.OutOrStdout(), "Forwarded command output to agent %q.\n", agentID)
 	if err != nil {
 		return err
 	}

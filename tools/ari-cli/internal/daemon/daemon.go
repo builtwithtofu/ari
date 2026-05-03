@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -20,42 +19,32 @@ import (
 )
 
 type Daemon struct {
-	mu                sync.RWMutex
-	running           bool
-	startedAt         time.Time
-	socketPath        string
-	dbPath            string
-	configPath        string
-	configSource      string
-	pidPath           string
-	signalCh          <-chan os.Signal
-	version           string
-	pid               int
-	store             *globaldb.Store
-	db                *sql.DB
-	cancel            context.CancelFunc
-	stopCh            chan struct{}
-	transport         *rpc.UnixSocketTransport
-	commandMu         sync.RWMutex
-	commands          map[string]*process.Process
-	commandLogs       map[string]string
-	commandLogOrder   []string
-	commandWG         sync.WaitGroup
-	agentMu           sync.RWMutex
-	agents            map[string]*process.Process
-	agentLogs         map[string]string
-	agentLogOrder     []string
-	agentStops        map[string]bool
-	agentWG           sync.WaitGroup
-	executorMu        sync.RWMutex
-	executorRuns      map[string]AgentRun
-	executorItems     map[string][]TimelineItem
-	harnessRegistry   *HarnessRegistry
-	agentProfiles     map[string]AgentProfile
-	attachMu          sync.Mutex
-	attachByToken     map[string]attachSession
-	attachByAgent     map[string]string
-	attachConnByAgent map[string]net.Conn
+	mu              sync.RWMutex
+	running         bool
+	startedAt       time.Time
+	socketPath      string
+	dbPath          string
+	configPath      string
+	configSource    string
+	pidPath         string
+	signalCh        <-chan os.Signal
+	version         string
+	pid             int
+	store           *globaldb.Store
+	db              *sql.DB
+	cancel          context.CancelFunc
+	stopCh          chan struct{}
+	transport       *rpc.UnixSocketTransport
+	commandMu       sync.RWMutex
+	commands        map[string]*process.Process
+	commandLogs     map[string]string
+	commandLogOrder []string
+	commandWG       sync.WaitGroup
+	executorMu      sync.RWMutex
+	executorRuns    map[string]AgentSession
+	executorItems   map[string][]TimelineItem
+	harnessRegistry *HarnessRegistry
+	agentProfiles   map[string]AgentProfile
 }
 
 var bootstrapDatabase = globaldb.Bootstrap
@@ -92,28 +81,21 @@ func NewWithSignalChannel(socketPath, dbPath, pidPath, configPath, configSource,
 	}
 
 	return &Daemon{
-		socketPath:        socketPath,
-		dbPath:            dbPath,
-		pidPath:           pidPath,
-		configPath:        configPath,
-		configSource:      configSource,
-		signalCh:          signalCh,
-		version:           version,
-		pid:               os.Getpid(),
-		commands:          make(map[string]*process.Process),
-		commandLogs:       make(map[string]string),
-		commandLogOrder:   make([]string, 0),
-		agents:            make(map[string]*process.Process),
-		agentLogs:         make(map[string]string),
-		agentLogOrder:     make([]string, 0),
-		agentStops:        make(map[string]bool),
-		executorRuns:      make(map[string]AgentRun),
-		executorItems:     make(map[string][]TimelineItem),
-		harnessRegistry:   NewDefaultHarnessRegistry(),
-		agentProfiles:     defaultAgentProfiles(),
-		attachByToken:     make(map[string]attachSession),
-		attachByAgent:     make(map[string]string),
-		attachConnByAgent: make(map[string]net.Conn),
+		socketPath:      socketPath,
+		dbPath:          dbPath,
+		pidPath:         pidPath,
+		configPath:      configPath,
+		configSource:    configSource,
+		signalCh:        signalCh,
+		version:         version,
+		pid:             os.Getpid(),
+		commands:        make(map[string]*process.Process),
+		commandLogs:     make(map[string]string),
+		commandLogOrder: make([]string, 0),
+		executorRuns:    make(map[string]AgentSession),
+		executorItems:   make(map[string][]TimelineItem),
+		harnessRegistry: NewDefaultHarnessRegistry(),
+		agentProfiles:   defaultAgentProfiles(),
 	}
 }
 
@@ -182,7 +164,6 @@ func (d *Daemon) Start(ctx context.Context) error {
 		_ = dbConn.Close()
 		return fmt.Errorf("reconcile running agents: %w", err)
 	}
-
 	registry := rpc.NewMethodRegistry()
 	if err := d.registerMethods(registry, store); err != nil {
 		_ = dbConn.Close()
@@ -190,7 +171,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 	}
 
 	server := rpc.NewServer(registry)
-	transport := rpc.NewUnixSocketTransportWithFrameRouter(d.socketPath, server, d.routeFrameConnection)
+	transport := rpc.NewUnixSocketTransport(d.socketPath, server)
 
 	runCtx, cancel := context.WithCancel(ctx)
 	stopCh := make(chan struct{}, 1)
@@ -215,15 +196,11 @@ func (d *Daemon) Start(ctx context.Context) error {
 		}
 	}()
 
-	go d.startAttachTokenCleanupLoop(runCtx, attachTokenCleanupInterval)
-
 	defer func() {
 		startupSucceeded = true
 		cancel()
 		d.stopAllCommands()
-		d.stopAllAgents()
 		d.commandWG.Wait()
-		d.agentWG.Wait()
 		_ = RemovePIDFileIfOwned(d.pidPath, d.pid)
 		if dbConn != nil {
 			_ = dbConn.Close()

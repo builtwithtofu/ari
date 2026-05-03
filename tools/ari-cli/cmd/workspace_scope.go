@@ -130,9 +130,6 @@ func loadLiveWorkspaceCandidates(ctx context.Context, socketPath string, summari
 			}
 			return nil, mapSessionRPCError(getErr)
 		}
-		if strings.EqualFold(strings.TrimSpace(workspace.Status), "closed") {
-			continue
-		}
 		candidates = append(candidates, workspace)
 	}
 

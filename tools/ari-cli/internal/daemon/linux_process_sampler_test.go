@@ -59,7 +59,7 @@ func TestSampleLinuxProcessMetricsReadsProcFixture(t *testing.T) {
 		t.Fatalf("write tcp: %v", err)
 	}
 	exitCode := 0
-	sample := sampleLinuxProcessMetrics(context.Background(), AgentRun{PID: 123, ExitCode: &exitCode})
+	sample := sampleLinuxProcessMetrics(context.Background(), AgentSession{PID: 123, ExitCode: &exitCode})
 	if !sample.PID.Known || sample.PID.Value == nil || *sample.PID.Value != 123 {
 		t.Fatalf("pid sample = %#v, want known pid", sample.PID)
 	}

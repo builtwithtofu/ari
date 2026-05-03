@@ -7,7 +7,7 @@ import (
 )
 
 func TestAuthSlotPersistsMetadataWithoutCredentialSources(t *testing.T) {
-	store := newMigratedGlobalDBStore(t, "auth-slot")
+	store := newGlobalDBTestStore(t, "auth-slot")
 	ctx := context.Background()
 
 	if err := store.UpsertAuthSlot(ctx, AuthSlot{AuthSlotID: "codex-personal", Harness: "codex", Label: "Personal", ProviderLabel: "ChatGPT Plus", Status: "authenticated"}); err != nil {
@@ -24,7 +24,7 @@ func TestAuthSlotPersistsMetadataWithoutCredentialSources(t *testing.T) {
 }
 
 func TestAuthSlotListFiltersByHarness(t *testing.T) {
-	store := newMigratedGlobalDBStore(t, "auth-slot-list")
+	store := newGlobalDBTestStore(t, "auth-slot-list")
 	ctx := context.Background()
 	for _, slot := range []AuthSlot{
 		{AuthSlotID: "codex-work", Harness: "codex", Label: "Work", Status: "authenticated"},
@@ -52,7 +52,7 @@ func TestAuthSlotListFiltersByHarness(t *testing.T) {
 }
 
 func TestAuthSlotRejectsSourceFieldsInMetadata(t *testing.T) {
-	store := newMigratedGlobalDBStore(t, "auth-slot-invalid")
+	store := newGlobalDBTestStore(t, "auth-slot-invalid")
 	err := store.UpsertAuthSlot(context.Background(), AuthSlot{AuthSlotID: "codex-work", Harness: "codex", Label: "Work", Status: "authenticated", MetadataJSON: `{"provider":{"source_ref":"/secret"}}`})
 	if err == nil {
 		t.Fatal("UpsertAuthSlot returned nil error for source_ref metadata")
@@ -62,8 +62,8 @@ func TestAuthSlotRejectsSourceFieldsInMetadata(t *testing.T) {
 	}
 }
 
-func TestAuthSlotMigrationSeedsDefaultProviderOwnedSlots(t *testing.T) {
-	store := newMigratedGlobalDBStore(t, "auth-slot-defaults")
+func TestAuthSlotDefaultsIncludeProviderOwnedSlots(t *testing.T) {
+	store := newGlobalDBTestStore(t, "auth-slot-defaults")
 	slots, err := store.ListAuthSlots(context.Background(), "")
 	if err != nil {
 		t.Fatalf("ListAuthSlots returned error: %v", err)
@@ -91,7 +91,7 @@ func TestAuthSlotMigrationSeedsDefaultProviderOwnedSlots(t *testing.T) {
 }
 
 func TestAgentProfilePersistsAuthBindings(t *testing.T) {
-	store := newMigratedGlobalDBStore(t, "profile-auth-bindings")
+	store := newGlobalDBTestStore(t, "profile-auth-bindings")
 	ctx := context.Background()
 
 	profile := AgentProfile{ProfileID: "ap_auth", Name: "codex-work", Harness: "codex", AuthSlotID: "codex-work", AuthPoolJSON: `{"slot_ids":["codex-work","codex-personal"],"strategy":"failover"}`, DefaultsJSON: `{}`}

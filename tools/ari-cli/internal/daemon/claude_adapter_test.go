@@ -16,7 +16,7 @@ func TestClaudeExecutorMapsJSONResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartExecutorRun returned error: %v", err)
 	}
-	if run.Executor != HarnessNameClaude || run.ProviderRunID != "550e8400-e29b-41d4-a716-446655440000" || run.AgentRunID == run.ProviderRunID || !isULID(run.AgentRunID) {
+	if run.Executor != HarnessNameClaude || run.ProviderRunID != "550e8400-e29b-41d4-a716-446655440000" || run.AgentSessionID == run.ProviderRunID || !isULID(run.AgentSessionID) {
 		t.Fatalf("run = %#v, want Ari run id with Claude provider session", run)
 	}
 	if len(items) != 4 {
@@ -38,7 +38,7 @@ func TestClaudeExecutorMapsJSONResult(t *testing.T) {
 
 func TestClaudeExecutorReportsMissingExecutableBeforeStart(t *testing.T) {
 	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "missing-claude", Cwd: "/repo", RunCommand: func(ctx context.Context, opts claudeExecutorOptions, prompt string) (commandRunResult, error) {
-		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "missing_executable", Executable: opts.Executable, Probe: opts.Executable + " --version", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
+		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "missing_executable", Executable: opts.Executable, Probe: opts.Executable + " --version", RequiredCapability: HarnessCapabilityAgentSessionFromContext, StartInvoked: false}
 	}})
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 
@@ -47,7 +47,7 @@ func TestClaudeExecutorReportsMissingExecutableBeforeStart(t *testing.T) {
 	if !errors.As(err, &unavailable) {
 		t.Fatalf("error = %T %[1]v, want HarnessUnavailableError", err)
 	}
-	if unavailable.StartInvoked || unavailable.Executable != "missing-claude" || unavailable.RequiredCapability != HarnessCapabilityAgentRunFromContext {
+	if unavailable.StartInvoked || unavailable.Executable != "missing-claude" || unavailable.RequiredCapability != HarnessCapabilityAgentSessionFromContext {
 		t.Fatalf("unavailable = %#v, want pre-start missing executable", unavailable)
 	}
 }

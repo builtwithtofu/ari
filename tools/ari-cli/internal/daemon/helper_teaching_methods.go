@@ -176,13 +176,13 @@ func (d *Daemon) helperExplain(ctx context.Context, store *globaldb.Store, req H
 		if err != nil {
 			return HelperExplainResponse{}, err
 		}
-		return HelperExplainResponse{Topic: "profile", Explanation: fmt.Sprintf("Profiles are workspace-scoped run configurations. This workspace has %d configured profile(s); helper is the conventional default helper profile when present.", len(profiles)), Anchors: []string{"agent.profile.list", "agent.profile.helper.get", "helper profile convention"}}, nil
+		return HelperExplainResponse{Topic: "profile", Explanation: fmt.Sprintf("Profiles are workspace-scoped run configurations. This workspace has %d configured profile(s); helper is the conventional default helper profile when present.", len(profiles)), Anchors: []string{"profile.list", "profile.helper.get", "helper profile convention"}}, nil
 	case "harness":
-		return HelperExplainResponse{Topic: "harness", Explanation: "A harness is the external agent runtime Ari launches, such as codex, opencode, or claude-code. Ari stores local state and passes scoped context to the harness.", Anchors: []string{"default_harness", "agent.spawn", "agent.profile.run"}}, nil
+		return HelperExplainResponse{Topic: "harness", Explanation: "A harness is the external agent runtime Ari launches, such as codex, opencode, or claude-code. Ari stores local state and passes scoped context to the harness.", Anchors: []string{"default_harness", "agent.run", "profile.run"}}, nil
 	case "workspace":
 		return HelperExplainResponse{Topic: "workspace", Explanation: "A workspace is a folder-backed place Ari can use for context. Init creates a normal home workspace as a starter landing place when possible; users can delete it without changing Ari defaults.", Anchors: []string{"workspace.create", "workspace.get", "ari init"}}, nil
 	case "telemetry":
-		return HelperExplainResponse{Topic: "telemetry", Explanation: "Telemetry summarizes Ari-owned run evidence such as status, token/cost knowledge, exit code, process metrics, and orphan state when available.", Anchors: []string{"telemetry.rollup", "agent_run_telemetry"}}, nil
+		return HelperExplainResponse{Topic: "telemetry", Explanation: "Telemetry summarizes Ari-owned run evidence such as status, token/cost knowledge, exit code, process metrics, and orphan state when available.", Anchors: []string{"telemetry.rollup", "agent_session_telemetry"}}, nil
 	case "final response":
 		return HelperExplainResponse{Topic: "final response", Explanation: "A final response is the durable answer or outcome Ari records for a run, including status, text, and evidence links where available.", Anchors: []string{"final_response.get", "final_response.list"}}, nil
 	case "tool grant", "tool grants":
@@ -249,7 +249,7 @@ func helperFinalResponses(ctx context.Context, store *globaldb.Store, workspaceI
 }
 
 func helperTelemetry(ctx context.Context, store *globaldb.Store, workspaceID string) ([]HelperTelemetrySummary, error) {
-	rollups, err := store.RollupAgentRunTelemetry(ctx, workspaceID)
+	rollups, err := store.RollupAgentSessionTelemetry(ctx, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -347,7 +347,7 @@ func helperLatestFailedRunExplanation(ctx context.Context, store *globaldb.Store
 }
 
 func helperDocs() []string {
-	return []string{"ari init: choose the default harness and create a normal home workspace when possible", "ari agent spawn --workspace home: start the home helper", "ari workspace show: inspect workspace folders and origin"}
+	return []string{"ari init: choose the default harness and create a normal home workspace when possible", "ari agents create helper --harness <harness>: define a workspace helper, then ari agents run helper", "ari workspace show: inspect workspace folders and origin"}
 }
 
 func helperExplanationTopics() []string {

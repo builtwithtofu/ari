@@ -120,7 +120,6 @@ func TestWorkspaceTargetingHelpRegistersWorkspaceFlagOnly(t *testing.T) {
 		args []string
 	}{
 		{name: "exec run", args: []string{"exec", "run"}},
-		{name: "agent spawn", args: []string{"agent", "spawn"}},
 		{name: "workspace command create", args: []string{"command", "create"}},
 	}
 
@@ -524,8 +523,6 @@ func TestCommandRunUsesSeparatorArguments(t *testing.T) {
 	originalRun := commandRunRPC
 	originalGet := commandGetRPC
 	originalOutput := commandOutputRPC
-	originalResolveAgent := commandResolveAgentSelector
-	originalSend := commandAgentSendRPC
 
 	commandResolveSessionTarget = func(context.Context, string, string) (resolvedSessionTarget, error) {
 		return resolvedSessionTarget{WorkspaceID: "sess-1", Session: &daemon.WorkspaceGetResponse{WorkspaceID: "sess-1", OriginRoot: t.TempDir()}}, nil
@@ -546,16 +543,6 @@ func TestCommandRunUsesSeparatorArguments(t *testing.T) {
 	commandOutputRPC = func(context.Context, string, string, string) (daemon.CommandOutputResponse, error) {
 		return daemon.CommandOutputResponse{Output: "ok\n"}, nil
 	}
-	gotSelector := ""
-	commandResolveAgentSelector = func(_ context.Context, _ string, _ string, selector string) (string, error) {
-		gotSelector = selector
-		return "agt-0", nil
-	}
-	gotSend := daemon.AgentSendRequest{}
-	commandAgentSendRPC = func(_ context.Context, _ string, req daemon.AgentSendRequest) (daemon.AgentSendResponse, error) {
-		gotSend = req
-		return daemon.AgentSendResponse{Status: "sent"}, nil
-	}
 	t.Cleanup(func() {
 		commandResolveSessionTarget = originalResolveTarget
 		commandReadActiveSession = originalReadActive
@@ -564,8 +551,6 @@ func TestCommandRunUsesSeparatorArguments(t *testing.T) {
 		commandRunRPC = originalRun
 		commandGetRPC = originalGet
 		commandOutputRPC = originalOutput
-		commandResolveAgentSelector = originalResolveAgent
-		commandAgentSendRPC = originalSend
 	})
 
 	out, err := executeRootCommand("exec", "run", "--", "go", "test", "./...")
@@ -579,78 +564,11 @@ func TestCommandRunUsesSeparatorArguments(t *testing.T) {
 	if len(gotReq.Args) != 2 || gotReq.Args[0] != "test" || gotReq.Args[1] != "./..." {
 		t.Fatalf("command run args = %#v, want [test ./...]", gotReq.Args)
 	}
-	if gotSelector != "0" {
-		t.Fatalf("agent selector = %q, want %q", gotSelector, "0")
-	}
-	if gotSend.AgentID != "agt-0" {
-		t.Fatalf("agent send agent_id = %q, want %q", gotSend.AgentID, "agt-0")
-	}
-	if gotSend.Input != "ok\n" {
-		t.Fatalf("agent send input = %q, want %q", gotSend.Input, "ok\n")
-	}
 	if !strings.Contains(out, "Command started: cmd-1") {
 		t.Fatalf("command run output = %q, want command started line", out)
 	}
-	if !strings.Contains(out, "Forwarded command output to agent \"agt-0\".") {
-		t.Fatalf("command run output = %q, want forwarding confirmation", out)
-	}
-}
-
-func TestCommandRunUsesExplicitAgentSelector(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	originalResolveTarget := commandResolveSessionTarget
-	originalReadActive := commandReadActiveSession
-	originalEnsure := commandEnsureDaemonRunning
-	originalEnsureScope := commandEnsureWorkspaceScope
-	originalRun := commandRunRPC
-	originalGet := commandGetRPC
-	originalOutput := commandOutputRPC
-	originalResolveAgent := commandResolveAgentSelector
-	originalSend := commandAgentSendRPC
-
-	commandResolveSessionTarget = func(context.Context, string, string) (resolvedSessionTarget, error) {
-		return resolvedSessionTarget{WorkspaceID: "sess-1", Session: &daemon.WorkspaceGetResponse{WorkspaceID: "sess-1", OriginRoot: t.TempDir()}}, nil
-	}
-	commandReadActiveSession = func() (string, error) { return "sess-1", nil }
-	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
-	commandEnsureWorkspaceScope = func(*daemon.WorkspaceGetResponse, string) error { return nil }
-	commandRunRPC = func(_ context.Context, _ string, _ daemon.CommandRunRequest) (daemon.CommandRunResponse, error) {
-		return daemon.CommandRunResponse{CommandID: "cmd-1", Status: "running"}, nil
-	}
-	commandGetRPC = func(context.Context, string, string, string) (daemon.CommandGetResponse, error) {
-		return daemon.CommandGetResponse{CommandID: "cmd-1", Status: "exited"}, nil
-	}
-	commandOutputRPC = func(context.Context, string, string, string) (daemon.CommandOutputResponse, error) {
-		return daemon.CommandOutputResponse{Output: "ok\n"}, nil
-	}
-	gotSelector := ""
-	commandResolveAgentSelector = func(_ context.Context, _ string, _ string, selector string) (string, error) {
-		gotSelector = selector
-		return "agt-1", nil
-	}
-	commandAgentSendRPC = func(_ context.Context, _ string, _ daemon.AgentSendRequest) (daemon.AgentSendResponse, error) {
-		return daemon.AgentSendResponse{Status: "sent"}, nil
-	}
-	t.Cleanup(func() {
-		commandResolveSessionTarget = originalResolveTarget
-		commandReadActiveSession = originalReadActive
-		commandEnsureDaemonRunning = originalEnsure
-		commandEnsureWorkspaceScope = originalEnsureScope
-		commandRunRPC = originalRun
-		commandGetRPC = originalGet
-		commandOutputRPC = originalOutput
-		commandResolveAgentSelector = originalResolveAgent
-		commandAgentSendRPC = originalSend
-	})
-
-	_, err := executeRootCommand("exec", "run", "--agent", "1", "--", "go", "test", "./...")
-	if err != nil {
-		t.Fatalf("execute command run: %v", err)
-	}
-	if gotSelector != "1" {
-		t.Fatalf("agent selector = %q, want %q", gotSelector, "1")
+	if !strings.Contains(out, "ok\n") {
+		t.Fatalf("command run output = %q, want command output", out)
 	}
 }
 
@@ -664,7 +582,6 @@ func TestCommandRunStopsPollingAtConfiguredWallclockCap(t *testing.T) {
 	originalEnsureScope := commandEnsureWorkspaceScope
 	originalRun := commandRunRPC
 	originalGet := commandGetRPC
-	originalResolveAgent := commandResolveAgentSelector
 	originalMaxDuration := oneOffCommandMaxDuration
 
 	commandResolveSessionTarget = func(context.Context, string, string) (resolvedSessionTarget, error) {
@@ -673,7 +590,6 @@ func TestCommandRunStopsPollingAtConfiguredWallclockCap(t *testing.T) {
 	commandReadActiveSession = func() (string, error) { return "sess-1", nil }
 	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	commandEnsureWorkspaceScope = func(*daemon.WorkspaceGetResponse, string) error { return nil }
-	commandResolveAgentSelector = func(context.Context, string, string, string) (string, error) { return "agt-1", nil }
 	commandRunRPC = func(context.Context, string, daemon.CommandRunRequest) (daemon.CommandRunResponse, error) {
 		return daemon.CommandRunResponse{CommandID: "cmd-1", Status: "running"}, nil
 	}
@@ -688,7 +604,6 @@ func TestCommandRunStopsPollingAtConfiguredWallclockCap(t *testing.T) {
 		commandEnsureWorkspaceScope = originalEnsureScope
 		commandRunRPC = originalRun
 		commandGetRPC = originalGet
-		commandResolveAgentSelector = originalResolveAgent
 		oneOffCommandMaxDuration = originalMaxDuration
 	})
 
@@ -701,7 +616,7 @@ func TestCommandRunStopsPollingAtConfiguredWallclockCap(t *testing.T) {
 	}
 }
 
-func TestCommandRunDoesNotStartWhenAgentResolutionFails(t *testing.T) {
+func TestCommandRunPrintsNoOutputMessageWhenOutputIsEmpty(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -709,54 +624,9 @@ func TestCommandRunDoesNotStartWhenAgentResolutionFails(t *testing.T) {
 	originalReadActive := commandReadActiveSession
 	originalEnsure := commandEnsureDaemonRunning
 	originalEnsureScope := commandEnsureWorkspaceScope
-	originalResolveAgent := commandResolveAgentSelector
-	originalRun := commandRunRPC
-
-	commandResolveSessionTarget = func(context.Context, string, string) (resolvedSessionTarget, error) {
-		return resolvedSessionTarget{WorkspaceID: "sess-1", Session: &daemon.WorkspaceGetResponse{WorkspaceID: "sess-1", OriginRoot: t.TempDir()}}, nil
-	}
-	commandReadActiveSession = func() (string, error) { return "sess-1", nil }
-	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
-	commandEnsureWorkspaceScope = func(*daemon.WorkspaceGetResponse, string) error { return nil }
-	commandResolveAgentSelector = func(context.Context, string, string, string) (string, error) {
-		return "", userFacingError{message: "Agent index 99 is out of range (0-0)"}
-	}
-	runCalled := false
-	commandRunRPC = func(context.Context, string, daemon.CommandRunRequest) (daemon.CommandRunResponse, error) {
-		runCalled = true
-		return daemon.CommandRunResponse{}, nil
-	}
-	t.Cleanup(func() {
-		commandResolveSessionTarget = originalResolveTarget
-		commandReadActiveSession = originalReadActive
-		commandEnsureDaemonRunning = originalEnsure
-		commandEnsureWorkspaceScope = originalEnsureScope
-		commandResolveAgentSelector = originalResolveAgent
-		commandRunRPC = originalRun
-	})
-
-	_, err := executeRootCommand("exec", "run", "--agent", "99", "--", "echo", "hi")
-	if err == nil {
-		t.Fatal("exec run returned nil error")
-	}
-	if runCalled {
-		t.Fatal("command run RPC called unexpectedly")
-	}
-}
-
-func TestCommandRunSkipsAgentSendWhenOutputIsEmpty(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	originalResolveTarget := commandResolveSessionTarget
-	originalReadActive := commandReadActiveSession
-	originalEnsure := commandEnsureDaemonRunning
-	originalEnsureScope := commandEnsureWorkspaceScope
-	originalResolveAgent := commandResolveAgentSelector
 	originalRun := commandRunRPC
 	originalGet := commandGetRPC
 	originalOutput := commandOutputRPC
-	originalSend := commandAgentSendRPC
 
 	commandResolveSessionTarget = func(context.Context, string, string) (resolvedSessionTarget, error) {
 		return resolvedSessionTarget{WorkspaceID: "sess-1", Session: &daemon.WorkspaceGetResponse{WorkspaceID: "sess-1", OriginRoot: t.TempDir()}}, nil
@@ -764,7 +634,6 @@ func TestCommandRunSkipsAgentSendWhenOutputIsEmpty(t *testing.T) {
 	commandReadActiveSession = func() (string, error) { return "sess-1", nil }
 	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	commandEnsureWorkspaceScope = func(*daemon.WorkspaceGetResponse, string) error { return nil }
-	commandResolveAgentSelector = func(context.Context, string, string, string) (string, error) { return "agt-0", nil }
 	commandRunRPC = func(context.Context, string, daemon.CommandRunRequest) (daemon.CommandRunResponse, error) {
 		return daemon.CommandRunResponse{CommandID: "cmd-1", Status: "running"}, nil
 	}
@@ -774,36 +643,26 @@ func TestCommandRunSkipsAgentSendWhenOutputIsEmpty(t *testing.T) {
 	commandOutputRPC = func(context.Context, string, string, string) (daemon.CommandOutputResponse, error) {
 		return daemon.CommandOutputResponse{Output: ""}, nil
 	}
-	sendCalled := false
-	commandAgentSendRPC = func(context.Context, string, daemon.AgentSendRequest) (daemon.AgentSendResponse, error) {
-		sendCalled = true
-		return daemon.AgentSendResponse{Status: "sent"}, nil
-	}
 	t.Cleanup(func() {
 		commandResolveSessionTarget = originalResolveTarget
 		commandReadActiveSession = originalReadActive
 		commandEnsureDaemonRunning = originalEnsure
 		commandEnsureWorkspaceScope = originalEnsureScope
-		commandResolveAgentSelector = originalResolveAgent
 		commandRunRPC = originalRun
 		commandGetRPC = originalGet
 		commandOutputRPC = originalOutput
-		commandAgentSendRPC = originalSend
 	})
 
 	out, err := executeRootCommand("exec", "run", "--", "echo", "hi")
 	if err != nil {
 		t.Fatalf("exec run returned error: %v", err)
 	}
-	if sendCalled {
-		t.Fatal("agent send called unexpectedly")
-	}
-	if !strings.Contains(out, "Command produced no output; nothing forwarded to agent \"agt-0\".") {
-		t.Fatalf("exec run output = %q, want no-output forwarding note", out)
+	if !strings.Contains(out, "Command produced no output.") {
+		t.Fatalf("exec run output = %q, want no-output note", out)
 	}
 }
 
-func TestCommandRunReturnsErrorOnNonZeroExitAfterForward(t *testing.T) {
+func TestCommandRunReturnsErrorOnNonZeroExit(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -811,11 +670,9 @@ func TestCommandRunReturnsErrorOnNonZeroExitAfterForward(t *testing.T) {
 	originalReadActive := commandReadActiveSession
 	originalEnsure := commandEnsureDaemonRunning
 	originalEnsureScope := commandEnsureWorkspaceScope
-	originalResolveAgent := commandResolveAgentSelector
 	originalRun := commandRunRPC
 	originalGet := commandGetRPC
 	originalOutput := commandOutputRPC
-	originalSend := commandAgentSendRPC
 
 	commandResolveSessionTarget = func(context.Context, string, string) (resolvedSessionTarget, error) {
 		return resolvedSessionTarget{WorkspaceID: "sess-1", Session: &daemon.WorkspaceGetResponse{WorkspaceID: "sess-1", OriginRoot: t.TempDir()}}, nil
@@ -823,7 +680,6 @@ func TestCommandRunReturnsErrorOnNonZeroExitAfterForward(t *testing.T) {
 	commandReadActiveSession = func() (string, error) { return "sess-1", nil }
 	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	commandEnsureWorkspaceScope = func(*daemon.WorkspaceGetResponse, string) error { return nil }
-	commandResolveAgentSelector = func(context.Context, string, string, string) (string, error) { return "agt-0", nil }
 	commandRunRPC = func(context.Context, string, daemon.CommandRunRequest) (daemon.CommandRunResponse, error) {
 		return daemon.CommandRunResponse{CommandID: "cmd-1", Status: "running"}, nil
 	}
@@ -834,21 +690,14 @@ func TestCommandRunReturnsErrorOnNonZeroExitAfterForward(t *testing.T) {
 	commandOutputRPC = func(context.Context, string, string, string) (daemon.CommandOutputResponse, error) {
 		return daemon.CommandOutputResponse{Output: "failed\n"}, nil
 	}
-	sendCalled := false
-	commandAgentSendRPC = func(context.Context, string, daemon.AgentSendRequest) (daemon.AgentSendResponse, error) {
-		sendCalled = true
-		return daemon.AgentSendResponse{Status: "sent"}, nil
-	}
 	t.Cleanup(func() {
 		commandResolveSessionTarget = originalResolveTarget
 		commandReadActiveSession = originalReadActive
 		commandEnsureDaemonRunning = originalEnsure
 		commandEnsureWorkspaceScope = originalEnsureScope
-		commandResolveAgentSelector = originalResolveAgent
 		commandRunRPC = originalRun
 		commandGetRPC = originalGet
 		commandOutputRPC = originalOutput
-		commandAgentSendRPC = originalSend
 	})
 
 	_, err := executeRootCommand("exec", "run", "--", "echo", "hi")
@@ -857,9 +706,6 @@ func TestCommandRunReturnsErrorOnNonZeroExitAfterForward(t *testing.T) {
 	}
 	if err.Error() != "Command exited with code 7" {
 		t.Fatalf("exec run error = %q, want %q", err.Error(), "Command exited with code 7")
-	}
-	if !sendCalled {
-		t.Fatal("agent send was not called")
 	}
 }
 
@@ -1084,8 +930,6 @@ func TestCommandSubcommandsUseSessionFlagOverride(t *testing.T) {
 	originalResolveTarget := commandResolveSessionTarget
 	originalReadActive := commandReadActiveSession
 	originalEnsure := commandEnsureDaemonRunning
-	originalResolveAgent := commandResolveAgentSelector
-	originalSend := commandAgentSendRPC
 	originalRun := commandRunRPC
 	originalList := commandListRPC
 	originalShow := commandGetRPC
@@ -1096,10 +940,6 @@ func TestCommandSubcommandsUseSessionFlagOverride(t *testing.T) {
 		return "", errors.New("active workspace should not be read when --workspace is provided")
 	}
 	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
-	commandResolveAgentSelector = func(context.Context, string, string, string) (string, error) { return "agt-0", nil }
-	commandAgentSendRPC = func(context.Context, string, daemon.AgentSendRequest) (daemon.AgentSendResponse, error) {
-		return daemon.AgentSendResponse{Status: "sent"}, nil
-	}
 	commandRunRPC = func(context.Context, string, daemon.CommandRunRequest) (daemon.CommandRunResponse, error) {
 		return daemon.CommandRunResponse{CommandID: "cmd-1", Status: "running"}, nil
 	}
@@ -1119,8 +959,6 @@ func TestCommandSubcommandsUseSessionFlagOverride(t *testing.T) {
 		commandResolveSessionTarget = originalResolveTarget
 		commandReadActiveSession = originalReadActive
 		commandEnsureDaemonRunning = originalEnsure
-		commandResolveAgentSelector = originalResolveAgent
-		commandAgentSendRPC = originalSend
 		commandRunRPC = originalRun
 		commandListRPC = originalList
 		commandGetRPC = originalShow

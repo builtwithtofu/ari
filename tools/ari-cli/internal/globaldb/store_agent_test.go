@@ -256,5 +256,5 @@ func TestCreateAgentRejectsDuplicateNameInSameSession(t *testing.T) {
 }
 
 func newAgentTestStore(t *testing.T) *Store {
-	return newMigratedGlobalDBStore(t, "agent-store")
+	return newGlobalDBTestStore(t, "agent-store")
 }

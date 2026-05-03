@@ -12,12 +12,12 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func newMigratedGlobalDBStore(t *testing.T, prefix string) *Store {
+func newGlobalDBTestStore(t *testing.T, prefix string) *Store {
 	t.Helper()
 
 	dbPath := filepath.Join(t.TempDir(), fmt.Sprintf("%s-%d.db", prefix, time.Now().UnixNano()))
-	if err := applyGlobalDBTestMigrations(dbPath); err != nil {
-		t.Fatalf("apply migrations: %v", err)
+	if err := applyGlobalDBTestSchema(dbPath); err != nil {
+		t.Fatalf("apply test schema: %v", err)
 	}
 
 	db, err := sql.Open("sqlite", dbPath)
@@ -41,7 +41,7 @@ func newMigratedGlobalDBStore(t *testing.T, prefix string) *Store {
 	return store
 }
 
-func applyGlobalDBTestMigrations(dbPath string) error {
+func applyGlobalDBTestSchema(dbPath string) error {
 	migrationsDir, err := atlasMigrationsDir()
 	if err != nil {
 		return err

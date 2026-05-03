@@ -7,7 +7,7 @@ import (
 )
 
 func TestAgentProfilePersistsAndFallsBackToGlobalScope(t *testing.T) {
-	store := newMigratedGlobalDBStore(t, "agent-profile")
+	store := newGlobalDBTestStore(t, "agent-profile")
 	ctx := context.Background()
 	if err := store.UpsertAgentProfile(ctx, AgentProfile{ProfileID: "ap_global", Name: "executor", Harness: "codex", Model: "gpt-5.1-codex", Prompt: "Do work", InvocationClass: "agent"}); err != nil {
 		t.Fatalf("UpsertAgentProfile global returned error: %v", err)
@@ -33,7 +33,7 @@ func TestAgentProfilePersistsAndFallsBackToGlobalScope(t *testing.T) {
 }
 
 func TestAgentProfileAllowsNullableOverrides(t *testing.T) {
-	store := newMigratedGlobalDBStore(t, "agent-profile-nullable")
+	store := newGlobalDBTestStore(t, "agent-profile-nullable")
 	ctx := context.Background()
 	if err := store.UpsertAgentProfile(ctx, AgentProfile{ProfileID: "ap_partial", Name: "partial"}); err != nil {
 		t.Fatalf("UpsertAgentProfile partial returned error: %v", err)
@@ -48,7 +48,7 @@ func TestAgentProfileAllowsNullableOverrides(t *testing.T) {
 }
 
 func TestAgentProfileUpsertUpdatesExistingScopeAndName(t *testing.T) {
-	store := newMigratedGlobalDBStore(t, "agent-profile-upsert")
+	store := newGlobalDBTestStore(t, "agent-profile-upsert")
 	ctx := context.Background()
 	if err := store.UpsertAgentProfile(ctx, AgentProfile{ProfileID: "ap_first", WorkspaceID: "ws-1", Name: "executor", Harness: "codex", Model: "gpt-5.1-codex"}); err != nil {
 		t.Fatalf("UpsertAgentProfile first returned error: %v", err)
@@ -67,7 +67,7 @@ func TestAgentProfileUpsertUpdatesExistingScopeAndName(t *testing.T) {
 }
 
 func TestAgentProfileListUsesRequestedScope(t *testing.T) {
-	store := newMigratedGlobalDBStore(t, "agent-profile-list")
+	store := newGlobalDBTestStore(t, "agent-profile-list")
 	ctx := context.Background()
 	if err := store.UpsertAgentProfile(ctx, AgentProfile{ProfileID: "ap_global", Name: "global", Harness: "codex"}); err != nil {
 		t.Fatalf("UpsertAgentProfile global returned error: %v", err)
@@ -93,7 +93,7 @@ func TestAgentProfileListUsesRequestedScope(t *testing.T) {
 }
 
 func TestEnsureDefaultHelperProfileCreatesWorkspaceScopedHelper(t *testing.T) {
-	store := newMigratedGlobalDBStore(t, "helper-profile")
+	store := newGlobalDBTestStore(t, "helper-profile")
 	ctx := context.Background()
 	if err := store.CreateSession(ctx, "ws-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
@@ -117,7 +117,7 @@ func TestEnsureDefaultHelperProfileCreatesWorkspaceScopedHelper(t *testing.T) {
 }
 
 func TestEnsureDefaultHelperProfileDoesNotOverwriteExistingHelper(t *testing.T) {
-	store := newMigratedGlobalDBStore(t, "helper-profile-existing")
+	store := newGlobalDBTestStore(t, "helper-profile-existing")
 	ctx := context.Background()
 	if err := store.CreateSession(ctx, "ws-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
@@ -136,7 +136,7 @@ func TestEnsureDefaultHelperProfileDoesNotOverwriteExistingHelper(t *testing.T) 
 }
 
 func TestEnsureDefaultHelperProfileUsesUniqueProfileIDs(t *testing.T) {
-	store := newMigratedGlobalDBStore(t, "helper-profile-unique-ids")
+	store := newGlobalDBTestStore(t, "helper-profile-unique-ids")
 	ctx := context.Background()
 	if err := store.CreateSession(ctx, "a-b_c", "one", "/tmp/one", "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession one returned error: %v", err)
@@ -162,7 +162,7 @@ func TestEnsureDefaultHelperProfileUsesUniqueProfileIDs(t *testing.T) {
 }
 
 func TestGetDefaultHelperProfileDoesNotFallbackAcrossScopes(t *testing.T) {
-	store := newMigratedGlobalDBStore(t, "helper-profile-scope")
+	store := newGlobalDBTestStore(t, "helper-profile-scope")
 	ctx := context.Background()
 	if err := store.CreateSession(ctx, "system-id", "system", "/tmp/system-origin", "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession system returned error: %v", err)
@@ -181,7 +181,7 @@ func TestGetDefaultHelperProfileDoesNotFallbackAcrossScopes(t *testing.T) {
 }
 
 func TestEnsureDefaultHelperProfileRejectsUnknownWorkspace(t *testing.T) {
-	store := newMigratedGlobalDBStore(t, "helper-profile-missing-workspace")
+	store := newGlobalDBTestStore(t, "helper-profile-missing-workspace")
 	_, err := store.EnsureDefaultHelperProfile(context.Background(), "missing", "codex", "Help")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("EnsureDefaultHelperProfile error = %v, want ErrNotFound", err)
@@ -189,7 +189,7 @@ func TestEnsureDefaultHelperProfileRejectsUnknownWorkspace(t *testing.T) {
 }
 
 func TestAgentProfileRejectsInvalidInput(t *testing.T) {
-	store := newMigratedGlobalDBStore(t, "agent-profile-invalid")
+	store := newGlobalDBTestStore(t, "agent-profile-invalid")
 	err := store.UpsertAgentProfile(context.Background(), AgentProfile{Name: "missing-id"})
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("UpsertAgentProfile error = %v, want ErrInvalidInput", err)

@@ -221,26 +221,12 @@ func TestCommandRunInvalidSessionStateAndFolderGuards(t *testing.T) {
 		name  string
 		setup func(t *testing.T, store *globaldb.Store)
 	}{
-		{
-			name: "missing primary folder",
-			setup: func(t *testing.T, store *globaldb.Store) {
-				t.Helper()
-				if err := store.CreateSession(context.Background(), "sess-1", "alpha", t.TempDir(), "manual", "auto"); err != nil {
-					t.Fatalf("CreateSession returned error: %v", err)
-				}
-			},
-		},
-		{
-			name: "closed session",
-			setup: func(t *testing.T, store *globaldb.Store) {
-				t.Helper()
-				workspace := t.TempDir()
-				seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
-				if err := store.UpdateSessionStatus(context.Background(), "sess-1", "closed"); err != nil {
-					t.Fatalf("UpdateSessionStatus returned error: %v", err)
-				}
-			},
-		},
+		{name: "missing primary folder", setup: func(t *testing.T, store *globaldb.Store) {
+			t.Helper()
+			if err := store.CreateSession(context.Background(), "sess-1", "alpha", t.TempDir(), "manual", "auto"); err != nil {
+				t.Fatalf("CreateSession returned error: %v", err)
+			}
+		}},
 	}
 
 	for _, tc := range tests {

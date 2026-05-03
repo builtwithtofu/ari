@@ -2,8 +2,10 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,19 +43,7 @@ func TestWorkspaceActivityProjectsCommandsAgentsProofsAndVCS(t *testing.T) {
 	}
 	d.setCommandOutput("cmd-1", "unit test failed\nfull log")
 
-	harness := "codex"
-	if err := store.CreateAgent(context.Background(), globaldb.CreateAgentParams{
-		AgentID:     "ag-1",
-		WorkspaceID: "ws-1",
-		Command:     "codex",
-		Args:        `[]`,
-		Status:      "running",
-		StartedAt:   "2026-04-25T00:00:01Z",
-		Harness:     &harness,
-	}); err != nil {
-		t.Fatalf("CreateAgent returned error: %v", err)
-	}
-	d.setAgentOutput("ag-1", "working")
+	d.recordExecutorRun(AgentSession{AgentSessionID: "run-1", WorkspaceID: "ws-1", Executor: "codex", Status: "running", StartedAt: "2026-04-25T00:00:01Z"}, nil)
 
 	resp := callMethod[WorkspaceActivityResponse](t, registry, "workspace.activity", WorkspaceActivityRequest{WorkspaceID: "ws-1"})
 	if resp.WorkspaceID != "ws-1" {
@@ -77,8 +67,8 @@ func TestWorkspaceActivityProjectsCommandsAgentsProofsAndVCS(t *testing.T) {
 	if len(resp.Agents) != 1 {
 		t.Fatalf("agents len = %d, want 1", len(resp.Agents))
 	}
-	if resp.Agents[0].ID != "ag-1" || resp.Agents[0].Executor != "codex" || resp.Agents[0].OutputSummary != "working" {
-		t.Fatalf("agent projection = %#v, want codex agent with output", resp.Agents[0])
+	if resp.Agents[0].ID != "run-1" || resp.Agents[0].Executor != "codex" || resp.Agents[0].Status != "running" {
+		t.Fatalf("agent projection = %#v, want codex run", resp.Agents[0])
 	}
 	if len(resp.Proofs) != 1 {
 		t.Fatalf("proofs len = %d, want 1", len(resp.Proofs))
@@ -89,8 +79,32 @@ func TestWorkspaceActivityProjectsCommandsAgentsProofsAndVCS(t *testing.T) {
 	if resp.Attention.Level != "action-required" {
 		t.Fatalf("attention level = %q, want action-required", resp.Attention.Level)
 	}
-	if len(resp.Attention.Items) != 2 || resp.Attention.Items[0].SourceID != "proof_cmd-1" || resp.Attention.Items[1].SourceID != "ag-1" {
+	if len(resp.Attention.Items) != 2 || resp.Attention.Items[0].SourceID != "proof_cmd-1" || resp.Attention.Items[1].SourceID != "run-1" {
 		t.Fatalf("attention items = %#v, want failed proof and running agent items", resp.Attention.Items)
+	}
+}
+
+func TestWorkspaceActivityJSONUsesAgentMessageTerminology(t *testing.T) {
+	resp := WorkspaceActivityResponse{
+		WorkspaceID:     "ws-1",
+		ContextExcerpts: []ContextExcerptActivity{{ContextExcerptID: "excerpt-1", SelectorType: "last_n", ItemCount: 1, TargetAgentID: "reviewer"}},
+		AgentMessages:   []AgentMessageActivity{{AgentMessageID: "msg-1", Status: "delivered", SourceSessionID: "run-1", TargetAgentID: "reviewer", ContextExcerptCount: 1}},
+	}
+
+	raw, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("Marshal returned error: %v", err)
+	}
+	got := string(raw)
+	for _, want := range []string{`"context_excerpts"`, `"context_excerpt_id"`, `"agent_messages"`, `"agent_message_id"`, `"context_excerpt_count"`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("workspace activity json = %s, want %s", got, want)
+		}
+	}
+	for _, stale := range []string{`"message_shares"`, `"share_id"`, `"direct_messages"`, `"direct_message_id"`} {
+		if strings.Contains(got, stale) {
+			t.Fatalf("workspace activity json = %s, want no stale field %s", got, stale)
+		}
 	}
 }
 
@@ -130,8 +144,8 @@ func TestWorkspaceActivityOrdersExecutorRunsDeterministically(t *testing.T) {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
-	d.recordExecutorRun(AgentRun{AgentRunID: "z-run", WorkspaceID: "ws-1", Status: "running", Executor: "fake", StartedAt: "2026-04-25T00:00:02Z"}, nil)
-	d.recordExecutorRun(AgentRun{AgentRunID: "a-run", WorkspaceID: "ws-1", Status: "running", Executor: "fake", StartedAt: "2026-04-25T00:00:01Z"}, nil)
+	d.recordExecutorRun(AgentSession{AgentSessionID: "z-run", WorkspaceID: "ws-1", Status: "running", Executor: "fake", StartedAt: "2026-04-25T00:00:02Z"}, nil)
+	d.recordExecutorRun(AgentSession{AgentSessionID: "a-run", WorkspaceID: "ws-1", Status: "running", Executor: "fake", StartedAt: "2026-04-25T00:00:01Z"}, nil)
 
 	resp := callMethod[WorkspaceActivityResponse](t, registry, "workspace.activity", WorkspaceActivityRequest{WorkspaceID: "ws-1"})
 	if len(resp.Agents) != 2 {
@@ -139,6 +153,91 @@ func TestWorkspaceActivityOrdersExecutorRunsDeterministically(t *testing.T) {
 	}
 	if resp.Agents[0].ID != "a-run" || resp.Agents[1].ID != "z-run" {
 		t.Fatalf("agents = %#v, want a-run then z-run", resp.Agents)
+	}
+}
+
+func TestWorkspaceActivityProjectsPersistedAgentSessionsAfterDaemonRestart(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	if err := store.CreateAgentSessionConfig(context.Background(), globaldb.AgentSessionConfig{AgentID: "agent-1", WorkspaceID: "ws-1", Name: "executor", Harness: "codex"}); err != nil {
+		t.Fatalf("CreateAgentSessionConfig returned error: %v", err)
+	}
+	if err := store.CreateAgentSession(context.Background(), globaldb.AgentSession{SessionID: "run-1", WorkspaceID: "ws-1", AgentID: "agent-1", Harness: "codex", Status: "running", Usage: "durable"}); err != nil {
+		t.Fatalf("CreateAgentSession returned error: %v", err)
+	}
+
+	resp := callMethod[WorkspaceActivityResponse](t, registry, "workspace.activity", WorkspaceActivityRequest{WorkspaceID: "ws-1"})
+	if len(resp.Agents) != 1 || resp.Agents[0].ID != "run-1" || resp.Agents[0].Executor != "codex" || resp.Agents[0].Status != "running" {
+		t.Fatalf("agents = %#v, want persisted running normalized agent run", resp.Agents)
+	}
+	if resp.Attention.Level != "running" || len(resp.Attention.Items) != 1 || resp.Attention.Items[0].SourceID != "run-1" {
+		t.Fatalf("attention = %#v, want persisted running run to bubble attention", resp.Attention)
+	}
+}
+
+func TestWorkspaceActivityProjectsMessageWorkflows(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	ctx := context.Background()
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "executor", WorkspaceID: "ws-1", Name: "executor", Harness: "codex"}); err != nil {
+		t.Fatalf("CreateAgentSessionConfig executor returned error: %v", err)
+	}
+	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "reviewer", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateAgentSessionConfig reviewer returned error: %v", err)
+	}
+	if err := store.CreateAgentSession(ctx, globaldb.AgentSession{SessionID: "run-1", WorkspaceID: "ws-1", AgentID: "executor", Harness: "codex", Status: "waiting", Usage: "durable"}); err != nil {
+		t.Fatalf("CreateAgentSession source returned error: %v", err)
+	}
+	if err := store.CreateAgentSession(ctx, globaldb.AgentSession{SessionID: "call-1-run", WorkspaceID: "ws-1", AgentID: "reviewer", Harness: "opencode", Status: "running", Usage: "ephemeral", SourceSessionID: "run-1", SourceAgentID: "executor"}); err != nil {
+		t.Fatalf("CreateAgentSession ephemeral returned error: %v", err)
+	}
+	if err := store.AppendRunLogMessage(ctx, globaldb.RunLogMessage{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "assistant", Parts: []globaldb.RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "text", Text: "please review"}}}); err != nil {
+		t.Fatalf("AppendRunLogMessage returned error: %v", err)
+	}
+	excerpt, err := store.CreateContextExcerptFromTail(ctx, globaldb.CreateContextExcerptFromTailParams{ContextExcerptID: "excerpt-1", SourceSessionID: "run-1", TargetAgentID: "reviewer", Count: 1})
+	if err != nil {
+		t.Fatalf("CreateContextExcerptFromTail returned error: %v", err)
+	}
+	if _, err := store.SendAgentMessage(ctx, globaldb.AgentMessageSendParams{AgentMessageID: "dm-1", SourceSessionID: "run-1", TargetAgentID: "reviewer", TargetSessionID: "call-1-run", Body: "review this", ContextExcerptIDs: []string{excerpt.ContextExcerptID}}); err != nil {
+		t.Fatalf("SendAgentMessage returned error: %v", err)
+	}
+
+	resp := callMethod[WorkspaceActivityResponse](t, registry, "workspace.activity", WorkspaceActivityRequest{WorkspaceID: "ws-1"})
+	if len(resp.Agents) != 2 {
+		t.Fatalf("agents = %#v, want durable waiting and ephemeral running runs", resp.Agents)
+	}
+	byID := map[string]AgentActivity{}
+	for _, agent := range resp.Agents {
+		byID[agent.ID] = agent
+	}
+	if byID["run-1"].Status != "waiting" || byID["call-1-run"].Usage != "ephemeral" || byID["call-1-run"].SourceSessionID != "run-1" {
+		t.Fatalf("agents = %#v, want waiting source and running ephemeral call metadata", resp.Agents)
+	}
+	if len(resp.ContextExcerpts) != 1 || resp.ContextExcerpts[0].ContextExcerptID != "excerpt-1" || resp.ContextExcerpts[0].SelectorType != "last_n" || resp.ContextExcerpts[0].ItemCount != 1 {
+		t.Fatalf("context excerpts = %#v, want excerpt history summary", resp.ContextExcerpts)
+	}
+	if len(resp.AgentMessages) != 1 || resp.AgentMessages[0].AgentMessageID != "dm-1" || resp.AgentMessages[0].ContextExcerptCount != 1 || resp.AgentMessages[0].Status != "delivered" {
+		t.Fatalf("agent messages = %#v, want delivered agent message history", resp.AgentMessages)
+	}
+	wantAttention := map[string]string{"agent_waiting": "run-1", "ephemeral_running": "call-1-run"}
+	for _, item := range resp.Attention.Items {
+		if wantAttention[item.Kind] == item.SourceID {
+			delete(wantAttention, item.Kind)
+		}
+	}
+	if len(wantAttention) != 0 {
+		t.Fatalf("attention = %#v, missing %v", resp.Attention, wantAttention)
 	}
 }
 
@@ -172,7 +271,7 @@ func TestWorkspaceActivityAttentionIncludesRunningAgents(t *testing.T) {
 		t.Fatalf("attention items len = %d, want 1", len(resp.Attention.Items))
 	}
 	item := resp.Attention.Items[0]
-	if item.Kind != "agent_running" || item.SourceID != "ag-running" {
+	if item.Kind != "agent_sessionning" || item.SourceID != "ag-running" {
 		t.Fatalf("attention item = %#v, want running agent item", item)
 	}
 }
@@ -258,7 +357,7 @@ func TestWorkspaceActivityAttentionIncludesMixedSourcesWithHighestLevel(t *testi
 	if resp.Attention.Level != "action-required" {
 		t.Fatalf("attention level = %q, want action-required", resp.Attention.Level)
 	}
-	want := map[string]string{"proof_failed": "proof_cmd-fail", "auth_required": "codex-default", "agent_running": "ag-running"}
+	want := map[string]string{"proof_failed": "proof_cmd-fail", "auth_required": "codex-default", "agent_sessionning": "ag-running"}
 	for _, item := range resp.Attention.Items {
 		if want[item.Kind] == item.SourceID {
 			delete(want, item.Kind)

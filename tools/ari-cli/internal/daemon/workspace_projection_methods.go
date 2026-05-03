@@ -18,15 +18,17 @@ type WorkspaceActivityRequest struct {
 }
 
 type WorkspaceActivityResponse struct {
-	WorkspaceID    string               `json:"workspace_id"`
-	WorkspaceName  string               `json:"workspace_name"`
-	VCS            DiffSummary          `json:"vcs"`
-	ActiveTaskID   string               `json:"active_task_id,omitempty"`
-	Attention      AttentionSummary     `json:"attention"`
-	Processes      []ProcessActivity    `json:"processes"`
-	Agents         []AgentActivity      `json:"agents"`
-	Proofs         []ProofResultSummary `json:"proofs"`
-	WorkspaceRoots []string             `json:"workspace_roots"`
+	WorkspaceID     string                   `json:"workspace_id"`
+	WorkspaceName   string                   `json:"workspace_name"`
+	VCS             DiffSummary              `json:"vcs"`
+	ActiveTaskID    string                   `json:"active_task_id,omitempty"`
+	Attention       AttentionSummary         `json:"attention"`
+	Processes       []ProcessActivity        `json:"processes"`
+	Agents          []AgentActivity          `json:"agents"`
+	Proofs          []ProofResultSummary     `json:"proofs"`
+	ContextExcerpts []ContextExcerptActivity `json:"context_excerpts"`
+	AgentMessages   []AgentMessageActivity   `json:"agent_messages"`
+	WorkspaceRoots  []string                 `json:"workspace_roots"`
 }
 
 type WorkspaceDiffRequest struct {
@@ -79,15 +81,37 @@ type ProcessActivity struct {
 }
 
 type AgentActivity struct {
-	ID             string `json:"id"`
-	Name           string `json:"name,omitempty"`
-	Status         string `json:"status"`
-	Executor       string `json:"executor"`
-	WorkspaceID    string `json:"workspace_id"`
-	ActiveTaskID   string `json:"active_task_id,omitempty"`
-	StartedAt      string `json:"started_at"`
-	LastActivityAt string `json:"last_activity_at,omitempty"`
-	OutputSummary  string `json:"output_summary,omitempty"`
+	ID              string `json:"id"`
+	Name            string `json:"name,omitempty"`
+	Status          string `json:"status"`
+	Executor        string `json:"executor"`
+	WorkspaceID     string `json:"workspace_id"`
+	ActiveTaskID    string `json:"active_task_id,omitempty"`
+	StartedAt       string `json:"started_at"`
+	LastActivityAt  string `json:"last_activity_at,omitempty"`
+	OutputSummary   string `json:"output_summary,omitempty"`
+	Usage           string `json:"usage,omitempty"`
+	SourceSessionID string `json:"source_session_id,omitempty"`
+	SourceAgentID   string `json:"source_agent_id,omitempty"`
+}
+
+type ContextExcerptActivity struct {
+	ContextExcerptID string `json:"context_excerpt_id"`
+	SourceSessionID  string `json:"source_session_id"`
+	SourceAgentID    string `json:"source_agent_id"`
+	TargetAgentID    string `json:"target_agent_id"`
+	SelectorType     string `json:"selector_type"`
+	ItemCount        int    `json:"item_count"`
+}
+
+type AgentMessageActivity struct {
+	AgentMessageID      string `json:"agent_message_id"`
+	SourceSessionID     string `json:"source_session_id"`
+	SourceAgentID       string `json:"source_agent_id"`
+	TargetSessionID     string `json:"target_session_id"`
+	TargetAgentID       string `json:"target_agent_id"`
+	Status              string `json:"status"`
+	ContextExcerptCount int    `json:"context_excerpt_count"`
 }
 
 type ProofResultSummary struct {
@@ -168,7 +192,7 @@ func (d *Daemon) workspaceActivity(ctx context.Context, store *globaldb.Store, r
 	if err != nil {
 		return WorkspaceActivityResponse{}, err
 	}
-	agents, err := d.workspaceAgentActivity(ctx, store, workspaceID)
+	agents, err := d.agentSessionConfigActivity(ctx, store, workspaceID)
 	if err != nil {
 		return WorkspaceActivityResponse{}, err
 	}
@@ -180,17 +204,51 @@ func (d *Daemon) workspaceActivity(ctx context.Context, store *globaldb.Store, r
 	if err != nil {
 		return WorkspaceActivityResponse{}, err
 	}
+	contextExcerpts, err := workspaceContextExcerpts(ctx, store, workspaceID)
+	if err != nil {
+		return WorkspaceActivityResponse{}, err
+	}
+	agentMessages, err := agentSessionConfigMessages(ctx, store, workspaceID)
+	if err != nil {
+		return WorkspaceActivityResponse{}, err
+	}
 
 	return WorkspaceActivityResponse{
-		WorkspaceID:    workspaceID,
-		WorkspaceName:  session.Name,
-		VCS:            buildDiffSummary(roots),
-		Attention:      attentionFromActivity(proofs, agents, authSlots),
-		Processes:      processes,
-		Agents:         agents,
-		Proofs:         proofs,
-		WorkspaceRoots: roots,
+		WorkspaceID:     workspaceID,
+		WorkspaceName:   session.Name,
+		VCS:             buildDiffSummary(roots),
+		Attention:       attentionFromActivity(proofs, agents, authSlots),
+		Processes:       processes,
+		Agents:          agents,
+		Proofs:          proofs,
+		ContextExcerpts: contextExcerpts,
+		AgentMessages:   agentMessages,
+		WorkspaceRoots:  roots,
 	}, nil
+}
+
+func workspaceContextExcerpts(ctx context.Context, store *globaldb.Store, workspaceID string) ([]ContextExcerptActivity, error) {
+	excerpts, err := store.ListContextExcerpts(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ContextExcerptActivity, 0, len(excerpts))
+	for _, excerpt := range excerpts {
+		out = append(out, ContextExcerptActivity{ContextExcerptID: excerpt.ContextExcerptID, SourceSessionID: excerpt.SourceSessionID, SourceAgentID: excerpt.SourceAgentID, TargetAgentID: excerpt.TargetAgentID, SelectorType: excerpt.SelectorType, ItemCount: len(excerpt.Items)})
+	}
+	return out, nil
+}
+
+func agentSessionConfigMessages(ctx context.Context, store *globaldb.Store, workspaceID string) ([]AgentMessageActivity, error) {
+	messages, err := store.ListAgentMessages(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]AgentMessageActivity, 0, len(messages))
+	for _, dm := range messages {
+		out = append(out, AgentMessageActivity{AgentMessageID: dm.AgentMessageID, SourceSessionID: dm.SourceSessionID, SourceAgentID: dm.SourceAgentID, TargetSessionID: dm.TargetSessionID, TargetAgentID: dm.TargetAgentID, Status: dm.Status, ContextExcerptCount: len(dm.ContextExcerptIDs)})
+	}
+	return out, nil
 }
 
 func workspaceAuthSlots(ctx context.Context, store *globaldb.Store, workspaceID string) ([]globaldb.AuthSlot, error) {
@@ -255,14 +313,21 @@ func attentionFromActivity(proofs []ProofResultSummary, agents []AgentActivity, 
 	}
 
 	for _, agent := range agents {
-		if agent.Status != "running" {
+		if agent.Status != "running" && agent.Status != "waiting" {
 			continue
 		}
 		message := strings.TrimSpace(agent.Name)
 		if message == "" {
 			message = strings.TrimSpace(agent.Executor)
 		}
-		items = append(items, AttentionItem{Kind: "agent_running", SourceID: agent.ID, Message: message})
+		kind := "agent_sessionning"
+		if agent.Status == "waiting" {
+			kind = "agent_waiting"
+		}
+		if agent.Usage == "ephemeral" && agent.Status == "running" {
+			kind = "ephemeral_running"
+		}
+		items = append(items, AttentionItem{Kind: kind, SourceID: agent.ID, Message: message})
 		if level == "none" {
 			level = "running"
 		}
@@ -306,45 +371,48 @@ func (d *Daemon) workspaceProcessActivity(ctx context.Context, store *globaldb.S
 	return out, nil
 }
 
-func (d *Daemon) workspaceAgentActivity(ctx context.Context, store *globaldb.Store, workspaceID string) ([]AgentActivity, error) {
-	agents, err := store.ListAgents(ctx, workspaceID)
-	if err != nil {
-		return nil, mapAgentStoreError(err, workspaceID)
+func (d *Daemon) agentSessionConfigActivity(ctx context.Context, store *globaldb.Store, workspaceID string) ([]AgentActivity, error) {
+	out := make([]AgentActivity, 0)
+	seen := make(map[string]bool)
+	executorRuns := d.executorRunsForWorkspace(workspaceID)
+	for _, run := range executorRuns {
+		out = append(out, AgentActivity{ID: run.AgentSessionID, Status: run.Status, Executor: run.Executor, WorkspaceID: run.WorkspaceID, ActiveTaskID: run.TaskID, StartedAt: run.StartedAt, LastActivityAt: run.StartedAt})
+		seen[run.AgentSessionID] = true
 	}
-	out := make([]AgentActivity, 0, len(agents))
-	for _, agent := range agents {
-		status := agent.Status
-		if proc, ok := d.getAgentProcess(agent.AgentID); ok {
-			status = string(proc.State())
+	persistedRuns, err := store.ListAgentSessions(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	for _, run := range persistedRuns {
+		if seen[run.SessionID] {
+			continue
 		}
-		executor := strings.TrimSpace(agent.Command)
+		out = append(out, AgentActivity{ID: run.SessionID, Status: run.Status, Executor: run.Harness, WorkspaceID: run.WorkspaceID, Usage: run.Usage, SourceSessionID: run.SourceSessionID, SourceAgentID: run.SourceAgentID})
+	}
+	legacyAgents, err := store.ListAgents(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	for _, agent := range legacyAgents {
+		if seen[agent.AgentID] {
+			continue
+		}
+		executor := agent.Command
 		if agent.Harness != nil && strings.TrimSpace(*agent.Harness) != "" {
 			executor = strings.TrimSpace(*agent.Harness)
 		}
-		item := AgentActivity{
-			ID:             agent.AgentID,
-			Status:         status,
-			Executor:       executor,
-			WorkspaceID:    agent.WorkspaceID,
-			StartedAt:      agent.StartedAt,
-			LastActivityAt: agent.StartedAt,
-			OutputSummary:  firstOutputLine(agentSummaryOutput(d, agent.AgentID)),
-		}
+		name := ""
 		if agent.Name != nil {
-			item.Name = *agent.Name
+			name = strings.TrimSpace(*agent.Name)
 		}
-		out = append(out, item)
-	}
-	executorRuns := d.executorRunsForWorkspace(workspaceID)
-	for _, run := range executorRuns {
-		out = append(out, AgentActivity{ID: run.AgentRunID, Status: run.Status, Executor: run.Executor, WorkspaceID: run.WorkspaceID, ActiveTaskID: run.TaskID, StartedAt: run.StartedAt, LastActivityAt: run.StartedAt})
+		out = append(out, AgentActivity{ID: agent.AgentID, Name: name, Status: agent.Status, Executor: executor, WorkspaceID: agent.WorkspaceID, StartedAt: agent.StartedAt})
 	}
 	return out, nil
 }
 
-func (d *Daemon) executorRunsForWorkspace(workspaceID string) []AgentRun {
+func (d *Daemon) executorRunsForWorkspace(workspaceID string) []AgentSession {
 	d.executorMu.RLock()
-	runs := make([]AgentRun, 0, len(d.executorRuns))
+	runs := make([]AgentSession, 0, len(d.executorRuns))
 	for _, run := range d.executorRuns {
 		if run.WorkspaceID != workspaceID {
 			continue
@@ -354,7 +422,7 @@ func (d *Daemon) executorRunsForWorkspace(workspaceID string) []AgentRun {
 	d.executorMu.RUnlock()
 	sort.Slice(runs, func(i int, j int) bool {
 		if runs[i].StartedAt == runs[j].StartedAt {
-			return runs[i].AgentRunID < runs[j].AgentRunID
+			return runs[i].AgentSessionID < runs[j].AgentSessionID
 		}
 		return runs[i].StartedAt < runs[j].StartedAt
 	})
@@ -473,16 +541,6 @@ func commandSummaryOutput(d *Daemon, commandID string) string {
 		return output
 	}
 	if proc, ok := d.getCommandProcess(commandID); ok {
-		return string(proc.OutputSnapshot())
-	}
-	return ""
-}
-
-func agentSummaryOutput(d *Daemon, agentID string) string {
-	if output, ok := d.getAgentOutput(agentID); ok {
-		return output
-	}
-	if proc, ok := d.getAgentProcess(agentID); ok {
 		return string(proc.OutputSnapshot())
 	}
 	return ""
