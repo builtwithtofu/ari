@@ -161,6 +161,111 @@ func TestAuthLogoutCommandUsesNamedAccount(t *testing.T) {
 	}
 }
 
+func TestAuthLogoutCommandScopesTimeoutToFinalRPC(t *testing.T) {
+	restore := replaceAuthCommandDeps(t)
+	defer restore()
+	var statusCtx context.Context
+	var logoutCtx context.Context
+	authStatusRPC = func(ctx context.Context, socketPath string, req daemon.HarnessAuthStatusRequest) (daemon.HarnessAuthStatusResponse, error) {
+		_ = socketPath
+		_ = req
+		statusCtx = ctx
+		return daemon.HarnessAuthStatusResponse{Statuses: []daemon.HarnessAuthStatus{{Harness: daemon.HarnessNameCodex, AuthSlotID: "codex-default", Status: daemon.HarnessAuthAuthenticated}}}, nil
+	}
+	authLogoutRPC = func(ctx context.Context, socketPath string, req daemon.HarnessAuthLogoutRequest) (daemon.HarnessAuthLogoutResponse, error) {
+		_ = socketPath
+		_ = req
+		logoutCtx = ctx
+		return daemon.HarnessAuthLogoutResponse{Status: daemon.HarnessAuthStatus{Harness: daemon.HarnessNameCodex, AuthSlotID: req.AuthSlotID, Status: daemon.HarnessAuthRequired, AriSecretStorage: daemon.HarnessAriSecretStorageNone}}, nil
+	}
+	cmd := newAuthLogoutCmd()
+	cmd.SetIn(bytes.NewBufferString("1\n"))
+	cmd.SetOut(&bytes.Buffer{})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("auth logout returned error: %v", err)
+	}
+	if statusCtx == nil || logoutCtx == nil || statusCtx == logoutCtx {
+		t.Fatalf("statusCtx=%p logoutCtx=%p, want separate RPC timeout contexts", statusCtx, logoutCtx)
+	}
+}
+
+func TestAuthLoginCommandRunsOpenCodeProviderMethodsClientSide(t *testing.T) {
+	restore := replaceAuthCommandDeps(t)
+	defer restore()
+	authOpenCodeMethods = func(ctx context.Context) (map[string][]openCodeAuthMethod, error) {
+		_ = ctx
+		return map[string][]openCodeAuthMethod{"openai": {{Type: "oauth", Label: "ChatGPT Pro/Plus (browser)"}}}, nil
+	}
+	var saved daemon.AuthSlotSaveRequest
+	authSlotSaveRPC = func(ctx context.Context, socketPath string, req daemon.AuthSlotSaveRequest) (daemon.AuthSlotResponse, error) {
+		_ = ctx
+		_ = socketPath
+		saved = req
+		return daemon.AuthSlotResponse{AuthSlotID: req.AuthSlotID, Harness: req.Harness, Label: req.Label, ProviderLabel: req.ProviderLabel}, nil
+	}
+	var ranProvider bool
+	var capturedMethod string
+	authRunProviderLogin = func(ctx context.Context, harness, method, provider string) error {
+		_ = ctx
+		ranProvider = true
+		capturedMethod = method
+		if harness != daemon.HarnessNameOpenCode || provider != "openai" {
+			t.Fatalf("provider login harness=%q provider=%q, want opencode/openai", harness, provider)
+		}
+		return nil
+	}
+	authStartRPC = func(ctx context.Context, socketPath string, req daemon.HarnessAuthStartRequest) (daemon.HarnessAuthStartResponse, error) {
+		_ = ctx
+		_ = socketPath
+		_ = req
+		t.Fatal("authStartRPC was called for OpenCode provider method; want client-side provider CLI")
+		return daemon.HarnessAuthStartResponse{}, nil
+	}
+	cmd := newAuthLoginCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--harness", daemon.HarnessNameOpenCode, "--provider", "openai"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("auth login returned error: %v", err)
+	}
+	if !ranProvider || capturedMethod != "oauth" {
+		t.Fatalf("ranProvider=%v method=%q, want OpenCode oauth provider login", ranProvider, capturedMethod)
+	}
+	if saved.AuthSlotID != "opencode-default" || saved.ProviderLabel != "openai" {
+		t.Fatalf("saved slot = %#v, want OpenCode provider binding", saved)
+	}
+}
+
+func TestAuthLoginCommandScopesTimeoutToPostPromptSlotSave(t *testing.T) {
+	restore := replaceAuthCommandDeps(t)
+	defer restore()
+	var statusCtx context.Context
+	var saveCtx context.Context
+	authStatusRPC = func(ctx context.Context, socketPath string, req daemon.HarnessAuthStatusRequest) (daemon.HarnessAuthStatusResponse, error) {
+		_ = socketPath
+		_ = req
+		statusCtx = ctx
+		return daemon.HarnessAuthStatusResponse{Statuses: []daemon.HarnessAuthStatus{{Harness: daemon.HarnessNameCodex, AuthSlotID: "codex-default", Status: daemon.HarnessAuthAuthenticated}}}, nil
+	}
+	authSlotSaveRPC = func(ctx context.Context, socketPath string, req daemon.AuthSlotSaveRequest) (daemon.AuthSlotResponse, error) {
+		_ = socketPath
+		_ = req
+		saveCtx = ctx
+		return daemon.AuthSlotResponse{AuthSlotID: req.AuthSlotID, Harness: req.Harness, Label: req.Label}, nil
+	}
+	cmd := newAuthLoginCmd()
+	cmd.SetIn(bytes.NewBufferString("1\n1\n"))
+	cmd.SetOut(&bytes.Buffer{})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("auth login returned error: %v", err)
+	}
+	if statusCtx == nil || saveCtx == nil || statusCtx == saveCtx {
+		t.Fatalf("statusCtx=%p saveCtx=%p, want separate RPC timeout contexts", statusCtx, saveCtx)
+	}
+}
+
 func TestHarnessExecutableUsesOpenCodeOverride(t *testing.T) {
 	t.Setenv(daemon.EnvOpenCodeExecutable, "/tmp/custom-opencode")
 	if got := daemon.HarnessExecutable("opencode", daemon.EnvOpenCodeExecutable); got != "/tmp/custom-opencode" {

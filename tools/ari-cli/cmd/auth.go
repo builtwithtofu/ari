@@ -81,11 +81,11 @@ func newAuthLogoutCmd() *cobra.Command {
 			if err := authEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
-			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
-			defer cancel()
 			selectedHarness := strings.TrimSpace(harness)
 			if selectedHarness == "" {
+				ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 				status, err := authStatusRPC(ctx, cfg.Daemon.SocketPath, daemon.HarnessAuthStatusRequest{WorkspaceID: workspaceID})
+				cancel()
 				if err != nil {
 					return err
 				}
@@ -98,6 +98,8 @@ func newAuthLogoutCmd() *cobra.Command {
 			if accountName == "" {
 				accountName = "default"
 			}
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			defer cancel()
 			resp, err := authLogoutRPC(ctx, cfg.Daemon.SocketPath, daemon.HarnessAuthLogoutRequest{AuthSlotID: authSlotIDForName(selectedHarness, accountName), WorkspaceID: workspaceID})
 			if err != nil {
 				return err
@@ -129,11 +131,11 @@ func newAuthLoginCmd() *cobra.Command {
 			if err := authEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
 			}
-			statusCtx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
-			defer cancel()
 			selectedHarness := strings.TrimSpace(harness)
 			if selectedHarness == "" {
+				statusCtx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 				status, err := authStatusRPC(statusCtx, cfg.Daemon.SocketPath, daemon.HarnessAuthStatusRequest{WorkspaceID: workspaceID})
+				cancel()
 				if err != nil {
 					return err
 				}
@@ -165,9 +167,12 @@ func newAuthLoginCmd() *cobra.Command {
 				}
 				methodOptions = openCodeLoginMethods(providerMethods)
 			}
-			if _, err := authSlotSaveRPC(statusCtx, cfg.Daemon.SocketPath, daemon.AuthSlotSaveRequest{AuthSlotID: authSlotIDForName(selectedHarness, accountName), Harness: selectedHarness, Label: accountName, ProviderLabel: providerID}); err != nil {
+			saveCtx, saveCancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			if _, err := authSlotSaveRPC(saveCtx, cfg.Daemon.SocketPath, daemon.AuthSlotSaveRequest{AuthSlotID: authSlotIDForName(selectedHarness, accountName), Harness: selectedHarness, Label: accountName, ProviderLabel: providerID}); err != nil {
+				saveCancel()
 				return err
 			}
+			saveCancel()
 			method, err := promptAuthLoginMethod(cmd, methodOptions)
 			if err != nil {
 				return err
@@ -266,7 +271,7 @@ func authMethodRunsClientSide(harness, method string) bool {
 	case daemon.HarnessNameClaude:
 		return method == "browser" || method == "console"
 	case daemon.HarnessNameOpenCode:
-		return method == "opencode_interactive"
+		return strings.TrimSpace(method) != ""
 	default:
 		return method == "browser"
 	}
