@@ -69,7 +69,7 @@ var (
 )
 
 func NewExecCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "exec", Short: "Run and manage workspace command executions"}
+	cmd := &cobra.Command{Use: "exec", Short: "Run and manage workspace command executions", Hidden: true}
 	cmd.AddCommand(newCommandRunCmd())
 	cmd.AddCommand(newCommandListCmd())
 	cmd.AddCommand(newCommandShowCmd())

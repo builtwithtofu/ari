@@ -163,7 +163,8 @@ func TestRootRunNonInteractiveRendersWorkspaceDashboard(t *testing.T) {
 		_ = ctx
 		_ = socketPath
 		_ = cwd
-		return daemon.WorkspaceGetResponse{WorkspaceID: "ws-1", Name: "clay", Status: "active", OriginRoot: "/tmp/work/clay"}, nil
+		t.Fatal("dashboard path must not resolve workspace from cwd")
+		return daemon.WorkspaceGetResponse{}, nil
 	}
 	deps.agentListRPC = func(ctx context.Context, socketPath, sessionID string) (daemon.AgentListResponse, error) {
 		_ = ctx
@@ -187,20 +188,32 @@ func TestRootRunNonInteractiveRendersWorkspaceDashboard(t *testing.T) {
 			Proofs:        []daemon.ProofResultSummary{{ID: "proof_cmd-1", Status: "failed", Command: "just verify"}},
 		}, nil
 	}
+	deps.dashboardRPC = func(ctx context.Context, socketPath, cwd string) (daemon.DashboardGetResponse, error) {
+		_ = ctx
+		_ = socketPath
+		_ = cwd
+		activity := daemon.WorkspaceActivityResponse{
+			WorkspaceID:   "ws-1",
+			WorkspaceName: "clay",
+			VCS:           daemon.DiffSummary{Backend: "jj", ChangedFiles: 3},
+			Attention:     daemon.AttentionSummary{Level: "action-required", Items: []daemon.AttentionItem{{Kind: "proof_failed", SourceID: "proof_cmd-1", Message: "just verify"}}},
+			Processes:     []daemon.ProcessActivity{{ID: "cmd-1", Kind: "command", Status: "running", Label: "just verify"}},
+			Agents:        []daemon.AgentActivity{{ID: "a1", Status: "running", Executor: "codex"}, {ID: "a2", Status: "exited", Executor: "opencode"}},
+			Proofs:        []daemon.ProofResultSummary{{ID: "proof_cmd-1", Status: "failed", Command: "just verify"}},
+		}
+		return daemon.DashboardGetResponse{ActiveContext: daemon.ActiveWorkspaceContext{WorkspaceID: "ws-1"}, EffectiveWorkspaceID: "ws-1", Activity: activity}, nil
+	}
 	replaceRootDeps(t, deps)
 
 	out, err := executeRootCommandRaw()
 	if err != nil {
 		t.Fatalf("executeRootCommandRaw returned error: %v", err)
 	}
-	if !strings.Contains(out, "Workspace: clay") {
+	if !strings.Contains(out, "Active workspace: clay") {
 		t.Fatalf("output = %q, want workspace line", out)
 	}
 	if !strings.Contains(out, "ID: ws-1") {
 		t.Fatalf("output = %q, want id line", out)
-	}
-	if !strings.Contains(out, "Status: active") {
-		t.Fatalf("output = %q, want status line", out)
 	}
 	if !strings.Contains(out, "Agents: 2") {
 		t.Fatalf("output = %q, want agents count", out)
@@ -216,6 +229,79 @@ func TestRootRunNonInteractiveRendersWorkspaceDashboard(t *testing.T) {
 	}
 	if !strings.Contains(out, "Attention: action-required (1 items)") {
 		t.Fatalf("output = %q, want attention line", out)
+	}
+}
+
+func TestStatusUsesDaemonDashboardActiveContext(t *testing.T) {
+	deps := rootDeps
+	deps.isInteractiveTerminal = func(cmd *cobra.Command) bool {
+		_ = cmd
+		return false
+	}
+	deps.configuredDaemonConfig = func() (*config.Config, error) {
+		return &config.Config{Daemon: config.DaemonConfig{SocketPath: "/tmp/daemon.sock"}}, nil
+	}
+	deps.ensureDaemonRunning = func(ctx context.Context, cfg *config.Config) error {
+		_ = ctx
+		_ = cfg
+		return nil
+	}
+	deps.resolveWorkspaceFromCWD = func(ctx context.Context, socketPath, cwd string) (daemon.WorkspaceGetResponse, error) {
+		_ = ctx
+		_ = socketPath
+		_ = cwd
+		t.Fatal("status must not resolve active workspace from cwd")
+		return daemon.WorkspaceGetResponse{}, nil
+	}
+	deps.dashboardRPC = func(ctx context.Context, socketPath, cwd string) (daemon.DashboardGetResponse, error) {
+		_ = ctx
+		if socketPath != "/tmp/daemon.sock" {
+			t.Fatalf("socket path = %q, want configured socket", socketPath)
+		}
+		if cwd == "" {
+			t.Fatal("cwd not passed to dashboard.get")
+		}
+		return daemon.DashboardGetResponse{
+			ActiveContext:        daemon.ActiveWorkspaceContext{WorkspaceID: "ws-active", Version: "v1"},
+			EffectiveWorkspaceID: "ws-active",
+			Activity: daemon.WorkspaceActivityResponse{
+				WorkspaceID:   "ws-active",
+				WorkspaceName: "active workspace",
+				VCS:           daemon.DiffSummary{Backend: "jj", ChangedFiles: 2},
+				Attention:     daemon.AttentionSummary{Level: "running", Items: []daemon.AttentionItem{{Kind: "agent_running", SourceID: "ag-1", Message: "codex"}}},
+				Agents:        []daemon.AgentActivity{{ID: "ag-1", Status: "running", Executor: "codex"}},
+			},
+			ResumeActions:  []daemon.ResumeAction{{ID: "resume:agent:ag-1", Kind: "attach_agent", WorkspaceID: "ws-active", SourceID: "ag-1", Label: "codex"}},
+			CWDMemberships: []daemon.WorkspaceMembership{{WorkspaceID: "ws-cwd", Name: "cwd workspace", FolderPath: "/tmp/cwd", Active: false}},
+		}, nil
+	}
+	replaceRootDeps(t, deps)
+
+	out, err := executeRootCommandRaw("status")
+	if err != nil {
+		t.Fatalf("execute status returned error: %v", err)
+	}
+	for _, want := range []string{"Active workspace: active workspace", "ID: ws-active", "Attention: running (1 items)", "Resume: attach_agent codex", "CWD workspace: cwd workspace"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("status output = %q, want %q", out, want)
+		}
+	}
+}
+
+func TestRootHelpHidesLowLevelMirrorCommands(t *testing.T) {
+	out, err := executeRootCommandRaw("--help")
+	if err != nil {
+		t.Fatalf("execute root help returned error: %v", err)
+	}
+	for _, hidden := range []string{"agent", "exec", "command", "profile", "final-response", "telemetry"} {
+		if strings.Contains(out, "\n  "+hidden+" ") {
+			t.Fatalf("root help = %q, want low-level mirror command %q hidden", out, hidden)
+		}
+	}
+	for _, visible := range []string{"status", "api", "workspace", "auth"} {
+		if !strings.Contains(out, visible) {
+			t.Fatalf("root help = %q, want workflow command %q visible", out, visible)
+		}
 	}
 }
 
@@ -237,7 +323,8 @@ func TestRootRunNonInteractiveCountsActivityAgents(t *testing.T) {
 		_ = ctx
 		_ = socketPath
 		_ = cwd
-		return daemon.WorkspaceGetResponse{WorkspaceID: "ws-1", Name: "clay", Status: "active", OriginRoot: "/tmp/work/clay"}, nil
+		t.Fatal("dashboard path must not resolve workspace from cwd")
+		return daemon.WorkspaceGetResponse{}, nil
 	}
 	deps.agentListRPC = func(ctx context.Context, socketPath, sessionID string) (daemon.AgentListResponse, error) {
 		_ = ctx
@@ -251,6 +338,12 @@ func TestRootRunNonInteractiveCountsActivityAgents(t *testing.T) {
 		_ = workspaceID
 		return daemon.WorkspaceActivityResponse{Agents: []daemon.AgentActivity{{ID: "run-1"}, {ID: "run-2"}}}, nil
 	}
+	deps.dashboardRPC = func(ctx context.Context, socketPath, cwd string) (daemon.DashboardGetResponse, error) {
+		_ = ctx
+		_ = socketPath
+		_ = cwd
+		return daemon.DashboardGetResponse{Activity: daemon.WorkspaceActivityResponse{WorkspaceID: "ws-1", Agents: []daemon.AgentActivity{{ID: "run-1"}, {ID: "run-2"}}}}, nil
+	}
 	replaceRootDeps(t, deps)
 
 	out, err := executeRootCommandRaw()
@@ -262,7 +355,7 @@ func TestRootRunNonInteractiveCountsActivityAgents(t *testing.T) {
 	}
 }
 
-func TestRootRunNonInteractivePrintsNoWorkspaceMatchHint(t *testing.T) {
+func TestRootRunNonInteractivePropagatesDashboardActiveContextError(t *testing.T) {
 	deps := rootDeps
 	deps.isInteractiveTerminal = func(cmd *cobra.Command) bool {
 		_ = cmd
@@ -280,18 +373,22 @@ func TestRootRunNonInteractivePrintsNoWorkspaceMatchHint(t *testing.T) {
 		_ = ctx
 		_ = socketPath
 		_ = cwd
-		return daemon.WorkspaceGetResponse{}, workspaceCWDResolutionError{reason: workspaceCWDReasonNoMatch}
+		t.Fatal("dashboard path must not resolve workspace from cwd")
+		return daemon.WorkspaceGetResponse{}, nil
+	}
+	deps.dashboardRPC = func(ctx context.Context, socketPath, cwd string) (daemon.DashboardGetResponse, error) {
+		_ = ctx
+		_ = socketPath
+		_ = cwd
+		return daemon.DashboardGetResponse{}, userFacingError{message: "active workspace context is not set"}
 	}
 	replaceRootDeps(t, deps)
 
-	out, err := executeRootCommandRaw()
+	_, err := executeRootCommandRaw()
 	if err == nil {
 		t.Fatal("executeRootCommandRaw returned nil error")
 	}
-	if err.Error() != "No workspace matches current directory" {
-		t.Fatalf("executeRootCommandRaw error = %q, want %q", err.Error(), "No workspace matches current directory")
-	}
-	if !strings.Contains(out, "No workspace matches current directory") {
-		t.Fatalf("output = %q, want no-match hint", out)
+	if err.Error() != "active workspace context is not set" {
+		t.Fatalf("executeRootCommandRaw error = %q, want active context error", err.Error())
 	}
 }

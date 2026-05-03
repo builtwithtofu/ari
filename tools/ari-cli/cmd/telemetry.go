@@ -24,7 +24,7 @@ var (
 )
 
 func NewTelemetryCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "telemetry", Short: "Read local agent telemetry"}
+	cmd := &cobra.Command{Use: "telemetry", Short: "Read local agent telemetry", Hidden: true}
 	cmd.AddCommand(newTelemetryRollupCmd())
 	return cmd
 }

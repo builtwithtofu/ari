@@ -63,19 +63,18 @@ Fixture tests are the default adapter contract tests. `agent-smoke` is a credent
 
 ---
 
-## Agent runtime surfaces
+## CLI workflow surfaces
 
-The current Go runtime exposes profile-driven local agent runs through daemon JSON-RPC and CLI commands under `tools/ari-cli/`.
+The current Go runtime exposes workflow commands and a direct daemon JSON-RPC escape hatch under `tools/ari-cli/`.
 
 - Ari is headless first: the daemon/API owns product behavior and state; CLI and future UI surfaces are clients.
 - Onboarding: `ari init` renders the daemon-owned `init.state`, `init.options`, and `init.apply` flow. The only day-one choice is the default harness.
-- Workspaces: the daemon owns workspace creation and resolution. A workspace contains one or more folders, and a folder can belong to multiple workspaces.
+- Dashboard: `ari` and `ari status` render the daemon-owned active workspace dashboard, including attention, resume actions, and cwd workspace memberships without auto-switching context.
+- API escape hatch: `ari api <method> --params '<json>'` calls daemon JSON-RPC directly for scripts, debugging, and low-level operations that are not part of the normal workflow surface.
+- Workspaces: the daemon owns workspace creation, folder membership, and active context. Use `ari workspace use <id-or-name>` to set the daemon active workspace. A workspace contains one or more folders, and a folder can belong to multiple workspaces.
 - Helpers: each workspace can have an ordinary profile named `helper`. Home and project helpers share one helper contract; scope comes from workspace context, not from a profile role/type field.
 - Ari tools: helper-visible settings/profile/self-check/run-forensics actions are daemon-owned tool calls with scoped metadata. Writes require explicit, single-use approval markers.
-- Profiles: `ari profile create|list|show|defaults` maps to daemon profile methods.
-- Temporary visibility: `ari agent list` hides temporary agents; `ari agent list --show-temporary` includes them with a `CLASS` label.
-- Final responses: `ari final-response show --run-id <run>` reads the first-class final-response artifact, while `ari final-response export --run-id <run>` prints only shareable final text without transcript, hidden context, or provider-private metadata.
-- Telemetry: `ari telemetry rollup --workspace-id <workspace>` reports local run counts and known/unknown token, cost, duration, and process facts without guessing missing values.
+- Low-level operation mirrors such as agent/process/profile/final-response/telemetry commands are hidden from normal help while the workflow surface is refined. Use `ari api` for direct method access when automation needs the underlying daemon operation.
 
 ---
 
@@ -112,11 +111,10 @@ The runtime is headless by design. Product behavior belongs behind daemon servic
 
 ```bash
 ari init                                  # choose a default harness and ensure a normal home workspace/helper
-ari agent spawn --workspace home -- \
-  "Teach me how Ari profiles work."       # ask the home helper about Ari
 ari workspace create my-app               # create a project workspace with a project helper when defaults exist
-ari agent spawn --workspace my-app -- \
-  "Tell me about this project."           # ask the project helper from project context
+ari workspace use my-app                  # make daemon active context explicit
+ari status                                # show active workspace attention, resume actions, and cwd memberships
+ari api workspace.list --params '{}'      # direct JSON-RPC escape hatch for scripts/debugging
 ```
 
 Ari asks before she acts. Helpers teach, explain, diagnose, draft, route, and request approval; they do not write project source. Coding work belongs to explicitly configured specialist profiles such as builders, reviewers, or test writers. Ari does not install or authenticate external harnesses, poll provider model catalogs, or turn natural language into every CLI command.

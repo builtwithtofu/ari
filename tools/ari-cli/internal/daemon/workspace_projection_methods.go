@@ -176,12 +176,16 @@ func (d *Daemon) workspaceActivity(ctx context.Context, store *globaldb.Store, r
 	if err != nil {
 		return WorkspaceActivityResponse{}, err
 	}
+	authSlots, err := workspaceAuthSlots(ctx, store, workspaceID)
+	if err != nil {
+		return WorkspaceActivityResponse{}, err
+	}
 
 	return WorkspaceActivityResponse{
 		WorkspaceID:    workspaceID,
 		WorkspaceName:  session.Name,
 		VCS:            buildDiffSummary(roots),
-		Attention:      attentionFromProofs(proofs),
+		Attention:      attentionFromActivity(proofs, agents, authSlots),
 		Processes:      processes,
 		Agents:         agents,
 		Proofs:         proofs,
@@ -189,18 +193,80 @@ func (d *Daemon) workspaceActivity(ctx context.Context, store *globaldb.Store, r
 	}, nil
 }
 
-func attentionFromProofs(proofs []ProofResultSummary) AttentionSummary {
+func workspaceAuthSlots(ctx context.Context, store *globaldb.Store, workspaceID string) ([]globaldb.AuthSlot, error) {
+	profiles, err := store.ListAgentProfiles(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	slots := make([]globaldb.AuthSlot, 0)
+	seen := map[string]bool{}
+	for _, profile := range profiles {
+		authSlotID := strings.TrimSpace(profile.AuthSlotID)
+		if authSlotID == "" || seen[authSlotID] {
+			continue
+		}
+		slot, err := store.GetAuthSlot(ctx, authSlotID)
+		if err != nil {
+			if errors.Is(err, globaldb.ErrNotFound) {
+				continue
+			}
+			return nil, err
+		}
+		seen[authSlotID] = true
+		slots = append(slots, slot)
+	}
+	return slots, nil
+}
+
+func attentionFromActivity(proofs []ProofResultSummary, agents []AgentActivity, authSlots []globaldb.AuthSlot) AttentionSummary {
 	items := make([]AttentionItem, 0)
+	level := "none"
 	for _, proof := range proofs {
 		if proof.Status != "failed" {
 			continue
 		}
 		items = append(items, AttentionItem{Kind: "proof_failed", SourceID: proof.ID, Message: proof.Command})
+		level = "action-required"
+	}
+
+	for _, slot := range authSlots {
+		if slot.Status != "auth_required" && slot.Status != "auth_failed" && slot.Status != "not_installed" {
+			continue
+		}
+		kind := "auth_required"
+		if slot.Status == "auth_failed" {
+			kind = "auth_failed"
+		}
+		if slot.Status == "not_installed" {
+			kind = "auth_not_installed"
+		}
+		message := strings.TrimSpace(slot.Harness)
+		if strings.TrimSpace(slot.Label) != "" {
+			message = message + " " + strings.TrimSpace(slot.Label)
+		}
+		items = append(items, AttentionItem{Kind: kind, SourceID: slot.AuthSlotID, Message: strings.TrimSpace(message)})
+		if level == "none" || level == "running" {
+			level = "auth"
+		}
+	}
+
+	for _, agent := range agents {
+		if agent.Status != "running" {
+			continue
+		}
+		message := strings.TrimSpace(agent.Name)
+		if message == "" {
+			message = strings.TrimSpace(agent.Executor)
+		}
+		items = append(items, AttentionItem{Kind: "agent_running", SourceID: agent.ID, Message: message})
+		if level == "none" {
+			level = "running"
+		}
 	}
 	if len(items) == 0 {
 		return AttentionSummary{Level: "none", Items: []AttentionItem{}}
 	}
-	return AttentionSummary{Level: "action-required", Items: items}
+	return AttentionSummary{Level: level, Items: items}
 }
 
 func (d *Daemon) workspaceProcessActivity(ctx context.Context, store *globaldb.Store, workspaceID string) ([]ProcessActivity, error) {
