@@ -90,3 +90,4 @@ CI splits the same repo contract into separate jobs, so a change can pass one lo
 - Ari is the project and interface name.
 - Breaking changes are acceptable when they improve the core design.
 - Do not add compatibility shims or legacy aliases unless explicitly requested.
+- When researching or integrating OpenCode harness auth, use `github.com/anomalyco/opencode`; do not use the unrelated `opencode-ai/opencode` repository as evidence.

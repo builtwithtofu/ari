@@ -182,6 +182,7 @@ type ExecutorStartRequest struct {
 	SourceProfileID string
 	Model           string
 	Prompt          string
+	AuthSlotID      string
 	InvocationClass HarnessInvocationClass
 }
 

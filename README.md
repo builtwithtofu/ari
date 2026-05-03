@@ -50,6 +50,31 @@ nix develop -c go test ./...
 
 For migration-related checks, run them from `nix develop` as well so Atlas and SQLite tool versions are consistent.
 
+### Agent harness smoke checks
+
+Default verification never requires provider credentials, network access, or billable model calls. To check locally installed harness command assumptions, run:
+
+```bash
+nix develop -c just agent-smoke
+```
+
+The smoke target only runs metadata probes:
+
+- `codex --version`
+- `claude --version`
+- `opencode --version`
+
+Ari resolves these command names at runtime unless you set explicit overrides:
+
+```bash
+ARI_CODEX_EXECUTABLE=/path/to/codex \
+ARI_CLAUDE_EXECUTABLE=/path/to/claude \
+ARI_OPENCODE_EXECUTABLE=/path/to/opencode \
+  nix develop -c just agent-smoke
+```
+
+Fixture tests are the default adapter contract tests. `agent-smoke` is a credential-free local binary check. Authenticated model-call integration tests are intentionally separate and must stay opt-in.
+
 ## Agent runtime surfaces
 
 The current Go runtime exposes profile-driven local agent runs through JSON-RPC and CLI commands under `tools/ari-cli/`.

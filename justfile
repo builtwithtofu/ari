@@ -30,9 +30,7 @@ verify: nix-fmt-check fmt-check lint build test flake-check
 ci: verify
 	@echo "CI gate complete"
 
-# No-credit binary smoke checks for packaged agent CLIs. These verify that the
-# commands Ari targets are installable and can print metadata without auth.
+# No-credit binary smoke checks for agent CLIs. Override command paths with
+# ARI_CODEX_EXECUTABLE, ARI_CLAUDE_EXECUTABLE, or ARI_OPENCODE_EXECUTABLE.
 agent-smoke:
-	nix run github:numtide/llm-agents.nix#codex -- --version
-	nix run github:numtide/llm-agents.nix#claude-code -- --version
-	nix run github:numtide/llm-agents.nix#opencode -- --version
+	@bash -euo pipefail -c 'for spec in "codex:${ARI_CODEX_EXECUTABLE:-codex}" "claude:${ARI_CLAUDE_EXECUTABLE:-claude}" "opencode:${ARI_OPENCODE_EXECUTABLE:-opencode}"; do harness="${spec%%:*}"; command="${spec#*:}"; if ! command -v "${command}" >/dev/null 2>&1; then env_name=$(printf "%s" "${harness}" | tr "[:lower:]" "[:upper:]"); printf "Ari agent smoke: missing %s executable %q. Install it or set ARI_%s_EXECUTABLE to an absolute path. No auth or model call was attempted.\n" "${harness}" "${command}" "${env_name}" >&2; exit 127; fi; "${command}" --version; done'

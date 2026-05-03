@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -12,13 +13,17 @@ import (
 )
 
 type opencodeExecutorOptions struct {
-	Executable string
-	Cwd        string
-	Model      string
-	RunCommand opencodeCommandRunner
+	Executable     string
+	Cwd            string
+	Model          string
+	RunCommand     opencodeCommandRunner
+	RunAuthCommand opencodeAuthCommandRunner
 }
 
-type opencodeCommandRunner func(context.Context, opencodeExecutorOptions, string) (commandRunResult, error)
+type (
+	opencodeCommandRunner     func(context.Context, opencodeExecutorOptions, string) (commandRunResult, error)
+	opencodeAuthCommandRunner func(context.Context, opencodeExecutorOptions, []string) (commandRunResult, error)
+)
 
 type OpenCodeExecutor struct {
 	options opencodeExecutorOptions
@@ -27,7 +32,7 @@ type OpenCodeExecutor struct {
 }
 
 func NewOpenCodeExecutor(cwd string) *OpenCodeExecutor {
-	return newOpenCodeExecutor(opencodeExecutorOptions{Executable: "opencode", Cwd: cwd, RunCommand: runOpenCodeCommand})
+	return newOpenCodeExecutor(opencodeExecutorOptions{Executable: harnessExecutable("opencode", EnvOpenCodeExecutable), Cwd: cwd, RunCommand: runOpenCodeCommand})
 }
 
 func NewOpenCodeExecutorForTest(options opencodeExecutorOptions) *OpenCodeExecutor {
@@ -41,7 +46,51 @@ func newOpenCodeExecutor(options opencodeExecutorOptions) *OpenCodeExecutor {
 	if options.RunCommand == nil {
 		options.RunCommand = runOpenCodeCommand
 	}
+	if options.RunAuthCommand == nil {
+		options.RunAuthCommand = runOpenCodeAuthCommand
+	}
 	return &OpenCodeExecutor{options: options, runs: map[string][]TimelineItem{}}
+}
+
+func (e *OpenCodeExecutor) AuthStatus(ctx context.Context, slot HarnessAuthSlot) (HarnessAuthStatus, error) {
+	if ctx == nil {
+		return HarnessAuthStatus{}, fmt.Errorf("context is required")
+	}
+	if e == nil {
+		return HarnessAuthStatus{}, fmt.Errorf("executor is required")
+	}
+	result, err := e.options.RunAuthCommand(ctx, e.options, []string{"auth", "list"})
+	if err != nil {
+		var unavailable *HarnessUnavailableError
+		if errors.As(err, &unavailable) {
+			return HarnessAuthStatus{}, err
+		}
+	}
+	if result.ExitCode != nil && *result.ExitCode == 0 && opencodeAuthOutputReady(result.Output, slot) {
+		return HarnessAuthStatus{Harness: HarnessNameOpenCode, AuthSlotID: strings.TrimSpace(slot.AuthSlotID), Status: HarnessAuthAuthenticated, AriSecretStorage: HarnessAriSecretStorageNone}, nil
+	}
+	return NewHarnessAuthRequired(HarnessNameOpenCode, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, Method: "provider_login", SecretOwnedBy: HarnessNameOpenCode}), nil
+}
+
+func (e *OpenCodeExecutor) AuthLogout(ctx context.Context, slot HarnessAuthSlot) (HarnessAuthStatus, error) {
+	if ctx == nil {
+		return HarnessAuthStatus{}, fmt.Errorf("context is required")
+	}
+	if e == nil {
+		return HarnessAuthStatus{}, fmt.Errorf("executor is required")
+	}
+	args := []string{"auth", "logout"}
+	if provider := opencodeAuthSlotHint(slot); provider != "" {
+		args = append(args, "--provider", provider)
+	}
+	result, err := e.options.RunAuthCommand(ctx, e.options, args)
+	if err != nil {
+		return HarnessAuthStatus{}, err
+	}
+	if result.ExitCode != nil && *result.ExitCode != 0 {
+		return HarnessAuthStatus{}, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "auth_logout_failed", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: true}
+	}
+	return NewHarnessAuthRequired(HarnessNameOpenCode, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, Method: "provider_login", SecretOwnedBy: HarnessNameOpenCode}), nil
 }
 
 func (e *OpenCodeExecutor) Descriptor() HarnessAdapterDescriptor {
@@ -54,6 +103,9 @@ func (e *OpenCodeExecutor) Start(ctx context.Context, req ExecutorStartRequest) 
 	}
 	if e == nil {
 		return ExecutorRun{}, fmt.Errorf("executor is required")
+	}
+	if !authSlotIsDefaultForHarness(HarnessNameOpenCode, req.AuthSlotID) {
+		return ExecutorRun{}, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "auth_slot_selection_unsupported", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
 	}
 	workspaceID := strings.TrimSpace(req.WorkspaceID)
 	if workspaceID == "" {
@@ -237,4 +289,61 @@ func runOpenCodeCommand(ctx context.Context, options opencodeExecutorOptions, pr
 		return commandRunResult{}, fmt.Errorf("run opencode json: %w: %s", err, strings.TrimSpace(output.String()))
 	}
 	return commandRunResult{Output: []byte(output.String()), ProcessSample: &sample, ExitCode: &exitCode}, nil
+}
+
+func runOpenCodeAuthCommand(ctx context.Context, options opencodeExecutorOptions, args []string) (commandRunResult, error) {
+	executable := strings.TrimSpace(options.Executable)
+	if executable == "" {
+		executable = "opencode"
+	}
+	path, err := exec.LookPath(executable)
+	if err != nil {
+		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
+	}
+	cmd := exec.CommandContext(ctx, path, args...)
+	cmd.Dir = strings.TrimSpace(options.Cwd)
+	var output strings.Builder
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	if err := cmd.Start(); err != nil {
+		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "start_failed", Executable: executable, Probe: executable + " " + strings.Join(args, " "), RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: true}
+	}
+	sample := sampleLinuxProcessMetrics(ctx, AgentRun{PID: cmd.Process.Pid})
+	err = cmd.Wait()
+	exitCode := cmd.ProcessState.ExitCode()
+	return commandRunResult{Output: []byte(output.String()), ProcessSample: &sample, ExitCode: &exitCode}, err
+}
+
+func opencodeAuthOutputReady(output []byte, slot HarnessAuthSlot) bool {
+	text := strings.ToLower(string(output))
+	providerHint := opencodeAuthSlotHint(slot)
+	if providerHint == "" && strings.TrimSpace(slot.AuthSlotID) == "opencode-default" {
+		if strings.Contains(text, "not authenticated") || strings.Contains(text, "no auth") {
+			return false
+		}
+		return strings.TrimSpace(text) != ""
+	}
+	if providerHint == "" {
+		return false
+	}
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, providerHint) {
+			return !strings.Contains(line, "not authenticated") && !strings.Contains(line, "no auth")
+		}
+	}
+	return false
+}
+
+func opencodeAuthSlotHint(slot HarnessAuthSlot) string {
+	for _, value := range []string{slot.ProviderLabel, slot.Label, slot.AuthSlotID} {
+		value = strings.ToLower(strings.TrimSpace(value))
+		for _, prefix := range []string{"opencode-", "opencode ", "open code "} {
+			value = strings.TrimPrefix(value, prefix)
+		}
+		if value != "" && value != "default" {
+			return value
+		}
+	}
+	return ""
 }

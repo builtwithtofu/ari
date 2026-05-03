@@ -46,3 +46,31 @@ func TestHarnessRegistryReplaceForTestAllowsInjection(t *testing.T) {
 		t.Fatalf("Resolve returned factory=%v ok=%v, want injected factory", resolved, ok)
 	}
 }
+
+func TestHarnessExecutorsUseExplicitExecutableOverrides(t *testing.T) {
+	t.Setenv(EnvCodexExecutable, "/opt/agents/codex")
+	t.Setenv(EnvClaudeExecutable, "/opt/agents/claude")
+	t.Setenv(EnvOpenCodeExecutable, "/opt/agents/opencode")
+
+	if got := NewCodexExecutor("/repo").options.Executable; got != "/opt/agents/codex" {
+		t.Fatalf("Codex executable = %q, want override", got)
+	}
+	if got := NewClaudeExecutor("/repo").options.Executable; got != "/opt/agents/claude" {
+		t.Fatalf("Claude executable = %q, want override", got)
+	}
+	if got := NewOpenCodeExecutor("/repo").options.Executable; got != "/opt/agents/opencode" {
+		t.Fatalf("OpenCode executable = %q, want override", got)
+	}
+}
+
+func TestHarnessExecutorsDefaultToSupportedCommandNames(t *testing.T) {
+	if got := NewCodexExecutor("/repo").options.Executable; got != "codex" {
+		t.Fatalf("Codex executable = %q, want codex", got)
+	}
+	if got := NewClaudeExecutor("/repo").options.Executable; got != "claude" {
+		t.Fatalf("Claude executable = %q, want claude", got)
+	}
+	if got := NewOpenCodeExecutor("/repo").options.Executable; got != "opencode" {
+		t.Fatalf("OpenCode executable = %q, want opencode", got)
+	}
+}

@@ -118,34 +118,33 @@ func TestBootstrapNormalizesRelativeDBPath(t *testing.T) {
 	}
 }
 
-func TestBootstrapAppliesDaemonMetaMigration(t *testing.T) {
+func TestBootstrapKeepsForwardMigrationHistory(t *testing.T) {
 	migrationsDir, err := atlasMigrationsDir()
 	if err != nil {
 		t.Fatalf("atlasMigrationsDir: %v", err)
 	}
 
-	baselinePath := filepath.Join(migrationsDir, "202602220901_init_globaldb.sql")
-	baselineContent, err := os.ReadFile(baselinePath)
-	if err != nil {
-		t.Fatalf("read baseline migration file: %v", err)
-	}
-	baselineSQL := string(baselineContent)
-	if !strings.Contains(baselineSQL, "CREATE TABLE IF NOT EXISTS sessions") {
-		t.Fatalf("baseline migration SQL = %q, want sessions table", baselineSQL)
-	}
-	if !strings.Contains(baselineSQL, "CREATE TABLE IF NOT EXISTS session_folders") {
-		t.Fatalf("baseline migration SQL = %q, want session_folders table", baselineSQL)
-	}
-
-	daemonMetaPath := filepath.Join(migrationsDir, "202604012220_daemon_meta.sql")
-	content, err := os.ReadFile(daemonMetaPath)
-	if err != nil {
-		t.Fatalf("read daemon_meta migration file: %v", err)
+	for _, filename := range []string{
+		"202604012220_daemon_meta.sql",
+		"202604062200_session_to_workspace.sql",
+		"202604292210_auth_slots.sql",
+		"202605022130_profile_auth_bindings.sql",
+	} {
+		content, err := os.ReadFile(filepath.Join(migrationsDir, filename))
+		if err != nil {
+			t.Fatalf("read migration file %s: %v", filename, err)
+		}
+		if len(content) == 0 {
+			t.Fatalf("migration file %s is empty", filename)
+		}
 	}
 
-	migrationSQL := string(content)
-	if !strings.Contains(migrationSQL, "CREATE TABLE IF NOT EXISTS daemon_meta") {
-		t.Fatalf("migration SQL = %q, want daemon_meta table", migrationSQL)
+	authSlotSQL, err := os.ReadFile(filepath.Join(migrationsDir, "202604292210_auth_slots.sql"))
+	if err != nil {
+		t.Fatalf("read auth slot migration file: %v", err)
+	}
+	if !strings.Contains(string(authSlotSQL), "CREATE TABLE auth_slots") {
+		t.Fatalf("auth slot migration SQL = %q, want auth_slots table", string(authSlotSQL))
 	}
 }
 

@@ -486,6 +486,8 @@ CREATE TABLE agent_profiles (
 	harness TEXT,
 	model TEXT,
 	prompt TEXT,
+	auth_slot_id TEXT,
+	auth_pool_json TEXT NOT NULL DEFAULT '{}',
 	invocation_class TEXT,
 	defaults_json TEXT NOT NULL DEFAULT '{}',
 	created_at TEXT NOT NULL,

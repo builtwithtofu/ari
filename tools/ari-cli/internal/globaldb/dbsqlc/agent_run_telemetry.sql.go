@@ -7,7 +7,6 @@ package dbsqlc
 
 import (
 	"context"
-	"database/sql"
 )
 
 const listAgentRunTelemetryByWorkspace = `-- name: ListAgentRunTelemetryByWorkspace :many
@@ -16,8 +15,12 @@ WHERE workspace_id = ?
 ORDER BY created_at DESC, run_id ASC
 `
 
-func (q *Queries) ListAgentRunTelemetryByWorkspace(ctx context.Context, workspaceID string) ([]AgentRunTelemetry, error) {
-	rows, err := q.db.QueryContext(ctx, listAgentRunTelemetryByWorkspace, workspaceID)
+type ListAgentRunTelemetryByWorkspaceParams struct {
+	WorkspaceID string `json:"workspace_id"`
+}
+
+func (q *Queries) ListAgentRunTelemetryByWorkspace(ctx context.Context, arg ListAgentRunTelemetryByWorkspaceParams) ([]AgentRunTelemetry, error) {
+	rows, err := q.db.QueryContext(ctx, listAgentRunTelemetryByWorkspace, arg.WorkspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -108,38 +111,38 @@ ON CONFLICT(run_id) DO UPDATE SET
 `
 
 type UpsertAgentRunTelemetryParams struct {
-	RunID                   string         `json:"run_id"`
-	WorkspaceID             string         `json:"workspace_id"`
-	TaskID                  string         `json:"task_id"`
-	ProfileID               sql.NullString `json:"profile_id"`
-	ProfileName             sql.NullString `json:"profile_name"`
-	Harness                 string         `json:"harness"`
-	Model                   string         `json:"model"`
-	InvocationClass         string         `json:"invocation_class"`
-	Status                  string         `json:"status"`
-	InputTokensKnown        int64          `json:"input_tokens_known"`
-	InputTokens             sql.NullInt64  `json:"input_tokens"`
-	OutputTokensKnown       int64          `json:"output_tokens_known"`
-	OutputTokens            sql.NullInt64  `json:"output_tokens"`
-	EstimatedCostKnown      int64          `json:"estimated_cost_known"`
-	EstimatedCostMicros     sql.NullInt64  `json:"estimated_cost_micros"`
-	DurationMsKnown         int64          `json:"duration_ms_known"`
-	DurationMs              sql.NullInt64  `json:"duration_ms"`
-	ExitCodeKnown           int64          `json:"exit_code_known"`
-	ExitCode                sql.NullInt64  `json:"exit_code"`
-	OwnedByAri              int64          `json:"owned_by_ari"`
-	PidKnown                int64          `json:"pid_known"`
-	Pid                     sql.NullInt64  `json:"pid"`
-	CpuTimeMsKnown          int64          `json:"cpu_time_ms_known"`
-	CpuTimeMs               sql.NullInt64  `json:"cpu_time_ms"`
-	MemoryRssBytesPeakKnown int64          `json:"memory_rss_bytes_peak_known"`
-	MemoryRssBytesPeak      sql.NullInt64  `json:"memory_rss_bytes_peak"`
-	ChildProcessesPeakKnown int64          `json:"child_processes_peak_known"`
-	ChildProcessesPeak      sql.NullInt64  `json:"child_processes_peak"`
-	PortsJson               string         `json:"ports_json"`
-	OrphanState             string         `json:"orphan_state"`
-	CreatedAt               string         `json:"created_at"`
-	UpdatedAt               string         `json:"updated_at"`
+	RunID                   string  `json:"run_id"`
+	WorkspaceID             string  `json:"workspace_id"`
+	TaskID                  string  `json:"task_id"`
+	ProfileID               *string `json:"profile_id"`
+	ProfileName             *string `json:"profile_name"`
+	Harness                 string  `json:"harness"`
+	Model                   string  `json:"model"`
+	InvocationClass         string  `json:"invocation_class"`
+	Status                  string  `json:"status"`
+	InputTokensKnown        int64   `json:"input_tokens_known"`
+	InputTokens             *int64  `json:"input_tokens"`
+	OutputTokensKnown       int64   `json:"output_tokens_known"`
+	OutputTokens            *int64  `json:"output_tokens"`
+	EstimatedCostKnown      int64   `json:"estimated_cost_known"`
+	EstimatedCostMicros     *int64  `json:"estimated_cost_micros"`
+	DurationMsKnown         int64   `json:"duration_ms_known"`
+	DurationMs              *int64  `json:"duration_ms"`
+	ExitCodeKnown           int64   `json:"exit_code_known"`
+	ExitCode                *int64  `json:"exit_code"`
+	OwnedByAri              int64   `json:"owned_by_ari"`
+	PidKnown                int64   `json:"pid_known"`
+	Pid                     *int64  `json:"pid"`
+	CpuTimeMsKnown          int64   `json:"cpu_time_ms_known"`
+	CpuTimeMs               *int64  `json:"cpu_time_ms"`
+	MemoryRssBytesPeakKnown int64   `json:"memory_rss_bytes_peak_known"`
+	MemoryRssBytesPeak      *int64  `json:"memory_rss_bytes_peak"`
+	ChildProcessesPeakKnown int64   `json:"child_processes_peak_known"`
+	ChildProcessesPeak      *int64  `json:"child_processes_peak"`
+	PortsJson               string  `json:"ports_json"`
+	OrphanState             string  `json:"orphan_state"`
+	CreatedAt               string  `json:"created_at"`
+	UpdatedAt               string  `json:"updated_at"`
 }
 
 func (q *Queries) UpsertAgentRunTelemetry(ctx context.Context, arg UpsertAgentRunTelemetryParams) error {

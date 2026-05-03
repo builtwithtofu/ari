@@ -52,6 +52,82 @@ func TestClaudeExecutorReportsMissingExecutableBeforeStart(t *testing.T) {
 	}
 }
 
+func TestClaudeAuthStatusNormalizesProviderOwnedReadiness(t *testing.T) {
+	exitCode := 0
+	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunAuthCommand: func(ctx context.Context, opts claudeExecutorOptions, args []string) (commandRunResult, error) {
+		_ = ctx
+		_ = opts
+		if strings.Join(args, " ") != "auth status --json" {
+			t.Fatalf("args = %q, want auth status --json", strings.Join(args, " "))
+		}
+		return commandRunResult{Output: []byte(`{"authenticated":true}`), ExitCode: &exitCode}, nil
+	}})
+
+	status, err := executor.AuthStatus(context.Background(), HarnessAuthSlot{AuthSlotID: "claude-default", Harness: HarnessNameClaude})
+	if err != nil {
+		t.Fatalf("AuthStatus returned error: %v", err)
+	}
+	if status.Status != HarnessAuthAuthenticated || status.AuthSlotID != "claude-default" || status.AriSecretStorage != HarnessAriSecretStorageNone {
+		t.Fatalf("status = %#v, want authenticated Claude slot without Ari secrets", status)
+	}
+}
+
+func TestClaudeAuthStatusReturnsProviderConfigRemediation(t *testing.T) {
+	exitCode := 1
+	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunAuthCommand: func(ctx context.Context, opts claudeExecutorOptions, args []string) (commandRunResult, error) {
+		_ = ctx
+		_ = opts
+		_ = args
+		return commandRunResult{Output: []byte(`{"authenticated":false}`), ExitCode: &exitCode}, errors.New("not authenticated")
+	}})
+
+	status, err := executor.AuthStatus(context.Background(), HarnessAuthSlot{AuthSlotID: "claude-default", Harness: HarnessNameClaude})
+	if err != nil {
+		t.Fatalf("AuthStatus returned error: %v", err)
+	}
+	if status.Status != HarnessAuthRequired || status.Remediation == nil || status.Remediation.SecretOwnedBy != HarnessNameClaude || status.AriSecretStorage != HarnessAriSecretStorageNone {
+		t.Fatalf("status = %#v, want provider-owned remediation", status)
+	}
+}
+
+func TestClaudeAuthStatusTreatsEmptyOutputAsAuthRequired(t *testing.T) {
+	exitCode := 0
+	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunAuthCommand: func(ctx context.Context, opts claudeExecutorOptions, args []string) (commandRunResult, error) {
+		_ = ctx
+		_ = opts
+		_ = args
+		return commandRunResult{Output: nil, ExitCode: &exitCode}, nil
+	}})
+
+	status, err := executor.AuthStatus(context.Background(), HarnessAuthSlot{AuthSlotID: "claude-default", Harness: HarnessNameClaude})
+	if err != nil {
+		t.Fatalf("AuthStatus returned error: %v", err)
+	}
+	if status.Status != HarnessAuthRequired || status.AriSecretStorage != HarnessAriSecretStorageNone {
+		t.Fatalf("status = %#v, want auth_required for empty provider output", status)
+	}
+}
+
+func TestClaudeAuthLogoutRunsProviderLogout(t *testing.T) {
+	exitCode := 0
+	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunAuthCommand: func(ctx context.Context, opts claudeExecutorOptions, args []string) (commandRunResult, error) {
+		_ = ctx
+		_ = opts
+		if strings.Join(args, " ") != "auth logout" {
+			t.Fatalf("args = %q, want auth logout", strings.Join(args, " "))
+		}
+		return commandRunResult{ExitCode: &exitCode}, nil
+	}})
+
+	status, err := executor.AuthLogout(context.Background(), HarnessAuthSlot{AuthSlotID: "claude-default", Harness: HarnessNameClaude})
+	if err != nil {
+		t.Fatalf("AuthLogout returned error: %v", err)
+	}
+	if status.Status != HarnessAuthRequired || status.AriSecretStorage != HarnessAriSecretStorageNone {
+		t.Fatalf("status = %#v, want auth_required after provider logout", status)
+	}
+}
+
 func TestClaudeExecutorRejectsMissingSessionID(t *testing.T) {
 	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunCommand: func(ctx context.Context, opts claudeExecutorOptions, prompt string) (commandRunResult, error) {
 		return commandRunResult{Output: []byte(`{"result":"Done"}`)}, nil
