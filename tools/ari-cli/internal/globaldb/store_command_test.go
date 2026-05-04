@@ -369,5 +369,5 @@ func intPtr(v int) *int { return &v }
 func stringPtr(v string) *string { return &v }
 
 func newCommandTestStore(t *testing.T) *Store {
-	return newMigratedGlobalDBStore(t, "command-store")
+	return newGlobalDBTestStore(t, "command-store")
 }

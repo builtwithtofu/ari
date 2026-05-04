@@ -14,7 +14,6 @@ import (
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
-	"github.com/builtwithtofu/ari/tools/ari-cli/internal/testutil"
 
 	_ "modernc.org/sqlite"
 )
@@ -34,7 +33,7 @@ func mustNewAriULID(t *testing.T) string {
 	return id
 }
 
-func TestStartExecutorRunProjectsPacketIntoAgentRunAndTimeline(t *testing.T) {
+func TestStartExecutorRunProjectsPacketIntoAgentSessionAndTimeline(t *testing.T) {
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 	executor := newFakeHarness("fake", []TimelineItem{{Kind: "agent_text", Text: "done"}})
 
@@ -48,11 +47,11 @@ func TestStartExecutorRunProjectsPacketIntoAgentRunAndTimeline(t *testing.T) {
 	if run.Executor != "fake" || run.Status != "completed" {
 		t.Fatalf("agent run executor/status = %q/%q, want fake/completed", run.Executor, run.Status)
 	}
-	if run.ProviderRunID == "" {
+	if run.ProviderSessionID == "" {
 		t.Fatal("provider run id is empty")
 	}
-	if run.AgentRunID == run.ProviderRunID || !isULID(run.AgentRunID) {
-		t.Fatalf("agent run id = %q, provider run id = %q, want distinct Ari ULID run id", run.AgentRunID, run.ProviderRunID)
+	if run.AgentSessionID == run.ProviderSessionID || !isULID(run.AgentSessionID) {
+		t.Fatalf("agent run id = %q, provider run id = %q, want distinct Ari ULID run id", run.AgentSessionID, run.ProviderSessionID)
 	}
 	if len(items) != 1 {
 		t.Fatalf("items len = %d, want 1", len(items))
@@ -60,11 +59,11 @@ func TestStartExecutorRunProjectsPacketIntoAgentRunAndTimeline(t *testing.T) {
 	if executor.lastContextPacket == "" || !strings.Contains(executor.lastContextPacket, "ctx_123") {
 		t.Fatalf("executor context packet = %q, want serialized packet", executor.lastContextPacket)
 	}
-	if items[0].RunID != run.AgentRunID || items[0].Kind != "agent_text" || items[0].SourceKind != "executor" {
+	if items[0].SessionID != run.AgentSessionID || items[0].Kind != "agent_text" || items[0].SourceKind != "executor" {
 		t.Fatalf("timeline item = %#v, want executor agent_text linked to run", items[0])
 	}
-	if items[0].SourceID != run.AgentRunID {
-		t.Fatalf("timeline source id = %q, want Ari run id %q", items[0].SourceID, run.AgentRunID)
+	if items[0].SourceID != run.AgentSessionID {
+		t.Fatalf("timeline source id = %q, want Ari run id %q", items[0].SourceID, run.AgentSessionID)
 	}
 }
 
@@ -88,8 +87,7 @@ func TestCreateStoredAgentProfileReturnsPersistedProfileIDAfterUpdate(t *testing
 func newDaemonMigratedGlobalDBStore(t *testing.T) *globaldb.Store {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "ari.db")
-	migrationsDir := filepath.Join("..", "..", "migrations")
-	if err := testutil.ApplySQLMigrations(dbPath, migrationsDir); err != nil {
+	if err := applyMigrationSQLFiles(dbPath); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}
 	db, err := sql.Open("sqlite", dbPath)
@@ -98,6 +96,9 @@ func newDaemonMigratedGlobalDBStore(t *testing.T) *globaldb.Store {
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
+	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
+		t.Fatalf("set busy timeout: %v", err)
+	}
 	t.Cleanup(func() { _ = db.Close() })
 	store, err := globaldb.NewSQLStore(db)
 	if err != nil {
@@ -108,10 +109,10 @@ func newDaemonMigratedGlobalDBStore(t *testing.T) *globaldb.Store {
 
 func TestStartExecutorRunRejectsMissingRequiredCapabilityBeforeStart(t *testing.T) {
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
-	executor := &spyExecutor{capabilities: []HarnessCapability{HarnessCapabilityAgentRunFromContext}}
-	call, err := NewAgentRunHarnessCall(packet, []HarnessCapability{HarnessCapabilityMeasuredTokenTelemetry})
+	executor := &spyExecutor{capabilities: []HarnessCapability{HarnessCapabilityAgentSessionFromContext}}
+	call, err := NewAgentSessionHarnessCall(packet, []HarnessCapability{HarnessCapabilityMeasuredTokenTelemetry})
 	if err != nil {
-		t.Fatalf("NewAgentRunHarnessCall returned error: %v", err)
+		t.Fatalf("NewAgentSessionHarnessCall returned error: %v", err)
 	}
 
 	_, _, err = StartHarnessCall(context.Background(), executor, call)
@@ -132,7 +133,7 @@ func TestStartExecutorRunRejectsMissingRequiredCapabilityBeforeStart(t *testing.
 
 func TestStartExecutorRunRejectsMissingTimelineCapabilityBeforeStart(t *testing.T) {
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
-	executor := &spyExecutor{capabilities: []HarnessCapability{HarnessCapabilityAgentRunFromContext}}
+	executor := &spyExecutor{capabilities: []HarnessCapability{HarnessCapabilityAgentSessionFromContext}}
 
 	_, _, err := StartExecutorRun(context.Background(), executor, packet)
 	if err == nil {
@@ -164,10 +165,10 @@ func TestStartExecutorRunReturnsULIDEntropyError(t *testing.T) {
 
 func TestStartHarnessCallRejectsUnsupportedCapabilityBeforeStart(t *testing.T) {
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
-	executor := &spyExecutor{capabilities: []HarnessCapability{HarnessCapabilityAgentRunFromContext}}
-	call, err := NewAgentRunHarnessCall(packet, nil)
+	executor := &spyExecutor{capabilities: []HarnessCapability{HarnessCapabilityAgentSessionFromContext}}
+	call, err := NewAgentSessionHarnessCall(packet, nil)
 	if err != nil {
-		t.Fatalf("NewAgentRunHarnessCall returned error: %v", err)
+		t.Fatalf("NewAgentSessionHarnessCall returned error: %v", err)
 	}
 	call.Capability = HarnessCapabilityFinalResponse
 	call.Required = nil
@@ -190,10 +191,10 @@ func TestStartHarnessCallRejectsUnsupportedCapabilityBeforeStart(t *testing.T) {
 
 func TestStartHarnessCallRejectsMismatchedSchemaBeforeStart(t *testing.T) {
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
-	executor := &spyExecutor{capabilities: []HarnessCapability{HarnessCapabilityAgentRunFromContext}}
-	call, err := NewAgentRunHarnessCall(packet, nil)
+	executor := &spyExecutor{capabilities: []HarnessCapability{HarnessCapabilityAgentSessionFromContext}}
+	call, err := NewAgentSessionHarnessCall(packet, nil)
 	if err != nil {
-		t.Fatalf("NewAgentRunHarnessCall returned error: %v", err)
+		t.Fatalf("NewAgentSessionHarnessCall returned error: %v", err)
 	}
 	call.InputSchemaVersion = "agent.run.from_context.v999"
 
@@ -208,10 +209,10 @@ func TestStartHarnessCallRejectsMismatchedSchemaBeforeStart(t *testing.T) {
 
 func TestStartHarnessCallRejectsMissingInputBeforeStart(t *testing.T) {
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
-	executor := &spyExecutor{capabilities: []HarnessCapability{HarnessCapabilityAgentRunFromContext}}
-	call, err := NewAgentRunHarnessCall(packet, nil)
+	executor := &spyExecutor{capabilities: []HarnessCapability{HarnessCapabilityAgentSessionFromContext}}
+	call, err := NewAgentSessionHarnessCall(packet, nil)
 	if err != nil {
-		t.Fatalf("NewAgentRunHarnessCall returned error: %v", err)
+		t.Fatalf("NewAgentSessionHarnessCall returned error: %v", err)
 	}
 
 	_, _, err = StartHarnessCall(context.Background(), executor, call)
@@ -225,10 +226,10 @@ func TestStartHarnessCallRejectsMissingInputBeforeStart(t *testing.T) {
 
 func TestStartHarnessCallRejectsInvalidJSONInputBeforeStart(t *testing.T) {
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
-	executor := &spyExecutor{capabilities: []HarnessCapability{HarnessCapabilityAgentRunFromContext}}
-	call, err := NewAgentRunHarnessCall(packet, nil)
+	executor := &spyExecutor{capabilities: []HarnessCapability{HarnessCapabilityAgentSessionFromContext}}
+	call, err := NewAgentSessionHarnessCall(packet, nil)
 	if err != nil {
-		t.Fatalf("NewAgentRunHarnessCall returned error: %v", err)
+		t.Fatalf("NewAgentSessionHarnessCall returned error: %v", err)
 	}
 	call.Input = []byte("{")
 
@@ -263,9 +264,9 @@ func TestHarnessSessionRefValidationRejectsOutOfRangeULID(t *testing.T) {
 func TestStartHarnessCallResultReturnsUnknownTelemetrySeed(t *testing.T) {
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 	executor := newFakeHarness("fake", []TimelineItem{{Kind: "agent_text", Text: "done"}})
-	call, err := NewAgentRunHarnessCall(packet, nil)
+	call, err := NewAgentSessionHarnessCall(packet, nil)
 	if err != nil {
-		t.Fatalf("NewAgentRunHarnessCall returned error: %v", err)
+		t.Fatalf("NewAgentSessionHarnessCall returned error: %v", err)
 	}
 	call.Input = []byte(renderContextPacket(packet))
 
@@ -273,7 +274,7 @@ func TestStartHarnessCallResultReturnsUnknownTelemetrySeed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartHarnessCallResult returned error: %v", err)
 	}
-	if result.Status != HarnessCallCompleted || result.AgentRun.AgentRunID == "" {
+	if result.Status != HarnessCallCompleted || result.AgentSession.AgentSessionID == "" {
 		t.Fatalf("harness result = %#v, want completed run", result)
 	}
 	if result.FinalResponse != nil {
@@ -282,14 +283,14 @@ func TestStartHarnessCallResultReturnsUnknownTelemetrySeed(t *testing.T) {
 	if result.Telemetry.Model != "unknown" || result.Telemetry.InputTokens != nil || result.Telemetry.OutputTokens != nil || result.Telemetry.MeasuredTokenTelemetry {
 		t.Fatalf("telemetry = %#v, want explicit unknown token telemetry", result.Telemetry)
 	}
-	if got := strings.Join(result.AgentRun.Capabilities, ","); got != "agent.run.from_context,context_packet,timeline_items" {
+	if got := strings.Join(result.AgentSession.Capabilities, ","); got != "agent.run.from_context,context_packet,timeline_items" {
 		t.Fatalf("capabilities = %q, want normalized descriptor capabilities", got)
 	}
 	if len(result.Events) != 1 || result.Events[0].Kind != string(HarnessEventAgentText) || !strings.Contains(string(result.Events[0].Payload), "done") {
 		t.Fatalf("events = %#v, want normalized agent text payload containing timeline text", result.Events)
 	}
-	if result.SessionRef.AriSessionID != result.AgentRun.AgentRunID {
-		t.Fatalf("session ref = %#v, want Ari run id %q", result.SessionRef, result.AgentRun.AgentRunID)
+	if result.SessionRef.AriSessionID != result.AgentSession.AgentSessionID {
+		t.Fatalf("session ref = %#v, want Ari run id %q", result.SessionRef, result.AgentSession.AgentSessionID)
 	}
 	if err := result.SessionRef.Validate(); err != nil {
 		t.Fatalf("session ref = %#v, validate error = %v", result.SessionRef, err)
@@ -305,9 +306,9 @@ func TestStartHarnessCallResultBuildsCanonicalEventsAndTelemetry(t *testing.T) {
 		{ID: "ti_error", Kind: string(HarnessEventError), Status: "failed", Text: "redacted failure", Metadata: map[string]any{"code": "provider_error", "retryable": false}, Sequence: 4},
 		{ID: "ti_final", Kind: string(HarnessEventAgentText), Text: "final answer", Metadata: map[string]any{"final": true}, Sequence: 5},
 	})
-	call, err := NewAgentRunHarnessCall(packet, nil)
+	call, err := NewAgentSessionHarnessCall(packet, nil)
 	if err != nil {
-		t.Fatalf("NewAgentRunHarnessCall returned error: %v", err)
+		t.Fatalf("NewAgentSessionHarnessCall returned error: %v", err)
 	}
 	call.Input = []byte(renderContextPacket(packet))
 	call.Model = "model-1"
@@ -405,7 +406,7 @@ func TestHarnessAuthPoolDoesNotFailoverForInteractiveAuthRequired(t *testing.T) 
 
 func TestAuthStatusReportsMissingHarnessAsNotInstalled(t *testing.T) {
 	registry := NewHarnessRegistry()
-	if err := registry.Register("missing-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	if err := registry.Register("missing-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -443,7 +444,7 @@ func TestAuthStatusReportsMissingHarnessAsNotInstalled(t *testing.T) {
 
 func TestAuthStatusDoesNotPersistSelectionUnsupportedAsNotInstalled(t *testing.T) {
 	registry := NewHarnessRegistry()
-	if err := registry.Register("codex", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	if err := registry.Register("codex", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -488,7 +489,7 @@ func TestAuthStatusPersistsProviderReadinessForStoredSlot(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -520,7 +521,7 @@ func TestAuthStartUsesStoredSlotAndPersistsInProgress(t *testing.T) {
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	var capturedSlot HarnessAuthSlot
 	var capturedMethod string
-	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -575,7 +576,7 @@ func TestAuthCancelUsesStoredSlotAndPersistsCancelled(t *testing.T) {
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	var capturedSlot HarnessAuthSlot
 	var capturedFlowID string
-	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -629,7 +630,7 @@ func TestAuthLogoutUsesStoredSlotAndPersistsAuthRequired(t *testing.T) {
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	var capturedSlot HarnessAuthSlot
-	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -681,7 +682,7 @@ func TestAuthLogoutUnsupportedHarnessReturnsProviderOwnedRemediation(t *testing.
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -705,7 +706,7 @@ func TestAuthLogoutReportsPartialSuccessWhenStatusPersistenceFails(t *testing.T)
 	store := newCommandMethodTestStore(t)
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	ctx, cancel := context.WithCancel(context.Background())
-	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -729,9 +730,9 @@ func TestAuthLogoutReportsPartialSuccessWhenStatusPersistenceFails(t *testing.T)
 func TestStartHarnessCallResultExtractsFinalResponseFromCapableHarness(t *testing.T) {
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 	executor := newFinalResponseHarness("fake", []TimelineItem{{ID: "ti_full_transcript", Kind: "agent_text", Text: "Detailed internal transcript"}, {ID: "ti_final", Kind: "agent_text", Text: "Concise answer"}})
-	call, err := NewAgentRunHarnessCall(packet, nil)
+	call, err := NewAgentSessionHarnessCall(packet, nil)
 	if err != nil {
-		t.Fatalf("NewAgentRunHarnessCall returned error: %v", err)
+		t.Fatalf("NewAgentSessionHarnessCall returned error: %v", err)
 	}
 	call.Input = []byte(renderContextPacket(packet))
 
@@ -760,7 +761,7 @@ type spyExecutor struct {
 type missingAuthHarness struct{ spyExecutor }
 
 func (missingAuthHarness) AuthStatus(context.Context, HarnessAuthSlot) (HarnessAuthStatus, error) {
-	return HarnessAuthStatus{}, &HarnessUnavailableError{Harness: "missing-harness", Reason: "missing_executable", Executable: "missing-harness", Probe: "missing-harness --version", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
+	return HarnessAuthStatus{}, &HarnessUnavailableError{Harness: "missing-harness", Reason: "missing_executable", Executable: "missing-harness", Probe: "missing-harness --version", RequiredCapability: HarnessCapabilityAgentSessionFromContext, StartInvoked: false}
 }
 
 func (e *spyExecutor) Descriptor() HarnessAdapterDescriptor {
@@ -771,18 +772,18 @@ func (e *spyExecutor) Start(ctx context.Context, req ExecutorStartRequest) (Exec
 	_ = ctx
 	_ = req
 	e.started = true
-	return ExecutorRun{RunID: "spy-run", Executor: "spy", ProviderRunID: "spy-run", CapabilityNames: []string{"agent.run.from_context"}}, nil
+	return ExecutorRun{SessionID: "spy-run", Executor: "spy", ProviderSessionID: "spy-run", CapabilityNames: []string{"agent.run.from_context"}}, nil
 }
 
-func (e *spyExecutor) Items(ctx context.Context, runID string) ([]TimelineItem, error) {
+func (e *spyExecutor) Items(ctx context.Context, sessionID string) ([]TimelineItem, error) {
 	_ = ctx
-	_ = runID
+	_ = sessionID
 	return nil, nil
 }
 
-func (e *spyExecutor) Stop(ctx context.Context, runID string) error {
+func (e *spyExecutor) Stop(ctx context.Context, sessionID string) error {
 	_ = ctx
-	_ = runID
+	_ = sessionID
 	return nil
 }
 
@@ -810,7 +811,7 @@ func newFinalResponseHarness(name string, items []TimelineItem) *fakeHarness {
 }
 
 func (e *fakeHarness) Descriptor() HarnessAdapterDescriptor {
-	capabilities := []HarnessCapability{HarnessCapabilityAgentRunFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems}
+	capabilities := []HarnessCapability{HarnessCapabilityAgentSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems}
 	if e.finalResponse {
 		capabilities = append(capabilities, HarnessCapabilityFinalResponse)
 	}
@@ -821,18 +822,18 @@ func (e *fakeHarness) Start(ctx context.Context, req ExecutorStartRequest) (Exec
 	if ctx == nil {
 		return ExecutorRun{}, fmt.Errorf("context is required")
 	}
-	runID := fmt.Sprintf("%s-run-%d", e.name, time.Now().UnixNano())
+	sessionID := fmt.Sprintf("%s-run-%d", e.name, time.Now().UnixNano())
 	e.lastContextPacket = req.ContextPacket
 	items := append([]TimelineItem(nil), e.template...)
 	for i := range items {
-		items[i].RunID = runID
+		items[i].SessionID = sessionID
 		items[i].WorkspaceID = req.WorkspaceID
 		items[i].SourceKind = "executor"
 		if strings.TrimSpace(items[i].SourceID) == "" {
-			items[i].SourceID = runID
+			items[i].SourceID = sessionID
 		}
 		if strings.TrimSpace(items[i].ID) == "" {
-			items[i].ID = fmt.Sprintf("%s:item-%d", runID, i+1)
+			items[i].ID = fmt.Sprintf("%s:item-%d", sessionID, i+1)
 		}
 		if items[i].Sequence == 0 {
 			items[i].Sequence = i + 1
@@ -842,25 +843,25 @@ func (e *fakeHarness) Start(ctx context.Context, req ExecutorStartRequest) (Exec
 		}
 	}
 	e.mu.Lock()
-	e.runs[runID] = items
+	e.runs[sessionID] = items
 	e.mu.Unlock()
-	return ExecutorRun{RunID: runID, Executor: e.name, ProviderRunID: runID, CapabilityNames: []string{string(HarnessCapabilityTimelineItems)}}, nil
+	return ExecutorRun{SessionID: sessionID, Executor: e.name, ProviderSessionID: sessionID, CapabilityNames: []string{string(HarnessCapabilityTimelineItems)}}, nil
 }
 
-func (e *fakeHarness) Items(ctx context.Context, runID string) ([]TimelineItem, error) {
+func (e *fakeHarness) Items(ctx context.Context, sessionID string) ([]TimelineItem, error) {
 	_ = ctx
 	e.mu.Lock()
-	items, ok := e.runs[strings.TrimSpace(runID)]
+	items, ok := e.runs[strings.TrimSpace(sessionID)]
 	e.mu.Unlock()
 	if !ok {
-		return nil, fmt.Errorf("run %q not found", runID)
+		return nil, fmt.Errorf("run %q not found", sessionID)
 	}
 	return append([]TimelineItem(nil), items...), nil
 }
 
-func (e *fakeHarness) Stop(ctx context.Context, runID string) error {
+func (e *fakeHarness) Stop(ctx context.Context, sessionID string) error {
 	_ = ctx
-	_ = runID
+	_ = sessionID
 	return nil
 }
 
@@ -874,19 +875,19 @@ type capturingHarness struct {
 }
 
 func (e *capturingHarness) Descriptor() HarnessAdapterDescriptor {
-	return HarnessAdapterDescriptor{Name: e.name, Capabilities: []HarnessCapability{HarnessCapabilityAgentRunFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems}}
+	return HarnessAdapterDescriptor{Name: e.name, Capabilities: []HarnessCapability{HarnessCapabilityAgentSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems}}
 }
 
 func (e *capturingHarness) Start(ctx context.Context, req ExecutorStartRequest) (ExecutorRun, error) {
 	_ = ctx
 	*e.captured = req
-	runID := fmt.Sprintf("%s-run-%d", e.name, time.Now().UnixNano())
-	return ExecutorRun{RunID: runID, Executor: e.name, ProviderRunID: runID}, nil
+	sessionID := fmt.Sprintf("%s-run-%d", e.name, time.Now().UnixNano())
+	return ExecutorRun{SessionID: sessionID, Executor: e.name, ProviderSessionID: sessionID}, nil
 }
 
-func (e *capturingHarness) Items(ctx context.Context, runID string) ([]TimelineItem, error) {
+func (e *capturingHarness) Items(ctx context.Context, sessionID string) ([]TimelineItem, error) {
 	_ = ctx
-	return []TimelineItem{{ID: runID + ":item-1", RunID: runID, Kind: "agent_text", Status: "completed", Sequence: 1}}, nil
+	return []TimelineItem{{ID: sessionID + ":item-1", SessionID: sessionID, Kind: "agent_text", Status: "completed", Sequence: 1}}, nil
 }
 
 func (e *capturingHarness) AuthStatus(ctx context.Context, slot HarnessAuthSlot) (HarnessAuthStatus, error) {
@@ -919,9 +920,9 @@ func (e *capturingHarness) AuthLogout(ctx context.Context, slot HarnessAuthSlot)
 	return HarnessAuthStatus{}, fmt.Errorf("auth logout not configured")
 }
 
-func (e *capturingHarness) Stop(ctx context.Context, runID string) error {
+func (e *capturingHarness) Stop(ctx context.Context, sessionID string) error {
 	_ = ctx
-	_ = runID
+	_ = sessionID
 	return nil
 }
 
@@ -954,20 +955,21 @@ func requireHandlerErrorData(t *testing.T, err error) map[string]any {
 	return data
 }
 
-func TestAgentRunMethodRejectsFakeExecutor(t *testing.T) {
+func TestAgentSessionMethodRejectsFakeExecutor(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
-	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	primaryFolder := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "ws-1", primaryFolder)
 	if err := store.UpsertAuthSlot(context.Background(), globaldb.AuthSlot{AuthSlotID: "codex-personal", Harness: "test-harness", Label: "Personal", ProviderLabel: "ChatGPT Plus", Status: "authenticated"}); err != nil {
 		t.Fatalf("UpsertAuthSlot returned error: %v", err)
 	}
 
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
-	err := callMethodError(registry, "agent.run", AgentRunStartRequest{
+	err := callMethodError(registry, "agent.run", AgentSessionStartRequest{
 		Executor: "fake",
 		Packet:   packet,
 	})
@@ -976,11 +978,11 @@ func TestAgentRunMethodRejectsFakeExecutor(t *testing.T) {
 	}
 }
 
-func TestAgentRunMethodUsesInjectedHarnessFactory(t *testing.T) {
+func TestAgentSessionMethodUsesInjectedHarnessFactory(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = primaryFolder
 		_ = sink
 		return newFakeHarness(req.Executor, []TimelineItem{{Kind: "agent_text", Text: "done"}}), nil
@@ -988,7 +990,8 @@ func TestAgentRunMethodUsesInjectedHarnessFactory(t *testing.T) {
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
-	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	primaryFolder := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "ws-1", primaryFolder)
 	for _, slot := range []globaldb.AuthSlot{
 		{AuthSlotID: "slot-one", Harness: "test-harness", Label: "One", Status: "not_installed"},
 		{AuthSlotID: "slot-two", Harness: "test-harness", Label: "Two", Status: "authenticated"},
@@ -999,9 +1002,42 @@ func TestAgentRunMethodUsesInjectedHarnessFactory(t *testing.T) {
 	}
 
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
-	resp := callMethod[AgentRunStartResponse](t, registry, "agent.run", AgentRunStartRequest{Executor: "test-harness", Packet: packet})
+	resp := callMethod[AgentSessionStartResponse](t, registry, "agent.run", AgentSessionStartRequest{Executor: "test-harness", Packet: packet})
 	if resp.Run.Executor != "test-harness" || resp.Run.ContextPacketID != "ctx_123" {
 		t.Fatalf("agent run = %#v, want injected harness run linked to context packet", resp.Run)
+	}
+}
+
+func TestAgentSessionMethodPersistsRepeatedNoProfileRunsAndRunLogScope(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = primaryFolder
+		_ = sink
+		return newFakeHarness(req.Executor, []TimelineItem{{Kind: "agent_text", Text: "done"}}), nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+
+	first := callMethod[AgentSessionStartResponse](t, registry, "agent.run", AgentSessionStartRequest{Executor: "test-harness", Packet: ContextPacket{ID: "ctx_1", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:1"}})
+	second := callMethod[AgentSessionStartResponse](t, registry, "agent.run", AgentSessionStartRequest{Executor: "test-harness", Packet: ContextPacket{ID: "ctx_2", WorkspaceID: "ws-1", TaskID: "task-2", PacketHash: "sha256:2"}})
+
+	runs, err := store.ListAgentSessions(context.Background(), "ws-1")
+	if err != nil {
+		t.Fatalf("ListAgentSessions returned error: %v", err)
+	}
+	if len(runs) != 2 || runs[0].AgentID != runs[1].AgentID {
+		t.Fatalf("runs = %#v, want repeated no-profile runs to share persisted harness runtime agent config", runs)
+	}
+	messages, err := store.TailRunLogMessages(context.Background(), second.Run.AgentSessionID, 1)
+	if err != nil {
+		t.Fatalf("TailRunLogMessages returned error: %v", err)
+	}
+	if len(messages) != 1 || messages[0].WorkspaceID != "ws-1" || messages[0].AgentID != runs[0].AgentID || messages[0].SessionID != second.Run.AgentSessionID {
+		t.Fatalf("messages = %#v first=%#v second=%#v, want run-log rows scoped to workspace and runtime agent", messages, first.Run, second.Run)
 	}
 }
 
@@ -1009,7 +1045,7 @@ func TestAgentProfileRunUsesProfileHarness(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = primaryFolder
 		_ = sink
 		return newFakeHarness(req.Executor, []TimelineItem{{Kind: "agent_text", Text: "done"}}), nil
@@ -1024,11 +1060,11 @@ func TestAgentProfileRunUsesProfileHarness(t *testing.T) {
 	}
 
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
-	resp := callMethod[AgentProfileRunResponse](t, registry, "agent.profile.run", AgentProfileRunRequest{Profile: "executor", Packet: packet})
+	resp := callMethod[AgentProfileRunResponse](t, registry, "profile.run", AgentProfileRunRequest{Profile: "executor", Packet: packet})
 	if resp.Profile != "executor" || resp.Harness != "test-harness" || resp.Run.Executor != "test-harness" {
 		t.Fatalf("profile run response = %#v, want executor routed to test-harness", resp)
 	}
-	if resp.Run.ContextPacketID != "ctx_123" || len(resp.Items) != 1 || resp.Items[0].RunID != resp.Run.AgentRunID {
+	if resp.Run.ContextPacketID != "ctx_123" || len(resp.Items) != 1 || resp.Items[0].SessionID != resp.Run.AgentSessionID {
 		t.Fatalf("profile run items = %#v run = %#v, want linked context/timeline", resp.Items, resp.Run)
 	}
 }
@@ -1037,7 +1073,7 @@ func TestAgentProfileRunUsesStoredProfile(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = primaryFolder
 		_ = sink
 		return newFakeHarness(req.Executor, []TimelineItem{{Kind: "agent_text", Text: "done"}}), nil
@@ -1051,7 +1087,7 @@ func TestAgentProfileRunUsesStoredProfile(t *testing.T) {
 	}
 
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
-	resp := callMethod[AgentProfileRunResponse](t, registry, "agent.profile.run", AgentProfileRunRequest{Profile: "executor", Packet: packet})
+	resp := callMethod[AgentProfileRunResponse](t, registry, "profile.run", AgentProfileRunRequest{Profile: "executor", Packet: packet})
 	if resp.Profile != "executor" || resp.Harness != "test-harness" || resp.Run.Executor != "test-harness" {
 		t.Fatalf("profile run response = %#v, want stored profile routed to test-harness", resp)
 	}
@@ -1061,25 +1097,26 @@ func TestAgentProfileRunPersistsFinalResponseArtifact(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
-		return newFinalResponseHarness("test-harness", []TimelineItem{{ID: "ti_transcript", Kind: "agent_text", Text: "Internal transcript text"}, {ID: "ti_final", Kind: "agent_text", Text: "Shareable answer"}}), nil
+		return newFinalResponseHarness("test-harness", []TimelineItem{{ID: "ti_transcript", Kind: "agent_text", Text: "Internal transcript text", Metadata: map[string]any{"provider_message_id": "msg-raw-1", "provider_item_id": "raw-1", "provider_turn_id": "turn-1", "provider_response_id": "resp-1", "provider_call_id": "call-1", "provider_channel": "analysis", "tool_name": "web.search"}}, {ID: "ti_final", Kind: "agent_text", Text: "Excerptable answer"}}), nil
 	})
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
-	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	primaryFolder := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "ws-1", primaryFolder)
 	if err := store.UpsertAgentProfile(context.Background(), globaldb.AgentProfile{ProfileID: "ap_executor", Name: "executor", Harness: "test-harness", InvocationClass: string(HarnessInvocationAgent)}); err != nil {
 		t.Fatalf("UpsertAgentProfile returned error: %v", err)
 	}
 
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
-	runResp := callMethod[AgentProfileRunResponse](t, registry, "agent.profile.run", AgentProfileRunRequest{Profile: "executor", Packet: packet})
-	finalResp := callMethod[FinalResponseResponse](t, registry, "final_response.get", FinalResponseGetRequest{RunID: runResp.Run.AgentRunID})
-	if finalResp.ProfileID != "ap_executor" || finalResp.ContextPacketID != "ctx_123" || finalResp.Text != "Shareable answer" {
-		t.Fatalf("final response = %#v, want stored shareable artifact", finalResp)
+	runResp := callMethod[AgentProfileRunResponse](t, registry, "profile.run", AgentProfileRunRequest{Profile: "executor", Packet: packet})
+	finalResp := callMethod[FinalResponseResponse](t, registry, "final_response.get", FinalResponseGetRequest{SessionID: runResp.Run.AgentSessionID})
+	if finalResp.ProfileID != "ap_executor" || finalResp.ContextPacketID != "ctx_123" || finalResp.Text != "Excerptable answer" {
+		t.Fatalf("final response = %#v, want stored excerptable artifact", finalResp)
 	}
 	if strings.Contains(finalResp.Text, "Internal transcript") {
 		t.Fatalf("final response text = %q, must not include transcript text", finalResp.Text)
@@ -1087,24 +1124,151 @@ func TestAgentProfileRunPersistsFinalResponseArtifact(t *testing.T) {
 	if len(finalResp.EvidenceLinks) < 2 || finalResp.EvidenceLinks[0].Kind != "context_packet" {
 		t.Fatalf("evidence links = %#v, want context/run provenance", finalResp.EvidenceLinks)
 	}
+	runs, err := store.ListAgentSessions(context.Background(), "ws-1")
+	if err != nil {
+		t.Fatalf("ListAgentSessions returned error: %v", err)
+	}
+	if len(runs) != 1 || runs[0].SessionID != runResp.Run.AgentSessionID || runs[0].WorkspaceID != "ws-1" || runs[0].Harness != "test-harness" || runs[0].Status != "completed" {
+		t.Fatalf("agent runs = %#v, want normalized persisted harness run", runs)
+	}
+	if runs[0].ProviderSessionID != runResp.Run.ProviderSessionID || runs[0].ProviderRunID != runResp.Run.ProviderRunID || runs[0].CWD != primaryFolder || !strings.Contains(runs[0].FolderScopeJSON, primaryFolder) || !strings.Contains(runs[0].ProviderMetadataJSON, `"resume_mode":"none"`) || !strings.Contains(runs[0].ProviderMetadataJSON, `"provider_session_id"`) || !strings.Contains(runs[0].ContextPayloadIDsJSON, "ctx_123") {
+		t.Fatalf("agent run metadata = %#v, want provider session and context/session metadata", runs[0])
+	}
+	messages, err := store.TailRunLogMessages(context.Background(), runResp.Run.AgentSessionID, 2)
+	if err != nil {
+		t.Fatalf("TailRunLogMessages returned error: %v", err)
+	}
+	if len(messages) != 2 || messages[0].Role != "assistant" || messages[0].Parts[0].Text != "Internal transcript text" || messages[1].Parts[0].Text != "Excerptable answer" {
+		t.Fatalf("run messages = %#v, want normalized harness transcript messages", messages)
+	}
+	if messages[0].ProviderKind != "agent_text" || messages[0].ProviderMessageID != "msg-raw-1" || messages[0].ProviderItemID != "raw-1" || messages[0].ProviderTurnID != "turn-1" || messages[0].ProviderResponseID != "resp-1" || messages[0].ProviderCallID != "call-1" || messages[0].ProviderChannel != "analysis" || messages[0].Parts[0].ToolName != "web.search" || messages[0].Parts[0].ToolCallID != "call-1" || !strings.Contains(messages[0].RawMetadataJSON, "raw-1") {
+		t.Fatalf("run message metadata = %#v, want provider kind and raw metadata", messages[0])
+	}
+}
+
+func TestAgentProfileRunPreservesProviderMessageFacetsAcrossHarnesses(t *testing.T) {
+	for _, harness := range []string{HarnessNameClaude, HarnessNameCodex, HarnessNameOpenCode, HarnessNamePTY} {
+		t.Run(harness, func(t *testing.T) {
+			store := newCommandMethodTestStore(t)
+			registry := rpc.NewMethodRegistry()
+			d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+			d.setHarnessFactoryForTest(harness, func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+				_ = req
+				_ = primaryFolder
+				_ = sink
+				return newFakeHarness(harness, []TimelineItem{{ID: harness + "-item", Kind: "agent_text", Text: harness + " output", Metadata: map[string]any{"message_id": harness + "-message", "item_id": harness + "-item", "turn_id": harness + "-turn", "response_id": harness + "-response", "tool_call_id": harness + "-call", "channel": "commentary", "name": harness + ".tool", "raw_event": harness}}}), nil
+			})
+			if err := d.registerMethods(registry, store); err != nil {
+				t.Fatalf("registerMethods returned error: %v", err)
+			}
+			primaryFolder := t.TempDir()
+			seedSessionWithPrimaryFolder(t, store, "ws-1", primaryFolder)
+			if err := store.UpsertAgentProfile(context.Background(), globaldb.AgentProfile{ProfileID: "ap_" + harness, Name: harness + "-agent", Harness: harness, InvocationClass: string(HarnessInvocationAgent)}); err != nil {
+				t.Fatalf("UpsertAgentProfile returned error: %v", err)
+			}
+
+			runResp := callMethod[AgentProfileRunResponse](t, registry, "profile.run", AgentProfileRunRequest{Profile: harness + "-agent", Packet: ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}})
+			messages, err := store.TailRunLogMessages(context.Background(), runResp.Run.AgentSessionID, 1)
+			if err != nil {
+				t.Fatalf("TailRunLogMessages returned error: %v", err)
+			}
+			if len(messages) != 1 || messages[0].ProviderMessageID != harness+"-message" || messages[0].ProviderItemID != harness+"-item" || messages[0].ProviderTurnID != harness+"-turn" || messages[0].ProviderResponseID != harness+"-response" || messages[0].ProviderCallID != harness+"-call" || messages[0].ProviderChannel != "commentary" || messages[0].Parts[0].ToolName != harness+".tool" || !strings.Contains(messages[0].RawMetadataJSON, "raw_event") {
+				t.Fatalf("message = %#v, want normalized provider facets and raw event metadata", messages)
+			}
+		})
+	}
+}
+
+func TestAgentProfileRunNormalizesRealCodexItemFacets(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest(HarnessNameCodex, func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		transport := newFakeCodexTransport([]codexNotification{
+			{Method: "thread/started", Params: mustRawJSON(t, `{"thread":{"id":"thr_123"}}`)},
+			{Method: "turn/started", Params: mustRawJSON(t, `{"threadId":"thr_123","turn":{"id":"turn_456"}}`)},
+			{Method: "item/completed", Params: mustRawJSON(t, `{"threadId":"thr_123","turnId":"turn_456","item":{"id":"item_1","type":"agent_message","text":"hello world"}}`)},
+			{Method: "turn/completed", Params: mustRawJSON(t, `{"threadId":"thr_123","turn":{"id":"turn_456","status":"completed"}}`)},
+		})
+		return NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: primaryFolder, StartTransport: fakeCodexStarter(transport)}), nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	if err := store.UpsertAgentProfile(context.Background(), globaldb.AgentProfile{ProfileID: "ap_codex", Name: "codex-agent", Harness: HarnessNameCodex, InvocationClass: string(HarnessInvocationAgent)}); err != nil {
+		t.Fatalf("UpsertAgentProfile returned error: %v", err)
+	}
+
+	runResp := callMethod[AgentProfileRunResponse](t, registry, "profile.run", AgentProfileRunRequest{Profile: "codex-agent", Packet: ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}})
+	messages, err := store.ListRunLogMessages(context.Background(), runResp.Run.AgentSessionID, 0, 10)
+	if err != nil {
+		t.Fatalf("TailRunLogMessages returned error: %v", err)
+	}
+	var matched *globaldb.RunLogMessage
+	for i := range messages {
+		if messages[i].ProviderItemID == "item_1" {
+			matched = &messages[i]
+		}
+	}
+	if matched == nil || matched.ProviderTurnID != "turn_456" || matched.ProviderKind != "agent_message" || !strings.Contains(matched.RawMetadataJSON, "item_1") {
+		t.Fatalf("message = %#v, want real Codex item id/type/turn normalized and raw metadata preserved", messages)
+	}
+}
+
+func TestAgentProfileRunUsesWorkspaceScopedRuntimeAgentForGlobalProfile(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return newFakeHarness("test-harness", []TimelineItem{{Kind: "agent_text", Text: "done"}}), nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	seedSessionWithPrimaryFolder(t, store, "ws-2", t.TempDir())
+	if err := store.UpsertAgentProfile(context.Background(), globaldb.AgentProfile{ProfileID: "ap_global_executor", Name: "executor", Harness: "test-harness", InvocationClass: string(HarnessInvocationAgent)}); err != nil {
+		t.Fatalf("UpsertAgentProfile returned error: %v", err)
+	}
+
+	first := callMethod[AgentProfileRunResponse](t, registry, "profile.run", AgentProfileRunRequest{Profile: "executor", Packet: ContextPacket{ID: "ctx_1", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:1"}})
+	second := callMethod[AgentProfileRunResponse](t, registry, "profile.run", AgentProfileRunRequest{Profile: "executor", Packet: ContextPacket{ID: "ctx_2", WorkspaceID: "ws-2", TaskID: "task-2", PacketHash: "sha256:2"}})
+	runsOne, err := store.ListAgentSessions(context.Background(), "ws-1")
+	if err != nil {
+		t.Fatalf("ListAgentSessions ws-1 returned error: %v", err)
+	}
+	runsTwo, err := store.ListAgentSessions(context.Background(), "ws-2")
+	if err != nil {
+		t.Fatalf("ListAgentSessions ws-2 returned error: %v", err)
+	}
+	if len(runsOne) != 1 || len(runsTwo) != 1 || runsOne[0].SessionID != first.Run.AgentSessionID || runsTwo[0].SessionID != second.Run.AgentSessionID || runsOne[0].AgentID == runsTwo[0].AgentID || runsOne[0].WorkspaceID != "ws-1" || runsTwo[0].WorkspaceID != "ws-2" {
+		t.Fatalf("runs = %#v / %#v, want workspace-scoped runtime agents for excerptd global profile", runsOne, runsTwo)
+	}
 }
 
 func TestAgentProfileRunPersistsMeasuredTelemetryAndProcessSample(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
 		return newFakeHarness("test-harness", []TimelineItem{{Kind: "telemetry", Metadata: map[string]any{"input_tokens": "12", "output_tokens": "5"}}}), nil
 	})
-	originalSampler := agentRunProcessMetricsSampler
+	originalSampler := agentSessionProcessMetricsSampler
 	pid := int64(12345)
-	agentRunProcessMetricsSampler = func(context.Context, AgentRun) ProcessMetricsSample {
+	agentSessionProcessMetricsSampler = func(context.Context, AgentSession) ProcessMetricsSample {
 		return ProcessMetricsSample{OwnedByAri: true, PID: ProcessMetricValue{Known: true, Value: &pid, Confidence: "sampled"}, CPUTimeMS: unknownProcessMetric("unsupported"), MemoryRSSBytesPeak: unknownProcessMetric("unsupported"), ChildProcessesPeak: unknownProcessMetric("unsupported"), OrphanState: "not_orphaned", ExitCode: unknownProcessMetric("unknown")}
 	}
-	t.Cleanup(func() { agentRunProcessMetricsSampler = originalSampler })
+	t.Cleanup(func() { agentSessionProcessMetricsSampler = originalSampler })
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
@@ -1114,10 +1278,10 @@ func TestAgentProfileRunPersistsMeasuredTelemetryAndProcessSample(t *testing.T) 
 	}
 
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
-	_ = callMethod[AgentProfileRunResponse](t, registry, "agent.profile.run", AgentProfileRunRequest{Profile: "executor", Packet: packet})
-	rollups, err := store.RollupAgentRunTelemetry(context.Background(), "ws-1")
+	_ = callMethod[AgentProfileRunResponse](t, registry, "profile.run", AgentProfileRunRequest{Profile: "executor", Packet: packet})
+	rollups, err := store.RollupAgentSessionTelemetry(context.Background(), "ws-1")
 	if err != nil {
-		t.Fatalf("RollupAgentRunTelemetry returned error: %v", err)
+		t.Fatalf("RollupAgentSessionTelemetry returned error: %v", err)
 	}
 	if len(rollups) != 1 || rollups[0].Group.ProfileID != "ap_executor" || !rollups[0].InputTokens.Known || *rollups[0].InputTokens.Value != 12 || !rollups[0].OutputTokens.Known || *rollups[0].OutputTokens.Value != 5 {
 		t.Fatalf("telemetry rollups = %#v, want measured token rollup", rollups)
@@ -1132,15 +1296,15 @@ func TestAgentProfileCreateAndGetPersistProfile(t *testing.T) {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
-	created := callMethod[AgentProfileResponse](t, registry, "agent.profile.create", AgentProfileCreateRequest{Name: "executor", Harness: "codex", Model: "gpt-5.1-codex", Prompt: "Do work", InvocationClass: HarnessInvocationAgent, Defaults: map[string]any{"effort": "high"}})
+	created := callMethod[AgentProfileResponse](t, registry, "profile.create", AgentProfileCreateRequest{Name: "executor", Harness: "codex", Model: "gpt-5.1-codex", Prompt: "Do work", InvocationClass: HarnessInvocationAgent, Defaults: map[string]any{"effort": "high"}})
 	if created.ProfileID == "" || created.Name != "executor" || created.Harness != "codex" || created.Defaults["effort"] != "high" {
 		t.Fatalf("created profile = %#v, want durable profile response", created)
 	}
-	got := callMethod[AgentProfileResponse](t, registry, "agent.profile.get", AgentProfileGetRequest{Name: "executor"})
+	got := callMethod[AgentProfileResponse](t, registry, "profile.get", AgentProfileGetRequest{Name: "executor"})
 	if got.ProfileID != created.ProfileID || got.Model != "gpt-5.1-codex" || got.Prompt != "Do work" || got.InvocationClass != HarnessInvocationAgent {
 		t.Fatalf("got profile = %#v, want created profile %#v", got, created)
 	}
-	listed := callMethod[AgentProfileListResponse](t, registry, "agent.profile.list", AgentProfileListRequest{})
+	listed := callMethod[AgentProfileListResponse](t, registry, "profile.list", AgentProfileListRequest{})
 	if len(listed.Profiles) != 1 || listed.Profiles[0].ProfileID != created.ProfileID {
 		t.Fatalf("listed profiles = %#v, want created profile", listed.Profiles)
 	}
@@ -1154,7 +1318,7 @@ func TestAgentProfileCreateRejectsMissingName(t *testing.T) {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
-	err := callMethodError(registry, "agent.profile.create", AgentProfileCreateRequest{Harness: "codex"})
+	err := callMethodError(registry, "profile.create", AgentProfileCreateRequest{Harness: "codex"})
 	data := requireHandlerErrorData(t, err)
 	if data["reason"] != "missing_profile_name" {
 		t.Fatalf("error data = %#v, want missing profile name", data)
@@ -1188,7 +1352,7 @@ func TestAuthStatusUsesStoredSlotsWhenNoSlotsRequested(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = primaryFolder
 		_ = sink
 		return &capturingHarness{name: req.Executor, authStatuses: map[string]HarnessAuthState{"slot-two": HarnessAuthAuthenticated}}, nil
@@ -1222,16 +1386,16 @@ func TestDefaultHelperEnsureAndGetUseWorkspaceScopedHelper(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
 	seedSessionWithPrimaryFolder(t, store, "ws-2", t.TempDir())
 
-	created := callMethod[AgentProfileResponse](t, registry, "agent.profile.helper.ensure", DefaultHelperEnsureRequest{WorkspaceID: "ws-1", Harness: "codex", Prompt: "Help here"})
+	created := callMethod[AgentProfileResponse](t, registry, "profile.helper.ensure", DefaultHelperEnsureRequest{WorkspaceID: "ws-1", Harness: "codex", Prompt: "Help here"})
 	if created.Name != "helper" || created.WorkspaceID != "ws-1" || created.Harness != "codex" || created.Prompt != "Help here" {
 		t.Fatalf("created helper = %#v", created)
 	}
-	got := callMethod[AgentProfileResponse](t, registry, "agent.profile.helper.get", DefaultHelperGetRequest{WorkspaceID: "ws-1"})
+	got := callMethod[AgentProfileResponse](t, registry, "profile.helper.get", DefaultHelperGetRequest{WorkspaceID: "ws-1"})
 	if got.ProfileID != created.ProfileID {
 		t.Fatalf("got helper = %#v, want %#v", got, created)
 	}
 
-	err := callMethodError(registry, "agent.profile.helper.get", DefaultHelperGetRequest{WorkspaceID: "ws-2"})
+	err := callMethodError(registry, "profile.helper.get", DefaultHelperGetRequest{WorkspaceID: "ws-2"})
 	data := requireHandlerErrorData(t, err)
 	if data["reason"] != "helper_setup_required" {
 		t.Fatalf("error data = %#v, want helper_setup_required", data)
@@ -1246,9 +1410,9 @@ func TestDefaultHelperEnsureRejectsUnknownWorkspace(t *testing.T) {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
-	err := callMethodError(registry, "agent.profile.helper.ensure", DefaultHelperEnsureRequest{WorkspaceID: "missing", Harness: "codex"})
+	err := callMethodError(registry, "profile.helper.ensure", DefaultHelperEnsureRequest{WorkspaceID: "missing", Harness: "codex"})
 	if err == nil {
-		t.Fatal("agent.profile.helper.ensure returned nil error for unknown workspace")
+		t.Fatal("profile.helper.ensure returned nil error for unknown workspace")
 	}
 }
 
@@ -1259,7 +1423,7 @@ func TestAgentProfileResponsesDoNotExposeRoleClassification(t *testing.T) {
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
-	created := callMethod[AgentProfileResponse](t, registry, "agent.profile.create", AgentProfileCreateRequest{Name: "helper", Harness: "codex"})
+	created := callMethod[AgentProfileResponse](t, registry, "profile.create", AgentProfileCreateRequest{Name: "helper", Harness: "codex"})
 	encoded, err := json.Marshal(created)
 	if err != nil {
 		t.Fatalf("marshal response: %v", err)
@@ -1280,7 +1444,7 @@ func TestAgentProfileRunUsesInlineProfileDefinition(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = primaryFolder
 		_ = sink
 		return newFakeHarness(req.Executor, []TimelineItem{{Kind: "agent_text", Text: "done"}}), nil
@@ -1299,7 +1463,7 @@ func TestAgentProfileRunUsesInlineProfileDefinition(t *testing.T) {
 	}
 
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
-	resp := callMethod[AgentProfileRunResponse](t, registry, "agent.profile.run", AgentProfileRunRequest{ProfileDefinition: &AgentProfile{Name: "dynamic", Harness: "test-harness"}, Packet: packet})
+	resp := callMethod[AgentProfileRunResponse](t, registry, "profile.run", AgentProfileRunRequest{ProfileDefinition: &AgentProfile{Name: "dynamic", Harness: "test-harness"}, Packet: packet})
 	if resp.Profile != "dynamic" || resp.Harness != "test-harness" || resp.Run.Executor != "test-harness" {
 		t.Fatalf("profile run response = %#v, want inline dynamic profile routed to test-harness", resp)
 	}
@@ -1309,7 +1473,7 @@ func TestAgentProfileRunUsesDefaultsOnlyHarness(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = primaryFolder
 		_ = sink
 		return newFakeHarness(req.Executor, []TimelineItem{{Kind: "agent_text", Text: "done"}}), nil
@@ -1320,7 +1484,7 @@ func TestAgentProfileRunUsesDefaultsOnlyHarness(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
 
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
-	resp := callMethod[AgentProfileRunResponse](t, registry, "agent.profile.run", AgentProfileRunRequest{Defaults: AgentRunDefaults{Harness: "test-harness", Model: "default-model", Prompt: "default-prompt"}, Packet: packet})
+	resp := callMethod[AgentProfileRunResponse](t, registry, "profile.run", AgentProfileRunRequest{Defaults: AgentSessionDefaults{Harness: "test-harness", Model: "default-model", Prompt: "default-prompt"}, Packet: packet})
 	if resp.Profile != "" || resp.Harness != "test-harness" || resp.Run.Executor != "test-harness" {
 		t.Fatalf("profile run response = %#v, want defaults-only harness route", resp)
 	}
@@ -1330,7 +1494,7 @@ func TestAgentProfileRunDefaultsFillPartialProfile(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = primaryFolder
 		_ = sink
 		return newFakeHarness(req.Executor, []TimelineItem{{Kind: "agent_text", Text: "done"}}), nil
@@ -1341,7 +1505,7 @@ func TestAgentProfileRunDefaultsFillPartialProfile(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
 
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
-	resp := callMethod[AgentProfileRunResponse](t, registry, "agent.profile.run", AgentProfileRunRequest{ProfileDefinition: &AgentProfile{Name: "dynamic"}, Defaults: AgentRunDefaults{Harness: "test-harness"}, Packet: packet})
+	resp := callMethod[AgentProfileRunResponse](t, registry, "profile.run", AgentProfileRunRequest{ProfileDefinition: &AgentProfile{Name: "dynamic"}, Defaults: AgentSessionDefaults{Harness: "test-harness"}, Packet: packet})
 	if resp.Profile != "dynamic" || resp.Harness != "test-harness" || resp.Run.Executor != "test-harness" {
 		t.Fatalf("profile run response = %#v, want defaults filling partial profile", resp)
 	}
@@ -1352,7 +1516,7 @@ func TestAgentProfileRunPassesProfileMetadataToHarness(t *testing.T) {
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	var captured ExecutorStartRequest
-	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = primaryFolder
 		_ = sink
 		return &capturingHarness{name: req.Executor, captured: &captured}, nil
@@ -1363,7 +1527,7 @@ func TestAgentProfileRunPassesProfileMetadataToHarness(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
 
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
-	_ = callMethod[AgentProfileRunResponse](t, registry, "agent.profile.run", AgentProfileRunRequest{ProfileDefinition: &AgentProfile{Name: "dynamic", Harness: "test-harness", Model: "explicit-model"}, Defaults: AgentRunDefaults{Model: "default-model", Prompt: "default-prompt"}, Packet: packet})
+	_ = callMethod[AgentProfileRunResponse](t, registry, "profile.run", AgentProfileRunRequest{ProfileDefinition: &AgentProfile{Name: "dynamic", Harness: "test-harness", Model: "explicit-model"}, Defaults: AgentSessionDefaults{Model: "default-model", Prompt: "default-prompt"}, Packet: packet})
 	if captured.SourceProfileID != "dynamic" || captured.Model != "explicit-model" || captured.Prompt != "default-prompt" || captured.InvocationClass != HarnessInvocationAgent {
 		t.Fatalf("captured request = %#v, want profile/default metadata at harness boundary", captured)
 	}
@@ -1374,7 +1538,7 @@ func TestAgentProfileRunPassesSelectedAuthSlotToHarnessAndRun(t *testing.T) {
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	var captured ExecutorStartRequest
-	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = primaryFolder
 		_ = sink
 		return &capturingHarness{name: req.Executor, captured: &captured}, nil
@@ -1388,7 +1552,7 @@ func TestAgentProfileRunPassesSelectedAuthSlotToHarnessAndRun(t *testing.T) {
 	}
 
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
-	resp := callMethod[AgentProfileRunResponse](t, registry, "agent.profile.run", AgentProfileRunRequest{ProfileDefinition: &AgentProfile{Name: "dynamic", Harness: "test-harness", AuthSlotID: "codex-personal"}, Packet: packet})
+	resp := callMethod[AgentProfileRunResponse](t, registry, "profile.run", AgentProfileRunRequest{ProfileDefinition: &AgentProfile{Name: "dynamic", Harness: "test-harness", AuthSlotID: "codex-personal"}, Packet: packet})
 	if captured.AuthSlotID != "codex-personal" || resp.Run.AuthSlotID != "codex-personal" {
 		t.Fatalf("captured request = %#v run = %#v, want selected auth slot recorded", captured, resp.Run)
 	}
@@ -1399,7 +1563,7 @@ func TestAgentProfileRunUsesDefaultAuthSlotWhenProfileOmitsAuth(t *testing.T) {
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	var captured ExecutorStartRequest
-	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = primaryFolder
 		_ = sink
 		return &capturingHarness{name: req.Executor, captured: &captured}, nil
@@ -1413,7 +1577,7 @@ func TestAgentProfileRunUsesDefaultAuthSlotWhenProfileOmitsAuth(t *testing.T) {
 	}
 
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
-	resp := callMethod[AgentProfileRunResponse](t, registry, "agent.profile.run", AgentProfileRunRequest{ProfileDefinition: &AgentProfile{Name: "dynamic", Harness: "test-harness"}, Defaults: AgentRunDefaults{AuthSlotID: "slot-default"}, Packet: packet})
+	resp := callMethod[AgentProfileRunResponse](t, registry, "profile.run", AgentProfileRunRequest{ProfileDefinition: &AgentProfile{Name: "dynamic", Harness: "test-harness"}, Defaults: AgentSessionDefaults{AuthSlotID: "slot-default"}, Packet: packet})
 	if captured.AuthSlotID != "slot-default" || resp.Run.AuthSlotID != "slot-default" {
 		t.Fatalf("captured request = %#v run = %#v, want default auth slot recorded", captured, resp.Run)
 	}
@@ -1424,7 +1588,7 @@ func TestAgentProfileRunAuthPoolRecordsSafeFailoverSlot(t *testing.T) {
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	var captured ExecutorStartRequest
-	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = primaryFolder
 		_ = sink
 		return &capturingHarness{name: req.Executor, captured: &captured, authStatuses: map[string]HarnessAuthState{"slot-one": HarnessAuthNotInstalled, "slot-two": HarnessAuthAuthenticated}}, nil
@@ -1443,7 +1607,7 @@ func TestAgentProfileRunAuthPoolRecordsSafeFailoverSlot(t *testing.T) {
 	}
 
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
-	resp := callMethod[AgentProfileRunResponse](t, registry, "agent.profile.run", AgentProfileRunRequest{ProfileDefinition: &AgentProfile{Name: "dynamic", Harness: "test-harness", AuthPool: HarnessAuthPool{SlotIDs: []string{"slot-one", "slot-two"}, Strategy: HarnessAuthPoolFailover}}, Packet: packet})
+	resp := callMethod[AgentProfileRunResponse](t, registry, "profile.run", AgentProfileRunRequest{ProfileDefinition: &AgentProfile{Name: "dynamic", Harness: "test-harness", AuthPool: HarnessAuthPool{SlotIDs: []string{"slot-one", "slot-two"}, Strategy: HarnessAuthPoolFailover}}, Packet: packet})
 	if captured.AuthSlotID != "slot-two" || resp.Run.AuthSlotID != "slot-two" {
 		t.Fatalf("captured request = %#v run = %#v, want safe failover slot recorded", captured, resp.Run)
 	}
@@ -1454,7 +1618,7 @@ func TestAgentProfileRunAuthPoolSkipsMissingDBSlot(t *testing.T) {
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	var captured ExecutorStartRequest
-	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = primaryFolder
 		_ = sink
 		return &capturingHarness{name: req.Executor, captured: &captured, authStatuses: map[string]HarnessAuthState{"slot-two": HarnessAuthAuthenticated}}, nil
@@ -1468,7 +1632,7 @@ func TestAgentProfileRunAuthPoolSkipsMissingDBSlot(t *testing.T) {
 	}
 
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
-	resp := callMethod[AgentProfileRunResponse](t, registry, "agent.profile.run", AgentProfileRunRequest{ProfileDefinition: &AgentProfile{Name: "dynamic", Harness: "test-harness", AuthPool: HarnessAuthPool{SlotIDs: []string{"slot-one", "slot-two"}, Strategy: HarnessAuthPoolFailover}}, Packet: packet})
+	resp := callMethod[AgentProfileRunResponse](t, registry, "profile.run", AgentProfileRunRequest{ProfileDefinition: &AgentProfile{Name: "dynamic", Harness: "test-harness", AuthPool: HarnessAuthPool{SlotIDs: []string{"slot-one", "slot-two"}, Strategy: HarnessAuthPoolFailover}}, Packet: packet})
 	if captured.AuthSlotID != "slot-two" || resp.Run.AuthSlotID != "slot-two" {
 		t.Fatalf("captured request = %#v run = %#v, want failover past missing DB slot", captured, resp.Run)
 	}
@@ -1478,7 +1642,7 @@ func TestAgentProfileRunRejectsUnstoredAuthSlot(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -1489,7 +1653,7 @@ func TestAgentProfileRunRejectsUnstoredAuthSlot(t *testing.T) {
 	}
 	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
 
-	err := callMethodError(registry, "agent.profile.run", AgentProfileRunRequest{ProfileDefinition: &AgentProfile{Name: "dynamic", Harness: "test-harness", AuthSlotID: "missing-slot"}, Packet: ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}})
+	err := callMethodError(registry, "profile.run", AgentProfileRunRequest{ProfileDefinition: &AgentProfile{Name: "dynamic", Harness: "test-harness", AuthSlotID: "missing-slot"}, Packet: ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}})
 	data := requireHandlerErrorData(t, err)
 	if data["reason"] != "unknown_auth_slot" || data["start_invoked"] != false {
 		t.Fatalf("error data = %#v, want unknown_auth_slot before start", data)
@@ -1505,7 +1669,7 @@ func TestAgentProfileRunRejectsMissingHarness(t *testing.T) {
 	}
 	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
 
-	err := callMethodError(registry, "agent.profile.run", AgentProfileRunRequest{ProfileDefinition: &AgentProfile{Name: "dynamic"}, Packet: ContextPacket{ID: "ctx", WorkspaceID: "ws-1", TaskID: "task"}})
+	err := callMethodError(registry, "profile.run", AgentProfileRunRequest{ProfileDefinition: &AgentProfile{Name: "dynamic"}, Packet: ContextPacket{ID: "ctx", WorkspaceID: "ws-1", TaskID: "task"}})
 	data := requireHandlerErrorData(t, err)
 	if data["reason"] != "missing_harness" || data["start_invoked"] != false {
 		t.Fatalf("error data = %#v, want missing harness data", data)
@@ -1521,7 +1685,7 @@ func TestAgentProfileRunRejectsAmbiguousProfileInput(t *testing.T) {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
-	err := callMethodError(registry, "agent.profile.run", AgentProfileRunRequest{Profile: "stored", ProfileDefinition: &AgentProfile{Name: "other"}, Packet: ContextPacket{ID: "ctx", WorkspaceID: "ws", TaskID: "task"}})
+	err := callMethodError(registry, "profile.run", AgentProfileRunRequest{Profile: "stored", ProfileDefinition: &AgentProfile{Name: "other"}, Packet: ContextPacket{ID: "ctx", WorkspaceID: "ws", TaskID: "task"}})
 	data := requireHandlerErrorData(t, err)
 	if data["reason"] != "ambiguous_profile" || data["start_invoked"] != false {
 		t.Fatalf("error data = %#v, want ambiguous profile data", data)
@@ -1537,7 +1701,7 @@ func TestAgentProfileRunRejectsSameNameAmbiguousProfileInput(t *testing.T) {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
-	err := callMethodError(registry, "agent.profile.run", AgentProfileRunRequest{Profile: "stored", ProfileDefinition: &AgentProfile{Name: "stored", Harness: "other"}, Packet: ContextPacket{ID: "ctx", WorkspaceID: "ws", TaskID: "task"}})
+	err := callMethodError(registry, "profile.run", AgentProfileRunRequest{Profile: "stored", ProfileDefinition: &AgentProfile{Name: "stored", Harness: "other"}, Packet: ContextPacket{ID: "ctx", WorkspaceID: "ws", TaskID: "task"}})
 	data := requireHandlerErrorData(t, err)
 	if data["reason"] != "ambiguous_profile" || data["start_invoked"] != false {
 		t.Fatalf("error data = %#v, want same-name ambiguous profile data", data)
@@ -1552,7 +1716,7 @@ func TestAgentProfileRunReturnsUnknownProfileData(t *testing.T) {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
-	err := callMethodError(registry, "agent.profile.run", AgentProfileRunRequest{Profile: "missing", Packet: ContextPacket{ID: "ctx", WorkspaceID: "ws", TaskID: "task"}})
+	err := callMethodError(registry, "profile.run", AgentProfileRunRequest{Profile: "missing", Packet: ContextPacket{ID: "ctx", WorkspaceID: "ws", TaskID: "task"}})
 	data := requireHandlerErrorData(t, err)
 	if data["profile"] != "missing" || data["reason"] != "unknown_profile" || data["start_invoked"] != false {
 		t.Fatalf("error data = %#v, want unknown profile data", data)
@@ -1569,7 +1733,7 @@ func TestAgentProfileRunReturnsUnknownHarnessData(t *testing.T) {
 	}
 	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
 
-	err := callMethodError(registry, "agent.profile.run", AgentProfileRunRequest{Profile: "executor", Packet: ContextPacket{ID: "ctx", WorkspaceID: "ws-1", TaskID: "task"}})
+	err := callMethodError(registry, "profile.run", AgentProfileRunRequest{Profile: "executor", Packet: ContextPacket{ID: "ctx", WorkspaceID: "ws-1", TaskID: "task"}})
 	data := requireHandlerErrorData(t, err)
 	if data["harness"] != "missing-harness" || data["reason"] != "unknown_harness" || data["start_invoked"] != false {
 		t.Fatalf("error data = %#v, want unknown harness data", data)
@@ -1580,11 +1744,11 @@ func TestAgentProfileRunReturnsUnavailableHarnessData(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("missing-binary", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("missing-binary", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
-		return nil, &HarnessUnavailableError{Harness: "missing-binary", Reason: "missing_executable", Executable: "missing-binary", Probe: "missing-binary --version", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
+		return nil, &HarnessUnavailableError{Harness: "missing-binary", Reason: "missing_executable", Executable: "missing-binary", Probe: "missing-binary --version", RequiredCapability: HarnessCapabilityAgentSessionFromContext, StartInvoked: false}
 	})
 	d.setAgentProfileForTest(AgentProfile{Name: "executor", Harness: "missing-binary", InvocationClass: HarnessInvocationAgent})
 	if err := d.registerMethods(registry, store); err != nil {
@@ -1592,9 +1756,9 @@ func TestAgentProfileRunReturnsUnavailableHarnessData(t *testing.T) {
 	}
 	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
 
-	err := callMethodError(registry, "agent.profile.run", AgentProfileRunRequest{Profile: "executor", Packet: ContextPacket{ID: "ctx", WorkspaceID: "ws-1", TaskID: "task"}})
+	err := callMethodError(registry, "profile.run", AgentProfileRunRequest{Profile: "executor", Packet: ContextPacket{ID: "ctx", WorkspaceID: "ws-1", TaskID: "task"}})
 	data := requireHandlerErrorData(t, err)
-	if data["harness"] != "missing-binary" || data["reason"] != "missing_executable" || data["executable"] != "missing-binary" || data["probe"] != "missing-binary --version" || data["required_capability"] != string(HarnessCapabilityAgentRunFromContext) || data["start_invoked"] != false {
+	if data["harness"] != "missing-binary" || data["reason"] != "missing_executable" || data["executable"] != "missing-binary" || data["probe"] != "missing-binary --version" || data["required_capability"] != string(HarnessCapabilityAgentSessionFromContext) || data["start_invoked"] != false {
 		t.Fatalf("error data = %#v, want unavailable harness data", data)
 	}
 }
@@ -1608,18 +1772,18 @@ func TestAgentProfileRunHasNoDefaultProfiles(t *testing.T) {
 	}
 	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
 
-	err := callMethodError(registry, "agent.profile.run", AgentProfileRunRequest{Profile: "plan", Packet: ContextPacket{ID: "ctx", WorkspaceID: "ws-1", TaskID: "task"}})
+	err := callMethodError(registry, "profile.run", AgentProfileRunRequest{Profile: "plan", Packet: ContextPacket{ID: "ctx", WorkspaceID: "ws-1", TaskID: "task"}})
 	data := requireHandlerErrorData(t, err)
 	if data["profile"] != "plan" || data["reason"] != "unknown_profile" || data["start_invoked"] != false {
 		t.Fatalf("error data = %#v, want no default profile data", data)
 	}
 }
 
-func TestAgentRunReturnsUnsupportedCapabilitiesData(t *testing.T) {
+func TestAgentSessionReturnsUnsupportedCapabilitiesData(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("limited", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("limited", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -1630,20 +1794,20 @@ func TestAgentRunReturnsUnsupportedCapabilitiesData(t *testing.T) {
 	}
 	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
 
-	err := callMethodError(registry, "agent.run", AgentRunStartRequest{Executor: "limited", Packet: ContextPacket{ID: "ctx", WorkspaceID: "ws-1", TaskID: "task"}})
+	err := callMethodError(registry, "agent.run", AgentSessionStartRequest{Executor: "limited", Packet: ContextPacket{ID: "ctx", WorkspaceID: "ws-1", TaskID: "task"}})
 	data := requireHandlerErrorData(t, err)
 	capabilities, ok := data["unsupported_capabilities"].([]string)
-	wantCapabilities := string(HarnessCapabilityAgentRunFromContext) + "," + string(HarnessCapabilityTimelineItems)
+	wantCapabilities := string(HarnessCapabilityAgentSessionFromContext) + "," + string(HarnessCapabilityTimelineItems)
 	if !ok || strings.Join(capabilities, ",") != wantCapabilities || data["start_invoked"] != false {
 		t.Fatalf("error data = %#v, want unsupported capabilities data", data)
 	}
 }
 
-func TestAgentRunReturnsInvalidParamsForMissingPacketID(t *testing.T) {
+func TestAgentSessionReturnsInvalidParamsForMissingPacketID(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = primaryFolder
 		_ = sink
 		return newFakeHarness(req.Executor, []TimelineItem{{Kind: "agent_text", Text: "done"}}), nil
@@ -1653,7 +1817,7 @@ func TestAgentRunReturnsInvalidParamsForMissingPacketID(t *testing.T) {
 	}
 	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
 
-	err := callMethodError(registry, "agent.run", AgentRunStartRequest{Executor: "test-harness", Packet: ContextPacket{WorkspaceID: "ws-1", TaskID: "task"}})
+	err := callMethodError(registry, "agent.run", AgentSessionStartRequest{Executor: "test-harness", Packet: ContextPacket{WorkspaceID: "ws-1", TaskID: "task"}})
 	handlerErr, ok := err.(*rpc.HandlerError)
 	if !ok || handlerErr.Code != rpc.InvalidParams {
 		t.Fatalf("error = %T %[1]v, want InvalidParams HandlerError", err)
@@ -1664,7 +1828,7 @@ func TestAgentRunReturnsInvalidParamsForMissingPacketID(t *testing.T) {
 	}
 }
 
-func TestAgentRunReturnsInvalidParamsForMissingPTYCommand(t *testing.T) {
+func TestAgentSessionReturnsInvalidParamsForMissingPTYCommand(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
@@ -1673,7 +1837,7 @@ func TestAgentRunReturnsInvalidParamsForMissingPTYCommand(t *testing.T) {
 	}
 	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
 
-	err := callMethodError(registry, "agent.run", AgentRunStartRequest{Executor: HarnessNamePTY, Packet: ContextPacket{ID: "ctx", WorkspaceID: "ws-1", TaskID: "task"}})
+	err := callMethodError(registry, "agent.run", AgentSessionStartRequest{Executor: HarnessNamePTY, Packet: ContextPacket{ID: "ctx", WorkspaceID: "ws-1", TaskID: "task"}})
 	handlerErr, ok := err.(*rpc.HandlerError)
 	if !ok || handlerErr.Code != rpc.InvalidParams {
 		t.Fatalf("error = %T %[1]v, want InvalidParams HandlerError", err)
@@ -1688,7 +1852,7 @@ func TestAgentProfileRunReturnsUnsupportedCapabilitiesData(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("limited", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("limited", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -1700,16 +1864,16 @@ func TestAgentProfileRunReturnsUnsupportedCapabilitiesData(t *testing.T) {
 	}
 	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
 
-	err := callMethodError(registry, "agent.profile.run", AgentProfileRunRequest{Profile: "executor", Packet: ContextPacket{ID: "ctx", WorkspaceID: "ws-1", TaskID: "task"}})
+	err := callMethodError(registry, "profile.run", AgentProfileRunRequest{Profile: "executor", Packet: ContextPacket{ID: "ctx", WorkspaceID: "ws-1", TaskID: "task"}})
 	data := requireHandlerErrorData(t, err)
 	capabilities, ok := data["unsupported_capabilities"].([]string)
-	wantCapabilities := string(HarnessCapabilityAgentRunFromContext) + "," + string(HarnessCapabilityTimelineItems)
+	wantCapabilities := string(HarnessCapabilityAgentSessionFromContext) + "," + string(HarnessCapabilityTimelineItems)
 	if !ok || strings.Join(capabilities, ",") != wantCapabilities || data["start_invoked"] != false {
 		t.Fatalf("error data = %#v, want profile unsupported capabilities data", data)
 	}
 }
 
-func TestAgentRunMethodStartsPTYExecutorFromContextPacket(t *testing.T) {
+func TestAgentSessionMethodStartsPTYExecutorFromContextPacket(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
@@ -1720,7 +1884,7 @@ func TestAgentRunMethodStartsPTYExecutorFromContextPacket(t *testing.T) {
 
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 	start := time.Now()
-	resp := callMethod[AgentRunStartResponse](t, registry, "agent.run", AgentRunStartRequest{
+	resp := callMethod[AgentSessionStartResponse](t, registry, "agent.run", AgentSessionStartRequest{
 		Executor: "pty",
 		Packet:   packet,
 		Command:  "/bin/sh",
@@ -1739,7 +1903,10 @@ func TestAgentRunMethodStartsPTYExecutorFromContextPacket(t *testing.T) {
 	for time.Now().Before(deadline) {
 		timeline := callMethod[WorkspaceTimelineResponse](t, registry, "workspace.timeline", WorkspaceTimelineRequest{WorkspaceID: "ws-1"})
 		for _, item := range timeline.Items {
-			if item.RunID == resp.Run.AgentRunID && item.Kind == "terminal_output" && item.Text == "done" {
+			if item.SessionID == resp.Run.AgentSessionID && item.Kind == "run_log_message" && item.Text == "done" {
+				if item.ID != resp.Run.AgentSessionID+":output" {
+					t.Fatalf("pty output timeline item id = %q, want Ari session scoped output id", item.ID)
+				}
 				activity := callMethod[WorkspaceActivityResponse](t, registry, "workspace.activity", WorkspaceActivityRequest{WorkspaceID: "ws-1"})
 				if len(activity.Agents) != 1 || activity.Agents[0].Status != "completed" {
 					t.Fatalf("activity agents = %#v, want completed pty run after output", activity.Agents)
@@ -1749,14 +1916,14 @@ func TestAgentRunMethodStartsPTYExecutorFromContextPacket(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("workspace.timeline did not persist pty output for run %s", resp.Run.AgentRunID)
+	t.Fatalf("workspace.timeline did not persist pty output for run %s", resp.Run.AgentSessionID)
 }
 
 func TestRecordExecutorRunPreservesBufferedSinkItems(t *testing.T) {
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.appendExecutorItems("run-1", []TimelineItem{{ID: "run-1:output", WorkspaceID: "ws-1", RunID: "run-1", SourceKind: "executor", SourceID: "run-1", Kind: "terminal_output", Status: "completed", Text: "done"}})
+	d.appendExecutorItems("run-1", []TimelineItem{{ID: "run-1:output", WorkspaceID: "ws-1", SessionID: "run-1", SourceKind: "executor", SourceID: "run-1", Kind: "terminal_output", Status: "completed", Text: "done"}})
 
-	d.recordExecutorRun(AgentRun{AgentRunID: "run-1", WorkspaceID: "ws-1", Status: "running", Executor: "pty"}, []TimelineItem{{ID: "run-1:lifecycle", WorkspaceID: "ws-1", RunID: "run-1", SourceKind: "executor", SourceID: "run-1", Kind: "lifecycle", Status: "running", Text: "pty"}})
+	d.recordExecutorRun(AgentSession{AgentSessionID: "run-1", WorkspaceID: "ws-1", Status: "running", Executor: "pty"}, []TimelineItem{{ID: "run-1:lifecycle", WorkspaceID: "ws-1", SessionID: "run-1", SourceKind: "executor", SourceID: "run-1", Kind: "lifecycle", Status: "running", Text: "pty"}})
 
 	items := d.executorTimelineItems("ws-1")
 	if len(items) != 2 {
@@ -1781,7 +1948,7 @@ func TestExecutorRunStatusFailureTakesPrecedence(t *testing.T) {
 	}
 }
 
-func TestAgentRunMethodMarksPTYFailureFromExitCode(t *testing.T) {
+func TestAgentSessionMethodMarksPTYFailureFromExitCode(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
@@ -1791,7 +1958,7 @@ func TestAgentRunMethodMarksPTYFailureFromExitCode(t *testing.T) {
 	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
 
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
-	resp := callMethod[AgentRunStartResponse](t, registry, "agent.run", AgentRunStartRequest{
+	resp := callMethod[AgentSessionStartResponse](t, registry, "agent.run", AgentSessionStartRequest{
 		Executor: "pty",
 		Packet:   packet,
 		Command:  "/bin/sh",
@@ -1800,10 +1967,10 @@ func TestAgentRunMethodMarksPTYFailureFromExitCode(t *testing.T) {
 	deadline := time.Now().Add(boundedTestTimeout(t, 5*time.Second))
 	for time.Now().Before(deadline) {
 		activity := callMethod[WorkspaceActivityResponse](t, registry, "workspace.activity", WorkspaceActivityRequest{WorkspaceID: "ws-1"})
-		if len(activity.Agents) == 1 && activity.Agents[0].ID == resp.Run.AgentRunID && activity.Agents[0].Status == "failed" {
+		if len(activity.Agents) == 1 && activity.Agents[0].ID == resp.Run.AgentSessionID && activity.Agents[0].Status == "failed" {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("workspace.activity did not mark failed pty run %s as failed", resp.Run.AgentRunID)
+	t.Fatalf("workspace.activity did not mark failed pty run %s as failed", resp.Run.AgentSessionID)
 }

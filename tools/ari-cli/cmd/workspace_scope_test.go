@@ -325,45 +325,6 @@ func TestResolveWorkspaceFromCWDSkipsStaleWorkspaceEntries(t *testing.T) {
 	}
 }
 
-func TestResolveWorkspaceFromCWDSkipsClosedWorkspaceEntries(t *testing.T) {
-	root := t.TempDir()
-	repo := filepath.Join(root, "work", "clay")
-	if err := os.MkdirAll(repo, 0o755); err != nil {
-		t.Fatalf("os.MkdirAll returned error: %v", err)
-	}
-
-	originalList := workspaceListRPC
-	originalGet := workspaceGetRPC
-	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
-		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{
-			{WorkspaceID: "ws-closed", Name: "clay"},
-			{WorkspaceID: "ws-active", Name: "clay"},
-		}}, nil
-	}
-	workspaceGetRPC = func(_ context.Context, _ string, workspaceID string) (daemon.WorkspaceGetResponse, error) {
-		switch workspaceID {
-		case "ws-closed":
-			return daemon.WorkspaceGetResponse{WorkspaceID: workspaceID, Name: "clay", Status: "closed", OriginRoot: repo}, nil
-		case "ws-active":
-			return daemon.WorkspaceGetResponse{WorkspaceID: workspaceID, Name: "clay", Status: "active", OriginRoot: repo}, nil
-		default:
-			return daemon.WorkspaceGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "session not found"}
-		}
-	}
-	t.Cleanup(func() {
-		workspaceListRPC = originalList
-		workspaceGetRPC = originalGet
-	})
-
-	workspace, err := resolveWorkspaceFromCWD(context.Background(), "/tmp/daemon.sock", repo)
-	if err != nil {
-		t.Fatalf("resolveWorkspaceFromCWD returned error: %v", err)
-	}
-	if workspace.WorkspaceID != "ws-active" {
-		t.Fatalf("workspaceID = %q, want ws-active", workspace.WorkspaceID)
-	}
-}
-
 func TestResolveWorkspaceFromCWDMapsRPCInvalidParams(t *testing.T) {
 	originalList := workspaceListRPC
 	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {

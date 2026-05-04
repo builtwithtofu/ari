@@ -4,7 +4,7 @@ import "testing"
 
 func TestHarnessRegistryRejectsInvalidRegistration(t *testing.T) {
 	registry := NewHarnessRegistry()
-	if err := registry.Register("", func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	if err := registry.Register("", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		return nil, nil
 	}); err == nil {
 		t.Fatal("Register returned nil error for empty name")
@@ -16,7 +16,7 @@ func TestHarnessRegistryRejectsInvalidRegistration(t *testing.T) {
 
 func TestHarnessRegistryRejectsDuplicateRegistration(t *testing.T) {
 	registry := NewHarnessRegistry()
-	factory := func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	factory := func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		return nil, nil
 	}
 	if err := registry.Register("test", factory); err != nil {
@@ -36,7 +36,7 @@ func TestHarnessRegistryResolveUnknownHarness(t *testing.T) {
 
 func TestHarnessRegistryReplaceForTestAllowsInjection(t *testing.T) {
 	registry := NewHarnessRegistry()
-	factory := func(req AgentRunStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	factory := func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		return nil, nil
 	}
 	if err := registry.ReplaceForTest("test", factory); err != nil {

@@ -246,7 +246,6 @@ func newWorkspaceCommandRemoveCmd() *cobra.Command {
 
 func newWorkspaceCommandRunCmd() *cobra.Command {
 	var workspaceRef string
-	var agentSelector string
 	cmd := &cobra.Command{
 		Use:   "run <id-or-name>",
 		Short: "Run a workspace command definition",
@@ -276,11 +275,10 @@ func newWorkspaceCommandRunCmd() *cobra.Command {
 				return mapCommandRPCError(err)
 			}
 
-			return runOneOffCommandAndForwardOutput(cmd, cfg, target.WorkspaceID, definition.Command, definition.Args, agentSelector)
+			return runOneOffCommand(cmd, cfg, target.WorkspaceID, definition.Command, definition.Args)
 		},
 	}
 	cmd.Flags().StringVar(&workspaceRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
-	cmd.Flags().StringVar(&agentSelector, "agent", "0", "Target agent id/name/index for output forwarding (defaults to 0)")
 	return cmd
 }
 

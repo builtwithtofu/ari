@@ -6,7 +6,7 @@ import (
 )
 
 func TestAgentRunTelemetryRollupPreservesUnknownTokens(t *testing.T) {
-	store := newMigratedGlobalDBStore(t, "telemetry-rollup")
+	store := newGlobalDBTestStore(t, "telemetry-rollup")
 	ctx := context.Background()
 	if err := store.CreateSession(ctx, "ws-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)

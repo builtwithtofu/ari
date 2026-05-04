@@ -206,11 +206,14 @@ func resumeActionsForActivity(activity WorkspaceActivityResponse) []ResumeAction
 		if agent.Status != "running" {
 			continue
 		}
+		if agent.Usage == "ephemeral" {
+			continue
+		}
 		label := strings.TrimSpace(agent.Name)
 		if label == "" {
 			label = strings.TrimSpace(agent.Executor)
 		}
-		actions = append(actions, ResumeAction{ID: "resume:agent:" + agent.ID, Kind: "attach_agent", WorkspaceID: activity.WorkspaceID, SourceID: agent.ID, Label: label})
+		actions = append(actions, ResumeAction{ID: "resume:session:" + agent.ID, Kind: "resume_session", WorkspaceID: activity.WorkspaceID, SourceID: agent.ID, Label: label})
 	}
 	return actions
 }
@@ -308,9 +311,6 @@ func setActiveWorkspaceContext(ctx context.Context, store *globaldb.Store, req C
 	if err != nil {
 		return ContextSetResponse{}, mapWorkspaceStoreError(err, workspaceID)
 	}
-	if strings.EqualFold(strings.TrimSpace(workspace.Status), "closed") {
-		return ContextSetResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace is closed", map[string]any{"reason": "workspace_closed", "workspace_id": workspace.ID})
-	}
 	previous, err := readActiveWorkspaceContext(ctx, store)
 	if err != nil {
 		return ContextSetResponse{}, err
@@ -325,21 +325,6 @@ func setActiveWorkspaceContext(ctx context.Context, store *globaldb.Store, req C
 		return ContextSetResponse{}, err
 	}
 	return ContextSetResponse{Previous: previous, Current: current}, nil
-}
-
-func clearActiveWorkspaceContextIfMatches(ctx context.Context, store *globaldb.Store, workspaceID string) error {
-	workspaceID = strings.TrimSpace(workspaceID)
-	if workspaceID == "" {
-		return nil
-	}
-	current, err := readActiveWorkspaceContext(ctx, store)
-	if err != nil {
-		return err
-	}
-	if current.WorkspaceID != workspaceID {
-		return nil
-	}
-	return store.SetMeta(ctx, activeContextMetaKey, `{}`)
 }
 
 func readActiveWorkspaceContext(ctx context.Context, store *globaldb.Store) (ActiveWorkspaceContext, error) {

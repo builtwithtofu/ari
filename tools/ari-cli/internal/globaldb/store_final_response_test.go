@@ -7,7 +7,7 @@ import (
 )
 
 func TestFinalResponsePersistsAndListsByWorkspace(t *testing.T) {
-	store := newMigratedGlobalDBStore(t, "final-response")
+	store := newGlobalDBTestStore(t, "final-response")
 	ctx := context.Background()
 	if err := store.CreateSession(ctx, "ws-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
@@ -39,7 +39,7 @@ func TestFinalResponsePersistsAndListsByWorkspace(t *testing.T) {
 }
 
 func TestFinalResponseRejectsInvalidInput(t *testing.T) {
-	store := newMigratedGlobalDBStore(t, "final-response-invalid")
+	store := newGlobalDBTestStore(t, "final-response-invalid")
 	err := store.UpsertFinalResponse(context.Background(), FinalResponse{FinalResponseID: "fr_1", RunID: "run_1", WorkspaceID: "ws-1", TaskID: "task-1", ContextPacketID: "ctx_1", Status: "complete", Text: "Done", EvidenceLinksJSON: `[]`})
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("UpsertFinalResponse error = %v, want ErrInvalidInput", err)

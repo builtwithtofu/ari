@@ -73,14 +73,6 @@ type WorkspaceGetResponse struct {
 	Folders       []WorkspaceFolderInfo `json:"folders"`
 }
 
-type WorkspaceCloseRequest struct {
-	WorkspaceID string `json:"workspace_id"`
-}
-
-type WorkspaceCloseResponse struct {
-	Status string `json:"status"`
-}
-
 type WorkspaceSuspendRequest struct {
 	WorkspaceID string `json:"workspace_id"`
 }
@@ -295,26 +287,6 @@ func (d *Daemon) registerWorkspaceMethods(registry *rpc.MethodRegistry, store *g
 		return fmt.Errorf("register workspace.get: %w", err)
 	}
 
-	if err := rpc.RegisterMethod(registry, rpc.Method[WorkspaceCloseRequest, WorkspaceCloseResponse]{
-		Name:        "workspace.close",
-		Description: "Close a workspace",
-		Handler: func(ctx context.Context, req WorkspaceCloseRequest) (WorkspaceCloseResponse, error) {
-			sessionID := strings.TrimSpace(req.WorkspaceID)
-			if sessionID == "" {
-				return WorkspaceCloseResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
-			}
-			if err := store.UpdateSessionStatus(ctx, sessionID, "closed"); err != nil {
-				return WorkspaceCloseResponse{}, mapWorkspaceStoreError(err, sessionID)
-			}
-			if err := clearActiveWorkspaceContextIfMatches(ctx, store, sessionID); err != nil {
-				return WorkspaceCloseResponse{}, err
-			}
-			return WorkspaceCloseResponse{Status: "closed"}, nil
-		},
-	}); err != nil {
-		return fmt.Errorf("register workspace.close: %w", err)
-	}
-
 	if err := rpc.RegisterMethod(registry, rpc.Method[WorkspaceSuspendRequest, WorkspaceSuspendResponse]{
 		Name:        "workspace.suspend",
 		Description: "Suspend a workspace",
@@ -415,9 +387,6 @@ func (d *Daemon) registerWorkspaceMethods(registry *rpc.MethodRegistry, store *g
 func mapWorkspaceStoreError(err error, sessionID string) error {
 	if errors.Is(err, globaldb.ErrNotFound) {
 		return rpc.NewHandlerError(rpc.SessionNotFound, "workspace not found", sessionID)
-	}
-	if errors.Is(err, globaldb.ErrSessionClosed) {
-		return rpc.NewHandlerError(rpc.InvalidParams, "workspace is closed", sessionID)
 	}
 	if errors.Is(err, globaldb.ErrLastFolder) {
 		return rpc.NewHandlerError(rpc.InvalidParams, "cannot remove last folder", sessionID)

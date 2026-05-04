@@ -159,12 +159,8 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 			if sessionID == "" {
 				return CommandRunResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
 			}
-			session, err := store.GetSession(ctx, sessionID)
-			if err != nil {
+			if _, err := store.GetSession(ctx, sessionID); err != nil {
 				return CommandRunResponse{}, mapWorkspaceStoreError(err, sessionID)
-			}
-			if session.Status == "closed" {
-				return CommandRunResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace is closed", sessionID)
 			}
 			command := strings.TrimSpace(req.Command)
 			if command == "" {

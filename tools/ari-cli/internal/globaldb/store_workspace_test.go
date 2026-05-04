@@ -81,6 +81,19 @@ func TestSessionCreateRejectsInvalidVCSPreference(t *testing.T) {
 	}
 }
 
+func TestSessionCreateRejectsRemovedCleanupPolicy(t *testing.T) {
+	store := newSessionTestStore(t)
+	ctx := context.Background()
+
+	err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "on_close", "auto")
+	if err == nil {
+		t.Fatal("CreateSession returned nil error for removed cleanup policy")
+	}
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("CreateSession error = %v, want ErrInvalidInput", err)
+	}
+}
+
 func TestSessionStatusTransitions(t *testing.T) {
 	store := newSessionTestStore(t)
 	ctx := context.Background()
@@ -91,15 +104,13 @@ func TestSessionStatusTransitions(t *testing.T) {
 	}
 
 	tests := []struct {
-		name       string
-		toStatus   string
-		wantErr    bool
-		wantClosed bool
+		name     string
+		toStatus string
+		wantErr  bool
 	}{
 		{name: "active to suspended", toStatus: "suspended"},
 		{name: "suspended to active", toStatus: "active"},
-		{name: "active to closed", toStatus: "closed", wantClosed: true},
-		{name: "closed to active rejected", toStatus: "active", wantErr: true},
+		{name: "invalid status rejected", toStatus: "closed", wantErr: true},
 	}
 
 	for _, tc := range tests {
@@ -109,8 +120,8 @@ func TestSessionStatusTransitions(t *testing.T) {
 				if err == nil {
 					t.Fatalf("UpdateSessionStatus returned nil error, want error")
 				}
-				if !errors.Is(err, ErrSessionClosed) {
-					t.Fatalf("UpdateSessionStatus error = %v, want ErrSessionClosed", err)
+				if !errors.Is(err, ErrInvalidInput) {
+					t.Fatalf("UpdateSessionStatus error = %v, want ErrInvalidInput", err)
 				}
 				return
 			}
@@ -186,19 +197,6 @@ func TestSessionFolderOperationsAndGuards(t *testing.T) {
 	if !errors.Is(err, ErrLastFolder) {
 		t.Fatalf("RemoveFolder error = %v, want ErrLastFolder", err)
 	}
-
-	err = store.UpdateSessionStatus(ctx, "sess-1", "closed")
-	if err != nil {
-		t.Fatalf("UpdateSessionStatus returned error: %v", err)
-	}
-
-	err = store.AddFolder(ctx, "sess-1", "/tmp/repo-c", "git", false)
-	if err == nil {
-		t.Fatal("AddFolder returned nil error for closed session")
-	}
-	if !errors.Is(err, ErrSessionClosed) {
-		t.Fatalf("AddFolder error = %v, want ErrSessionClosed", err)
-	}
 }
 
 func TestAddFolderRejectsFolderAlreadyOwnedByAnotherWorkspace(t *testing.T) {
@@ -224,61 +222,7 @@ func TestAddFolderRejectsFolderAlreadyOwnedByAnotherWorkspace(t *testing.T) {
 	}
 }
 
-func TestAddFolderRejectsAnyActiveHistoricalOwner(t *testing.T) {
-	store := newSessionTestStore(t)
-	ctx := context.Background()
-
-	if err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin-a", "manual", "auto"); err != nil {
-		t.Fatalf("CreateSession sess-1 returned error: %v", err)
-	}
-	if err := store.CreateSession(ctx, "sess-2", "beta", "/tmp/origin-b", "manual", "auto"); err != nil {
-		t.Fatalf("CreateSession sess-2 returned error: %v", err)
-	}
-	if err := store.CreateSession(ctx, "sess-3", "gamma", "/tmp/origin-c", "manual", "auto"); err != nil {
-		t.Fatalf("CreateSession sess-3 returned error: %v", err)
-	}
-	if err := store.UpdateSessionStatus(ctx, "sess-1", statusClosed); err != nil {
-		t.Fatalf("UpdateSessionStatus returned error: %v", err)
-	}
-	if err := store.sqlcQueries().CreateWorkspaceFolder(ctx, dbsqlc.CreateWorkspaceFolderParams{WorkspaceID: "sess-1", FolderPath: "/tmp/repo-a", VcsType: "git", IsPrimary: 1, AddedAt: time.Now().UTC().Format(time.RFC3339Nano)}); err != nil {
-		t.Fatalf("direct closed owner insert returned error: %v", err)
-	}
-	if err := store.sqlcQueries().CreateWorkspaceFolder(ctx, dbsqlc.CreateWorkspaceFolderParams{WorkspaceID: "sess-2", FolderPath: "/tmp/repo-a", VcsType: "git", IsPrimary: 1, AddedAt: time.Now().UTC().Format(time.RFC3339Nano)}); err != nil {
-		t.Fatalf("direct active owner insert returned error: %v", err)
-	}
-
-	err := store.AddFolder(ctx, "sess-3", "/tmp/repo-a", "git", true)
-	if err == nil {
-		t.Fatal("AddFolder returned nil error with an active historical owner")
-	}
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("AddFolder error = %v, want ErrInvalidInput", err)
-	}
-}
-
-func TestAddFolderAllowsReuseFromClosedWorkspace(t *testing.T) {
-	store := newSessionTestStore(t)
-	ctx := context.Background()
-
-	if err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin-a", "manual", "auto"); err != nil {
-		t.Fatalf("CreateSession sess-1 returned error: %v", err)
-	}
-	if err := store.CreateSession(ctx, "sess-2", "beta", "/tmp/origin-b", "manual", "auto"); err != nil {
-		t.Fatalf("CreateSession sess-2 returned error: %v", err)
-	}
-	if err := store.AddFolder(ctx, "sess-1", "/tmp/repo-a", "git", true); err != nil {
-		t.Fatalf("AddFolder sess-1 returned error: %v", err)
-	}
-	if err := store.UpdateSessionStatus(ctx, "sess-1", statusClosed); err != nil {
-		t.Fatalf("UpdateSessionStatus returned error: %v", err)
-	}
-
-	if err := store.AddFolder(ctx, "sess-2", "/tmp/repo-a", "git", true); err != nil {
-		t.Fatalf("AddFolder should allow closed workspace folder reuse, got: %v", err)
-	}
-}
-
-func TestWorkspaceFolderPathMigrationAllowsHistoricalDuplicates(t *testing.T) {
+func TestWorkspaceFolderPathAllowsHistoricalDuplicates(t *testing.T) {
 	store := newSessionTestStore(t)
 	ctx := context.Background()
 
@@ -401,29 +345,6 @@ func TestAddFolderPrimaryDemotesExistingPrimary(t *testing.T) {
 	}
 }
 
-func TestUpdateSessionStatusRejectsClosedToClosed(t *testing.T) {
-	store := newSessionTestStore(t)
-	ctx := context.Background()
-
-	err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto")
-	if err != nil {
-		t.Fatalf("CreateSession returned error: %v", err)
-	}
-
-	err = store.UpdateSessionStatus(ctx, "sess-1", "closed")
-	if err != nil {
-		t.Fatalf("UpdateSessionStatus close returned error: %v", err)
-	}
-
-	err = store.UpdateSessionStatus(ctx, "sess-1", "closed")
-	if err == nil {
-		t.Fatal("UpdateSessionStatus returned nil error for closed->closed")
-	}
-	if !errors.Is(err, ErrSessionClosed) {
-		t.Fatalf("UpdateSessionStatus error = %v, want ErrSessionClosed", err)
-	}
-}
-
 func TestConcurrentRemoveFolderKeepsOneFolder(t *testing.T) {
 	store := newSessionTestStore(t)
 	ctx := context.Background()
@@ -464,5 +385,5 @@ func TestConcurrentRemoveFolderKeepsOneFolder(t *testing.T) {
 }
 
 func newSessionTestStore(t *testing.T) *Store {
-	return newMigratedGlobalDBStore(t, "workspace-store")
+	return newGlobalDBTestStore(t, "workspace-store")
 }

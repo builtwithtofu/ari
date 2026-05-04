@@ -88,13 +88,13 @@ func (e *OpenCodeExecutor) AuthLogout(ctx context.Context, slot HarnessAuthSlot)
 		return HarnessAuthStatus{}, err
 	}
 	if result.ExitCode != nil && *result.ExitCode != 0 {
-		return HarnessAuthStatus{}, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "auth_logout_failed", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: true}
+		return HarnessAuthStatus{}, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "auth_logout_failed", RequiredCapability: HarnessCapabilityAgentSessionFromContext, StartInvoked: true}
 	}
 	return NewHarnessAuthRequired(HarnessNameOpenCode, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, Method: "provider_login", SecretOwnedBy: HarnessNameOpenCode}), nil
 }
 
 func (e *OpenCodeExecutor) Descriptor() HarnessAdapterDescriptor {
-	return HarnessAdapterDescriptor{Name: HarnessNameOpenCode, Capabilities: []HarnessCapability{HarnessCapabilityAgentRunFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems, HarnessCapabilityFinalResponse, HarnessCapabilityMeasuredTokenTelemetry}}
+	return HarnessAdapterDescriptor{Name: HarnessNameOpenCode, Capabilities: []HarnessCapability{HarnessCapabilityAgentSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems, HarnessCapabilityFinalResponse, HarnessCapabilityMeasuredTokenTelemetry}}
 }
 
 func (e *OpenCodeExecutor) Start(ctx context.Context, req ExecutorStartRequest) (ExecutorRun, error) {
@@ -105,7 +105,7 @@ func (e *OpenCodeExecutor) Start(ctx context.Context, req ExecutorStartRequest) 
 		return ExecutorRun{}, fmt.Errorf("executor is required")
 	}
 	if !authSlotIsDefaultForHarness(HarnessNameOpenCode, req.AuthSlotID) {
-		return ExecutorRun{}, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "auth_slot_selection_unsupported", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
+		return ExecutorRun{}, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "auth_slot_selection_unsupported", RequiredCapability: HarnessCapabilityAgentSessionFromContext, StartInvoked: false}
 	}
 	workspaceID := strings.TrimSpace(req.WorkspaceID)
 	if workspaceID == "" {
@@ -131,7 +131,7 @@ func (e *OpenCodeExecutor) Start(ctx context.Context, req ExecutorStartRequest) 
 	e.mu.Lock()
 	e.runs[parsed.SessionID] = items
 	e.mu.Unlock()
-	return ExecutorRun{RunID: parsed.SessionID, Executor: HarnessNameOpenCode, ProviderRunID: parsed.SessionID, ExitCode: commandResult.ExitCode, ProcessSample: commandResult.ProcessSample, CapabilityNames: harnessCapabilitiesToStrings(e.Descriptor().Capabilities)}, nil
+	return ExecutorRun{RunID: parsed.SessionID, SessionID: parsed.SessionID, Executor: HarnessNameOpenCode, ProviderSessionID: parsed.SessionID, ProviderRunID: parsed.SessionID, ExitCode: commandResult.ExitCode, ProcessSample: commandResult.ProcessSample, CapabilityNames: harnessCapabilitiesToStrings(e.Descriptor().Capabilities)}, nil
 }
 
 func (e *OpenCodeExecutor) Items(ctx context.Context, runID string) ([]TimelineItem, error) {
@@ -272,7 +272,7 @@ func runOpenCodeCommand(ctx context.Context, options opencodeExecutorOptions, pr
 	}
 	path, err := exec.LookPath(executable)
 	if err != nil {
-		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
+		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityAgentSessionFromContext, StartInvoked: false}
 	}
 	cmd := exec.CommandContext(ctx, path, opencodeArgs(options, prompt)...)
 	cmd.Dir = strings.TrimSpace(options.Cwd)
@@ -282,7 +282,7 @@ func runOpenCodeCommand(ctx context.Context, options opencodeExecutorOptions, pr
 	if err := cmd.Start(); err != nil {
 		return commandRunResult{}, err
 	}
-	sample := sampleLinuxProcessMetrics(ctx, AgentRun{PID: cmd.Process.Pid})
+	sample := sampleLinuxProcessMetrics(ctx, AgentSession{PID: cmd.Process.Pid})
 	err = cmd.Wait()
 	exitCode := cmd.ProcessState.ExitCode()
 	if err != nil {
@@ -298,7 +298,7 @@ func runOpenCodeAuthCommand(ctx context.Context, options opencodeExecutorOptions
 	}
 	path, err := exec.LookPath(executable)
 	if err != nil {
-		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: false}
+		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityAgentSessionFromContext, StartInvoked: false}
 	}
 	cmd := exec.CommandContext(ctx, path, args...)
 	cmd.Dir = strings.TrimSpace(options.Cwd)
@@ -306,9 +306,9 @@ func runOpenCodeAuthCommand(ctx context.Context, options opencodeExecutorOptions
 	cmd.Stdout = &output
 	cmd.Stderr = &output
 	if err := cmd.Start(); err != nil {
-		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "start_failed", Executable: executable, Probe: executable + " " + strings.Join(args, " "), RequiredCapability: HarnessCapabilityAgentRunFromContext, StartInvoked: true}
+		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "start_failed", Executable: executable, Probe: executable + " " + strings.Join(args, " "), RequiredCapability: HarnessCapabilityAgentSessionFromContext, StartInvoked: true}
 	}
-	sample := sampleLinuxProcessMetrics(ctx, AgentRun{PID: cmd.Process.Pid})
+	sample := sampleLinuxProcessMetrics(ctx, AgentSession{PID: cmd.Process.Pid})
 	err = cmd.Wait()
 	exitCode := cmd.ProcessState.ExitCode()
 	return commandRunResult{Output: []byte(output.String()), ProcessSample: &sample, ExitCode: &exitCode}, err

@@ -451,56 +451,22 @@ func callMethod[T any](t *testing.T, registry *rpc.MethodRegistry, methodName st
 func newSessionMethodTestStore(t *testing.T) *globaldb.Store {
 	t.Helper()
 
-	db, err := sql.Open("sqlite", "file::memory:?cache=shared")
+	dbPath := filepath.Join(t.TempDir(), "ari.db")
+	if err := applyMigrationSQLFiles(dbPath); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatalf("open sqlite db: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
+		t.Fatalf("set busy timeout: %v", err)
 	}
 	t.Cleanup(func() {
 		_ = db.Close()
 	})
-
-	if _, err := db.Exec(`
-CREATE TABLE workspaces (
-	workspace_id TEXT PRIMARY KEY,
-	name TEXT NOT NULL UNIQUE,
-	status TEXT NOT NULL DEFAULT 'active',
-	vcs_preference TEXT NOT NULL DEFAULT 'auto',
-	origin_root TEXT NOT NULL,
-	cleanup_policy TEXT NOT NULL DEFAULT 'manual',
-	created_at TEXT NOT NULL,
-	updated_at TEXT NOT NULL
-);
-CREATE TABLE workspace_folders (
-	workspace_id TEXT NOT NULL,
-	folder_path TEXT NOT NULL,
-	vcs_type TEXT NOT NULL DEFAULT 'unknown',
-	is_primary INTEGER NOT NULL DEFAULT 0,
-	added_at TEXT NOT NULL,
-	PRIMARY KEY (workspace_id, folder_path),
-	FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
-);
-CREATE TABLE agent_profiles (
-	profile_id TEXT PRIMARY KEY,
-	workspace_id TEXT,
-	name TEXT NOT NULL,
-	harness TEXT,
-	model TEXT,
-	prompt TEXT,
-	auth_slot_id TEXT,
-	auth_pool_json TEXT NOT NULL DEFAULT '{}',
-	invocation_class TEXT,
-	defaults_json TEXT NOT NULL DEFAULT '{}',
-	created_at TEXT NOT NULL,
-	updated_at TEXT NOT NULL,
-	UNIQUE(workspace_id, name),
-	FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
-);
-CREATE UNIQUE INDEX agent_profiles_global_name_idx
-	ON agent_profiles(name)
-	WHERE workspace_id IS NULL;
-`); err != nil {
-		t.Fatalf("create schema: %v", err)
-	}
 
 	store, err := globaldb.NewSQLStore(db)
 	if err != nil {
@@ -513,7 +479,7 @@ CREATE UNIQUE INDEX agent_profiles_global_name_idx
 func newSessionMethodStoreWithoutFolders(t *testing.T) *globaldb.Store {
 	t.Helper()
 
-	db, err := sql.Open("sqlite", "file::memory:?cache=shared")
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "ari.db"))
 	if err != nil {
 		t.Fatalf("open sqlite db: %v", err)
 	}

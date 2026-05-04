@@ -87,12 +87,6 @@ func TestWorkspaceSmokeLifecycleOverRPC(t *testing.T) {
 		t.Fatalf("session.resume status = %q, want %q", resume.Status, "active")
 	}
 
-	closeResp := WorkspaceCloseResponse{}
-	callDaemonMethod(t, socketPath, "workspace.close", WorkspaceCloseRequest{WorkspaceID: create.WorkspaceID}, &closeResp)
-	if closeResp.Status != "closed" {
-		t.Fatalf("session.close status = %q, want %q", closeResp.Status, "closed")
-	}
-
 	cli := client.New(socketPath)
 	missing := WorkspaceGetResponse{}
 	err := cli.Call(context.Background(), "workspace.get", WorkspaceGetRequest{WorkspaceID: "missing"}, &missing)

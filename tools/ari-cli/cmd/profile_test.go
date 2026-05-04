@@ -40,3 +40,16 @@ func TestProfileDefaultsRejectsInvalidInvocationClassBeforeWritingConfig(t *test
 		t.Fatalf("default_harness = %v, want preserved codex", parsed["default_harness"])
 	}
 }
+
+func TestProfileHelpUsesProfileTerminology(t *testing.T) {
+	out, err := executeRootCommand("profile", "--help")
+	if err != nil {
+		t.Fatalf("profile help returned error: %v", err)
+	}
+	if strings.Contains(out, "agent profile") || strings.Contains(out, "agent profiles") {
+		t.Fatalf("profile help = %q, want profile terminology without agent-profile wording", out)
+	}
+	if !strings.Contains(out, "Manage Ari profiles") {
+		t.Fatalf("profile help = %q, want profile help summary", out)
+	}
+}

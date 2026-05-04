@@ -138,7 +138,7 @@ func (d *Daemon) homeWorkspaceInitState(ctx context.Context, store *globaldb.Sto
 		return false, false, err
 	}
 	for _, session := range sessions {
-		if session.Status != "closed" && session.OriginRoot == home {
+		if session.OriginRoot == home {
 			_, helperErr := store.GetDefaultHelperProfile(ctx, session.ID)
 			return true, helperErr == nil, nil
 		}
@@ -157,9 +157,6 @@ func (d *Daemon) ensureHomeWorkspace(ctx context.Context, store *globaldb.Store)
 	}
 	for _, session := range sessions {
 		if session.OriginRoot == home {
-			if session.Status == "closed" {
-				continue
-			}
 			return &session, nil
 		}
 	}

@@ -133,15 +133,15 @@ func finalResponseLookup(cmd *cobra.Command, args []string, runID string) (daemo
 	}
 	ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 	defer cancel()
-	req := daemon.FinalResponseGetRequest{RunID: strings.TrimSpace(runID)}
-	if req.RunID == "" && len(args) > 0 {
+	req := daemon.FinalResponseGetRequest{SessionID: strings.TrimSpace(runID)}
+	if req.SessionID == "" && len(args) > 0 {
 		req.FinalResponseID = strings.TrimSpace(args[0])
 	}
 	return finalResponseGetRPC(ctx, cfg.Daemon.SocketPath, req)
 }
 
 func printFinalResponse(cmd *cobra.Command, response daemon.FinalResponseResponse) error {
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "final_response\tid=%s\trun=%s\tstatus=%s\n", response.FinalResponseID, response.RunID, response.Status); err != nil {
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "final_response\tid=%s\trun=%s\tstatus=%s\n", response.FinalResponseID, response.SessionID, response.Status); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "workspace=%s\ttask=%s\tcontext_packet=%s\n", response.WorkspaceID, response.TaskID, response.ContextPacketID); err != nil {

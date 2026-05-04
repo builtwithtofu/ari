@@ -129,7 +129,7 @@ func TestDashboardGetUsesActiveContextAndIncludesCwdMemberships(t *testing.T) {
 	}
 }
 
-func TestDashboardGetIncludesResumeAffordanceForRunningAgent(t *testing.T) {
+func TestDashboardGetIncludesResumeAffordanceForPersistedRunningAgentSession(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
@@ -138,8 +138,17 @@ func TestDashboardGetIncludesResumeAffordanceForRunningAgent(t *testing.T) {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
-	if err := store.CreateAgent(context.Background(), globaldb.CreateAgentParams{AgentID: "ag-running", WorkspaceID: "ws-1", Command: "codex", Args: `[]`, Status: "running", StartedAt: "2026-04-25T00:00:01Z"}); err != nil {
+	if err := store.CreateAgentSessionConfig(context.Background(), globaldb.AgentSessionConfig{AgentID: "agent-1", WorkspaceID: "ws-1", Name: "executor", Harness: "codex"}); err != nil {
 		t.Fatalf("CreateAgent returned error: %v", err)
+	}
+	if err := store.CreateAgentSession(context.Background(), globaldb.AgentSession{SessionID: "run-1", WorkspaceID: "ws-1", AgentID: "agent-1", Harness: "codex", Status: "running", Usage: "durable"}); err != nil {
+		t.Fatalf("CreateAgentSession returned error: %v", err)
+	}
+	if err := store.CreateAgentSessionConfig(context.Background(), globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateAgent ephemeral returned error: %v", err)
+	}
+	if err := store.CreateAgentSession(context.Background(), globaldb.AgentSession{SessionID: "run-2", WorkspaceID: "ws-1", AgentID: "agent-2", Harness: "opencode", Status: "running", Usage: "ephemeral"}); err != nil {
+		t.Fatalf("CreateAgentSession ephemeral returned error: %v", err)
 	}
 	_ = callMethod[ContextSetResponse](t, registry, "context.set", ContextSetRequest{WorkspaceID: "ws-1"})
 
@@ -148,8 +157,8 @@ func TestDashboardGetIncludesResumeAffordanceForRunningAgent(t *testing.T) {
 		t.Fatalf("resume actions len = %d, want 1", len(resp.ResumeActions))
 	}
 	action := resp.ResumeActions[0]
-	if action.ID != "resume:agent:ag-running" || action.Kind != "attach_agent" || action.SourceID != "ag-running" || action.WorkspaceID != "ws-1" {
-		t.Fatalf("resume action = %#v, want attach affordance for running agent", action)
+	if action.ID != "resume:session:run-1" || action.Kind != "resume_session" || action.SourceID != "run-1" || action.WorkspaceID != "ws-1" || action.Label != "codex" {
+		t.Fatalf("resume action = %#v, want session resume affordance for persisted running run", action)
 	}
 }
 
@@ -162,14 +171,17 @@ func TestResumeActionResolvesDashboardAffordance(t *testing.T) {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
-	if err := store.CreateAgent(context.Background(), globaldb.CreateAgentParams{AgentID: "ag-running", WorkspaceID: "ws-1", Command: "codex", Args: `[]`, Status: "running", StartedAt: "2026-04-25T00:00:01Z"}); err != nil {
+	if err := store.CreateAgentSessionConfig(context.Background(), globaldb.AgentSessionConfig{AgentID: "agent-1", WorkspaceID: "ws-1", Name: "executor", Harness: "codex"}); err != nil {
 		t.Fatalf("CreateAgent returned error: %v", err)
+	}
+	if err := store.CreateAgentSession(context.Background(), globaldb.AgentSession{SessionID: "run-1", WorkspaceID: "ws-1", AgentID: "agent-1", Harness: "codex", Status: "running", Usage: "durable"}); err != nil {
+		t.Fatalf("CreateAgentSession returned error: %v", err)
 	}
 	contextSet := callMethod[ContextSetResponse](t, registry, "context.set", ContextSetRequest{WorkspaceID: "ws-1"})
 
-	resp := callMethod[ResumeActionResponse](t, registry, "resume.action", ResumeActionRequest{ActionID: "resume:agent:ag-running", ObservedContextVersion: contextSet.Current.Version})
-	if resp.Action.Kind != "attach_agent" || resp.Action.SourceID != "ag-running" || resp.Action.WorkspaceID != "ws-1" {
-		t.Fatalf("resume action response = %#v, want attach action", resp)
+	resp := callMethod[ResumeActionResponse](t, registry, "resume.action", ResumeActionRequest{ActionID: "resume:session:run-1", ObservedContextVersion: contextSet.Current.Version})
+	if resp.Action.Kind != "resume_session" || resp.Action.SourceID != "run-1" || resp.Action.WorkspaceID != "ws-1" {
+		t.Fatalf("resume action response = %#v, want session resume action", resp)
 	}
 }
 
@@ -237,57 +249,5 @@ func TestActiveContextRejectsUnknownWorkspace(t *testing.T) {
 	}
 	if _, err := spec.Call(t.Context(), []byte(`{"workspace_id":"missing"}`)); err == nil {
 		t.Fatal("context.set returned nil error for unknown workspace")
-	}
-}
-
-func TestWorkspaceCloseClearsMatchingActiveContext(t *testing.T) {
-	store := newCommandMethodTestStore(t)
-	registry := rpc.NewMethodRegistry()
-	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-
-	if err := d.registerMethods(registry, store); err != nil {
-		t.Fatalf("registerMethods returned error: %v", err)
-	}
-	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
-	_ = callMethod[ContextSetResponse](t, registry, "context.set", ContextSetRequest{WorkspaceID: "ws-1"})
-	_ = callMethod[WorkspaceCloseResponse](t, registry, "workspace.close", WorkspaceCloseRequest{WorkspaceID: "ws-1"})
-
-	current := callMethod[ContextGetResponse](t, registry, "context.get", ContextGetRequest{})
-	if current.Current.WorkspaceID != "" {
-		t.Fatalf("current workspace after close = %#v, want cleared active context", current.Current)
-	}
-}
-
-func TestActiveContextRejectsClosedWorkspace(t *testing.T) {
-	store := newCommandMethodTestStore(t)
-	registry := rpc.NewMethodRegistry()
-	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-
-	if err := d.registerMethods(registry, store); err != nil {
-		t.Fatalf("registerMethods returned error: %v", err)
-	}
-	seedSessionWithPrimaryFolder(t, store, "ws-open", t.TempDir())
-	seedSessionWithPrimaryFolder(t, store, "ws-closed", t.TempDir())
-	_ = callMethod[ContextSetResponse](t, registry, "context.set", ContextSetRequest{WorkspaceID: "ws-open"})
-	_ = callMethod[WorkspaceCloseResponse](t, registry, "workspace.close", WorkspaceCloseRequest{WorkspaceID: "ws-closed"})
-
-	spec, ok := registry.Get("context.set")
-	if !ok {
-		t.Fatal("context.set method not registered")
-	}
-	_, err := spec.Call(context.Background(), []byte(`{"workspace_id":"ws-closed"}`))
-	if err == nil {
-		t.Fatal("context.set returned nil error for closed workspace")
-	}
-	var rpcErr *rpc.HandlerError
-	if !errors.As(err, &rpcErr) {
-		t.Fatalf("context.set error = %T, want *rpc.HandlerError", err)
-	}
-	if rpcErr.Code != rpc.InvalidParams || rpcErr.Message != "workspace is closed" {
-		t.Fatalf("context.set error = %#v, want InvalidParams workspace is closed", rpcErr)
-	}
-	current := callMethod[ContextGetResponse](t, registry, "context.get", ContextGetRequest{})
-	if current.Current.WorkspaceID != "ws-open" {
-		t.Fatalf("current workspace after rejected closed set = %#v, want previous ws-open", current.Current)
 	}
 }

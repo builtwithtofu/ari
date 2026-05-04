@@ -49,14 +49,6 @@ var (
 		}
 		return response, nil
 	}
-	workspaceCloseRPC = func(ctx context.Context, socketPath, sessionID string) (daemon.WorkspaceCloseResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.WorkspaceCloseResponse
-		if err := rpcClient.Call(ctx, "workspace.close", daemon.WorkspaceCloseRequest{WorkspaceID: sessionID}, &response); err != nil {
-			return daemon.WorkspaceCloseResponse{}, err
-		}
-		return response, nil
-	}
 	workspaceSuspendRPC = func(ctx context.Context, socketPath, sessionID string) (daemon.WorkspaceSuspendResponse, error) {
 		rpcClient := client.New(socketPath)
 		var response daemon.WorkspaceSuspendResponse
@@ -101,7 +93,6 @@ func NewWorkspaceCmd() *cobra.Command {
 	cmd.AddCommand(newWorkspaceCreateCmd())
 	cmd.AddCommand(newWorkspaceListCmd())
 	cmd.AddCommand(newWorkspaceShowCmd())
-	cmd.AddCommand(newWorkspaceCloseCmd())
 	cmd.AddCommand(newWorkspaceSuspendCmd())
 	cmd.AddCommand(newWorkspaceResumeCmd())
 	cmd.AddCommand(newWorkspaceSetCmd())
@@ -110,7 +101,6 @@ func NewWorkspaceCmd() *cobra.Command {
 	cmd.AddCommand(newWorkspaceSwitchCmd())
 	cmd.AddCommand(newWorkspaceClearCmd())
 	cmd.AddCommand(newWorkspaceFolderCmd())
-	cmd.AddCommand(newWorkspaceAttachCmd())
 	return cmd
 }
 
@@ -133,19 +123,11 @@ func newWorkspaceUseCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			workspace, err := workspaceGetRPC(ctx, cfg.Daemon.SocketPath, workspaceID)
-			if err != nil {
-				return mapSessionRPCError(err)
-			}
-			if strings.EqualFold(strings.TrimSpace(workspace.Status), "closed") {
-				return userFacingError{message: "Workspace is closed"}
-			}
 			resp, err := workspaceContextSetRPC(ctx, cfg.Daemon.SocketPath, daemon.ContextSetRequest{WorkspaceID: workspaceID})
 			if err != nil {
 				return mapSessionRPCError(err)
 			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Active workspace set: %s\n", resp.Current.WorkspaceID)
-			return err
+			return writeAndReportActiveSession(cmd, resp.Current.WorkspaceID)
 		},
 	}
 }
@@ -175,7 +157,7 @@ func newWorkspaceSetCmd() *cobra.Command {
 			if err := writeAndReportActiveSession(cmd, sessionID); err != nil {
 				return err
 			}
-			return resumeWorkspaceAgentConversation(cmd, cfg, sessionID)
+			return nil
 		},
 	}
 }
@@ -243,16 +225,10 @@ func newWorkspaceSwitchCmd() *cobra.Command {
 				return mapSessionRPCError(err)
 			}
 
-			available := make([]daemon.WorkspaceSummary, 0, len(response.Workspaces))
-			for _, session := range response.Workspaces {
-				if strings.EqualFold(strings.TrimSpace(session.Status), "closed") {
-					continue
-				}
-				available = append(available, session)
-			}
+			available := response.Workspaces
 
 			if len(available) == 0 {
-				return userFacingError{message: "No open workspaces available; create one with `ari workspace create <name>`"}
+				return userFacingError{message: "No workspaces available; create one with `ari workspace create <name>`"}
 			}
 
 			selected := daemon.WorkspaceSummary{}
@@ -285,7 +261,7 @@ func newWorkspaceSwitchCmd() *cobra.Command {
 			if err := writeAndReportActiveSession(cmd, selected.WorkspaceID); err != nil {
 				return err
 			}
-			return resumeWorkspaceAgentConversation(cmd, cfg, selected.WorkspaceID)
+			return nil
 		},
 	}
 }
@@ -308,68 +284,10 @@ func writeAndReportActiveSession(cmd *cobra.Command, sessionID string) error {
 	return err
 }
 
-func resumeWorkspaceAgentConversation(cmd *cobra.Command, cfg *config.Config, sessionID string) error {
-	if cmd == nil {
-		return fmt.Errorf("resume workspace agent: command is required")
-	}
-	if cfg == nil {
-		return fmt.Errorf("resume workspace agent: config is required")
-	}
-	if sessionID = strings.TrimSpace(sessionID); sessionID == "" {
-		return fmt.Errorf("resume workspace agent: workspace id is required")
-	}
-
-	lookupCtx, lookupCancel := context.WithTimeout(cmd.Context(), 5*time.Second)
-	defer lookupCancel()
-
-	agents, err := agentListRPC(lookupCtx, cfg.Daemon.SocketPath, sessionID)
-	if err != nil {
-		_, writeErr := fmt.Fprintf(cmd.OutOrStdout(), "Warning: active workspace set but resume lookup failed: %v\n", mapAgentRPCError(err))
-		return writeErr
-	}
-
-	for _, summary := range agents.Agents {
-		getCtx, getCancel := context.WithTimeout(cmd.Context(), 5*time.Second)
-		details, err := agentGetRPC(getCtx, cfg.Daemon.SocketPath, sessionID, summary.AgentID)
-		getCancel()
-		if err != nil {
-			continue
-		}
-		if strings.EqualFold(strings.TrimSpace(details.Status), "running") {
-			continue
-		}
-		harness := strings.TrimSpace(details.Harness)
-		resumableID := strings.TrimSpace(details.HarnessResumableID)
-		resumableFlag := strings.TrimSpace(daemon.ResumableFlagForHarness(harness))
-		if harness == "" || resumableID == "" || resumableFlag == "" {
-			continue
-		}
-
-		spawnCtx, spawnCancel := context.WithTimeout(cmd.Context(), 5*time.Second)
-		spawnResp, err := agentSpawnRPC(spawnCtx, cfg.Daemon.SocketPath, daemon.AgentSpawnRequest{
-			WorkspaceID: sessionID,
-			Harness:     harness,
-			Args:        []string{resumableFlag, resumableID},
-		})
-		spawnCancel()
-		if err != nil {
-			_, writeErr := fmt.Fprintf(cmd.OutOrStdout(), "Warning: active workspace set but resume failed: %v\n", mapAgentRPCError(err))
-			return writeErr
-		}
-
-		_, writeErr := fmt.Fprintf(cmd.OutOrStdout(), "Resumed agent conversation: %s (%s)\n", spawnResp.AgentID, spawnResp.Status)
-		return writeErr
-	}
-
-	_, err = fmt.Fprintln(cmd.OutOrStdout(), "No resumable agent history found for workspace")
-	return err
-}
-
 func newWorkspaceCreateCmd() *cobra.Command {
 	var folder string
 	var cleanup string
 	var vcsPreference string
-	var harness string
 
 	cmd := &cobra.Command{
 		Use:   "create <name>",
@@ -426,42 +344,13 @@ func newWorkspaceCreateCmd() *cobra.Command {
 				return err
 			}
 
-			autoHarness := strings.TrimSpace(harness)
-			if autoHarness == "" {
-				autoHarness = strings.TrimSpace(cfg.DefaultHarness)
-			}
-			if autoHarness == "" {
-				if _, err := fmt.Fprintln(cmd.OutOrStdout(), "Warning: workspace created but default agent did not start: no default harness configured; set `default_harness` or pass --harness"); err != nil {
-					return err
-				}
-				return nil
-			}
-
-			spawnCtx, spawnCancel := context.WithTimeout(cmd.Context(), 5*time.Second)
-			defer spawnCancel()
-
-			agentResp, err := agentSpawnRPC(spawnCtx, cfg.Daemon.SocketPath, daemon.AgentSpawnRequest{
-				WorkspaceID: response.WorkspaceID,
-				Harness:     autoHarness,
-			})
-			if err != nil {
-				if _, warnErr := fmt.Fprintf(cmd.OutOrStdout(), "Warning: workspace created but default agent did not start: %v\n", mapAgentRPCError(err)); warnErr != nil {
-					return warnErr
-				}
-				return nil
-			}
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Agent started: %s (%s)\n", agentResp.AgentID, agentResp.Status); err != nil {
-				return err
-			}
-
 			return nil
 		},
 	}
 
 	cmd.Flags().StringVar(&folder, "folder", "", "Initial workspace folder (defaults to CWD)")
-	cmd.Flags().StringVar(&cleanup, "cleanup", "manual", "Cleanup policy: manual|on_close")
+	cmd.Flags().StringVar(&cleanup, "cleanup", "manual", "Cleanup policy: manual")
 	cmd.Flags().StringVar(&vcsPreference, "vcs-preference", "", "VCS preference: auto|jj|git (defaults to global config)")
-	cmd.Flags().StringVar(&harness, "harness", "", "Harness for auto-started agent: "+strings.Join(daemon.SupportedHarnesses(), "|"))
 
 	return cmd
 }
@@ -568,49 +457,6 @@ func newWorkspaceShowCmd() *cobra.Command {
 			}
 
 			return nil
-		},
-	}
-}
-
-func newWorkspaceCloseCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "close <id-or-name>",
-		Short: "Close workspace",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := configuredDaemonConfig()
-			if err != nil {
-				return err
-			}
-			if err := workspaceEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
-				return err
-			}
-
-			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
-			defer cancel()
-
-			sessionID, err := resolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, args[0])
-			if err != nil {
-				return err
-			}
-
-			resp, err := workspaceCloseRPC(ctx, cfg.Daemon.SocketPath, sessionID)
-			if err != nil {
-				return mapSessionRPCError(err)
-			}
-
-			activeSession, err := config.ReadPersistedActiveWorkspace()
-			if err != nil {
-				return err
-			}
-			if strings.TrimSpace(activeSession) == sessionID {
-				if err := config.WriteActiveWorkspace(""); err != nil {
-					return err
-				}
-			}
-
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Workspace close: %s\n", resp.Status)
-			return err
 		},
 	}
 }

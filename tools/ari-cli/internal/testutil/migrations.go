@@ -26,6 +26,9 @@ func ApplySQLMigrations(dbPath, migrationsDir string) error {
 	defer func() {
 		_ = db.Close()
 	}()
+	if err := configureFastTestSQLite(db); err != nil {
+		return err
+	}
 
 	entries, err := os.ReadDir(migrationsDir)
 	if err != nil {
@@ -60,10 +63,26 @@ func ApplyNamedSQLMigrations(dbPath, migrationsDir string, names ...string) erro
 	defer func() {
 		_ = db.Close()
 	}()
+	if err := configureFastTestSQLite(db); err != nil {
+		return err
+	}
 
 	for _, name := range names {
 		if err := applyMigrationFile(db, migrationsDir, name); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func configureFastTestSQLite(db *sql.DB) error {
+	for _, stmt := range []string{
+		"PRAGMA journal_mode = MEMORY",
+		"PRAGMA synchronous = OFF",
+		"PRAGMA temp_store = MEMORY",
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("configure test sqlite %s: %w", stmt, err)
 		}
 	}
 	return nil

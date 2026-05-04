@@ -18,10 +18,10 @@ func TestFinalResponseShowAndExportUseArtifactTextOnly(t *testing.T) {
 	originalGet := finalResponseGetRPC
 	finalResponseEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	finalResponseGetRPC = func(_ context.Context, _ string, req daemon.FinalResponseGetRequest) (daemon.FinalResponseResponse, error) {
-		if req.RunID != "run_1" {
+		if req.SessionID != "run_1" {
 			t.Fatalf("get request = %#v, want run_1", req)
 		}
-		return daemon.FinalResponseResponse{FinalResponseID: "fr_1", RunID: "run_1", WorkspaceID: "ws-1", TaskID: "task-1", ContextPacketID: "ctx_1", Status: "completed", Text: "Shareable answer", EvidenceLinks: []daemon.FinalResponseEvidenceLink{{Kind: "context_packet", ID: "ctx_1"}}}, nil
+		return daemon.FinalResponseResponse{FinalResponseID: "fr_1", SessionID: "run_1", WorkspaceID: "ws-1", TaskID: "task-1", ContextPacketID: "ctx_1", Status: "completed", Text: "Excerptable answer", EvidenceLinks: []daemon.FinalResponseEvidenceLink{{Kind: "context_packet", ID: "ctx_1"}}}, nil
 	}
 	t.Cleanup(func() {
 		finalResponseEnsureDaemonRunning = originalEnsure
@@ -32,7 +32,7 @@ func TestFinalResponseShowAndExportUseArtifactTextOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("final-response show returned error: %v", err)
 	}
-	if !strings.Contains(showOut, "Shareable answer") || !strings.Contains(showOut, "evidence=context_packet:ctx_1") {
+	if !strings.Contains(showOut, "Excerptable answer") || !strings.Contains(showOut, "evidence=context_packet:ctx_1") {
 		t.Fatalf("show output = %q, want text and evidence", showOut)
 	}
 
@@ -40,8 +40,8 @@ func TestFinalResponseShowAndExportUseArtifactTextOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("final-response export returned error: %v", err)
 	}
-	if exportOut != "Shareable answer\n" {
-		t.Fatalf("export output = %q, want only shareable text", exportOut)
+	if exportOut != "Excerptable answer\n" {
+		t.Fatalf("export output = %q, want only excerptable text", exportOut)
 	}
 	if strings.Contains(exportOut, "ctx_1") || strings.Contains(exportOut, "provider") || strings.Contains(exportOut, "transcript") {
 		t.Fatalf("export output = %q, must not include provenance, provider ids, or transcripts", exportOut)

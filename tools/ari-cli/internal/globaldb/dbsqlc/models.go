@@ -20,6 +20,25 @@ type Agent struct {
 	InvocationClass    string  `json:"invocation_class"`
 }
 
+type AgentMessage struct {
+	AgentMessageID     string `json:"agent_message_id"`
+	WorkspaceID        string `json:"workspace_id"`
+	SourceAgentID      string `json:"source_agent_id"`
+	SourceSessionID    string `json:"source_session_id"`
+	TargetAgentID      string `json:"target_agent_id"`
+	TargetSessionID    string `json:"target_session_id"`
+	Body               string `json:"body"`
+	Status             string `json:"status"`
+	DeliveredSessionID string `json:"delivered_session_id"`
+	CreatedAt          string `json:"created_at"`
+}
+
+type AgentMessageContextExcerpt struct {
+	AgentMessageID   string `json:"agent_message_id"`
+	ContextExcerptID string `json:"context_excerpt_id"`
+	Sequence         int64  `json:"sequence"`
+}
+
 type AgentProfile struct {
 	ProfileID       string  `json:"profile_id"`
 	WorkspaceID     *string `json:"workspace_id"`
@@ -27,12 +46,12 @@ type AgentProfile struct {
 	Harness         *string `json:"harness"`
 	Model           *string `json:"model"`
 	Prompt          *string `json:"prompt"`
-	AuthSlotID      *string `json:"auth_slot_id"`
-	AuthPoolJson    string  `json:"auth_pool_json"`
 	InvocationClass *string `json:"invocation_class"`
 	DefaultsJson    string  `json:"defaults_json"`
 	CreatedAt       string  `json:"created_at"`
 	UpdatedAt       string  `json:"updated_at"`
+	AuthSlotID      *string `json:"auth_slot_id"`
+	AuthPoolJson    string  `json:"auth_pool_json"`
 }
 
 type AgentRunTelemetry struct {
@@ -70,6 +89,48 @@ type AgentRunTelemetry struct {
 	UpdatedAt               string  `json:"updated_at"`
 }
 
+type AgentSession struct {
+	SessionID             string `json:"session_id"`
+	WorkspaceID           string `json:"workspace_id"`
+	AgentID               string `json:"agent_id"`
+	Harness               string `json:"harness"`
+	Model                 string `json:"model"`
+	ProviderSessionID     string `json:"provider_session_id"`
+	ProviderRunID         string `json:"provider_run_id"`
+	ProviderThreadID      string `json:"provider_thread_id"`
+	Cwd                   string `json:"cwd"`
+	FolderScopeJson       string `json:"folder_scope_json"`
+	Status                string `json:"status"`
+	Usage                 string `json:"usage"`
+	SourceSessionID       string `json:"source_session_id"`
+	SourceAgentID         string `json:"source_agent_id"`
+	PromptHash            string `json:"prompt_hash"`
+	ContextPayloadIdsJson string `json:"context_payload_ids_json"`
+	PermissionMode        string `json:"permission_mode"`
+	SandboxMode           string `json:"sandbox_mode"`
+	ToolScopeJson         string `json:"tool_scope_json"`
+	ProviderMetadataJson  string `json:"provider_metadata_json"`
+	CreatedAt             string `json:"created_at"`
+	UpdatedAt             string `json:"updated_at"`
+}
+
+type AgentSessionConfig struct {
+	AgentID              string  `json:"agent_id"`
+	WorkspaceID          *string `json:"workspace_id"`
+	Name                 string  `json:"name"`
+	Harness              string  `json:"harness"`
+	Model                string  `json:"model"`
+	Prompt               string  `json:"prompt"`
+	AuthSlotID           string  `json:"auth_slot_id"`
+	AuthPoolJson         string  `json:"auth_pool_json"`
+	ToolScopeJson        string  `json:"tool_scope_json"`
+	PermissionPolicyJson string  `json:"permission_policy_json"`
+	ContextPolicyJson    string  `json:"context_policy_json"`
+	DefaultsJson         string  `json:"defaults_json"`
+	CreatedAt            string  `json:"created_at"`
+	UpdatedAt            string  `json:"updated_at"`
+}
+
 type AuthSlot struct {
 	AuthSlotID      string  `json:"auth_slot_id"`
 	Harness         string  `json:"harness"`
@@ -93,6 +154,32 @@ type Command struct {
 	FinishedAt  *string `json:"finished_at"`
 }
 
+type ContextExcerpt struct {
+	ContextExcerptID string `json:"context_excerpt_id"`
+	WorkspaceID      string `json:"workspace_id"`
+	SourceSessionID  string `json:"source_session_id"`
+	SourceAgentID    string `json:"source_agent_id"`
+	TargetAgentID    string `json:"target_agent_id"`
+	TargetSessionID  string `json:"target_session_id"`
+	SelectorType     string `json:"selector_type"`
+	SelectorJson     string `json:"selector_json"`
+	Visibility       string `json:"visibility"`
+	AppendedMessage  string `json:"appended_message"`
+	ContentHash      string `json:"content_hash"`
+	CreatedAt        string `json:"created_at"`
+}
+
+type ContextExcerptItem struct {
+	ContextExcerptID string `json:"context_excerpt_id"`
+	Sequence         int64  `json:"sequence"`
+	SourceMessageID  string `json:"source_message_id"`
+	SourceSessionID  string `json:"source_session_id"`
+	SourceAgentID    string `json:"source_agent_id"`
+	CopiedRole       string `json:"copied_role"`
+	CopiedText       string `json:"copied_text"`
+	CopiedPartsJson  string `json:"copied_parts_json"`
+}
+
 type DaemonMetum struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
@@ -110,6 +197,40 @@ type FinalResponse struct {
 	EvidenceLinks   string  `json:"evidence_links"`
 	CreatedAt       string  `json:"created_at"`
 	UpdatedAt       *string `json:"updated_at"`
+}
+
+type RunLogMessage struct {
+	MessageID          string `json:"message_id"`
+	WorkspaceID        string `json:"workspace_id"`
+	SessionID          string `json:"session_id"`
+	AgentID            string `json:"agent_id"`
+	Sequence           int64  `json:"sequence"`
+	Role               string `json:"role"`
+	Status             string `json:"status"`
+	ProviderMessageID  string `json:"provider_message_id"`
+	ProviderItemID     string `json:"provider_item_id"`
+	ProviderTurnID     string `json:"provider_turn_id"`
+	ProviderResponseID string `json:"provider_response_id"`
+	ProviderCallID     string `json:"provider_call_id"`
+	ProviderChannel    string `json:"provider_channel"`
+	ProviderKind       string `json:"provider_kind"`
+	RawMetadataJson    string `json:"raw_metadata_json"`
+	CreatedAt          string `json:"created_at"`
+	UpdatedAt          string `json:"updated_at"`
+}
+
+type RunLogMessagePart struct {
+	PartID     string `json:"part_id"`
+	MessageID  string `json:"message_id"`
+	Sequence   int64  `json:"sequence"`
+	Kind       string `json:"kind"`
+	Text       string `json:"text"`
+	MimeType   string `json:"mime_type"`
+	Uri        string `json:"uri"`
+	Name       string `json:"name"`
+	ToolName   string `json:"tool_name"`
+	ToolCallID string `json:"tool_call_id"`
+	RawJson    string `json:"raw_json"`
 }
 
 type Workspace struct {
