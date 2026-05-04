@@ -1008,6 +1008,39 @@ func TestAgentSessionMethodUsesInjectedHarnessFactory(t *testing.T) {
 	}
 }
 
+func TestAgentSessionMethodPersistsRepeatedNoProfileRunsAndRunLogScope(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = primaryFolder
+		_ = sink
+		return newFakeHarness(req.Executor, []TimelineItem{{Kind: "agent_text", Text: "done"}}), nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+
+	first := callMethod[AgentSessionStartResponse](t, registry, "agent.run", AgentSessionStartRequest{Executor: "test-harness", Packet: ContextPacket{ID: "ctx_1", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:1"}})
+	second := callMethod[AgentSessionStartResponse](t, registry, "agent.run", AgentSessionStartRequest{Executor: "test-harness", Packet: ContextPacket{ID: "ctx_2", WorkspaceID: "ws-1", TaskID: "task-2", PacketHash: "sha256:2"}})
+
+	runs, err := store.ListAgentSessions(context.Background(), "ws-1")
+	if err != nil {
+		t.Fatalf("ListAgentSessions returned error: %v", err)
+	}
+	if len(runs) != 2 || runs[0].AgentID != runs[1].AgentID {
+		t.Fatalf("runs = %#v, want repeated no-profile runs to share persisted harness runtime agent config", runs)
+	}
+	messages, err := store.TailRunLogMessages(context.Background(), second.Run.AgentSessionID, 1)
+	if err != nil {
+		t.Fatalf("TailRunLogMessages returned error: %v", err)
+	}
+	if len(messages) != 1 || messages[0].WorkspaceID != "ws-1" || messages[0].AgentID != runs[0].AgentID || messages[0].SessionID != second.Run.AgentSessionID {
+		t.Fatalf("messages = %#v first=%#v second=%#v, want run-log rows scoped to workspace and runtime agent", messages, first.Run, second.Run)
+	}
+}
+
 func TestAgentProfileRunUsesProfileHarness(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()

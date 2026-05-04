@@ -253,10 +253,6 @@ func (e *PTYExecutor) Start(ctx context.Context, req ExecutorStartRequest) (Exec
 	go func() {
 		result, waitErr := proc.Wait()
 		output := strings.TrimSpace(string(proc.OutputSnapshot()))
-		for deadline := time.Now().Add(200 * time.Millisecond); output == "" && time.Now().Before(deadline); {
-			time.Sleep(10 * time.Millisecond)
-			output = strings.TrimSpace(string(proc.OutputSnapshot()))
-		}
 		status := "completed"
 		if waitErr != nil || result.Signaled || result.ExitCode != 0 {
 			status = "failed"

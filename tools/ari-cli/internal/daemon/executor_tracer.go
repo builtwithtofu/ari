@@ -1742,8 +1742,8 @@ func (d *Daemon) startAgentSession(ctx context.Context, store *globaldb.Store, r
 
 func storeHarnessRunLogMessages(ctx context.Context, store *globaldb.Store, result HarnessCallResult, primaryFolder string, profile ...AgentProfile) error {
 	run := result.AgentSession
-	agentID := "wa_" + strings.TrimSpace(run.AgentSessionID)
 	agentName := strings.TrimSpace(run.Executor)
+	agentID := ""
 	model := result.Telemetry.Model
 	prompt := ""
 	if len(profile) > 0 {
@@ -1759,7 +1759,10 @@ func storeHarnessRunLogMessages(ctx context.Context, store *globaldb.Store, resu
 		prompt = strings.TrimSpace(profile[0].Prompt)
 	}
 	if agentName == "" {
-		agentName = agentID
+		agentName = "executor"
+	}
+	if agentID == "" {
+		agentID = "wa_" + strings.TrimSpace(run.WorkspaceID) + "_" + stableRuntimeAgentIDSegment(agentName)
 	}
 	if err := store.EnsureAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: agentID, WorkspaceID: run.WorkspaceID, Name: agentName, Harness: run.Executor, Model: model, Prompt: prompt}); err != nil {
 		return err
@@ -1808,6 +1811,21 @@ func storeHarnessRunLogMessages(ctx context.Context, store *globaldb.Store, resu
 		sequence++
 	}
 	return nil
+}
+
+func stableRuntimeAgentIDSegment(value string) string {
+	segment := strings.ToLower(strings.TrimSpace(value))
+	segment = strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r == '-' {
+			return r
+		}
+		return '_'
+	}, segment)
+	segment = strings.Trim(segment, "_")
+	if segment == "" {
+		return "executor"
+	}
+	return segment
 }
 
 type providerMessageFields struct {
