@@ -722,9 +722,7 @@ func (d *Daemon) registerExecutorMethods(registry *rpc.MethodRegistry, store *gl
 		Name:        "session.fanout",
 		Description: "Fan out a visible session message to multiple sessions or profiles",
 		Handler: func(ctx context.Context, req AgentMessageSendRequest) (AgentMessageSendResponse, error) {
-			_ = ctx
-			_ = store
-			return AgentMessageSendResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "session fanout is not implemented yet", map[string]any{"reason": "not_implemented", "method": "session.fanout", "source_session_id": strings.TrimSpace(req.SourceSessionID), "target_session_id": strings.TrimSpace(req.TargetSessionID), "target_agent_id": strings.TrimSpace(req.TargetAgentID), "start_invoked": false})
+			return sendAgentMessage(ctx, store, req)
 		},
 	}); err != nil {
 		return fmt.Errorf("register session.fanout: %w", err)
@@ -1540,6 +1538,7 @@ func sendAgentMessage(ctx context.Context, store *globaldb.Store, req AgentMessa
 	targetAgentID := strings.TrimSpace(req.TargetAgentID)
 	targetSessionID := strings.TrimSpace(req.TargetSessionID)
 	startSessionID := strings.TrimSpace(req.StartSessionID)
+	contextExcerptIDs := trimNonEmptyStrings(req.ContextExcerptIDs)
 	effectiveTargetSessionID := targetSessionID
 	if effectiveTargetSessionID == "" {
 		effectiveTargetSessionID = startSessionID
@@ -1558,7 +1557,7 @@ func sendAgentMessage(ctx context.Context, store *globaldb.Store, req AgentMessa
 		}
 		return AgentMessageSendResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "missing_required_fields", "missing_field": missingField, "start_invoked": false})
 	}
-	dm, err := store.SendAgentMessage(ctx, globaldb.AgentMessageSendParams{AgentMessageID: req.AgentMessageID, SourceSessionID: req.SourceSessionID, TargetAgentID: req.TargetAgentID, TargetSessionID: req.TargetSessionID, Body: req.Body, ContextExcerptIDs: req.ContextExcerptIDs, StartSessionID: req.StartSessionID})
+	dm, err := store.SendAgentMessage(ctx, globaldb.AgentMessageSendParams{AgentMessageID: agentMessageID, SourceSessionID: sourceSessionID, TargetAgentID: targetAgentID, TargetSessionID: targetSessionID, Body: body, ContextExcerptIDs: contextExcerptIDs, StartSessionID: startSessionID})
 	if err != nil {
 		errText := strings.ToLower(err.Error())
 		if strings.Contains(errText, "unique constraint failed") && strings.Contains(errText, "agent_messages.agent_message_id") {
@@ -1571,16 +1570,16 @@ func sendAgentMessage(ctx context.Context, store *globaldb.Store, req AgentMessa
 					resolvedTargetAgentID = strings.TrimSpace(targetRun.AgentID)
 				}
 			}
-			if errors.Is(err, globaldb.ErrNotFound) && len(req.ContextExcerptIDs) > 0 {
-				contextExcerptID := strings.TrimSpace(req.ContextExcerptIDs[0])
+			if errors.Is(err, globaldb.ErrNotFound) && len(contextExcerptIDs) > 0 {
+				contextExcerptID := contextExcerptIDs[0]
 				if contextExcerptID != "" {
 					if _, excerptErr := store.GetContextExcerpt(ctx, contextExcerptID); errors.Is(excerptErr, globaldb.ErrNotFound) {
 						return AgentMessageSendResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "unknown_context_excerpt", "context_excerpt_id": contextExcerptID, "start_invoked": false})
 					}
 				}
 			}
-			if errors.Is(err, globaldb.ErrInvalidInput) && len(req.ContextExcerptIDs) > 0 {
-				contextExcerptID := strings.TrimSpace(req.ContextExcerptIDs[0])
+			if errors.Is(err, globaldb.ErrInvalidInput) && len(contextExcerptIDs) > 0 {
+				contextExcerptID := contextExcerptIDs[0]
 				if contextExcerptID != "" {
 					if excerpt, excerptErr := store.GetContextExcerpt(ctx, contextExcerptID); excerptErr == nil {
 						if excerpt.TargetAgentID != "" && resolvedTargetAgentID != "" && excerpt.TargetAgentID != resolvedTargetAgentID {
@@ -1634,6 +1633,20 @@ func sendAgentMessage(ctx context.Context, store *globaldb.Store, req AgentMessa
 		return AgentMessageSendResponse{}, err
 	}
 	return AgentMessageSendResponse{AgentMessage: AgentMessageResponse{AgentMessageID: dm.AgentMessageID, WorkspaceID: dm.WorkspaceID, SourceAgentID: dm.SourceAgentID, SourceSessionID: dm.SourceSessionID, TargetAgentID: dm.TargetAgentID, TargetSessionID: dm.TargetSessionID, Body: dm.Body, Status: dm.Status, DeliveredSessionID: dm.DeliveredSessionID, ContextExcerptIDs: dm.ContextExcerptIDs}}, nil
+}
+
+func trimNonEmptyStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
 
 func agentMessageResponse(dm globaldb.AgentMessage) AgentMessageResponse {
@@ -1733,6 +1746,7 @@ func (d *Daemon) callEphemeralAgent(ctx context.Context, store *globaldb.Store, 
 	}
 	requestDM, err := store.SendAgentMessage(ctx, globaldb.AgentMessageSendParams{AgentMessageID: requestAgentMessageID, SourceSessionID: sourceRun.SessionID, TargetAgentID: targetAgent.AgentID, TargetSessionID: sessionID, Body: body, ContextExcerptIDs: req.ContextExcerptIDs})
 	if err != nil {
+		_ = store.UpdateAgentSessionStatus(ctx, sessionID, "failed")
 		errText := strings.ToLower(err.Error())
 		if strings.Contains(errText, "unique constraint failed") && strings.Contains(errText, "agent_messages.agent_message_id") {
 			return EphemeralAgentCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "request_agent_message_id_conflict", "agent_message_id": requestAgentMessageID, "start_invoked": false})
@@ -1875,6 +1889,13 @@ func startProfileSession(d *Daemon, ctx context.Context, store *globaldb.Store, 
 		if err == nil {
 			if existing.WorkspaceID != workspaceID {
 				return AgentSessionStartResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "session_id belongs to a different workspace", map[string]any{"reason": "session_workspace_mismatch", "session_id": sessionID, "workspace_id": workspaceID, "existing_workspace_id": existing.WorkspaceID, "start_invoked": false})
+			}
+			if strings.TrimSpace(existing.AgentID) != "" && strings.TrimSpace(profile.ProfileID) != "" && existing.AgentID != profile.ProfileID {
+				existingProfile := strings.TrimSpace(existing.AgentID)
+				if storedProfile, profileErr := store.GetAgentSessionConfig(ctx, existing.AgentID); profileErr == nil && strings.TrimSpace(storedProfile.Name) != "" {
+					existingProfile = strings.TrimSpace(storedProfile.Name)
+				}
+				return AgentSessionStartResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "session_id belongs to a different profile", map[string]any{"reason": "session_profile_mismatch", "session_id": sessionID, "profile": strings.TrimSpace(profile.Name), "existing_profile": existingProfile, "start_invoked": false})
 			}
 			return AgentSessionStartResponse{Run: agentSessionResponseFromStore(existing)}, nil
 		}

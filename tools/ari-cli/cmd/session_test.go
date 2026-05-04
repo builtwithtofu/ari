@@ -179,7 +179,7 @@ func TestSessionFanoutCallsPublicRPC(t *testing.T) {
 	originalFanout := sessionFanoutRPC
 	sessionEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	sessionFanoutRPC = func(_ context.Context, _ string, req daemon.AgentMessageSendRequest) (daemon.AgentMessageSendResponse, error) {
-		if req.SourceSessionID != "planner-main" || req.TargetSessionID != "executor-main" || req.Body != "Please execute" || len(req.ContextExcerptIDs) != 1 || req.ContextExcerptIDs[0] != "plan-tail" || req.TargetAgentID != "" {
+		if req.SourceSessionID != "planner-main" || req.TargetSessionID != "executor-main" || strings.TrimSpace(req.AgentMessageID) == "" || req.Body != "Please execute" || len(req.ContextExcerptIDs) != 1 || req.ContextExcerptIDs[0] != "plan-tail" || req.TargetAgentID != "" {
 			t.Fatalf("session.fanout request = %#v", req)
 		}
 		return daemon.AgentMessageSendResponse{AgentMessage: daemon.AgentMessageResponse{AgentMessageID: "fanout-1", Status: "delivered", TargetSessionID: "executor-main"}}, nil

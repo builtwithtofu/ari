@@ -334,6 +334,32 @@ func TestPlannerAgentMessageToExecutorDeliversSelectedPlan(t *testing.T) {
 	}
 }
 
+func TestSessionMessageSendTrimsContextExcerptIDsInResponse(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	}
+	if err := store.AppendRunLogMessage(ctx, globaldb.RunLogMessage{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "assistant", Parts: []globaldb.RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "text", Text: "Build the endpoint"}}}); err != nil {
+		t.Fatalf("AppendRunLogMessage returned error: %v", err)
+	}
+	excerpt, err := store.CreateContextExcerptFromTail(ctx, globaldb.CreateContextExcerptFromTailParams{ContextExcerptID: "excerpt-trim", SourceSessionID: "run-1", TargetAgentID: "agent-2", Count: 1})
+	if err != nil {
+		t.Fatalf("CreateContextExcerptFromTail returned error: %v", err)
+	}
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	got := callMethod[AgentMessageSendResponse](t, registry, "session.message.send", AgentMessageSendRequest{AgentMessageID: "dm-trim", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Please implement", ContextExcerptIDs: []string{" " + excerpt.ContextExcerptID + " "}, StartSessionID: "run-2"})
+	if len(got.AgentMessage.ContextExcerptIDs) != 1 || got.AgentMessage.ContextExcerptIDs[0] != excerpt.ContextExcerptID {
+		t.Fatalf("context excerpt ids = %#v, want trimmed excerpt id", got.AgentMessage.ContextExcerptIDs)
+	}
+}
+
 func TestEphemeralAgentCallRunsTargetAndRoutesReplyToCaller(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
@@ -511,24 +537,25 @@ func TestEphemeralAgentCallRejectsMissingRequiredFieldsWithStructuredError(t *te
 	}
 }
 
-func TestSessionFanoutReturnsStructuredNotImplementedError(t *testing.T) {
+func TestSessionFanoutSendsVisibleMessageToTargetSession(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "reviewer", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	}
+	if err := store.CreateAgentSession(ctx, globaldb.AgentSession{SessionID: "reviewer-run", WorkspaceID: "ws-1", AgentID: "reviewer", Harness: "opencode", Status: "waiting", Usage: "durable"}); err != nil {
+		t.Fatalf("CreateAgentSession target returned error: %v", err)
+	}
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
-	err := callMethodError(registry, "session.fanout", AgentMessageSendRequest{AgentMessageID: "fanout-1", SourceSessionID: "run-1", TargetSessionID: "executor-run", TargetAgentID: "reviewer", Body: "fan out"})
-	handlerErr, ok := err.(*rpc.HandlerError)
-	if !ok || handlerErr.Code != rpc.InvalidParams {
-		t.Fatalf("error = %T %[1]v, want InvalidParams handler error", err)
-	}
-	data := requireHandlerErrorData(t, err)
-	if data["reason"] != "not_implemented" || data["method"] != "session.fanout" || data["source_session_id"] != "run-1" || data["target_session_id"] != "executor-run" || data["target_agent_id"] != "reviewer" || data["start_invoked"] != false {
-		t.Fatalf("error data = %#v, want structured not_implemented details", data)
+	got := callMethod[AgentMessageSendResponse](t, registry, "session.fanout", AgentMessageSendRequest{AgentMessageID: "fanout-1", SourceSessionID: "run-1", TargetSessionID: "reviewer-run", Body: "fan out"})
+	if got.AgentMessage.AgentMessageID != "fanout-1" || got.AgentMessage.TargetAgentID != "reviewer" || got.AgentMessage.TargetSessionID != "reviewer-run" || got.AgentMessage.Status != "delivered" {
+		t.Fatalf("fanout response = %#v, want delivered fanout message", got.AgentMessage)
 	}
 }
 

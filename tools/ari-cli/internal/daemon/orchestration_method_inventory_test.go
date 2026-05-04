@@ -214,6 +214,30 @@ func TestSessionStartRejectsExistingSessionFromDifferentWorkspace(t *testing.T) 
 	}
 }
 
+func TestSessionStartRejectsExistingSessionFromDifferentProfile(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	planner := callMethod[AgentProfileResponse](t, registry, "profile.create", AgentProfileCreateRequest{WorkspaceID: "ws-1", Name: "planner", Harness: "test-harness", Model: "model-1", Prompt: "plan", InvocationClass: HarnessInvocationAgent})
+	_ = callMethod[AgentProfileResponse](t, registry, "profile.create", AgentProfileCreateRequest{WorkspaceID: "ws-1", Name: "executor", Harness: "test-harness", Model: "model-1", Prompt: "execute", InvocationClass: HarnessInvocationAgent})
+	if err := store.EnsureAgentSessionConfig(context.Background(), globaldb.AgentSessionConfig{AgentID: planner.ProfileID, WorkspaceID: "ws-1", Name: planner.Name, Harness: planner.Harness, Model: planner.Model, Prompt: planner.Prompt}); err != nil {
+		t.Fatalf("EnsureAgentSessionConfig returned error: %v", err)
+	}
+	if err := store.CreateAgentSession(context.Background(), globaldb.AgentSession{SessionID: "shared-session", WorkspaceID: "ws-1", AgentID: planner.ProfileID, Harness: "test-harness", Model: "model-1", ProviderSessionID: "provider-existing", Status: "waiting", Usage: "sticky"}); err != nil {
+		t.Fatalf("CreateAgentSession returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "session.start", AgentSessionStartRequest{WorkspaceID: "ws-1", Profile: "executor", SessionID: "shared-session", Message: "Do not attach wrong profile"})
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "session_profile_mismatch" || data["session_id"] != "shared-session" || data["profile"] != "executor" || data["existing_profile"] != "planner" || data["start_invoked"] != false {
+		t.Fatalf("error data = %#v, want profile mismatch rejection details", data)
+	}
+}
+
 func TestSessionGetAndListPreservePersistedSessionLinkageFields(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
