@@ -577,14 +577,21 @@ func (s *Store) SendAgentMessage(ctx context.Context, params AgentMessageSendPar
 	if strings.TrimSpace(params.AgentMessageID) == "" || strings.TrimSpace(params.SourceSessionID) == "" || strings.TrimSpace(params.TargetAgentID) == "" || strings.TrimSpace(params.Body) == "" {
 		return AgentMessage{}, ErrInvalidInput
 	}
-	source, err := s.sqlc.GetAgentSession(ctx, dbsqlc.GetAgentSessionParams{SessionID: params.SourceSessionID})
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AgentMessage{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	qtx := s.sqlc.WithTx(tx)
+
+	source, err := qtx.GetAgentSession(ctx, dbsqlc.GetAgentSessionParams{SessionID: params.SourceSessionID})
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return AgentMessage{}, ErrNotFound
 		}
 		return AgentMessage{}, err
 	}
-	targetAgent, err := s.sqlc.GetAgentSessionConfig(ctx, dbsqlc.GetAgentSessionConfigParams{AgentID: params.TargetAgentID})
+	targetAgent, err := qtx.GetAgentSessionConfig(ctx, dbsqlc.GetAgentSessionConfigParams{AgentID: params.TargetAgentID})
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return AgentMessage{}, ErrNotFound
@@ -603,7 +610,7 @@ func (s *Store) SendAgentMessage(ctx context.Context, params AgentMessageSendPar
 	}
 	excerpts := make([]ContextExcerpt, 0, len(params.ContextExcerptIDs))
 	for _, contextExcerptID := range params.ContextExcerptIDs {
-		excerpt, err := s.GetContextExcerpt(ctx, strings.TrimSpace(contextExcerptID))
+		excerpt, err := getContextExcerptWithQueries(ctx, qtx, strings.TrimSpace(contextExcerptID))
 		if err != nil {
 			return AgentMessage{}, err
 		}
@@ -616,7 +623,7 @@ func (s *Store) SendAgentMessage(ctx context.Context, params AgentMessageSendPar
 		excerpts = append(excerpts, excerpt)
 	}
 	if strings.TrimSpace(params.TargetSessionID) != "" {
-		targetRun, err := s.sqlc.GetAgentSession(ctx, dbsqlc.GetAgentSessionParams{SessionID: targetSessionID})
+		targetRun, err := qtx.GetAgentSession(ctx, dbsqlc.GetAgentSessionParams{SessionID: targetSessionID})
 		if err != nil {
 			if err == sql.ErrNoRows {
 				return AgentMessage{}, ErrNotFound
@@ -627,12 +634,6 @@ func (s *Store) SendAgentMessage(ctx context.Context, params AgentMessageSendPar
 			return AgentMessage{}, ErrInvalidInput
 		}
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return AgentMessage{}, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	qtx := s.sqlc.WithTx(tx)
 	if strings.TrimSpace(params.TargetSessionID) == "" {
 		if err := qtx.CreateAgentSession(ctx, createAgentSessionParams(AgentSession{SessionID: targetSessionID, WorkspaceID: source.WorkspaceID, AgentID: targetAgent.AgentID, Harness: targetAgent.Harness, Model: targetAgent.Model, Status: "waiting"}, "agent_message")); err != nil {
 			return AgentMessage{}, err
@@ -764,7 +765,11 @@ func (s *Store) ListAgentMessages(ctx context.Context, workspaceID string) ([]Ag
 }
 
 func (s *Store) GetContextExcerpt(ctx context.Context, contextExcerptID string) (ContextExcerpt, error) {
-	row, err := s.sqlc.GetContextExcerpt(ctx, dbsqlc.GetContextExcerptParams{ContextExcerptID: contextExcerptID})
+	return getContextExcerptWithQueries(ctx, s.sqlc, contextExcerptID)
+}
+
+func getContextExcerptWithQueries(ctx context.Context, queries *dbsqlc.Queries, contextExcerptID string) (ContextExcerpt, error) {
+	row, err := queries.GetContextExcerpt(ctx, dbsqlc.GetContextExcerptParams{ContextExcerptID: contextExcerptID})
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return ContextExcerpt{}, ErrNotFound
@@ -772,7 +777,7 @@ func (s *Store) GetContextExcerpt(ctx context.Context, contextExcerptID string) 
 		return ContextExcerpt{}, err
 	}
 	excerpt := ContextExcerpt{ContextExcerptID: row.ContextExcerptID, WorkspaceID: row.WorkspaceID, SourceSessionID: row.SourceSessionID, SourceAgentID: row.SourceAgentID, TargetAgentID: row.TargetAgentID, TargetSessionID: row.TargetSessionID, SelectorType: row.SelectorType, SelectorJSON: row.SelectorJson, Visibility: row.Visibility, AppendedMessage: row.AppendedMessage, ContentHash: row.ContentHash}
-	rows, err := s.sqlc.ListContextExcerptItems(ctx, dbsqlc.ListContextExcerptItemsParams{ContextExcerptID: contextExcerptID})
+	rows, err := queries.ListContextExcerptItems(ctx, dbsqlc.ListContextExcerptItemsParams{ContextExcerptID: contextExcerptID})
 	if err != nil {
 		return ContextExcerpt{}, err
 	}

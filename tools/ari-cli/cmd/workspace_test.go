@@ -448,6 +448,8 @@ func TestWorkspaceSetCurrentAndClear(t *testing.T) {
 }
 
 func TestWorkspaceUseSetsDaemonActiveContext(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 	originalGet := workspaceGetRPC
 	originalList := workspaceListRPC
 	originalContextSet := workspaceContextSetRPC
@@ -480,6 +482,13 @@ func TestWorkspaceUseSetsDaemonActiveContext(t *testing.T) {
 	}
 	if !strings.Contains(out, "Active workspace set: ws-123") {
 		t.Fatalf("workspace use output = %q, want daemon context confirmation", out)
+	}
+	persisted, err := config.ReadPersistedActiveWorkspace()
+	if err != nil {
+		t.Fatalf("ReadPersistedActiveWorkspace returned error: %v", err)
+	}
+	if persisted != "ws-123" {
+		t.Fatalf("persisted active workspace = %q, want ws-123", persisted)
 	}
 }
 

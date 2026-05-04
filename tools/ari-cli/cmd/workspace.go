@@ -127,8 +127,7 @@ func newWorkspaceUseCmd() *cobra.Command {
 			if err != nil {
 				return mapSessionRPCError(err)
 			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Active workspace set: %s\n", resp.Current.WorkspaceID)
-			return err
+			return writeAndReportActiveSession(cmd, resp.Current.WorkspaceID)
 		},
 	}
 }
