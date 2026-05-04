@@ -1979,11 +1979,13 @@ func storeHarnessRunLogMessages(ctx context.Context, store *globaldb.Store, resu
 	run := result.AgentSession
 	agentName := strings.TrimSpace(run.Executor)
 	agentID := ""
+	agentConfigWorkspaceID := strings.TrimSpace(run.WorkspaceID)
 	model := result.Telemetry.Model
 	prompt := ""
 	if len(profile) > 0 {
-		if strings.TrimSpace(profile[0].ProfileID) != "" && strings.TrimSpace(profile[0].WorkspaceID) == strings.TrimSpace(run.WorkspaceID) {
+		if strings.TrimSpace(profile[0].ProfileID) != "" {
 			agentID = strings.TrimSpace(profile[0].ProfileID)
+			agentConfigWorkspaceID = strings.TrimSpace(profile[0].WorkspaceID)
 		}
 		if strings.TrimSpace(profile[0].Name) != "" {
 			agentName = strings.TrimSpace(profile[0].Name)
@@ -1999,7 +2001,7 @@ func storeHarnessRunLogMessages(ctx context.Context, store *globaldb.Store, resu
 	if agentID == "" {
 		agentID = "wa_" + stableRuntimeAgentIDSegment(run.WorkspaceID) + "_" + stableRuntimeAgentIDSegment(agentName)
 	}
-	if err := store.EnsureAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: agentID, WorkspaceID: run.WorkspaceID, Name: agentName, Harness: run.Executor, Model: model, Prompt: prompt}); err != nil {
+	if err := store.EnsureAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: agentID, WorkspaceID: agentConfigWorkspaceID, Name: agentName, Harness: run.Executor, Model: model, Prompt: prompt}); err != nil {
 		return err
 	}
 	providerMetadata, err := json.Marshal(map[string]any{"session_ref": result.SessionRef, "provider_session_id": run.ProviderSessionID, "capabilities": run.Capabilities})

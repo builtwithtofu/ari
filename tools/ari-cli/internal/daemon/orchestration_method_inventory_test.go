@@ -238,6 +238,68 @@ func TestSessionStartRejectsExistingSessionFromDifferentProfile(t *testing.T) {
 	}
 }
 
+func TestSessionStartReattachesExistingSessionFromGlobalProfile(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	globalProfile := globaldb.AgentProfile{ProfileID: "ap_global_executor", Name: "executor", Harness: "test-harness", Model: "model-1", Prompt: "global behavior", InvocationClass: string(HarnessInvocationAgent)}
+	if err := store.UpsertAgentProfile(context.Background(), globalProfile); err != nil {
+		t.Fatalf("UpsertAgentProfile returned error: %v", err)
+	}
+	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return newFakeHarness("test-harness", []TimelineItem{{Kind: "agent_text", Text: "started"}}), nil
+	})
+
+	created := callMethod[AgentSessionStartResponse](t, registry, "session.start", AgentSessionStartRequest{WorkspaceID: "ws-1", Profile: "executor", SessionID: "executor-main", Message: "start"})
+	if created.Run.AgentSessionID != "executor-main" || created.Run.WorkspaceID != "ws-1" {
+		t.Fatalf("created session = %#v, want executor-main in ws-1", created.Run)
+	}
+	reattached := callMethod[AgentSessionStartResponse](t, registry, "session.start", AgentSessionStartRequest{WorkspaceID: "ws-1", Profile: "executor", SessionID: "executor-main", Message: "reattach"})
+	if reattached.Run.AgentSessionID != "executor-main" || reattached.Run.WorkspaceID != "ws-1" {
+		t.Fatalf("reattached session = %#v, want same global-profile session", reattached.Run)
+	}
+}
+
+func TestSessionStartUsesGlobalProfileAcrossWorkspaces(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	seedSessionWithPrimaryFolder(t, store, "ws-2", t.TempDir())
+	if err := store.UpsertAgentProfile(context.Background(), globaldb.AgentProfile{ProfileID: "ap_global_executor", Name: "executor", Harness: "test-harness", Model: "model-1", Prompt: "global behavior", InvocationClass: string(HarnessInvocationAgent)}); err != nil {
+		t.Fatalf("UpsertAgentProfile returned error: %v", err)
+	}
+	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return newFakeHarness("test-harness", []TimelineItem{{Kind: "agent_text", Text: "started"}}), nil
+	})
+
+	first := callMethod[AgentSessionStartResponse](t, registry, "session.start", AgentSessionStartRequest{WorkspaceID: "ws-1", Profile: "executor", SessionID: "executor-ws-1", Message: "start in ws-1"})
+	second := callMethod[AgentSessionStartResponse](t, registry, "session.start", AgentSessionStartRequest{WorkspaceID: "ws-2", Profile: "executor", SessionID: "executor-ws-2", Message: "start in ws-2"})
+	if first.Run.WorkspaceID != "ws-1" || second.Run.WorkspaceID != "ws-2" {
+		t.Fatalf("sessions = %#v %#v, want global profile usable in both workspaces", first.Run, second.Run)
+	}
+	config, err := store.GetAgentSessionConfig(context.Background(), "ap_global_executor")
+	if err != nil {
+		t.Fatalf("GetAgentSessionConfig returned error: %v", err)
+	}
+	if config.WorkspaceID != "" {
+		t.Fatalf("global profile session config workspace = %q, want global config", config.WorkspaceID)
+	}
+}
+
 func TestSessionGetAndListPreservePersistedSessionLinkageFields(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()

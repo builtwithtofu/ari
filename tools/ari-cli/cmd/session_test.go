@@ -10,6 +10,8 @@ import (
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/config"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
+	"github.com/sourcegraph/jsonrpc2"
 )
 
 func TestSessionStartCallsPublicSessionStartRPC(t *testing.T) {
@@ -37,6 +39,37 @@ func TestSessionStartCallsPublicSessionStartRPC(t *testing.T) {
 	}
 	if !strings.Contains(out, "Session started: executor-main") {
 		t.Fatalf("session start output = %q, want stable session id", out)
+	}
+}
+
+func TestSessionStartResolvesWorkspaceNameBeforeRPC(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	originalEnsure := sessionEnsureDaemonRunning
+	originalStart := sessionStartRPC
+	originalGet := workspaceGetRPC
+	originalList := workspaceListRPC
+	sessionEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	workspaceGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
+		return daemon.WorkspaceGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "session not found"}
+	}
+	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{{WorkspaceID: "ws-1", Name: "app"}}}, nil
+	}
+	sessionStartRPC = func(_ context.Context, _ string, req daemon.AgentSessionStartRequest) (daemon.AgentSessionStartResponse, error) {
+		if req.WorkspaceID != "ws-1" {
+			t.Fatalf("session.start workspace_id = %q, want resolved id ws-1", req.WorkspaceID)
+		}
+		return daemon.AgentSessionStartResponse{Run: daemon.AgentSession{AgentSessionID: "executor-main", SessionID: "executor-main", WorkspaceID: req.WorkspaceID, Status: "waiting"}}, nil
+	}
+	t.Cleanup(func() {
+		sessionEnsureDaemonRunning = originalEnsure
+		sessionStartRPC = originalStart
+		workspaceGetRPC = originalGet
+		workspaceListRPC = originalList
+	})
+
+	if _, err := executeRootCommand("session", "start", "executor", "--workspace", "app", "--session", "executor-main"); err != nil {
+		t.Fatalf("session start returned error: %v", err)
 	}
 }
 
@@ -93,6 +126,37 @@ func TestSessionListCallsPublicSessionListRPC(t *testing.T) {
 	}
 	if !strings.Contains(out, "executor-main") || !strings.Contains(out, "running") {
 		t.Fatalf("session list output = %q, want listed session id and status", out)
+	}
+}
+
+func TestSessionListResolvesWorkspaceNameBeforeRPC(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	originalEnsure := sessionEnsureDaemonRunning
+	originalListSessions := sessionListRPC
+	originalGet := workspaceGetRPC
+	originalListWorkspaces := workspaceListRPC
+	sessionEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	workspaceGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
+		return daemon.WorkspaceGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "session not found"}
+	}
+	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
+		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{{WorkspaceID: "ws-1", Name: "app"}}}, nil
+	}
+	sessionListRPC = func(_ context.Context, _ string, req daemon.SessionListRequest) (daemon.SessionListResponse, error) {
+		if req.WorkspaceID != "ws-1" {
+			t.Fatalf("session.list workspace_id = %q, want resolved id ws-1", req.WorkspaceID)
+		}
+		return daemon.SessionListResponse{Sessions: []daemon.AgentSession{{SessionID: "executor-main", Status: "running", Executor: "codex"}}}, nil
+	}
+	t.Cleanup(func() {
+		sessionEnsureDaemonRunning = originalEnsure
+		sessionListRPC = originalListSessions
+		workspaceGetRPC = originalGet
+		workspaceListRPC = originalListWorkspaces
+	})
+
+	if _, err := executeRootCommand("session", "list", "--workspace", "app"); err != nil {
+		t.Fatalf("session list returned error: %v", err)
 	}
 }
 

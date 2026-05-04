@@ -93,6 +93,15 @@ func newSessionStartCmd() *cobra.Command {
 		if workspaceID == "" {
 			return userFacingError{message: "No active workspace is set"}
 		}
+		ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+		defer cancel()
+		if cmd.Flags().Changed("workspace") {
+			resolvedWorkspaceID, err := resolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, workspaceID)
+			if err != nil {
+				return err
+			}
+			workspaceID = resolvedWorkspaceID
+		}
 		if strings.TrimSpace(prompt) != "" && strings.TrimSpace(promptFile) != "" {
 			return userFacingError{message: "Use either --prompt or --prompt-file, not both"}
 		}
@@ -103,8 +112,6 @@ func newSessionStartCmd() *cobra.Command {
 			}
 			prompt = string(data)
 		}
-		ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
-		defer cancel()
 		resp, err := sessionStartRPC(ctx, cfg.Daemon.SocketPath, daemon.AgentSessionStartRequest{WorkspaceID: workspaceID, Profile: strings.TrimSpace(args[0]), SessionID: strings.TrimSpace(sessionID), Message: strings.TrimSpace(message), Prompt: prompt})
 		if err != nil {
 			return mapSessionRPCError(err)
@@ -147,6 +154,13 @@ func newSessionListCmd() *cobra.Command {
 		}
 		ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 		defer cancel()
+		if cmd.Flags().Changed("workspace") {
+			resolvedWorkspaceID, err := resolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, workspaceID)
+			if err != nil {
+				return err
+			}
+			workspaceID = resolvedWorkspaceID
+		}
 		resp, err := sessionListRPC(ctx, cfg.Daemon.SocketPath, daemon.SessionListRequest{WorkspaceID: workspaceID})
 		if err != nil {
 			return mapSessionRPCError(err)
