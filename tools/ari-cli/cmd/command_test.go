@@ -24,6 +24,7 @@ func TestRootRegistersCommandCommand(t *testing.T) {
 		{name: "command root registered", path: []string{"command"}, want: "command"},
 		{name: "exec root registered", path: []string{"exec"}, want: "exec"},
 		{name: "profile root registered", path: []string{"profile"}, want: "profile"},
+		{name: "session root registered", path: []string{"session"}, want: "session"},
 		{name: "daemon root still registered", path: []string{"daemon"}, want: "daemon"},
 		{name: "workspace root still registered", path: []string{"workspace"}, want: "workspace"},
 	}
@@ -42,6 +43,35 @@ func TestRootRegistersCommandCommand(t *testing.T) {
 				t.Fatalf("command name = %q, want %q", cmd.Name(), tc.want)
 			}
 		})
+	}
+}
+
+func TestSessionSubcommandsUseCommittedOrchestrationSurface(t *testing.T) {
+	root := NewRootCmd()
+	for _, path := range [][]string{{"session", "start"}, {"session", "list"}, {"session", "show"}, {"session", "message", "send"}, {"session", "call"}, {"session", "fanout"}} {
+		cmd, _, err := root.Find(path)
+		if err != nil {
+			t.Fatalf("find %v: %v", path, err)
+		}
+		if cmd == nil {
+			t.Fatalf("expected command %v to be registered", path)
+		}
+	}
+	if legacy, _, err := root.Find([]string{"agents"}); err == nil && legacy != nil && legacy.Name() == "agents" {
+		t.Fatalf("legacy agents command is still registered as a public orchestration surface")
+	}
+}
+
+func TestContextExcerptSubcommandsUseCommittedOrchestrationSurface(t *testing.T) {
+	root := NewRootCmd()
+	for _, path := range [][]string{{"context", "excerpt", "tail"}, {"context", "excerpt", "range"}, {"context", "excerpt", "messages"}, {"context", "excerpt", "show"}} {
+		cmd, _, err := root.Find(path)
+		if err != nil {
+			t.Fatalf("find %v: %v", path, err)
+		}
+		if cmd == nil {
+			t.Fatalf("expected command %v to be registered", path)
+		}
 	}
 }
 

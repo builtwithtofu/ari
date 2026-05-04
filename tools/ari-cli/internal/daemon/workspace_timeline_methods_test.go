@@ -101,3 +101,115 @@ func TestWorkspaceTimelineNormalizesExecutorItemsToSessionRunLogTerms(t *testing
 		t.Fatalf("terminal output item = %#v, want run_log_message", resp.Items[1])
 	}
 }
+
+func TestWorkspaceTimelineIncludesAgentMessageAndContextExcerptActivity(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	ctx := context.Background()
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "executor", WorkspaceID: "ws-1", Name: "executor", Harness: "codex"}); err != nil {
+		t.Fatalf("CreateAgentSessionConfig executor returned error: %v", err)
+	}
+	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "reviewer", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateAgentSessionConfig reviewer returned error: %v", err)
+	}
+	if err := store.CreateAgentSession(ctx, globaldb.AgentSession{SessionID: "run-1", WorkspaceID: "ws-1", AgentID: "executor", Harness: "codex", Status: "waiting", Usage: "durable"}); err != nil {
+		t.Fatalf("CreateAgentSession source returned error: %v", err)
+	}
+	if err := store.CreateAgentSession(ctx, globaldb.AgentSession{SessionID: "call-1-run", WorkspaceID: "ws-1", AgentID: "reviewer", Harness: "opencode", Status: "running", Usage: "ephemeral", SourceSessionID: "run-1", SourceAgentID: "executor"}); err != nil {
+		t.Fatalf("CreateAgentSession ephemeral returned error: %v", err)
+	}
+	if err := store.AppendRunLogMessage(ctx, globaldb.RunLogMessage{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "assistant", Parts: []globaldb.RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "text", Text: "please review"}}}); err != nil {
+		t.Fatalf("AppendRunLogMessage returned error: %v", err)
+	}
+	excerpt, err := store.CreateContextExcerptFromTail(ctx, globaldb.CreateContextExcerptFromTailParams{ContextExcerptID: "excerpt-1", SourceSessionID: "run-1", TargetAgentID: "reviewer", Count: 1})
+	if err != nil {
+		t.Fatalf("CreateContextExcerptFromTail returned error: %v", err)
+	}
+	if _, err := store.SendAgentMessage(ctx, globaldb.AgentMessageSendParams{AgentMessageID: "dm-1", SourceSessionID: "run-1", TargetAgentID: "reviewer", TargetSessionID: "call-1-run", Body: "review this", ContextExcerptIDs: []string{excerpt.ContextExcerptID}}); err != nil {
+		t.Fatalf("SendAgentMessage returned error: %v", err)
+	}
+
+	resp := callMethod[WorkspaceTimelineResponse](t, registry, "workspace.timeline", WorkspaceTimelineRequest{WorkspaceID: "ws-1"})
+	foundExcerpt := false
+	foundMessage := false
+	for _, item := range resp.Items {
+		if item.SourceKind == "context_excerpt" && item.SourceID == "excerpt-1" {
+			foundExcerpt = true
+		}
+		if item.SourceKind == "agent_message" && item.SourceID == "dm-1" {
+			foundMessage = true
+		}
+	}
+	if !foundExcerpt || !foundMessage {
+		t.Fatalf("timeline items = %#v, want context_excerpt and agent_message activity", resp.Items)
+	}
+}
+
+func TestWorkspaceTimelineOrdersContextExcerptAndAgentMessageActivityByWorkflow(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	ctx := context.Background()
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "executor", WorkspaceID: "ws-1", Name: "executor", Harness: "codex"}); err != nil {
+		t.Fatalf("CreateAgentSessionConfig executor returned error: %v", err)
+	}
+	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "reviewer", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateAgentSessionConfig reviewer returned error: %v", err)
+	}
+	if err := store.CreateAgentSession(ctx, globaldb.AgentSession{SessionID: "run-1", WorkspaceID: "ws-1", AgentID: "executor", Harness: "codex", Status: "waiting", Usage: "durable"}); err != nil {
+		t.Fatalf("CreateAgentSession source returned error: %v", err)
+	}
+	if err := store.CreateAgentSession(ctx, globaldb.AgentSession{SessionID: "call-1-run", WorkspaceID: "ws-1", AgentID: "reviewer", Harness: "opencode", Status: "running", Usage: "ephemeral", SourceSessionID: "run-1", SourceAgentID: "executor"}); err != nil {
+		t.Fatalf("CreateAgentSession ephemeral returned error: %v", err)
+	}
+	for _, msg := range []globaldb.RunLogMessage{
+		{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "assistant", Parts: []globaldb.RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "text", Text: "first"}}},
+		{MessageID: "msg-2", SessionID: "run-1", Sequence: 2, Role: "assistant", Parts: []globaldb.RunLogMessagePart{{PartID: "part-2", Sequence: 1, Kind: "text", Text: "second"}}},
+	} {
+		if err := store.AppendRunLogMessage(ctx, msg); err != nil {
+			t.Fatalf("AppendRunLogMessage(%s) returned error: %v", msg.MessageID, err)
+		}
+	}
+	excerpt1, err := store.CreateContextExcerptFromExplicitIDs(ctx, globaldb.CreateContextExcerptFromExplicitIDsParams{ContextExcerptID: "excerpt-1", SourceSessionID: "run-1", TargetAgentID: "reviewer", MessageIDs: []string{"msg-1"}})
+	if err != nil {
+		t.Fatalf("CreateContextExcerptFromExplicitIDs excerpt-1 returned error: %v", err)
+	}
+	if _, err := store.SendAgentMessage(ctx, globaldb.AgentMessageSendParams{AgentMessageID: "dm-1", SourceSessionID: "run-1", TargetAgentID: "reviewer", TargetSessionID: "call-1-run", Body: "review first", ContextExcerptIDs: []string{excerpt1.ContextExcerptID}}); err != nil {
+		t.Fatalf("SendAgentMessage dm-1 returned error: %v", err)
+	}
+	excerpt2, err := store.CreateContextExcerptFromExplicitIDs(ctx, globaldb.CreateContextExcerptFromExplicitIDsParams{ContextExcerptID: "excerpt-2", SourceSessionID: "run-1", TargetAgentID: "reviewer", MessageIDs: []string{"msg-2"}})
+	if err != nil {
+		t.Fatalf("CreateContextExcerptFromExplicitIDs excerpt-2 returned error: %v", err)
+	}
+	if _, err := store.SendAgentMessage(ctx, globaldb.AgentMessageSendParams{AgentMessageID: "dm-2", SourceSessionID: "run-1", TargetAgentID: "reviewer", TargetSessionID: "call-1-run", Body: "review second", ContextExcerptIDs: []string{excerpt2.ContextExcerptID}}); err != nil {
+		t.Fatalf("SendAgentMessage dm-2 returned error: %v", err)
+	}
+
+	resp := callMethod[WorkspaceTimelineResponse](t, registry, "workspace.timeline", WorkspaceTimelineRequest{WorkspaceID: "ws-1"})
+	order := []string{}
+	for _, item := range resp.Items {
+		if item.SourceKind == "context_excerpt" || item.SourceKind == "agent_message" {
+			order = append(order, item.SourceID)
+		}
+	}
+	want := []string{"excerpt-1", "dm-1", "excerpt-2", "dm-2"}
+	if len(order) != len(want) {
+		t.Fatalf("workflow order = %#v, want %#v", order, want)
+	}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Fatalf("workflow order = %#v, want %#v", order, want)
+		}
+	}
+}

@@ -31,8 +31,62 @@ func TestClaudeExecutorMapsJSONResult(t *testing.T) {
 	if got := strings.Join(runner.args, " "); !strings.Contains(got, "--bare") || !strings.Contains(got, "--output-format json") || !strings.Contains(got, "--model opus") {
 		t.Fatalf("claude args = %q, want bare json model invocation", got)
 	}
-	if !strings.Contains(runner.prompt, "Review it") || !strings.Contains(runner.prompt, "ctx_123") {
-		t.Fatalf("claude prompt = %q, want profile prompt plus context packet", runner.prompt)
+	if strings.Contains(runner.prompt, "Review it") || !strings.Contains(runner.prompt, "ctx_123") {
+		t.Fatalf("claude prompt = %q, want context packet without profile behavior", runner.prompt)
+	}
+}
+
+func TestClaudeExecutorMapsProfilePromptToReplacementSystemPrompt(t *testing.T) {
+	runner := &fakeClaudeRunner{output: []byte(`{"result":"Done","session_id":"550e8400-e29b-41d4-a716-446655440000"}`)}
+	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunCommand: runner.Run})
+	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
+
+	_, _, err := StartExecutorRun(context.Background(), executor, packet, AgentProfile{Name: "reviewer", Model: "opus", Prompt: "Act as the reviewer", InvocationClass: HarnessInvocationAgent})
+	if err != nil {
+		t.Fatalf("StartExecutorRun returned error: %v", err)
+	}
+
+	args := strings.Join(runner.args, " ")
+	if !strings.Contains(args, "--system-prompt Act as the reviewer") {
+		t.Fatalf("claude args = %q, want replacement --system-prompt with profile behavior", args)
+	}
+	if strings.Contains(args, "--append-system-prompt") {
+		t.Fatalf("claude args = %q, must not append profile behavior by default", args)
+	}
+	if strings.Contains(runner.prompt, "Act as the reviewer") {
+		t.Fatalf("claude stdin prompt = %q, must keep profile behavior out of visible task/context payload", runner.prompt)
+	}
+	if !strings.Contains(runner.prompt, "ctx_123") {
+		t.Fatalf("claude stdin prompt = %q, want context packet visible in user payload", runner.prompt)
+	}
+}
+
+func TestClaudeExecutorUsesRequestPromptAsReplacementSystemPrompt(t *testing.T) {
+	runner := &fakeClaudeRunner{output: []byte(`{"result":"Done","session_id":"550e8400-e29b-41d4-a716-446655440000"}`)}
+	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunCommand: runner.Run})
+
+	_, err := executor.Start(context.Background(), ExecutorStartRequest{
+		WorkspaceID:   "ws-1",
+		Model:         "opus",
+		Prompt:        "Session-specific behavior",
+		ContextPacket: `{"context_packet_id":"ctx_123","task":"visible task"}`,
+	})
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+
+	args := strings.Join(runner.args, " ")
+	if !strings.Contains(args, "--system-prompt Session-specific behavior") {
+		t.Fatalf("claude args = %q, want request prompt mapped to replacement --system-prompt", args)
+	}
+	if strings.Contains(args, "--append-system-prompt") {
+		t.Fatalf("claude args = %q, must not append request prompt by default", args)
+	}
+	if strings.Contains(runner.prompt, "Session-specific behavior") {
+		t.Fatalf("claude stdin prompt = %q, must keep request prompt out of visible task/context payload", runner.prompt)
+	}
+	if !strings.Contains(runner.prompt, "visible task") {
+		t.Fatalf("claude stdin prompt = %q, want context packet visible in user payload", runner.prompt)
 	}
 }
 

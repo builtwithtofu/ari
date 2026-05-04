@@ -62,11 +62,11 @@ type DashboardGetRequest struct {
 }
 
 type DashboardGetResponse struct {
-	ActiveContext        ActiveWorkspaceContext    `json:"active_context"`
-	EffectiveWorkspaceID string                    `json:"effective_workspace_id"`
-	Activity             WorkspaceActivityResponse `json:"activity"`
-	ResumeActions        []ResumeAction            `json:"resume_actions"`
-	CWDMemberships       []WorkspaceMembership     `json:"cwd_memberships"`
+	ActiveContext        ActiveWorkspaceContext  `json:"active_context"`
+	EffectiveWorkspaceID string                  `json:"effective_workspace_id"`
+	Status               WorkspaceStatusResponse `json:"status"`
+	ResumeActions        []ResumeAction          `json:"resume_actions"`
+	CWDMemberships       []WorkspaceMembership   `json:"cwd_memberships"`
 }
 
 type ResumeAction struct {
@@ -185,7 +185,7 @@ func (d *Daemon) dashboardGet(ctx context.Context, store *globaldb.Store, req Da
 	if effectiveWorkspaceID == "" {
 		return DashboardGetResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "active workspace context is not set", map[string]any{"reason": "missing_active_context"})
 	}
-	activity, err := d.workspaceActivity(ctx, store, effectiveWorkspaceID)
+	status, err := d.workspaceStatus(ctx, store, effectiveWorkspaceID)
 	if err != nil {
 		return DashboardGetResponse{}, err
 	}
@@ -197,12 +197,12 @@ func (d *Daemon) dashboardGet(ctx context.Context, store *globaldb.Store, req Da
 		}
 		memberships = membershipResp.Memberships
 	}
-	return DashboardGetResponse{ActiveContext: activeContext, EffectiveWorkspaceID: activity.WorkspaceID, Activity: activity, ResumeActions: resumeActionsForActivity(activity), CWDMemberships: memberships}, nil
+	return DashboardGetResponse{ActiveContext: activeContext, EffectiveWorkspaceID: status.WorkspaceID, Status: status, ResumeActions: resumeActionsForStatus(status), CWDMemberships: memberships}, nil
 }
 
-func resumeActionsForActivity(activity WorkspaceActivityResponse) []ResumeAction {
+func resumeActionsForStatus(status WorkspaceStatusResponse) []ResumeAction {
 	actions := make([]ResumeAction, 0)
-	for _, agent := range activity.Agents {
+	for _, agent := range status.Sessions {
 		if agent.Status != "running" {
 			continue
 		}
@@ -213,7 +213,7 @@ func resumeActionsForActivity(activity WorkspaceActivityResponse) []ResumeAction
 		if label == "" {
 			label = strings.TrimSpace(agent.Executor)
 		}
-		actions = append(actions, ResumeAction{ID: "resume:session:" + agent.ID, Kind: "resume_session", WorkspaceID: activity.WorkspaceID, SourceID: agent.ID, Label: label})
+		actions = append(actions, ResumeAction{ID: "resume:session:" + agent.ID, Kind: "resume_session", WorkspaceID: status.WorkspaceID, SourceID: agent.ID, Label: label})
 	}
 	return actions
 }

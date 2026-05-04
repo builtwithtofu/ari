@@ -287,7 +287,11 @@ func (e *CodexExecutor) Start(ctx context.Context, req ExecutorStartRequest) (Ex
 		return ExecutorRun{}, fmt.Errorf("acknowledge codex initialization: %w", err)
 	}
 	var thread codexThreadStartResult
-	if err := transport.Call(ctx, "thread/start", map[string]any{"model": strings.TrimSpace(req.Model), "cwd": strings.TrimSpace(e.options.Cwd), "approvalPolicy": "never", "sandbox": "workspaceWrite", "experimentalRawEvents": false, "persistExtendedHistory": true}, &thread); err != nil {
+	threadParams := map[string]any{"model": strings.TrimSpace(req.Model), "cwd": strings.TrimSpace(e.options.Cwd), "approvalPolicy": "never", "sandbox": "workspaceWrite", "experimentalRawEvents": false, "persistExtendedHistory": true}
+	if instructions := strings.TrimSpace(req.Prompt); instructions != "" {
+		threadParams["baseInstructions"] = instructions
+	}
+	if err := transport.Call(ctx, "thread/start", threadParams, &thread); err != nil {
 		return ExecutorRun{}, fmt.Errorf("start codex thread: %w", err)
 	}
 	threadID := strings.TrimSpace(thread.Thread.ID)
@@ -348,12 +352,7 @@ type codexTurnStartResult struct {
 }
 
 func codexPromptFromRequest(req ExecutorStartRequest) string {
-	parts := make([]string, 0, 2)
-	if prompt := strings.TrimSpace(req.Prompt); prompt != "" {
-		parts = append(parts, prompt)
-	}
-	parts = append(parts, strings.TrimSpace(req.ContextPacket))
-	return strings.Join(parts, "\n\n")
+	return strings.TrimSpace(req.ContextPacket)
 }
 
 func collectCodexTimelineItems(ctx context.Context, notifications <-chan codexNotification, workspaceID, threadID, turnID string) ([]TimelineItem, error) {

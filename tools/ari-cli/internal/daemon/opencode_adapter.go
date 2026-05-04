@@ -248,12 +248,7 @@ func opencodeTimelineItemsFromEvents(workspaceID string, parsed opencodeParsedEv
 }
 
 func opencodePromptFromRequest(req ExecutorStartRequest) string {
-	parts := make([]string, 0, 2)
-	if prompt := strings.TrimSpace(req.Prompt); prompt != "" {
-		parts = append(parts, prompt)
-	}
-	parts = append(parts, strings.TrimSpace(req.ContextPacket))
-	return strings.Join(parts, "\n\n")
+	return strings.TrimSpace(req.ContextPacket)
 }
 
 func opencodeArgs(options opencodeExecutorOptions, prompt string) []string {

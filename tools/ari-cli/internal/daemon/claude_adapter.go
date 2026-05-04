@@ -16,6 +16,7 @@ type claudeExecutorOptions struct {
 	Executable     string
 	Cwd            string
 	Model          string
+	SystemPrompt   string
 	RunCommand     claudeCommandRunner
 	RunAuthCommand claudeAuthCommandRunner
 }
@@ -123,6 +124,7 @@ func (e *ClaudeExecutor) Start(ctx context.Context, req ExecutorStartRequest) (E
 	if strings.TrimSpace(req.Model) != "" {
 		options.Model = strings.TrimSpace(req.Model)
 	}
+	options.SystemPrompt = strings.TrimSpace(req.Prompt)
 	commandResult, err := options.RunCommand(ctx, options, claudePromptFromRequest(req))
 	if err != nil {
 		return ExecutorRun{}, err
@@ -196,18 +198,16 @@ func claudeTimelineItemsFromResult(workspaceID, sessionID string, result claudeJ
 }
 
 func claudePromptFromRequest(req ExecutorStartRequest) string {
-	parts := make([]string, 0, 2)
-	if prompt := strings.TrimSpace(req.Prompt); prompt != "" {
-		parts = append(parts, prompt)
-	}
-	parts = append(parts, strings.TrimSpace(req.ContextPacket))
-	return strings.Join(parts, "\n\n")
+	return strings.TrimSpace(req.ContextPacket)
 }
 
 func claudeArgs(options claudeExecutorOptions) []string {
 	args := []string{"--bare", "-p", "-", "--output-format", "json"}
 	if model := strings.TrimSpace(options.Model); model != "" {
 		args = append(args, "--model", model)
+	}
+	if systemPrompt := strings.TrimSpace(options.SystemPrompt); systemPrompt != "" {
+		args = append(args, "--system-prompt", systemPrompt)
 	}
 	return args
 }

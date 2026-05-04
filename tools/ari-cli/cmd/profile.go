@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -41,7 +42,7 @@ var (
 )
 
 func NewProfileCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "profile", Short: "Manage Ari profiles", Hidden: true}
+	cmd := &cobra.Command{Use: "profile", Short: "Manage Ari profiles"}
 	cmd.AddCommand(newProfileCreateCmd())
 	cmd.AddCommand(newProfileListCmd())
 	cmd.AddCommand(newProfileShowCmd())
@@ -112,12 +113,22 @@ func validateProfileDefaultsInput(harness, invocationClass string) error {
 }
 
 func newProfileCreateCmd() *cobra.Command {
-	var workspaceID, harness, model, prompt, invocationClass string
+	var workspaceID, harness, model, prompt, promptFile, invocationClass string
 	cmd := &cobra.Command{
 		Use:   "create <name>",
 		Short: "Create or update a profile",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if strings.TrimSpace(prompt) != "" && strings.TrimSpace(promptFile) != "" {
+				return userFacingError{message: "Use either --prompt or --prompt-file, not both"}
+			}
+			if strings.TrimSpace(promptFile) != "" {
+				data, err := os.ReadFile(promptFile)
+				if err != nil {
+					return err
+				}
+				prompt = string(data)
+			}
 			cfg, err := configuredDaemonConfig()
 			if err != nil {
 				return err
@@ -138,6 +149,7 @@ func newProfileCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&harness, "harness", "", "Preferred harness for this profile")
 	cmd.Flags().StringVar(&model, "model", "", "Preferred model or variant for this profile")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "Prompt or system seed for this profile")
+	cmd.Flags().StringVar(&promptFile, "prompt-file", "", "File containing profile prompt or system seed")
 	cmd.Flags().StringVar(&invocationClass, "invocation-class", "", "Invocation class: agent or temporary")
 	return cmd
 }

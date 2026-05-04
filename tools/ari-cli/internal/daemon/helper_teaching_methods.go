@@ -176,9 +176,9 @@ func (d *Daemon) helperExplain(ctx context.Context, store *globaldb.Store, req H
 		if err != nil {
 			return HelperExplainResponse{}, err
 		}
-		return HelperExplainResponse{Topic: "profile", Explanation: fmt.Sprintf("Profiles are workspace-scoped run configurations. This workspace has %d configured profile(s); helper is the conventional default helper profile when present.", len(profiles)), Anchors: []string{"profile.list", "profile.helper.get", "helper profile convention"}}, nil
+		return HelperExplainResponse{Topic: "profile", Explanation: fmt.Sprintf("Profiles are workspace-scoped run configurations. This workspace has %d configured profile(s); helper is the conventional default helper profile when present.", len(profiles)), Anchors: []string{"profile.list", "profile.get", "helper profile convention"}}, nil
 	case "harness":
-		return HelperExplainResponse{Topic: "harness", Explanation: "A harness is the external agent runtime Ari launches, such as codex, opencode, or claude-code. Ari stores local state and passes scoped context to the harness.", Anchors: []string{"default_harness", "agent.run", "profile.run"}}, nil
+		return HelperExplainResponse{Topic: "harness", Explanation: "A harness is the external agent runtime Ari launches, such as codex, opencode, or claude-code. Ari stores local state and passes scoped context to the harness.", Anchors: []string{"default_harness", "session.start", "profile.create"}}, nil
 	case "workspace":
 		return HelperExplainResponse{Topic: "workspace", Explanation: "A workspace is a folder-backed place Ari can use for context. Init creates a normal home workspace as a starter landing place when possible; users can delete it without changing Ari defaults.", Anchors: []string{"workspace.create", "workspace.get", "ari init"}}, nil
 	case "telemetry":
@@ -347,7 +347,7 @@ func helperLatestFailedRunExplanation(ctx context.Context, store *globaldb.Store
 }
 
 func helperDocs() []string {
-	return []string{"ari init: choose the default harness and create a normal home workspace when possible", "ari agents create helper --harness <harness>: define a workspace helper, then ari agents run helper", "ari workspace show: inspect workspace folders and origin"}
+	return []string{"ari init: choose the default harness and create a normal home workspace when possible", "ari profile create helper --harness <harness>: define reusable helper behavior, then ari session call --profile helper", "ari workspace show: inspect workspace folders and origin"}
 }
 
 func helperExplanationTopics() []string {
