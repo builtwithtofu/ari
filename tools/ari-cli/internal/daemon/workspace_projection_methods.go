@@ -13,18 +13,18 @@ import (
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/vcs"
 )
 
-type WorkspaceActivityRequest struct {
+type WorkspaceStatusRequest struct {
 	WorkspaceID string `json:"workspace_id"`
 }
 
-type WorkspaceActivityResponse struct {
+type WorkspaceStatusResponse struct {
 	WorkspaceID     string                   `json:"workspace_id"`
 	WorkspaceName   string                   `json:"workspace_name"`
 	VCS             DiffSummary              `json:"vcs"`
 	ActiveTaskID    string                   `json:"active_task_id,omitempty"`
 	Attention       AttentionSummary         `json:"attention"`
 	Processes       []ProcessActivity        `json:"processes"`
-	Agents          []AgentActivity          `json:"agents"`
+	Sessions        []SessionActivity        `json:"sessions"`
 	Proofs          []ProofResultSummary     `json:"proofs"`
 	ContextExcerpts []ContextExcerptActivity `json:"context_excerpts"`
 	AgentMessages   []AgentMessageActivity   `json:"agent_messages"`
@@ -80,7 +80,7 @@ type ProcessActivity struct {
 	OutputSummary string `json:"output_summary,omitempty"`
 }
 
-type AgentActivity struct {
+type SessionActivity struct {
 	ID              string `json:"id"`
 	Name            string `json:"name,omitempty"`
 	Status          string `json:"status"`
@@ -94,6 +94,8 @@ type AgentActivity struct {
 	SourceSessionID string `json:"source_session_id,omitempty"`
 	SourceAgentID   string `json:"source_agent_id,omitempty"`
 }
+
+type AgentActivity = SessionActivity
 
 type ContextExcerptActivity struct {
 	ContextExcerptID string `json:"context_excerpt_id"`
@@ -133,14 +135,14 @@ func (d *Daemon) registerWorkspaceProjectionMethods(registry *rpc.MethodRegistry
 		return fmt.Errorf("globaldb store is required")
 	}
 
-	if err := rpc.RegisterMethod(registry, rpc.Method[WorkspaceActivityRequest, WorkspaceActivityResponse]{
-		Name:        "workspace.activity",
-		Description: "Project workspace activity for control-plane clients",
-		Handler: func(ctx context.Context, req WorkspaceActivityRequest) (WorkspaceActivityResponse, error) {
-			return d.workspaceActivity(ctx, store, req.WorkspaceID)
+	if err := rpc.RegisterMethod(registry, rpc.Method[WorkspaceStatusRequest, WorkspaceStatusResponse]{
+		Name:        "workspace.status",
+		Description: "Project workspace orchestration status for control-plane clients",
+		Handler: func(ctx context.Context, req WorkspaceStatusRequest) (WorkspaceStatusResponse, error) {
+			return d.workspaceStatus(ctx, store, req.WorkspaceID)
 		},
 	}); err != nil {
-		return fmt.Errorf("register workspace.activity: %w", err)
+		return fmt.Errorf("register workspace.status: %w", err)
 	}
 
 	if err := rpc.RegisterMethod(registry, rpc.Method[WorkspaceDiffRequest, WorkspaceDiffResponse]{
@@ -179,47 +181,47 @@ func (d *Daemon) registerWorkspaceProjectionMethods(registry *rpc.MethodRegistry
 	return nil
 }
 
-func (d *Daemon) workspaceActivity(ctx context.Context, store *globaldb.Store, rawWorkspaceID string) (WorkspaceActivityResponse, error) {
+func (d *Daemon) workspaceStatus(ctx context.Context, store *globaldb.Store, rawWorkspaceID string) (WorkspaceStatusResponse, error) {
 	workspaceID, roots, err := requireWorkspaceRoots(ctx, store, rawWorkspaceID)
 	if err != nil {
-		return WorkspaceActivityResponse{}, err
+		return WorkspaceStatusResponse{}, err
 	}
 	session, err := store.GetSession(ctx, workspaceID)
 	if err != nil {
-		return WorkspaceActivityResponse{}, mapWorkspaceStoreError(err, workspaceID)
+		return WorkspaceStatusResponse{}, mapWorkspaceStoreError(err, workspaceID)
 	}
 	processes, err := d.workspaceProcessActivity(ctx, store, workspaceID)
 	if err != nil {
-		return WorkspaceActivityResponse{}, err
+		return WorkspaceStatusResponse{}, err
 	}
-	agents, err := d.agentSessionConfigActivity(ctx, store, workspaceID)
+	sessions, err := d.workspaceSessionActivity(ctx, store, workspaceID)
 	if err != nil {
-		return WorkspaceActivityResponse{}, err
+		return WorkspaceStatusResponse{}, err
 	}
 	proofs, err := d.workspaceProofs(ctx, store, workspaceID)
 	if err != nil {
-		return WorkspaceActivityResponse{}, err
+		return WorkspaceStatusResponse{}, err
 	}
 	authSlots, err := workspaceAuthSlots(ctx, store, workspaceID)
 	if err != nil {
-		return WorkspaceActivityResponse{}, err
+		return WorkspaceStatusResponse{}, err
 	}
 	contextExcerpts, err := workspaceContextExcerpts(ctx, store, workspaceID)
 	if err != nil {
-		return WorkspaceActivityResponse{}, err
+		return WorkspaceStatusResponse{}, err
 	}
 	agentMessages, err := agentSessionConfigMessages(ctx, store, workspaceID)
 	if err != nil {
-		return WorkspaceActivityResponse{}, err
+		return WorkspaceStatusResponse{}, err
 	}
 
-	return WorkspaceActivityResponse{
+	return WorkspaceStatusResponse{
 		WorkspaceID:     workspaceID,
 		WorkspaceName:   session.Name,
 		VCS:             buildDiffSummary(roots),
-		Attention:       attentionFromActivity(proofs, agents, authSlots),
+		Attention:       attentionFromActivity(proofs, sessions, authSlots),
 		Processes:       processes,
-		Agents:          agents,
+		Sessions:        sessions,
 		Proofs:          proofs,
 		ContextExcerpts: contextExcerpts,
 		AgentMessages:   agentMessages,
@@ -276,7 +278,7 @@ func workspaceAuthSlots(ctx context.Context, store *globaldb.Store, workspaceID 
 	return slots, nil
 }
 
-func attentionFromActivity(proofs []ProofResultSummary, agents []AgentActivity, authSlots []globaldb.AuthSlot) AttentionSummary {
+func attentionFromActivity(proofs []ProofResultSummary, sessions []SessionActivity, authSlots []globaldb.AuthSlot) AttentionSummary {
 	items := make([]AttentionItem, 0)
 	level := "none"
 	for _, proof := range proofs {
@@ -312,22 +314,22 @@ func attentionFromActivity(proofs []ProofResultSummary, agents []AgentActivity, 
 		}
 	}
 
-	for _, agent := range agents {
-		if agent.Status != "running" && agent.Status != "waiting" {
+	for _, session := range sessions {
+		if session.Status != "running" && session.Status != "waiting" {
 			continue
 		}
-		message := strings.TrimSpace(agent.Name)
+		message := strings.TrimSpace(session.Name)
 		if message == "" {
-			message = strings.TrimSpace(agent.Executor)
+			message = strings.TrimSpace(session.Executor)
 		}
-		kind := "agent_sessionning"
-		if agent.Status == "waiting" {
-			kind = "agent_waiting"
+		kind := "session_running"
+		if session.Status == "waiting" {
+			kind = "session_waiting"
 		}
-		if agent.Usage == "ephemeral" && agent.Status == "running" {
+		if session.Usage == "ephemeral" && session.Status == "running" {
 			kind = "ephemeral_running"
 		}
-		items = append(items, AttentionItem{Kind: kind, SourceID: agent.ID, Message: message})
+		items = append(items, AttentionItem{Kind: kind, SourceID: session.ID, Message: message})
 		if level == "none" {
 			level = "running"
 		}
@@ -371,12 +373,12 @@ func (d *Daemon) workspaceProcessActivity(ctx context.Context, store *globaldb.S
 	return out, nil
 }
 
-func (d *Daemon) agentSessionConfigActivity(ctx context.Context, store *globaldb.Store, workspaceID string) ([]AgentActivity, error) {
-	out := make([]AgentActivity, 0)
+func (d *Daemon) workspaceSessionActivity(ctx context.Context, store *globaldb.Store, workspaceID string) ([]SessionActivity, error) {
+	out := make([]SessionActivity, 0)
 	seen := make(map[string]bool)
 	executorRuns := d.executorRunsForWorkspace(workspaceID)
 	for _, run := range executorRuns {
-		out = append(out, AgentActivity{ID: run.AgentSessionID, Status: run.Status, Executor: run.Executor, WorkspaceID: run.WorkspaceID, ActiveTaskID: run.TaskID, StartedAt: run.StartedAt, LastActivityAt: run.StartedAt})
+		out = append(out, SessionActivity{ID: run.AgentSessionID, Status: run.Status, Executor: run.Executor, WorkspaceID: run.WorkspaceID, ActiveTaskID: run.TaskID, StartedAt: run.StartedAt, LastActivityAt: run.StartedAt})
 		seen[run.AgentSessionID] = true
 	}
 	persistedRuns, err := store.ListAgentSessions(ctx, workspaceID)
@@ -387,25 +389,7 @@ func (d *Daemon) agentSessionConfigActivity(ctx context.Context, store *globaldb
 		if seen[run.SessionID] {
 			continue
 		}
-		out = append(out, AgentActivity{ID: run.SessionID, Status: run.Status, Executor: run.Harness, WorkspaceID: run.WorkspaceID, Usage: run.Usage, SourceSessionID: run.SourceSessionID, SourceAgentID: run.SourceAgentID})
-	}
-	legacyAgents, err := store.ListAgents(ctx, workspaceID)
-	if err != nil {
-		return nil, err
-	}
-	for _, agent := range legacyAgents {
-		if seen[agent.AgentID] {
-			continue
-		}
-		executor := agent.Command
-		if agent.Harness != nil && strings.TrimSpace(*agent.Harness) != "" {
-			executor = strings.TrimSpace(*agent.Harness)
-		}
-		name := ""
-		if agent.Name != nil {
-			name = strings.TrimSpace(*agent.Name)
-		}
-		out = append(out, AgentActivity{ID: agent.AgentID, Name: name, Status: agent.Status, Executor: executor, WorkspaceID: agent.WorkspaceID, StartedAt: agent.StartedAt})
+		out = append(out, SessionActivity{ID: run.SessionID, Status: run.Status, Executor: run.Harness, WorkspaceID: run.WorkspaceID, Usage: run.Usage, SourceSessionID: run.SourceSessionID, SourceAgentID: run.SourceAgentID})
 	}
 	return out, nil
 }

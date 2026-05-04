@@ -531,6 +531,23 @@ func TestAgentMessageToExistingRunAppendsAfterCurrentTail(t *testing.T) {
 	}
 }
 
+func TestAgentMessageResolvesTargetAgentFromTargetSession(t *testing.T) {
+	store := newGlobalDBTestStore(t, "agent-message-resolve-target-session")
+	ctx := context.Background()
+	seedAgentSessionConfigSession(t, store, ctx)
+	if err := store.CreateAgentSession(ctx, AgentSession{SessionID: "run-2", WorkspaceID: "ws-1", AgentID: "agent-2", Harness: "opencode", Status: "running", Usage: "durable", CWD: t.TempDir()}); err != nil {
+		t.Fatalf("CreateAgentSession target returned error: %v", err)
+	}
+
+	dm, err := store.SendAgentMessage(ctx, AgentMessageSendParams{AgentMessageID: "dm-1", SourceSessionID: "run-1", TargetSessionID: "run-2", Body: "continue"})
+	if err != nil {
+		t.Fatalf("SendAgentMessage returned error: %v", err)
+	}
+	if dm.TargetAgentID != "agent-2" || dm.TargetSessionID != "run-2" || dm.DeliveredSessionID != "run-2" {
+		t.Fatalf("direct message = %#v, want target agent resolved from target session", dm)
+	}
+}
+
 func TestAgentMessageAppendsToExistingTargetRun(t *testing.T) {
 	store := newGlobalDBTestStore(t, "agent-message-existing-run")
 	ctx := context.Background()

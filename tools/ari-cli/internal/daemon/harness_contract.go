@@ -16,6 +16,7 @@ var ariRandomReader io.Reader = rand.Reader
 
 type HarnessCall struct {
 	CallID              string                 `json:"call_id"`
+	AriSessionID        string                 `json:"ari_session_id,omitempty"`
 	WorkspaceID         string                 `json:"workspace_id"`
 	TaskID              string                 `json:"task_id"`
 	SourceProfileID     string                 `json:"source_profile_id,omitempty"`
@@ -718,11 +719,15 @@ func trimOrDefault(value, fallback string) string {
 }
 
 func startHarnessCallAfterCapabilityCheck(ctx context.Context, executor Executor, call HarnessCall, descriptor HarnessAdapterDescriptor) (AgentSession, []TimelineItem, error) {
-	ariRunID, err := newAriULID()
-	if err != nil {
-		return AgentSession{}, nil, err
+	ariRunID := strings.TrimSpace(call.AriSessionID)
+	if ariRunID == "" {
+		var err error
+		ariRunID, err = newAriULID()
+		if err != nil {
+			return AgentSession{}, nil, err
+		}
 	}
-	providerRun, err := executor.Start(ctx, ExecutorStartRequest{WorkspaceID: call.WorkspaceID, RunID: ariRunID, ContextPacket: string(call.Input), SourceProfileID: call.SourceProfileID, Model: call.Model, Prompt: call.Prompt, AuthSlotID: call.AuthSlotID, InvocationClass: call.InvocationClass})
+	providerRun, err := executor.Start(ctx, ExecutorStartRequest{WorkspaceID: call.WorkspaceID, RunID: ariRunID, SessionID: ariRunID, ContextPacket: string(call.Input), SourceProfileID: call.SourceProfileID, Model: call.Model, Prompt: call.Prompt, AuthSlotID: call.AuthSlotID, InvocationClass: call.InvocationClass})
 	if err != nil {
 		return AgentSession{}, nil, err
 	}

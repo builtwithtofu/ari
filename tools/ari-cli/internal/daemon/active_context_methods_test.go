@@ -121,8 +121,8 @@ func TestDashboardGetUsesActiveContextAndIncludesCwdMemberships(t *testing.T) {
 	if resp.EffectiveWorkspaceID != "ws-active" {
 		t.Fatalf("effective workspace = %q, want ws-active", resp.EffectiveWorkspaceID)
 	}
-	if resp.Activity.WorkspaceID != "ws-active" {
-		t.Fatalf("activity workspace = %q, want ws-active", resp.Activity.WorkspaceID)
+	if resp.Status.WorkspaceID != "ws-active" {
+		t.Fatalf("activity workspace = %q, want ws-active", resp.Status.WorkspaceID)
 	}
 	if len(resp.CWDMemberships) != 1 || resp.CWDMemberships[0].WorkspaceID != "ws-cwd" || resp.CWDMemberships[0].Active {
 		t.Fatalf("cwd memberships = %#v, want non-active cwd workspace", resp.CWDMemberships)
@@ -230,7 +230,7 @@ func TestDashboardGetExplicitWorkspaceIgnoresStaleActiveContextVersion(t *testin
 	_ = callMethod[ContextSetResponse](t, registry, "context.set", ContextSetRequest{WorkspaceID: "ws-two"})
 
 	resp := callMethod[DashboardGetResponse](t, registry, "dashboard.get", DashboardGetRequest{WorkspaceID: "ws-one", ObservedContextVersion: first.Current.Version})
-	if resp.EffectiveWorkspaceID != "ws-one" || resp.Activity.WorkspaceID != "ws-one" {
+	if resp.EffectiveWorkspaceID != "ws-one" || resp.Status.WorkspaceID != "ws-one" {
 		t.Fatalf("dashboard response = %#v, want explicit ws-one despite stale active context version", resp)
 	}
 }

@@ -51,6 +51,40 @@ func TestCodexExecutorMapsAppServerNotifications(t *testing.T) {
 	}
 }
 
+func TestCodexExecutorMapsProfilePromptToThreadInstructions(t *testing.T) {
+	transport := newFakeCodexTransport([]codexNotification{
+		{Method: "thread/started", Params: mustRawJSON(t, `{"thread":{"id":"thr_123"}}`)},
+		{Method: "turn/started", Params: mustRawJSON(t, `{"threadId":"thr_123","turn":{"id":"turn_456"}}`)},
+		{Method: "turn/completed", Params: mustRawJSON(t, `{"threadId":"thr_123","turn":{"id":"turn_456","status":"completed"}}`)},
+	})
+	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo", StartTransport: fakeCodexStarter(transport)})
+	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
+
+	_, _, err := StartExecutorRun(context.Background(), executor, packet, AgentProfile{Name: "executor", Model: "gpt-5.1-codex", Prompt: "Use executor behavior", InvocationClass: HarnessInvocationAgent})
+	if err != nil {
+		t.Fatalf("StartExecutorRun returned error: %v", err)
+	}
+
+	threadStart := transport.paramsByMethod["thread/start"]
+	if threadStart["baseInstructions"] != "Use executor behavior" {
+		t.Fatalf("thread/start params = %#v, want replacement profile behavior in baseInstructions", threadStart)
+	}
+	if _, ok := threadStart["developerInstructions"]; ok {
+		t.Fatalf("thread/start params = %#v, must not use additive developerInstructions for default profile behavior", threadStart)
+	}
+	turnStart := transport.paramsByMethod["turn/start"]
+	encodedTurn, err := json.Marshal(turnStart)
+	if err != nil {
+		t.Fatalf("marshal turn/start params: %v", err)
+	}
+	if strings.Contains(string(encodedTurn), "Use executor behavior") {
+		t.Fatalf("turn/start params = %s, must keep profile behavior out of visible task/context input", encodedTurn)
+	}
+	if !strings.Contains(string(encodedTurn), "ctx_123") {
+		t.Fatalf("turn/start params = %s, want context packet visible in user input", encodedTurn)
+	}
+}
+
 func TestCodexExecutorAdvertisesFinalResponseCapability(t *testing.T) {
 	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo", StartTransport: fakeCodexStarter(newFakeCodexTransport(nil))})
 	if !harnessCapabilitiesContain(executor.Descriptor().Capabilities, HarnessCapabilityFinalResponse) {

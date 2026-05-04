@@ -22,6 +22,11 @@ type AgentSessionConfig struct {
 	Prompt      string
 }
 
+const (
+	AgentSessionUsageSticky    = "sticky"
+	AgentSessionUsageEphemeral = "ephemeral"
+)
+
 type AgentSession struct {
 	SessionID             string
 	RunID                 string
@@ -574,7 +579,15 @@ func (s *Store) SendAgentMessage(ctx context.Context, params AgentMessageSendPar
 	s.agentMessageMu.Lock()
 	defer s.agentMessageMu.Unlock()
 
-	if strings.TrimSpace(params.AgentMessageID) == "" || strings.TrimSpace(params.SourceSessionID) == "" || strings.TrimSpace(params.TargetAgentID) == "" || strings.TrimSpace(params.Body) == "" {
+	if strings.TrimSpace(params.AgentMessageID) == "" || strings.TrimSpace(params.SourceSessionID) == "" || strings.TrimSpace(params.Body) == "" {
+		return AgentMessage{}, ErrInvalidInput
+	}
+	targetSessionID := strings.TrimSpace(params.TargetSessionID)
+	if targetSessionID == "" {
+		targetSessionID = strings.TrimSpace(params.StartSessionID)
+	}
+	targetAgentID := strings.TrimSpace(params.TargetAgentID)
+	if targetAgentID == "" && targetSessionID == "" {
 		return AgentMessage{}, ErrInvalidInput
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -591,7 +604,20 @@ func (s *Store) SendAgentMessage(ctx context.Context, params AgentMessageSendPar
 		}
 		return AgentMessage{}, err
 	}
-	targetAgent, err := qtx.GetAgentSessionConfig(ctx, dbsqlc.GetAgentSessionConfigParams{AgentID: params.TargetAgentID})
+	if targetAgentID == "" {
+		targetRun, err := qtx.GetAgentSession(ctx, dbsqlc.GetAgentSessionParams{SessionID: targetSessionID})
+		if err != nil {
+			if err == sql.ErrNoRows {
+				return AgentMessage{}, ErrNotFound
+			}
+			return AgentMessage{}, err
+		}
+		if targetRun.WorkspaceID != source.WorkspaceID {
+			return AgentMessage{}, ErrInvalidInput
+		}
+		targetAgentID = targetRun.AgentID
+	}
+	targetAgent, err := qtx.GetAgentSessionConfig(ctx, dbsqlc.GetAgentSessionConfigParams{AgentID: targetAgentID})
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return AgentMessage{}, ErrNotFound
@@ -600,10 +626,6 @@ func (s *Store) SendAgentMessage(ctx context.Context, params AgentMessageSendPar
 	}
 	if targetAgent.WorkspaceID != nil && *targetAgent.WorkspaceID != source.WorkspaceID {
 		return AgentMessage{}, ErrInvalidInput
-	}
-	targetSessionID := strings.TrimSpace(params.TargetSessionID)
-	if targetSessionID == "" {
-		targetSessionID = strings.TrimSpace(params.StartSessionID)
 	}
 	if targetSessionID == "" {
 		return AgentMessage{}, ErrInvalidInput

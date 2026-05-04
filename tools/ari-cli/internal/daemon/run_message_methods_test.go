@@ -115,7 +115,7 @@ func TestExecutorMethodsExposeADRTerminology(t *testing.T) {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
-	for _, name := range []string{"profile.run", "profile.create", "profile.get", "profile.list", "profile.helper.ensure", "profile.helper.get", "context.excerpt.create_from_tail", "context.excerpt.create_from_range", "context.excerpt.create_from_explicit_ids", "context.excerpt.get", "agent.message.send"} {
+	for _, name := range []string{"session.start", "profile.create", "profile.get", "profile.list", "context.excerpt.create_from_tail", "context.excerpt.create_from_range", "context.excerpt.create_from_explicit_ids", "context.excerpt.get", "session.message.send"} {
 		method, ok := registry.Get(name)
 		if !ok {
 			t.Fatalf("method %q is not registered", name)
@@ -127,7 +127,7 @@ func TestExecutorMethodsExposeADRTerminology(t *testing.T) {
 		}
 	}
 
-	for _, name := range []string{"agent.profile.run", "agent.profile.create", "agent.profile.get", "agent.profile.list", "agent.profile.helper.ensure", "agent.profile.helper.get", "message.excerpt.create_from_tail", "message.excerpt.create_from_range", "message.excerpt.create_from_explicit_ids", "message.excerpt.get"} {
+	for _, name := range []string{"agent.profile.run", "agent.profile.create", "agent.profile.get", "agent.profile.list", "agent.profile.helper.ensure", "agent.profile.helper.get", "profile.helper.ensure", "profile.helper.get", "message.excerpt.create_from_tail", "message.excerpt.create_from_range", "message.excerpt.create_from_explicit_ids", "message.excerpt.get"} {
 		if _, ok := registry.Get(name); ok {
 			t.Fatalf("legacy method %q is still registered", name)
 		}
@@ -154,7 +154,7 @@ func TestAgentMessageSendMethodDeliversVisibleMessage(t *testing.T) {
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
-	got := callMethod[AgentMessageSendResponse](t, registry, "agent.message.send", AgentMessageSendRequest{AgentMessageID: "dm-1", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "review this", ContextExcerptIDs: []string{excerpt.ContextExcerptID}, StartSessionID: "run-2"})
+	got := callMethod[AgentMessageSendResponse](t, registry, "session.message.send", AgentMessageSendRequest{AgentMessageID: "dm-1", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "review this", ContextExcerptIDs: []string{excerpt.ContextExcerptID}, StartSessionID: "run-2"})
 	if got.AgentMessage.TargetSessionID != "run-2" || got.AgentMessage.Status != "delivered" {
 		t.Fatalf("direct message = %#v, want delivered run-2", got.AgentMessage)
 	}
@@ -194,7 +194,7 @@ func TestAgentMessageSendMethodDeliversExcerptAppendedMessage(t *testing.T) {
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
-	_ = callMethod[AgentMessageSendResponse](t, registry, "agent.message.send", AgentMessageSendRequest{AgentMessageID: "dm-1", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "review this", ContextExcerptIDs: []string{excerpt.ContextExcerptID}, StartSessionID: "run-2"})
+	_ = callMethod[AgentMessageSendResponse](t, registry, "session.message.send", AgentMessageSendRequest{AgentMessageID: "dm-1", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "review this", ContextExcerptIDs: []string{excerpt.ContextExcerptID}, StartSessionID: "run-2"})
 	tail, err := store.TailRunLogMessages(ctx, "run-2", 3)
 	if err != nil {
 		t.Fatalf("TailRunLogMessages target returned error: %v", err)
@@ -285,7 +285,7 @@ func TestAgentMessageSendMethodLeavesExcerptImmutable(t *testing.T) {
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
-	_ = callMethod[AgentMessageSendResponse](t, registry, "agent.message.send", AgentMessageSendRequest{AgentMessageID: "dm-1", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "review this", ContextExcerptIDs: []string{excerpt.ContextExcerptID}, StartSessionID: "run-2"})
+	_ = callMethod[AgentMessageSendResponse](t, registry, "session.message.send", AgentMessageSendRequest{AgentMessageID: "dm-1", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "review this", ContextExcerptIDs: []string{excerpt.ContextExcerptID}, StartSessionID: "run-2"})
 	got := callMethod[ContextExcerptResponse](t, registry, "context.excerpt.get", ContextExcerptGetRequest{ContextExcerptID: excerpt.ContextExcerptID})
 	if got.TargetSessionID != "" || len(got.Items) != 1 || got.Items[0].CopiedText != "plan" {
 		t.Fatalf("excerpt = %#v, want immutable excerpt not bound to delivery run", got)
@@ -305,6 +305,9 @@ func TestPlannerAgentMessageToExecutorDeliversSelectedPlan(t *testing.T) {
 	if err := store.CreateAgentSession(ctx, globaldb.AgentSession{SessionID: "planner-run", WorkspaceID: "ws-1", AgentID: "planner", Harness: "planner-harness", Status: "running", Usage: "durable", CWD: t.TempDir()}); err != nil {
 		t.Fatalf("CreateAgentSession planner returned error: %v", err)
 	}
+	if err := store.CreateAgentSession(ctx, globaldb.AgentSession{SessionID: "executor-run", WorkspaceID: "ws-1", AgentID: "executor-target", Harness: "executor-harness", Status: "waiting", Usage: "durable", CWD: t.TempDir()}); err != nil {
+		t.Fatalf("CreateAgentSession executor returned error: %v", err)
+	}
 	if err := store.AppendRunLogMessage(ctx, globaldb.RunLogMessage{MessageID: "planner-msg-1", SessionID: "planner-run", Sequence: 1, Role: "assistant", Parts: []globaldb.RunLogMessagePart{{PartID: "planner-part-1", Sequence: 1, Kind: "text", Text: "Build the endpoint"}}}); err != nil {
 		t.Fatalf("AppendRunLogMessage planner returned error: %v", err)
 	}
@@ -318,7 +321,7 @@ func TestPlannerAgentMessageToExecutorDeliversSelectedPlan(t *testing.T) {
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
-	got := callMethod[AgentMessageSendResponse](t, registry, "agent.message.send", AgentMessageSendRequest{AgentMessageID: "planner-dm", SourceSessionID: "planner-run", TargetAgentID: "executor-target", Body: "Please implement", ContextExcerptIDs: []string{excerpt.ContextExcerptID}, StartSessionID: "executor-run"})
+	got := callMethod[AgentMessageSendResponse](t, registry, "session.message.send", AgentMessageSendRequest{AgentMessageID: "planner-dm", SourceSessionID: "planner-run", TargetSessionID: "executor-run", Body: "Please implement", ContextExcerptIDs: []string{excerpt.ContextExcerptID}})
 	if got.AgentMessage.SourceAgentID != "planner" || got.AgentMessage.TargetAgentID != "executor-target" || got.AgentMessage.TargetSessionID != "executor-run" {
 		t.Fatalf("direct message = %#v, want planner to executor delivery", got.AgentMessage)
 	}
@@ -358,7 +361,7 @@ func TestEphemeralAgentCallRunsTargetAndRoutesReplyToCaller(t *testing.T) {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
-	got := callMethod[EphemeralAgentCallResponse](t, registry, "agent.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-1", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research this", ContextExcerptIDs: []string{excerpt.ContextExcerptID}, ReplyAgentMessageID: "dm-reply-1"})
+	got := callMethod[EphemeralAgentCallResponse](t, registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-1", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research this", ContextExcerptIDs: []string{excerpt.ContextExcerptID}, ReplyAgentMessageID: "dm-reply-1"})
 	if got.Run.Usage != "ephemeral" || got.Run.Status != "completed" || got.Run.AgentID != "agent-2" || got.Reply.AgentMessageID != "dm-reply-1" || got.Reply.TargetSessionID != "run-1" {
 		t.Fatalf("ephemeral call = %#v, want ephemeral target run and reply routed to caller", got)
 	}
@@ -375,6 +378,630 @@ func TestEphemeralAgentCallRunsTargetAndRoutesReplyToCaller(t *testing.T) {
 	}
 	if sourceTail[len(sourceTail)-1].Role != "user" || sourceTail[len(sourceTail)-1].Parts[0].Text != "Use Spring Boot 4 feature flags." {
 		t.Fatalf("source tail = %#v, want librarian reply visible in caller run", sourceTail)
+	}
+	final := callMethod[FinalResponseResponse](t, registry, "final_response.get", FinalResponseGetRequest{SessionID: got.Run.SessionID})
+	if final.SessionID != got.Run.SessionID || final.Status != "completed" || final.Text != "Use Spring Boot 4 feature flags." {
+		t.Fatalf("final response = %#v, want persisted ephemeral call final response by session", final)
+	}
+}
+
+func TestEphemeralAgentCallResolvesTargetByProfileName(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.AppendRunLogMessage(ctx, globaldb.RunLogMessage{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "assistant", Parts: []globaldb.RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "text", Text: "Spring question"}}}); err != nil {
+		t.Fatalf("AppendRunLogMessage returned error: %v", err)
+	}
+
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return newFakeHarness("test-harness", []TimelineItem{{ID: "ti_reply", Kind: "agent_text", Text: "Reviewed", Status: "completed"}}), nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	created := callMethod[AgentProfileResponse](t, registry, "profile.create", AgentProfileCreateRequest{WorkspaceID: "ws-1", Name: "reviewer", Harness: "test-harness", Model: "model-1", Prompt: "review", InvocationClass: HarnessInvocationTemporary})
+	excerpt, err := store.CreateContextExcerptFromTail(ctx, globaldb.CreateContextExcerptFromTailParams{ContextExcerptID: "excerpt-1", SourceSessionID: "run-1", TargetAgentID: created.ProfileID, Count: 1})
+	if err != nil {
+		t.Fatalf("CreateContextExcerptFromTail returned error: %v", err)
+	}
+	got := callMethod[EphemeralAgentCallResponse](t, registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-1", SourceSessionID: "run-1", TargetAgentID: "reviewer", Body: "Research this", ContextExcerptIDs: []string{excerpt.ContextExcerptID}, ReplyAgentMessageID: "dm-reply-1"})
+	if got.Run.AgentID != created.ProfileID || got.Run.SourceSessionID != "run-1" || got.Reply.Body != "Reviewed" {
+		t.Fatalf("call response = %#v, want profile-name resolution to stored target profile id", got)
+	}
+}
+
+func TestEphemeralAgentCallRejectsUnknownTargetProfile(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-missing", SourceSessionID: "run-1", TargetAgentID: "missing-profile", Body: "Research this"})
+	handlerErr, ok := err.(*rpc.HandlerError)
+	if !ok || handlerErr.Code != rpc.InvalidParams {
+		t.Fatalf("error = %T %[1]v, want InvalidParams handler error", err)
+	}
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "unknown_profile" || data["profile"] != "missing-profile" || data["start_invoked"] != false {
+		t.Fatalf("error data = %#v, want unknown_profile details", data)
+	}
+}
+
+func TestEphemeralAgentCallRejectsUnknownSourceSessionWithStructuredError(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	}
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-missing-source", SourceSessionID: "missing-source", TargetAgentID: "agent-2", Body: "Research this"})
+	handlerErr, ok := err.(*rpc.HandlerError)
+	if !ok || handlerErr.Code != rpc.InvalidParams {
+		t.Fatalf("error = %T %[1]v, want InvalidParams handler error", err)
+	}
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "unknown_source_session" || data["source_session_id"] != "missing-source" || data["start_invoked"] != false {
+		t.Fatalf("error data = %#v, want unknown_source_session details", data)
+	}
+}
+
+func TestEphemeralAgentCallRejectsCrossWorkspaceTargetWithStructuredError(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateSession(ctx, "ws-2", "workspace-2", t.TempDir(), "manual", "auto"); err != nil {
+		t.Fatalf("CreateSession ws-2 returned error: %v", err)
+	}
+	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-other", WorkspaceID: "ws-2", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	}
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-cross-ws", SourceSessionID: "run-1", TargetAgentID: "agent-other", Body: "Research this"})
+	handlerErr, ok := err.(*rpc.HandlerError)
+	if !ok || handlerErr.Code != rpc.InvalidParams {
+		t.Fatalf("error = %T %[1]v, want InvalidParams handler error", err)
+	}
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "target_workspace_mismatch" || data["target_agent_id"] != "agent-other" || data["source_workspace_id"] != "ws-1" || data["target_workspace_id"] != "ws-2" || data["start_invoked"] != false {
+		t.Fatalf("error data = %#v, want cross-workspace target details", data)
+	}
+}
+
+func TestEphemeralAgentCallRejectsMissingRequiredFieldsWithStructuredError(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	}
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-missing-body", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: ""})
+	handlerErr, ok := err.(*rpc.HandlerError)
+	if !ok || handlerErr.Code != rpc.InvalidParams {
+		t.Fatalf("error = %T %[1]v, want InvalidParams handler error", err)
+	}
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "missing_required_fields" || data["missing_field"] != "body" || data["start_invoked"] != false {
+		t.Fatalf("error data = %#v, want missing required field details", data)
+	}
+}
+
+func TestSessionFanoutReturnsStructuredNotImplementedError(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "session.fanout", AgentMessageSendRequest{AgentMessageID: "fanout-1", SourceSessionID: "run-1", TargetSessionID: "executor-run", TargetAgentID: "reviewer", Body: "fan out"})
+	handlerErr, ok := err.(*rpc.HandlerError)
+	if !ok || handlerErr.Code != rpc.InvalidParams {
+		t.Fatalf("error = %T %[1]v, want InvalidParams handler error", err)
+	}
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "not_implemented" || data["method"] != "session.fanout" || data["source_session_id"] != "run-1" || data["target_session_id"] != "executor-run" || data["target_agent_id"] != "reviewer" || data["start_invoked"] != false {
+		t.Fatalf("error data = %#v, want structured not_implemented details", data)
+	}
+}
+
+func TestSessionMessageSendRejectsUnknownTargetAgentWithStructuredError(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "session.message.send", AgentMessageSendRequest{AgentMessageID: "dm-missing", SourceSessionID: "run-1", TargetAgentID: "missing-agent", Body: "review this", StartSessionID: "run-2"})
+	handlerErr, ok := err.(*rpc.HandlerError)
+	if !ok || handlerErr.Code != rpc.InvalidParams {
+		t.Fatalf("error = %T %[1]v, want InvalidParams handler error", err)
+	}
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "unknown_target_agent" || data["target_agent_id"] != "missing-agent" || data["start_invoked"] != false {
+		t.Fatalf("error data = %#v, want unknown_target_agent details", data)
+	}
+}
+
+func TestSessionMessageSendRejectsUnknownSourceSessionWithStructuredError(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	}
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "session.message.send", AgentMessageSendRequest{AgentMessageID: "dm-missing-source", SourceSessionID: "missing-source", TargetAgentID: "agent-2", Body: "review this", StartSessionID: "run-2"})
+	handlerErr, ok := err.(*rpc.HandlerError)
+	if !ok || handlerErr.Code != rpc.InvalidParams {
+		t.Fatalf("error = %T %[1]v, want InvalidParams handler error", err)
+	}
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "unknown_source_session" || data["source_session_id"] != "missing-source" || data["start_invoked"] != false {
+		t.Fatalf("error data = %#v, want unknown_source_session details", data)
+	}
+}
+
+func TestSessionMessageSendRejectsMissingRequiredFieldsWithStructuredError(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	}
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "session.message.send", AgentMessageSendRequest{AgentMessageID: "dm-missing-body", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "", StartSessionID: "run-2"})
+	handlerErr, ok := err.(*rpc.HandlerError)
+	if !ok || handlerErr.Code != rpc.InvalidParams {
+		t.Fatalf("error = %T %[1]v, want InvalidParams handler error", err)
+	}
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "missing_required_fields" || data["missing_field"] != "body" || data["start_invoked"] != false {
+		t.Fatalf("error data = %#v, want missing required field details", data)
+	}
+}
+
+func TestSessionMessageSendRejectsMismatchedContextExcerptWithStructuredError(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	}
+	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-3", WorkspaceID: "ws-1", Name: "other", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateAgentSessionConfig other returned error: %v", err)
+	}
+	if err := store.AppendRunLogMessage(ctx, globaldb.RunLogMessage{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "assistant", Parts: []globaldb.RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "text", Text: "plan"}}}); err != nil {
+		t.Fatalf("AppendRunLogMessage returned error: %v", err)
+	}
+	excerpt, err := store.CreateContextExcerptFromTail(ctx, globaldb.CreateContextExcerptFromTailParams{ContextExcerptID: "excerpt-1", SourceSessionID: "run-1", TargetAgentID: "agent-3", Count: 1})
+	if err != nil {
+		t.Fatalf("CreateContextExcerptFromTail returned error: %v", err)
+	}
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err = callMethodError(registry, "session.message.send", AgentMessageSendRequest{AgentMessageID: "dm-bad-excerpt", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "review this", ContextExcerptIDs: []string{excerpt.ContextExcerptID}, StartSessionID: "run-2"})
+	handlerErr, ok := err.(*rpc.HandlerError)
+	if !ok || handlerErr.Code != rpc.InvalidParams {
+		t.Fatalf("error = %T %[1]v, want InvalidParams handler error", err)
+	}
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "context_excerpt_mismatch" || data["context_excerpt_id"] != "excerpt-1" || data["start_invoked"] != false {
+		t.Fatalf("error data = %#v, want context excerpt mismatch details", data)
+	}
+}
+
+func TestSessionMessageSendRejectsTargetSessionOnlyContextExcerptMismatchWithStructuredError(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	}
+	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-3", WorkspaceID: "ws-1", Name: "other", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateAgentSessionConfig other returned error: %v", err)
+	}
+	if err := store.CreateAgentSession(ctx, globaldb.AgentSession{SessionID: "run-2", WorkspaceID: "ws-1", AgentID: "agent-2", Harness: "opencode", Status: "waiting", Usage: "durable"}); err != nil {
+		t.Fatalf("CreateAgentSession target returned error: %v", err)
+	}
+	if err := store.AppendRunLogMessage(ctx, globaldb.RunLogMessage{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "assistant", Parts: []globaldb.RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "text", Text: "plan"}}}); err != nil {
+		t.Fatalf("AppendRunLogMessage returned error: %v", err)
+	}
+	excerpt, err := store.CreateContextExcerptFromTail(ctx, globaldb.CreateContextExcerptFromTailParams{ContextExcerptID: "excerpt-1", SourceSessionID: "run-1", TargetAgentID: "agent-3", Count: 1})
+	if err != nil {
+		t.Fatalf("CreateContextExcerptFromTail returned error: %v", err)
+	}
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err = callMethodError(registry, "session.message.send", AgentMessageSendRequest{AgentMessageID: "dm-bad-excerpt", SourceSessionID: "run-1", TargetSessionID: "run-2", Body: "review this", ContextExcerptIDs: []string{excerpt.ContextExcerptID}})
+	handlerErr, ok := err.(*rpc.HandlerError)
+	if !ok || handlerErr.Code != rpc.InvalidParams {
+		t.Fatalf("error = %T %[1]v, want InvalidParams handler error", err)
+	}
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "context_excerpt_mismatch" || data["context_excerpt_id"] != "excerpt-1" || data["target_session_id"] != "run-2" || data["target_agent_id"] != "agent-2" || data["start_invoked"] != false {
+		t.Fatalf("error data = %#v, want target-session-only context excerpt mismatch details", data)
+	}
+}
+
+func TestSessionMessageSendRejectsTargetSessionAgentMismatchWithStructuredError(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	}
+	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-3", WorkspaceID: "ws-1", Name: "other", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateAgentSessionConfig other returned error: %v", err)
+	}
+	if err := store.CreateAgentSession(ctx, globaldb.AgentSession{SessionID: "run-2", WorkspaceID: "ws-1", AgentID: "agent-3", Harness: "opencode", Status: "waiting", Usage: "durable"}); err != nil {
+		t.Fatalf("CreateAgentSession target returned error: %v", err)
+	}
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "session.message.send", AgentMessageSendRequest{AgentMessageID: "dm-session-mismatch", SourceSessionID: "run-1", TargetAgentID: "agent-2", TargetSessionID: "run-2", Body: "review this"})
+	handlerErr, ok := err.(*rpc.HandlerError)
+	if !ok || handlerErr.Code != rpc.InvalidParams {
+		t.Fatalf("error = %T %[1]v, want InvalidParams handler error", err)
+	}
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "target_session_mismatch" || data["target_session_id"] != "run-2" || data["target_agent_id"] != "agent-2" || data["start_invoked"] != false {
+		t.Fatalf("error data = %#v, want target session mismatch details", data)
+	}
+}
+
+func TestSessionMessageSendRejectsUnknownTargetSessionWithStructuredError(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "session.message.send", AgentMessageSendRequest{AgentMessageID: "dm-missing-target-session", SourceSessionID: "run-1", TargetSessionID: "missing-target", Body: "review this"})
+	handlerErr, ok := err.(*rpc.HandlerError)
+	if !ok || handlerErr.Code != rpc.InvalidParams {
+		t.Fatalf("error = %T %[1]v, want InvalidParams handler error", err)
+	}
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "unknown_target_session" || data["target_session_id"] != "missing-target" || data["start_invoked"] != false {
+		t.Fatalf("error data = %#v, want unknown target session details", data)
+	}
+}
+
+func TestSessionMessageSendRejectsUnknownStartSessionWithStructuredError(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "session.message.send", AgentMessageSendRequest{AgentMessageID: "dm-missing-start-session", SourceSessionID: "run-1", StartSessionID: "missing-start", Body: "review this"})
+	handlerErr, ok := err.(*rpc.HandlerError)
+	if !ok || handlerErr.Code != rpc.InvalidParams {
+		t.Fatalf("error = %T %[1]v, want InvalidParams handler error", err)
+	}
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "unknown_target_session" || data["target_session_id"] != "missing-start" || data["start_invoked"] != false {
+		t.Fatalf("error data = %#v, want unknown start session target details", data)
+	}
+}
+
+func TestSessionMessageSendRejectsCrossWorkspaceTargetSessionWithStructuredError(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateSession(ctx, "ws-2", "workspace-2", t.TempDir(), "manual", "auto"); err != nil {
+		t.Fatalf("CreateSession ws-2 returned error: %v", err)
+	}
+	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-3", WorkspaceID: "ws-2", Name: "reviewer-2", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateAgentSessionConfig ws-2 returned error: %v", err)
+	}
+	if err := store.CreateAgentSession(ctx, globaldb.AgentSession{SessionID: "run-2", WorkspaceID: "ws-2", AgentID: "agent-3", Harness: "opencode", Status: "waiting", Usage: "durable"}); err != nil {
+		t.Fatalf("CreateAgentSession ws-2 target returned error: %v", err)
+	}
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "session.message.send", AgentMessageSendRequest{AgentMessageID: "dm-cross-ws", SourceSessionID: "run-1", TargetSessionID: "run-2", Body: "review this"})
+	handlerErr, ok := err.(*rpc.HandlerError)
+	if !ok || handlerErr.Code != rpc.InvalidParams {
+		t.Fatalf("error = %T %[1]v, want InvalidParams handler error", err)
+	}
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "target_workspace_mismatch" || data["target_session_id"] != "run-2" || data["source_workspace_id"] != "ws-1" || data["target_workspace_id"] != "ws-2" || data["start_invoked"] != false {
+		t.Fatalf("error data = %#v, want cross-workspace target session details", data)
+	}
+}
+
+func TestSessionMessageSendRejectsCrossWorkspaceTargetAgentWithStructuredError(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateSession(ctx, "ws-2", "workspace-2", t.TempDir(), "manual", "auto"); err != nil {
+		t.Fatalf("CreateSession ws-2 returned error: %v", err)
+	}
+	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-cross", WorkspaceID: "ws-2", Name: "reviewer-2", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateAgentSessionConfig ws-2 returned error: %v", err)
+	}
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "session.message.send", AgentMessageSendRequest{AgentMessageID: "dm-cross-agent", SourceSessionID: "run-1", TargetAgentID: "agent-cross", Body: "review this"})
+	handlerErr, ok := err.(*rpc.HandlerError)
+	if !ok || handlerErr.Code != rpc.InvalidParams {
+		t.Fatalf("error = %T %[1]v, want InvalidParams handler error", err)
+	}
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "target_workspace_mismatch" || data["target_agent_id"] != "agent-cross" || data["source_workspace_id"] != "ws-1" || data["target_workspace_id"] != "ws-2" || data["start_invoked"] != false {
+		t.Fatalf("error data = %#v, want cross-workspace target agent details", data)
+	}
+}
+
+func TestSessionMessageSendRejectsDuplicateAgentMessageIDWithStructuredError(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	}
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	first := callMethod[AgentMessageSendResponse](t, registry, "session.message.send", AgentMessageSendRequest{AgentMessageID: "dm-dup", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "first", StartSessionID: "run-2"})
+	if first.AgentMessage.TargetSessionID == "" {
+		t.Fatalf("first response = %#v, want target session id", first)
+	}
+
+	err := callMethodError(registry, "session.message.send", AgentMessageSendRequest{AgentMessageID: "dm-dup", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "second", StartSessionID: "run-3"})
+	handlerErr, ok := err.(*rpc.HandlerError)
+	if !ok || handlerErr.Code != rpc.InvalidParams {
+		t.Fatalf("error = %T %[1]v, want InvalidParams handler error", err)
+	}
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "agent_message_id_conflict" || data["agent_message_id"] != "dm-dup" || data["start_invoked"] != false {
+		t.Fatalf("error data = %#v, want duplicate agent_message_id details", data)
+	}
+}
+
+func TestEphemeralAgentCallRejectsConflictingSessionIDWithStructuredError(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	}
+	if err := store.CreateAgentSession(ctx, globaldb.AgentSession{SessionID: "existing-run", WorkspaceID: "ws-1", AgentID: "agent-2", Harness: "opencode", Status: "waiting", Usage: "durable"}); err != nil {
+		t.Fatalf("CreateAgentSession existing returned error: %v", err)
+	}
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-conflict", SessionID: "existing-run", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research this"})
+	handlerErr, ok := err.(*rpc.HandlerError)
+	if !ok || handlerErr.Code != rpc.InvalidParams {
+		t.Fatalf("error = %T %[1]v, want InvalidParams handler error", err)
+	}
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "session_id_conflict" || data["session_id"] != "existing-run" || data["start_invoked"] != false {
+		t.Fatalf("error data = %#v, want session conflict details", data)
+	}
+}
+
+func TestEphemeralAgentCallRejectsMismatchedContextExcerptWithStructuredError(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	}
+	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-3", WorkspaceID: "ws-1", Name: "other", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateAgentSessionConfig other returned error: %v", err)
+	}
+	if err := store.AppendRunLogMessage(ctx, globaldb.RunLogMessage{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "assistant", Parts: []globaldb.RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "text", Text: "plan"}}}); err != nil {
+		t.Fatalf("AppendRunLogMessage returned error: %v", err)
+	}
+	excerpt, err := store.CreateContextExcerptFromTail(ctx, globaldb.CreateContextExcerptFromTailParams{ContextExcerptID: "excerpt-1", SourceSessionID: "run-1", TargetAgentID: "agent-3", Count: 1})
+	if err != nil {
+		t.Fatalf("CreateContextExcerptFromTail returned error: %v", err)
+	}
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err = callMethodError(registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-bad-excerpt", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research this", ContextExcerptIDs: []string{excerpt.ContextExcerptID}})
+	handlerErr, ok := err.(*rpc.HandlerError)
+	if !ok || handlerErr.Code != rpc.InvalidParams {
+		t.Fatalf("error = %T %[1]v, want InvalidParams handler error", err)
+	}
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "context_excerpt_mismatch" || data["context_excerpt_id"] != "excerpt-1" || data["start_invoked"] != false {
+		t.Fatalf("error data = %#v, want context excerpt mismatch details", data)
+	}
+	runs, listErr := store.ListAgentSessions(ctx, "ws-1")
+	if listErr != nil {
+		t.Fatalf("ListAgentSessions returned error: %v", listErr)
+	}
+	for _, run := range runs {
+		if run.SessionID == "call-bad-excerpt-run" {
+			t.Fatalf("sessions = %#v, want rejected call not to leave an ephemeral session", runs)
+		}
+	}
+}
+
+func TestEphemeralAgentCallRejectsUnknownContextExcerptWithStructuredError(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	}
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-missing-excerpt", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research this", ContextExcerptIDs: []string{"excerpt-missing"}})
+	handlerErr, ok := err.(*rpc.HandlerError)
+	if !ok || handlerErr.Code != rpc.InvalidParams {
+		t.Fatalf("error = %T %[1]v, want InvalidParams handler error", err)
+	}
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "unknown_context_excerpt" || data["context_excerpt_id"] != "excerpt-missing" || data["start_invoked"] != false {
+		t.Fatalf("error data = %#v, want unknown context excerpt details", data)
+	}
+}
+
+func TestEphemeralAgentCallRejectsReplyTargetAgentMissingConfigWithStructuredError(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	if err := store.CreateSession(ctx, "ws-1", "workspace", t.TempDir(), "manual", "auto"); err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-missing", WorkspaceID: "ws-1", Name: "source", Harness: "codex"}); err != nil {
+		t.Fatalf("CreateAgentSessionConfig source returned error: %v", err)
+	}
+	if err := store.CreateAgentSession(ctx, globaldb.AgentSession{SessionID: "run-missing-agent", WorkspaceID: "ws-1", AgentID: "agent-missing", Harness: "codex", Status: "running", Usage: "durable", CWD: t.TempDir()}); err != nil {
+		t.Fatalf("CreateAgentSession source returned error: %v", err)
+	}
+	if err := store.DeleteAgentSessionConfig(ctx, "agent-missing"); err != nil {
+		t.Fatalf("DeleteAgentSessionConfig source returned error: %v", err)
+	}
+	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "test-harness", Model: "model-1", Prompt: "research"}); err != nil {
+		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	}
+
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return newFakeHarness("test-harness", []TimelineItem{{Kind: "agent_text", Text: "reply"}}), nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-missing-reply-target", SourceSessionID: "run-missing-agent", TargetAgentID: "agent-2", Body: "Research this"})
+	handlerErr, ok := err.(*rpc.HandlerError)
+	if !ok || handlerErr.Code != rpc.InvalidParams {
+		t.Fatalf("error = %T %[1]v, want InvalidParams handler error", err)
+	}
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "unknown_reply_target_agent" || data["target_agent_id"] != "agent-missing" || data["start_invoked"] != false {
+		t.Fatalf("error data = %#v, want unknown reply target agent details", data)
+	}
+}
+
+func TestEphemeralAgentCallRejectsDuplicateCallIDRequestMessageConflictWithStructuredError(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "test-harness", Model: "model-1", Prompt: "research"}); err != nil {
+		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	}
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return newFakeHarness("test-harness", []TimelineItem{{Kind: "agent_text", Text: "reply"}}), nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	_ = callMethod[EphemeralAgentCallResponse](t, registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-dup", SessionID: "call-dup-run-1", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research this"})
+	err := callMethodError(registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-dup", SessionID: "call-dup-run-2", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research this again"})
+	handlerErr, ok := err.(*rpc.HandlerError)
+	if !ok || handlerErr.Code != rpc.InvalidParams {
+		t.Fatalf("error = %T %[1]v, want InvalidParams handler error", err)
+	}
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "request_agent_message_id_conflict" || data["agent_message_id"] != "call-dup-request" || data["start_invoked"] != false {
+		t.Fatalf("error data = %#v, want duplicate request message details", data)
+	}
+	runs, listErr := store.ListAgentSessions(ctx, "ws-1")
+	if listErr != nil {
+		t.Fatalf("ListAgentSessions returned error: %v", listErr)
+	}
+	for _, run := range runs {
+		if run.SessionID == "call-dup-run-2" {
+			t.Fatalf("sessions = %#v, want rejected duplicate request not to leave an ephemeral session", runs)
+		}
 	}
 }
 
@@ -425,9 +1052,9 @@ func TestEphemeralAgentCallCoversPlannerExecutorReviewerAndParallelOrchestratorW
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
-	executorCall := callMethod[EphemeralAgentCallResponse](t, registry, "agent.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-executor", SourceSessionID: "run-1", TargetAgentID: "executor", Body: "execute plan", ContextExcerptIDs: []string{firstPlan.ContextExcerptID}})
-	reviewerCall := callMethod[EphemeralAgentCallResponse](t, registry, "agent.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-reviewer", SourceSessionID: "run-1", TargetAgentID: "reviewer", Body: "review last updates", ContextExcerptIDs: []string{lastTwo.ContextExcerptID}})
-	plannerCall := callMethod[EphemeralAgentCallResponse](t, registry, "agent.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-planner", SourceSessionID: executorCall.Run.SessionID, TargetAgentID: "planner", Body: "plan follow-up"})
+	executorCall := callMethod[EphemeralAgentCallResponse](t, registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-executor", SourceSessionID: "run-1", TargetAgentID: "executor", Body: "execute plan", ContextExcerptIDs: []string{firstPlan.ContextExcerptID}})
+	reviewerCall := callMethod[EphemeralAgentCallResponse](t, registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-reviewer", SourceSessionID: "run-1", TargetAgentID: "reviewer", Body: "review last updates", ContextExcerptIDs: []string{lastTwo.ContextExcerptID}})
+	plannerCall := callMethod[EphemeralAgentCallResponse](t, registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-planner", SourceSessionID: executorCall.Run.SessionID, TargetAgentID: "planner", Body: "plan follow-up"})
 	if executorCall.Run.AgentID != "executor" || reviewerCall.Run.AgentID != "reviewer" || plannerCall.Run.AgentID != "planner" {
 		t.Fatalf("calls = %#v %#v %#v, want target-specific ephemeral runs", executorCall.Run, reviewerCall.Run, plannerCall.Run)
 	}
@@ -453,22 +1080,19 @@ func TestEphemeralAgentCallCoversPlannerExecutorReviewerAndParallelOrchestratorW
 	}
 }
 
-func TestAgentSessionConfigCreateMethodDoesNotCreateRun(t *testing.T) {
+func TestProfileCreateMethodDoesNotCreateRun(t *testing.T) {
 	store := newCommandMethodTestStore(t)
-	ctx := context.Background()
-	if err := store.CreateSession(ctx, "ws-1", "workspace", t.TempDir(), "manual", "auto"); err != nil {
-		t.Fatalf("CreateSession returned error: %v", err)
-	}
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
-	got := callMethod[AgentSessionConfigCreateResponse](t, registry, "workspace.agent.create", AgentSessionConfigCreateRequest{AgentID: "agent-1", WorkspaceID: "ws-1", Name: "planner", Harness: "codex"})
-	if got.Agent.Name != "planner" {
-		t.Fatalf("agent = %#v, want planner", got.Agent)
+	got := callMethod[AgentProfileResponse](t, registry, "profile.create", AgentProfileCreateRequest{WorkspaceID: "ws-1", Name: "planner", Harness: "codex"})
+	if got.Name != "planner" {
+		t.Fatalf("profile = %#v, want planner", got)
 	}
-	runs, err := store.ListAgentSessions(ctx, "ws-1")
+	runs, err := store.ListAgentSessions(context.Background(), "ws-1")
 	if err != nil {
 		t.Fatalf("ListAgentSessions returned error: %v", err)
 	}
@@ -477,34 +1101,26 @@ func TestAgentSessionConfigCreateMethodDoesNotCreateRun(t *testing.T) {
 	}
 }
 
-func TestAgentSessionConfigRosterMethodsAndRun(t *testing.T) {
+func TestProfileRosterMethodsAndSessionStart(t *testing.T) {
 	store := newCommandMethodTestStore(t)
-	ctx := context.Background()
-	if err := store.CreateSession(ctx, "ws-1", "workspace", t.TempDir(), "manual", "auto"); err != nil {
-		t.Fatalf("CreateSession returned error: %v", err)
-	}
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
-	_ = callMethod[AgentSessionConfigCreateResponse](t, registry, "workspace.agent.create", AgentSessionConfigCreateRequest{AgentID: "agent-1", WorkspaceID: "ws-1", Name: "planner", Harness: "codex", Model: "gpt-5", Prompt: "plan"})
-	listed := callMethod[AgentSessionConfigListResponse](t, registry, "workspace.agent.list", AgentSessionConfigListRequest{WorkspaceID: "ws-1"})
-	if len(listed.Agents) != 1 || listed.Agents[0].Name != "planner" {
+	created := callMethod[AgentProfileResponse](t, registry, "profile.create", AgentProfileCreateRequest{WorkspaceID: "ws-1", Name: "planner", Harness: "pty", Model: "gpt-5", Prompt: "plan"})
+	listed := callMethod[AgentProfileListResponse](t, registry, "profile.list", AgentProfileListRequest{WorkspaceID: "ws-1"})
+	if len(listed.Profiles) != 1 || listed.Profiles[0].Name != "planner" {
 		t.Fatalf("listed = %#v, want planner", listed)
 	}
-	updated := callMethod[AgentSessionConfigResponse](t, registry, "workspace.agent.update", AgentSessionConfigUpdateRequest{AgentID: "agent-1", WorkspaceID: "ws-1", Name: "planner", Harness: "claude", Model: "sonnet", Prompt: "revise"})
-	if updated.Harness != "claude" || updated.Prompt != "revise" {
-		t.Fatalf("updated = %#v, want changed agent", updated)
+	got := callMethod[AgentProfileResponse](t, registry, "profile.get", AgentProfileGetRequest{WorkspaceID: "ws-1", Name: "planner"})
+	if got.ProfileID != created.ProfileID || got.Harness != "pty" || got.Prompt != "plan" {
+		t.Fatalf("got profile = %#v, want created planner", got)
 	}
-	run := callMethod[AgentSessionConfigSessionResponse](t, registry, "workspace.agent.run", AgentSessionConfigSessionRequest{SessionID: "run-1", AgentID: "agent-1", CWD: t.TempDir()})
-	if run.Run.AgentID != "agent-1" || run.Run.Harness != "claude" || run.Run.Status != "waiting" {
-		t.Fatalf("run = %#v, want run from updated agent", run)
-	}
-	_ = callMethod[AgentSessionConfigDeleteResponse](t, registry, "workspace.agent.delete", AgentSessionConfigDeleteRequest{AgentID: "agent-1"})
-	listed = callMethod[AgentSessionConfigListResponse](t, registry, "workspace.agent.list", AgentSessionConfigListRequest{WorkspaceID: "ws-1"})
-	if len(listed.Agents) != 0 {
-		t.Fatalf("listed after delete = %#v, want empty", listed)
+	run := callMethod[AgentSessionStartResponse](t, registry, "session.start", AgentSessionStartRequest{WorkspaceID: "ws-1", Profile: "planner", SessionID: "run-1", Command: "/bin/sh", Args: []string{"-c", "printf done"}})
+	if run.Run.AgentSessionID != "run-1" || run.Run.Executor != "pty" || (run.Run.Status != "running" && run.Run.Status != "completed") {
+		t.Fatalf("run = %#v, want pty session from profile", run.Run)
 	}
 }
 

@@ -120,6 +120,80 @@ func (d *Daemon) workspaceTimeline(ctx context.Context, store *globaldb.Store, w
 		sequence++
 	}
 
+	excerpts, err := store.ListContextExcerpts(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	excerptsByID := make(map[string]globaldb.ContextExcerpt, len(excerpts))
+	excerptOrder := make([]string, 0, len(excerpts))
+	for _, excerpt := range excerpts {
+		excerptsByID[excerpt.ContextExcerptID] = excerpt
+		excerptOrder = append(excerptOrder, excerpt.ContextExcerptID)
+	}
+	emittedExcerpts := make(map[string]bool, len(excerpts))
+	appendExcerpt := func(excerptID string) {
+		if emittedExcerpts[excerptID] {
+			return
+		}
+		excerpt, ok := excerptsByID[excerptID]
+		if !ok {
+			return
+		}
+		items = append(items, TimelineItem{
+			ID:          excerpt.ContextExcerptID,
+			WorkspaceID: workspaceID,
+			RunID:       excerpt.SourceSessionID,
+			SessionID:   excerpt.SourceSessionID,
+			SourceKind:  "context_excerpt",
+			SourceID:    excerpt.ContextExcerptID,
+			Kind:        "context_excerpt",
+			Status:      "captured",
+			Sequence:    sequence,
+			Metadata: map[string]any{
+				"source_session_id": excerpt.SourceSessionID,
+				"source_agent_id":   excerpt.SourceAgentID,
+				"target_agent_id":   excerpt.TargetAgentID,
+				"selector_type":     excerpt.SelectorType,
+				"item_count":        len(excerpt.Items),
+			},
+		})
+		emittedExcerpts[excerptID] = true
+		sequence++
+	}
+
+	messages, err := store.ListAgentMessages(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	for _, msg := range messages {
+		for _, excerptID := range msg.ContextExcerptIDs {
+			appendExcerpt(excerptID)
+		}
+		items = append(items, TimelineItem{
+			ID:          msg.AgentMessageID,
+			WorkspaceID: workspaceID,
+			RunID:       msg.SourceSessionID,
+			SessionID:   msg.SourceSessionID,
+			SourceKind:  "agent_message",
+			SourceID:    msg.AgentMessageID,
+			Kind:        "agent_message",
+			Status:      msg.Status,
+			Sequence:    sequence,
+			Text:        msg.Body,
+			Metadata: map[string]any{
+				"source_session_id":     msg.SourceSessionID,
+				"source_agent_id":       msg.SourceAgentID,
+				"target_session_id":     msg.TargetSessionID,
+				"target_agent_id":       msg.TargetAgentID,
+				"context_excerpt_count": len(msg.ContextExcerptIDs),
+			},
+		})
+		sequence++
+	}
+	for _, excerptID := range excerptOrder {
+		appendExcerpt(excerptID)
+	}
+
 	for _, item := range d.executorTimelineItems(workspaceID) {
 		item = normalizeAgentSessionTimelineItem(item)
 		item.Sequence = sequence

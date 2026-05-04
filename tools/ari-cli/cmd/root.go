@@ -17,8 +17,8 @@ type rootRunDeps struct {
 	configuredDaemonConfig  func() (*config.Config, error)
 	ensureDaemonRunning     func(context.Context, *config.Config) error
 	resolveWorkspaceFromCWD func(context.Context, string, string) (daemon.WorkspaceGetResponse, error)
-	workspaceActivityRPC    func(context.Context, string, string) (daemon.WorkspaceActivityResponse, error)
 	dashboardRPC            func(context.Context, string, string) (daemon.DashboardGetResponse, error)
+	timelineRPC             func(context.Context, string, string) (daemon.WorkspaceTimelineResponse, error)
 }
 
 var rootDeps = rootRunDeps{
@@ -28,19 +28,19 @@ var rootDeps = rootRunDeps{
 	configuredDaemonConfig:  configuredDaemonConfig,
 	ensureDaemonRunning:     ensureDaemonRunning,
 	resolveWorkspaceFromCWD: resolveWorkspaceFromCWD,
-	workspaceActivityRPC: func(ctx context.Context, socketPath, workspaceID string) (daemon.WorkspaceActivityResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.WorkspaceActivityResponse
-		if err := rpcClient.Call(ctx, "workspace.activity", daemon.WorkspaceActivityRequest{WorkspaceID: workspaceID}, &response); err != nil {
-			return daemon.WorkspaceActivityResponse{}, err
-		}
-		return response, nil
-	},
 	dashboardRPC: func(ctx context.Context, socketPath, cwd string) (daemon.DashboardGetResponse, error) {
 		rpcClient := client.New(socketPath)
 		var response daemon.DashboardGetResponse
 		if err := rpcClient.Call(ctx, "dashboard.get", daemon.DashboardGetRequest{CWD: cwd}, &response); err != nil {
 			return daemon.DashboardGetResponse{}, err
+		}
+		return response, nil
+	},
+	timelineRPC: func(ctx context.Context, socketPath, workspaceID string) (daemon.WorkspaceTimelineResponse, error) {
+		rpcClient := client.New(socketPath)
+		var response daemon.WorkspaceTimelineResponse
+		if err := rpcClient.Call(ctx, "workspace.timeline", daemon.WorkspaceTimelineRequest{WorkspaceID: workspaceID}, &response); err != nil {
+			return daemon.WorkspaceTimelineResponse{}, err
 		}
 		return response, nil
 	},
@@ -84,32 +84,32 @@ var rootRunNonInteractive = func(cmd *cobra.Command, _ []string) error {
 }
 
 func renderDashboard(cmd *cobra.Command, dashboard daemon.DashboardGetResponse) error {
-	activity := dashboard.Activity
+	status := dashboard.Status
 	if _, err := fmt.Fprintln(cmd.OutOrStdout(), "Ari workspace dashboard"); err != nil {
 		return err
 	}
-	workspaceName := activity.WorkspaceName
+	workspaceName := status.WorkspaceName
 	if workspaceName == "" {
-		workspaceName = activity.WorkspaceID
+		workspaceName = status.WorkspaceID
 	}
 	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Active workspace: %s\n", workspaceName); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "ID: %s\n", activity.WorkspaceID); err != nil {
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "ID: %s\n", status.WorkspaceID); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Agents: %d\n", len(activity.Agents)); err != nil {
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Sessions: %d\n", len(status.Sessions)); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "VCS: %s (%d changed files)\n", activity.VCS.Backend, activity.VCS.ChangedFiles); err != nil {
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "VCS: %s (%d changed files)\n", status.VCS.Backend, status.VCS.ChangedFiles); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Processes: %d\n", len(activity.Processes)); err != nil {
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Processes: %d\n", len(status.Processes)); err != nil {
 		return err
 	}
 	waitingSessions := 0
 	runningEphemeral := 0
-	for _, agent := range activity.Agents {
+	for _, agent := range status.Sessions {
 		if agent.Status == "waiting" {
 			waitingSessions++
 		}
@@ -123,27 +123,27 @@ func renderDashboard(cmd *cobra.Command, dashboard daemon.DashboardGetResponse) 
 	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Running ephemeral calls: %d\n", runningEphemeral); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Context excerpts: %d\n", len(activity.ContextExcerpts)); err != nil {
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Context excerpts: %d\n", len(status.ContextExcerpts)); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Agent messages: %d\n", len(activity.AgentMessages)); err != nil {
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Session messages: %d\n", len(status.AgentMessages)); err != nil {
 		return err
 	}
-	for _, excerpt := range activity.ContextExcerpts {
+	for _, excerpt := range status.ContextExcerpts {
 		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Context excerpt: %s %s %d -> %s\n", excerpt.ContextExcerptID, excerpt.SelectorType, excerpt.ItemCount, excerpt.TargetAgentID); err != nil {
 			return err
 		}
 	}
-	for _, message := range activity.AgentMessages {
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Agent message: %s %s %s -> %s\n", message.AgentMessageID, message.Status, message.SourceSessionID, message.TargetAgentID); err != nil {
+	for _, message := range status.AgentMessages {
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Session message: %s %s %s -> %s\n", message.AgentMessageID, message.Status, message.SourceSessionID, message.TargetAgentID); err != nil {
 			return err
 		}
 	}
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Attention: %s (%d items)\n", activity.Attention.Level, len(activity.Attention.Items)); err != nil {
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Attention: %s (%d items)\n", status.Attention.Level, len(status.Attention.Items)); err != nil {
 		return err
 	}
-	if len(activity.Proofs) > 0 {
-		proof := activity.Proofs[0]
+	if len(status.Proofs) > 0 {
+		proof := status.Proofs[0]
 		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Latest proof: %s %s\n", proof.Status, proof.Command); err != nil {
 			return err
 		}
@@ -190,12 +190,14 @@ func NewRootCmd() *cobra.Command {
 	rootCmd.AddCommand(NewWorkspaceCmd())
 	rootCmd.AddCommand(NewCommandCmd())
 	rootCmd.AddCommand(NewExecCmd())
-	rootCmd.AddCommand(NewAgentsCmd())
+	rootCmd.AddCommand(NewSessionCmd())
+	rootCmd.AddCommand(NewContextCmd())
 	rootCmd.AddCommand(NewProfileCmd())
 	rootCmd.AddCommand(NewFinalResponseCmd())
 	rootCmd.AddCommand(NewTelemetryCmd())
 	rootCmd.AddCommand(NewAuthCmd())
 	rootCmd.AddCommand(newStatusCmd())
+	rootCmd.AddCommand(newTimelineCmd())
 	rootCmd.AddCommand(NewAPICmd())
 
 	return rootCmd
@@ -208,6 +210,50 @@ func newStatusCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE:  rootRunNonInteractive,
 	}
+}
+
+func newTimelineCmd() *cobra.Command {
+	var workspaceID string
+	cmd := &cobra.Command{
+		Use:   "timeline",
+		Short: "Show Ari workspace timeline",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_ = args
+			cfg, err := rootDeps.configuredDaemonConfig()
+			if err != nil {
+				return err
+			}
+			if err := rootDeps.ensureDaemonRunning(cmd.Context(), cfg); err != nil {
+				return err
+			}
+			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
+			defer cancel()
+			ws := workspaceID
+			if ws == "" {
+				dashboard, err := rootDeps.dashboardRPC(ctx, cfg.Daemon.SocketPath, "")
+				if err != nil {
+					return mapSessionRPCError(err)
+				}
+				ws = dashboard.EffectiveWorkspaceID
+			}
+			if ws == "" {
+				return userFacingError{message: "No active workspace is set"}
+			}
+			resp, err := rootDeps.timelineRPC(ctx, cfg.Daemon.SocketPath, ws)
+			if err != nil {
+				return mapSessionRPCError(err)
+			}
+			for _, item := range resp.Items {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", item.ID, item.Kind, item.Status); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&workspaceID, "workspace", "", "Target workspace id or name (defaults to active workspace)")
+	return cmd
 }
 
 func Execute() {

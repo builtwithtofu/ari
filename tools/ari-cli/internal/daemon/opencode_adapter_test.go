@@ -37,8 +37,29 @@ func TestOpenCodeExecutorMapsJSONEvents(t *testing.T) {
 	if got := strings.Join(runner.args, " "); !strings.Contains(got, "run") || !strings.Contains(got, "--format json") || !strings.Contains(got, "--model sonnet") {
 		t.Fatalf("opencode args = %q, want run json model invocation", got)
 	}
-	if !strings.Contains(runner.prompt, "Build it") || !strings.Contains(runner.prompt, "ctx_123") {
-		t.Fatalf("opencode prompt = %q, want profile prompt plus context packet", runner.prompt)
+	if strings.Contains(runner.prompt, "Build it") || !strings.Contains(runner.prompt, "ctx_123") {
+		t.Fatalf("opencode prompt = %q, want context packet without hidden profile behavior", runner.prompt)
+	}
+}
+
+func TestOpenCodeExecutorDoesNotHideProfilePromptInVisibleRunInput(t *testing.T) {
+	runner := &fakeOpenCodeRunner{output: []byte(strings.Join([]string{
+		`{"type":"session.status","properties":{"sessionID":"sess_123","status":{"type":"busy"}}}`,
+		`{"type":"session.status","properties":{"sessionID":"sess_123","status":{"type":"idle"}}}`,
+	}, "\n"))}
+	executor := NewOpenCodeExecutorForTest(opencodeExecutorOptions{Executable: "opencode", Cwd: "/repo", RunCommand: runner.Run})
+	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
+
+	_, _, err := StartExecutorRun(context.Background(), executor, packet, AgentProfile{Name: "builder", Model: "sonnet", Prompt: "Use builder behavior", InvocationClass: HarnessInvocationAgent})
+	if err != nil {
+		t.Fatalf("StartExecutorRun returned error: %v", err)
+	}
+
+	if strings.Contains(runner.prompt, "Use builder behavior") {
+		t.Fatalf("opencode prompt = %q, must keep profile behavior out of visible task/context payload", runner.prompt)
+	}
+	if !strings.Contains(runner.prompt, "ctx_123") {
+		t.Fatalf("opencode prompt = %q, want context packet visible in user payload", runner.prompt)
 	}
 }
 
@@ -226,6 +247,16 @@ func TestOpenCodeExecutorRejectsMissingSessionID(t *testing.T) {
 	_, _, err := StartExecutorRun(context.Background(), executor, packet)
 	if err == nil || !strings.Contains(err.Error(), "opencode session id is required") {
 		t.Fatalf("StartExecutorRun error = %v, want missing session id error", err)
+	}
+}
+
+func TestOpenCodeExecutorAdvertisesCapabilityProofSurface(t *testing.T) {
+	executor := NewOpenCodeExecutorForTest(opencodeExecutorOptions{Executable: "opencode", Cwd: "/repo"})
+	capabilities := executor.Descriptor().Capabilities
+	for _, required := range []HarnessCapability{HarnessCapabilityAgentSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems, HarnessCapabilityFinalResponse, HarnessCapabilityMeasuredTokenTelemetry} {
+		if !harnessCapabilitiesContain(capabilities, required) {
+			t.Fatalf("opencode capabilities = %#v, missing required %q", capabilities, required)
+		}
 	}
 }
 
