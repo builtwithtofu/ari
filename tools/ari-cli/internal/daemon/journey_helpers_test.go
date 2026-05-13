@@ -67,8 +67,8 @@ func (j *journeyRuntime) seedWorkspace(workspaceID string, folders ...string) {
 		folders = []string{j.t.TempDir()}
 	}
 	seedSessionWithPrimaryFolder(j.t, j.store, workspaceID, folders[0])
-	for i, folder := range folders[1:] {
-		if err := j.store.AddFolder(j.ctx, workspaceID, folder, "git", i == 0); err != nil {
+	for _, folder := range folders[1:] {
+		if err := j.store.AddFolder(j.ctx, workspaceID, folder, "git", false); err != nil {
 			j.t.Fatalf("AddFolder(%s, %s) returned error: %v", workspaceID, folder, err)
 		}
 	}

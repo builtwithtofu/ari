@@ -11,7 +11,8 @@ func TestJourneyWorkspaceConnectResumeAndStickyReattach(t *testing.T) {
 	j := newJourneyRuntime(t)
 	harness := newJourneyHarnessFactory(t, "test-harness", []TimelineItem{{Kind: "agent_text", Status: "completed", Text: "started"}})
 	harness.register(j.daemon)
-	j.seedWorkspace("ws-1", t.TempDir(), t.TempDir())
+	primaryFolder := t.TempDir()
+	j.seedWorkspace("ws-1", primaryFolder, t.TempDir())
 	profile := j.createProfile("ws-1", "executor", "test-harness")
 
 	started := callMethod[AgentSessionStartResponse](t, j.registry, "session.start", AgentSessionStartRequest{WorkspaceID: "ws-1", Profile: profile.Name, SessionID: "executor-main", Message: "implement feature"})
@@ -29,6 +30,9 @@ func TestJourneyWorkspaceConnectResumeAndStickyReattach(t *testing.T) {
 	status := callMethod[WorkspaceStatusResponse](t, j.registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-1"})
 	if len(status.WorkspaceRoots) != 2 {
 		t.Fatalf("workspace roots = %#v, want two connected folders", status.WorkspaceRoots)
+	}
+	if status.WorkspaceRoots[0] != primaryFolder {
+		t.Fatalf("primary workspace root = %q, want original primary %q", status.WorkspaceRoots[0], primaryFolder)
 	}
 	requireStatusSession(t, status, "executor-main", "completed", "")
 }
