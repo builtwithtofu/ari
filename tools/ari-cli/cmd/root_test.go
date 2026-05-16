@@ -175,6 +175,49 @@ func TestRootRunNonInteractiveRendersWorkspaceDashboard(t *testing.T) {
 	}
 }
 
+func TestRootRunNonInteractiveRendersWorkspacePicker(t *testing.T) {
+	deps := rootDeps
+	deps.isInteractiveTerminal = func(cmd *cobra.Command) bool {
+		_ = cmd
+		return false
+	}
+	deps.configuredDaemonConfig = func() (*config.Config, error) {
+		return &config.Config{Daemon: config.DaemonConfig{SocketPath: "/tmp/daemon.sock"}}, nil
+	}
+	deps.ensureDaemonRunning = func(ctx context.Context, cfg *config.Config) error {
+		_ = ctx
+		_ = cfg
+		return nil
+	}
+	deps.resolveWorkspaceFromCWD = func(ctx context.Context, socketPath, cwd string) (daemon.WorkspaceGetResponse, error) {
+		_ = ctx
+		_ = socketPath
+		_ = cwd
+		t.Fatal("picker path must not resolve workspace from cwd")
+		return daemon.WorkspaceGetResponse{}, nil
+	}
+	deps.dashboardRPC = func(ctx context.Context, socketPath, cwd string) (daemon.DashboardGetResponse, error) {
+		_ = ctx
+		_ = socketPath
+		_ = cwd
+		return daemon.DashboardGetResponse{State: "workspace_picker", PickerWorkspaces: []daemon.WorkspaceSummary{{WorkspaceID: "ws-1", Name: "clay"}, {WorkspaceID: "ws-2"}}}, nil
+	}
+	replaceRootDeps(t, deps)
+
+	out, err := executeRootCommandRaw()
+	if err != nil {
+		t.Fatalf("executeRootCommandRaw returned error: %v", err)
+	}
+	for _, want := range []string{"Workspace option: clay (ws-1)", "Workspace option: ws-2 (ws-2)"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output = %q, want %q", out, want)
+		}
+	}
+	if strings.Contains(out, "Active workspace:") {
+		t.Fatalf("output = %q, want picker without active workspace rendering", out)
+	}
+}
+
 func TestStatusUsesDaemonDashboardActiveContext(t *testing.T) {
 	deps := rootDeps
 	deps.isInteractiveTerminal = func(cmd *cobra.Command) bool {

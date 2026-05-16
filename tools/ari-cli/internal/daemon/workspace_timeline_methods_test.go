@@ -2,11 +2,40 @@ package daemon
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
 )
+
+func TestWorkspaceTimelineIncludesOperationRecords(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"default_harness":"codex"}`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", configPath, "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	repoRoot := t.TempDir()
+	if err := makeGitRoot(repoRoot); err != nil {
+		t.Fatalf("makeGitRoot returned error: %v", err)
+	}
+	setup := callMethod[WorkspaceSetupExistingResponse](t, registry, "workspace.setup_existing", WorkspaceSetupExistingRequest{Name: "project", Folder: repoRoot})
+
+	resp := callMethod[WorkspaceTimelineResponse](t, registry, "workspace.timeline", WorkspaceTimelineRequest{WorkspaceID: setup.WorkspaceID})
+	if len(resp.Items) == 0 {
+		t.Fatalf("timeline items = %#v, want operation record item", resp.Items)
+	}
+	item := resp.Items[0]
+	if item.SourceKind != "operation" || item.Kind != "workspace_project_setup" || item.Status != daemonOperationResultSucceeded || item.Metadata["source"] != daemonOperationSourceCLI || item.Metadata["rollback_point_id"] != setup.RollbackPointID {
+		t.Fatalf("operation timeline item = %#v, want setup operation metadata", item)
+	}
+}
 
 func TestWorkspaceTimelineMapsCommandAgentAndProofOutput(t *testing.T) {
 	store := newCommandMethodTestStore(t)

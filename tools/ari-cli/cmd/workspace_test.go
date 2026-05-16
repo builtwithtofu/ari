@@ -1283,3 +1283,40 @@ func TestWorkspaceCreateAllowsVCSPreferenceOverride(t *testing.T) {
 		t.Fatalf("create vcs preference = %q, want %q", gotReq.VCSPreference, "jj")
 	}
 }
+
+func TestWorkspaceSetupExistingCallsDaemonFlowAndPrintsActiveWorkspace(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalWD) })
+	if err := os.Chdir(cwd); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	project := filepath.Join(cwd, "project")
+	if err := os.MkdirAll(filepath.Join(project, ".git"), 0o755); err != nil {
+		t.Fatalf("create project git dir: %v", err)
+	}
+
+	originalSetup := workspaceSetupExistingRPC
+	var gotReq daemon.WorkspaceSetupExistingRequest
+	workspaceSetupExistingRPC = func(_ context.Context, _ string, req daemon.WorkspaceSetupExistingRequest) (daemon.WorkspaceSetupExistingResponse, error) {
+		gotReq = req
+		return daemon.WorkspaceSetupExistingResponse{WorkspaceID: "ws-project", Name: req.Name, Folder: req.Folder, VCSType: "git", ActiveWorkspace: "ws-project", RollbackPointID: "op-checkpoint"}, nil
+	}
+	t.Cleanup(func() { workspaceSetupExistingRPC = originalSetup })
+
+	out, err := executeRootCommand("workspace", "setup", "project", "./project", "--vcs-preference", "git")
+	if err != nil {
+		t.Fatalf("workspace setup returned error: %v", err)
+	}
+	if gotReq.Name != "project" || gotReq.Folder != project || gotReq.VCSPreference != "git" {
+		t.Fatalf("setup request = %#v, want project/%s/git", gotReq, project)
+	}
+	if !strings.Contains(out, "Project workspace ready: project (ws-project)") || !strings.Contains(out, "Active workspace: ws-project") || !strings.Contains(out, "Inspect: ari workspace show") {
+		t.Fatalf("workspace setup output = %q", out)
+	}
+}

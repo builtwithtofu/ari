@@ -84,6 +84,21 @@ var rootRunNonInteractive = func(cmd *cobra.Command, _ []string) error {
 }
 
 func renderDashboard(cmd *cobra.Command, dashboard daemon.DashboardGetResponse) error {
+	if dashboard.State == "workspace_picker" {
+		if _, err := fmt.Fprintln(cmd.OutOrStdout(), "Ari workspace dashboard"); err != nil {
+			return err
+		}
+		for _, workspace := range dashboard.PickerWorkspaces {
+			name := workspace.Name
+			if name == "" {
+				name = workspace.WorkspaceID
+			}
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Workspace option: %s (%s)\n", name, workspace.WorkspaceID); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	status := dashboard.Status
 	if _, err := fmt.Fprintln(cmd.OutOrStdout(), "Ari workspace dashboard"); err != nil {
 		return err

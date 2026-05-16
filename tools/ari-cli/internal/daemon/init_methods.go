@@ -12,11 +12,15 @@ import (
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
 )
 
+const daemonOperationTypeInitApplied = "init_applied"
+
 type InitStateRequest struct{}
 
 type InitStateResponse struct {
 	Initialized        bool   `json:"initialized"`
 	DefaultHarness     string `json:"default_harness"`
+	PreferredModel     string `json:"preferred_model"`
+	DefaultRoot        string `json:"default_root"`
 	HomeWorkspaceReady bool   `json:"home_workspace_ready"`
 	HomeHelperReady    bool   `json:"home_helper_ready"`
 }
@@ -28,17 +32,33 @@ type InitHarnessOption struct {
 	Label string `json:"label"`
 }
 
+type InitModelOption struct {
+	Name  string `json:"name"`
+	Label string `json:"label"`
+}
+
+type InitRootOption struct {
+	Path  string `json:"path"`
+	Label string `json:"label"`
+}
+
 type InitOptionsResponse struct {
 	Harnesses []InitHarnessOption `json:"harnesses"`
+	Models    []InitModelOption   `json:"models"`
+	Roots     []InitRootOption    `json:"roots"`
 }
 
 type InitApplyRequest struct {
 	Harness string `json:"harness"`
+	Model   string `json:"model"`
+	Root    string `json:"root"`
 }
 
 type InitApplyResponse struct {
 	Initialized        bool   `json:"initialized"`
 	DefaultHarness     string `json:"default_harness"`
+	PreferredModel     string `json:"preferred_model"`
+	DefaultRoot        string `json:"default_root"`
 	DefaultHarnessSet  bool   `json:"default_harness_set"`
 	HomeWorkspaceReady bool   `json:"home_workspace_ready"`
 	HomeHelperReady    bool   `json:"home_helper_ready"`
@@ -83,15 +103,19 @@ func (d *Daemon) initState(ctx context.Context, store *globaldb.Store) (InitStat
 	if err != nil {
 		return InitStateResponse{}, err
 	}
+	model, root, err := d.readConfiguredInitDefaults()
+	if err != nil {
+		return InitStateResponse{}, err
+	}
 	homeWorkspaceReady := false
 	homeHelperReady := false
 	if store != nil {
-		homeWorkspaceReady, homeHelperReady, err = d.homeWorkspaceInitState(ctx, store)
+		homeWorkspaceReady, homeHelperReady, err = d.homeWorkspaceInitState(ctx, store, root)
 		if err != nil {
 			return InitStateResponse{}, err
 		}
 	}
-	return InitStateResponse{Initialized: harness != "", DefaultHarness: harness, HomeWorkspaceReady: homeWorkspaceReady, HomeHelperReady: homeHelperReady}, nil
+	return InitStateResponse{Initialized: harness != "", DefaultHarness: harness, PreferredModel: model, DefaultRoot: root, HomeWorkspaceReady: homeWorkspaceReady, HomeHelperReady: homeHelperReady}, nil
 }
 
 func initOptions() InitOptionsResponse {
@@ -100,7 +124,7 @@ func initOptions() InitOptionsResponse {
 	for _, name := range names {
 		options = append(options, InitHarnessOption{Name: name, Label: name})
 	}
-	return InitOptionsResponse{Harnesses: options}
+	return InitOptionsResponse{Harnesses: options, Models: []InitModelOption{{Name: "", Label: "Manual/default model"}}, Roots: []InitRootOption{{Path: "~/", Label: "~/"}}}
 }
 
 func (d *Daemon) applyInit(ctx context.Context, store *globaldb.Store, req InitApplyRequest) (InitApplyResponse, error) {
@@ -108,29 +132,87 @@ func (d *Daemon) applyInit(ctx context.Context, store *globaldb.Store, req InitA
 	if !isSupportedHarness(harness) {
 		return InitApplyResponse{}, fmt.Errorf("init apply: harness must be one of %s", strings.Join(SupportedHarnesses(), ", "))
 	}
-	if store == nil {
-		return InitApplyResponse{}, fmt.Errorf("globaldb store is required")
-	}
-	if err := patchJSONConfigString(d.configPath, "default_harness", harness); err != nil {
-		return InitApplyResponse{}, err
-	}
-	home, err := d.ensureHomeWorkspace(ctx, store)
+	model := strings.TrimSpace(req.Model)
+	root, err := normalizeInitRoot(req.Root)
 	if err != nil {
 		return InitApplyResponse{}, err
 	}
-	homeHelperReady := false
-	if home != nil {
-		if _, err := store.EnsureDefaultHelperProfile(ctx, home.ID, harness, helperPrompt()); err != nil {
-			return InitApplyResponse{}, err
-		}
-		homeHelperReady = true
+	if store == nil {
+		return InitApplyResponse{}, fmt.Errorf("globaldb store is required")
 	}
-	return InitApplyResponse{Initialized: true, DefaultHarness: harness, DefaultHarnessSet: true, HomeWorkspaceReady: home != nil, HomeHelperReady: homeHelperReady}, nil
+	payload := map[string]string{"harness": harness, "model": model, "root": root, "step": "init.apply"}
+	rollbackData := map[string]string{"scope": "ari_owned_state_only"}
+	previousConfig, err := readJSONConfig(d.configPath)
+	if err != nil {
+		return InitApplyResponse{}, err
+	}
+	previousDefaultHarness, err := readJSONConfigString(previousConfig, "default_harness")
+	if err != nil {
+		return InitApplyResponse{}, err
+	}
+	previousPreferredModel, err := readJSONConfigString(previousConfig, "preferred_model")
+	if err != nil {
+		return InitApplyResponse{}, err
+	}
+	previousDefaultRoot, err := readJSONConfigString(previousConfig, "default_workspace_root")
+	if err != nil {
+		return InitApplyResponse{}, err
+	}
+	previousContext, err := readActiveWorkspaceContext(ctx, store)
+	if err != nil {
+		return InitApplyResponse{}, err
+	}
+	payload["previous_workspace_id"] = previousContext.WorkspaceID
+	payload["previous_default_harness"] = previousDefaultHarness
+	payload["previous_preferred_model"] = previousPreferredModel
+	payload["previous_default_workspace_root"] = previousDefaultRoot
+	rollbackData["previous_workspace_id"] = previousContext.WorkspaceID
+	rollbackData["previous_default_harness"] = previousDefaultHarness
+	rollbackData["previous_preferred_model"] = previousPreferredModel
+	rollbackData["previous_default_workspace_root"] = previousDefaultRoot
+	checkpoint, err := createDaemonOperationCheckpoint(ctx, store, daemonOperationCheckpointOptions{Actor: "user", Source: daemonOperationSourceDaemon, Scope: globaldb.OperationScopeGlobal, RequestSummary: "apply Ari init choices", PayloadSnapshot: payload})
+	if err != nil {
+		return InitApplyResponse{}, err
+	}
+
+	var response InitApplyResponse
+	_, err = recordDaemonOperation(ctx, store, daemonOperationRecordOptions{OperationType: daemonOperationTypeInitApplied, Actor: "user", Source: daemonOperationSourceDaemon, Scope: globaldb.OperationScopeGlobal, RequestSummary: "apply Ari init choices", ParentOperationID: checkpoint.OperationID, CheckpointOperationID: checkpoint.OperationID, RollbackPointID: checkpoint.OperationID, RollbackData: rollbackData, PayloadSnapshot: payload}, func(ctx context.Context) error {
+		if err := patchJSONConfigStrings(d.configPath, map[string]string{"default_harness": harness, "preferred_model": model, "default_workspace_root": root}); err != nil {
+			return err
+		}
+		home, homeCreated, err := d.ensureHomeWorkspace(ctx, store, root)
+		if err != nil {
+			return err
+		}
+		homeHelperReady := false
+		if home != nil {
+			payload["home_workspace_id"] = home.ID
+			payload["home_workspace_created"] = fmt.Sprintf("%t", homeCreated)
+			rollbackData["home_workspace_id"] = home.ID
+			rollbackData["home_workspace_created"] = fmt.Sprintf("%t", homeCreated)
+			if err := d.ensureHomeHelperSession(ctx, store, home.ID, harness); err != nil {
+				return err
+			}
+			if _, err := setActiveWorkspaceContext(ctx, store, ContextSetRequest{WorkspaceID: home.ID}); err != nil {
+				return err
+			}
+			if err := patchJSONConfigStrings(d.configPath, map[string]string{"active_workspace": home.ID}); err != nil {
+				return err
+			}
+			homeHelperReady = true
+		}
+		response = InitApplyResponse{Initialized: true, DefaultHarness: harness, PreferredModel: model, DefaultRoot: root, DefaultHarnessSet: true, HomeWorkspaceReady: home != nil, HomeHelperReady: homeHelperReady}
+		return nil
+	})
+	if err != nil {
+		return InitApplyResponse{}, err
+	}
+	return response, nil
 }
 
-func (d *Daemon) homeWorkspaceInitState(ctx context.Context, store *globaldb.Store) (bool, bool, error) {
-	home, err := os.UserHomeDir()
-	if err != nil || strings.TrimSpace(home) == "" {
+func (d *Daemon) homeWorkspaceInitState(ctx context.Context, store *globaldb.Store, root string) (bool, bool, error) {
+	root, err := normalizeInitRoot(root)
+	if err != nil || strings.TrimSpace(root) == "" {
 		return false, false, nil
 	}
 	sessions, err := store.ListSessions(ctx)
@@ -138,41 +220,78 @@ func (d *Daemon) homeWorkspaceInitState(ctx context.Context, store *globaldb.Sto
 		return false, false, err
 	}
 	for _, session := range sessions {
-		if session.OriginRoot == home {
-			_, helperErr := store.GetDefaultHelperProfile(ctx, session.ID)
-			return true, helperErr == nil, nil
+		if session.OriginRoot == root {
+			profile, helperErr := store.GetDefaultHelperProfile(ctx, session.ID)
+			if helperErr != nil {
+				return true, false, nil
+			}
+			helpers, err := store.ListAgentSessions(ctx, session.ID)
+			if err != nil {
+				return false, false, err
+			}
+			return true, hasLiveHelperSession(helpers, profile.ProfileID), nil
 		}
 	}
 	return false, false, nil
 }
 
-func (d *Daemon) ensureHomeWorkspace(ctx context.Context, store *globaldb.Store) (*globaldb.Session, error) {
-	home, err := os.UserHomeDir()
-	if err != nil || strings.TrimSpace(home) == "" {
-		return nil, nil
+func (d *Daemon) ensureHomeHelperSession(ctx context.Context, store *globaldb.Store, workspaceID, harness string) error {
+	profile, err := store.EnsureDefaultHelperProfile(ctx, workspaceID, harness, helperPrompt())
+	if err != nil {
+		return err
+	}
+	sessions, err := store.ListAgentSessions(ctx, workspaceID)
+	if err != nil {
+		return err
+	}
+	if hasLiveHelperSession(sessions, profile.ProfileID) {
+		return nil
+	}
+	_, err = startProfileSession(d, ctx, store, AgentSessionStartRequest{WorkspaceID: workspaceID, Profile: globaldb.DefaultHelperProfileName})
+	return err
+}
+
+func hasLiveHelperSession(sessions []globaldb.AgentSession, profileID string) bool {
+	profileID = strings.TrimSpace(profileID)
+	if profileID == "" {
+		return false
+	}
+	for _, session := range sessions {
+		if strings.TrimSpace(session.AgentID) == profileID && strings.TrimSpace(session.Status) == "running" {
+			return true
+		}
+	}
+	return false
+}
+
+func (d *Daemon) ensureHomeWorkspace(ctx context.Context, store *globaldb.Store, root string) (*globaldb.Session, bool, error) {
+	root, err := normalizeInitRoot(root)
+	if err != nil || strings.TrimSpace(root) == "" {
+		return nil, false, nil
 	}
 	sessions, err := store.ListSessions(ctx)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	for _, session := range sessions {
-		if session.OriginRoot == home {
-			return &session, nil
+		if session.OriginRoot == root {
+			return &session, false, nil
 		}
 	}
 	workspaceID, err := newWorkspaceID()
 	if err != nil {
-		return nil, fmt.Errorf("generate workspace id: %w", err)
+		return nil, false, fmt.Errorf("generate workspace id: %w", err)
 	}
 	name := availableHomeWorkspaceName(sessions)
-	if err := store.CreateSession(ctx, workspaceID, name, home, "manual", "auto"); err != nil {
-		return nil, err
+	if err := store.CreateSession(ctx, workspaceID, name, root, "manual", "auto"); err != nil {
+		return nil, false, err
 	}
-	if err := store.AddFolder(ctx, workspaceID, home, "unknown", true); err != nil {
+	if err := store.AddFolder(ctx, workspaceID, root, "unknown", true); err != nil {
 		_ = store.DeleteSession(ctx, workspaceID)
-		return nil, err
+		return nil, false, err
 	}
-	return store.GetSession(ctx, workspaceID)
+	session, err := store.GetSession(ctx, workspaceID)
+	return session, true, err
 }
 
 func availableHomeWorkspaceName(sessions []globaldb.Session) string {
@@ -212,8 +331,56 @@ func (d *Daemon) readConfiguredDefaultHarness() (string, error) {
 	return harness, nil
 }
 
-func patchJSONConfigString(path, key, value string) error {
-	return patchJSONConfigStrings(path, map[string]string{key: value})
+func (d *Daemon) readConfiguredInitDefaults() (string, string, error) {
+	values, err := readJSONConfig(d.configPath)
+	if err != nil {
+		return "", "", err
+	}
+	model, err := readJSONConfigString(values, "preferred_model")
+	if err != nil {
+		return "", "", fmt.Errorf("read init state: parse preferred_model: %w", err)
+	}
+	root, err := readJSONConfigString(values, "default_workspace_root")
+	if err != nil {
+		return "", "", fmt.Errorf("read init state: parse default_workspace_root: %w", err)
+	}
+	root, err = normalizeInitRoot(root)
+	if err != nil {
+		return "", "", fmt.Errorf("read init state: normalize default_workspace_root: %w", err)
+	}
+	return strings.TrimSpace(model), root, nil
+}
+
+func readJSONConfigString(values map[string]json.RawMessage, key string) (string, error) {
+	var value string
+	if raw, ok := values[key]; ok {
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return "", err
+		}
+	}
+	return strings.TrimSpace(value), nil
+}
+
+func normalizeInitRoot(root string) (string, error) {
+	trimmed := strings.TrimSpace(root)
+	if trimmed == "" || trimmed == "~/" || trimmed == "~" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("init apply: resolve home root: %w", err)
+		}
+		trimmed = home
+	} else if strings.HasPrefix(trimmed, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("init apply: resolve home root: %w", err)
+		}
+		trimmed = filepath.Join(home, trimmed[2:])
+	}
+	abs, err := filepath.Abs(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("init apply: resolve root: %w", err)
+	}
+	return abs, nil
 }
 
 func patchJSONConfigStrings(path string, updates map[string]string) error {

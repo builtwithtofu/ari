@@ -2,10 +2,69 @@ package daemon
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
 )
+
+func TestJourneyInitToProjectStateIsDaemonBacked(t *testing.T) {
+	stubBootstrap(t)
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", configPath, "defaults", "test-version")
+	harness := newJourneyHarnessFactory(t, "codex", []TimelineItem{{Kind: "agent_text", Status: "completed", Text: "helper ready"}})
+	harness.register(d)
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	homeRoot := filepath.Join(t.TempDir(), "home-root")
+	initResp := callMethod[InitApplyResponse](t, registry, "init.apply", InitApplyRequest{Harness: "codex", Model: "gpt-5.5", Root: homeRoot})
+	if !initResp.HomeWorkspaceReady || !initResp.HomeHelperReady || initResp.DefaultRoot != homeRoot {
+		t.Fatalf("init response = %#v, want home workspace/helper/defaults", initResp)
+	}
+	active := callMethod[ContextGetResponse](t, registry, "context.get", ContextGetRequest{})
+	if active.Current.WorkspaceID == "" {
+		t.Fatalf("active context after init = %#v, want home workspace", active.Current)
+	}
+	homeStatus := callMethod[WorkspaceStatusResponse](t, registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: active.Current.WorkspaceID})
+	if homeStatus.WorkspaceName != "home" || len(homeStatus.Sessions) == 0 || len(homeStatus.RecentOperations) == 0 {
+		t.Fatalf("home status = %#v, want home helper/session/audit projection", homeStatus)
+	}
+	homeTimeline := callMethod[WorkspaceTimelineResponse](t, registry, "workspace.timeline", WorkspaceTimelineRequest{WorkspaceID: active.Current.WorkspaceID})
+	if len(homeTimeline.Items) == 0 || homeTimeline.Items[0].SourceKind != "operation" {
+		t.Fatalf("home timeline = %#v, want operation-backed timeline", homeTimeline)
+	}
+
+	repoRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".git"), 0o755); err != nil {
+		t.Fatalf("create git marker: %v", err)
+	}
+	setup := callMethod[WorkspaceSetupExistingResponse](t, registry, "workspace.setup_existing", WorkspaceSetupExistingRequest{Name: "project", Folder: repoRoot})
+	active = callMethod[ContextGetResponse](t, registry, "context.get", ContextGetRequest{})
+	if active.Current.WorkspaceID != setup.WorkspaceID {
+		t.Fatalf("active context after setup = %#v, want project %q", active.Current, setup.WorkspaceID)
+	}
+	projectStatus := callMethod[WorkspaceStatusResponse](t, registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: setup.WorkspaceID})
+	if projectStatus.WorkspaceName != "project" || len(projectStatus.WorkspaceRoots) != 1 || projectStatus.WorkspaceRoots[0] != repoRoot || len(projectStatus.RecentOperations) == 0 {
+		t.Fatalf("project status = %#v, want project roots and audit projection", projectStatus)
+	}
+	projectTimeline := callMethod[WorkspaceTimelineResponse](t, registry, "workspace.timeline", WorkspaceTimelineRequest{WorkspaceID: setup.WorkspaceID})
+	if len(projectTimeline.Items) == 0 || projectTimeline.Items[0].Kind != "workspace_project_setup" {
+		t.Fatalf("project timeline = %#v, want setup operation", projectTimeline)
+	}
+	records, err := store.ListOperationRecords(context.Background(), "")
+	if err != nil {
+		t.Fatalf("ListOperationRecords returned error: %v", err)
+	}
+	if len(records) < 4 {
+		t.Fatalf("operation records = %#v, want init and project checkpoints/operations", records)
+	}
+}
 
 func TestJourneyWorkspaceConnectResumeAndStickyReattach(t *testing.T) {
 	j := newJourneyRuntime(t)

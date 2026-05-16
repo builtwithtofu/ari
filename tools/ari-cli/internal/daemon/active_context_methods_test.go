@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -126,6 +127,97 @@ func TestDashboardGetUsesActiveContextAndIncludesCwdMemberships(t *testing.T) {
 	}
 	if len(resp.CWDMemberships) != 1 || resp.CWDMemberships[0].WorkspaceID != "ws-cwd" || resp.CWDMemberships[0].Active {
 		t.Fatalf("cwd memberships = %#v, want non-active cwd workspace", resp.CWDMemberships)
+	}
+}
+
+func TestDashboardGetUsesPersistedActiveContextWhenCWDIsAnotherWorkspace(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	lastAccessedRoot := t.TempDir()
+	homeRoot := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "ws-last", lastAccessedRoot)
+	seedSessionWithPrimaryFolder(t, store, "ws-home", homeRoot)
+	_ = callMethod[ContextSetResponse](t, registry, "context.set", ContextSetRequest{WorkspaceID: "ws-last"})
+
+	resp := callMethod[DashboardGetResponse](t, registry, "dashboard.get", DashboardGetRequest{CWD: homeRoot})
+	if resp.State != "workspace_active" {
+		t.Fatalf("dashboard state = %q, want workspace_active", resp.State)
+	}
+	if resp.EffectiveWorkspaceID != "ws-last" || resp.Status.WorkspaceID != "ws-last" {
+		t.Fatalf("dashboard response = %#v, want last accessed workspace despite cwd membership", resp)
+	}
+}
+
+func TestDashboardGetReturnsPickerWhenLastAccessedWorkspaceWasRemoved(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	removedRoot := t.TempDir()
+	remainingRoot := t.TempDir()
+	missingHomeRoot := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "ws-removed", removedRoot)
+	seedSessionWithPrimaryFolder(t, store, "ws-remaining", remainingRoot)
+	seedSessionWithPrimaryFolder(t, store, "ws-home", missingHomeRoot)
+	set := callMethod[ContextSetResponse](t, registry, "context.set", ContextSetRequest{WorkspaceID: "ws-removed"})
+	if err := store.DeleteSession(context.Background(), "ws-removed"); err != nil {
+		t.Fatalf("DeleteSession returned error: %v", err)
+	}
+	if err := os.RemoveAll(removedRoot); err != nil {
+		t.Fatalf("RemoveAll removed root returned error: %v", err)
+	}
+	if err := os.RemoveAll(missingHomeRoot); err != nil {
+		t.Fatalf("RemoveAll missing home root returned error: %v", err)
+	}
+
+	resp := callMethod[DashboardGetResponse](t, registry, "dashboard.get", DashboardGetRequest{})
+	if resp.State != "workspace_picker" {
+		t.Fatalf("dashboard state = %q, want workspace_picker", resp.State)
+	}
+	if resp.ActiveContext.WorkspaceID != "ws-removed" || resp.ActiveContext.Version != set.Current.Version {
+		t.Fatalf("active context = %#v, want removed last-accessed context preserved", resp.ActiveContext)
+	}
+	if resp.EffectiveWorkspaceID != "" || resp.Status.WorkspaceID != "" {
+		t.Fatalf("dashboard response = %#v, want no silent workspace switch", resp)
+	}
+	if len(resp.PickerWorkspaces) != 1 || resp.PickerWorkspaces[0].WorkspaceID != "ws-remaining" {
+		t.Fatalf("picker workspaces = %#v, want remaining workspace choice", resp.PickerWorkspaces)
+	}
+	if _, err := os.Stat(removedRoot); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("removed root stat error = %v, want not exist", err)
+	}
+	if _, err := os.Stat(missingHomeRoot); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing home root stat error = %v, want not exist", err)
+	}
+}
+
+func TestDashboardGetReturnsPickerWhenNoActiveContextIsSet(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "ws-one", t.TempDir())
+
+	resp := callMethod[DashboardGetResponse](t, registry, "dashboard.get", DashboardGetRequest{})
+	if resp.State != "workspace_picker" {
+		t.Fatalf("dashboard state = %q, want workspace_picker", resp.State)
+	}
+	if resp.EffectiveWorkspaceID != "" || resp.Status.WorkspaceID != "" {
+		t.Fatalf("dashboard response = %#v, want picker without implicit active workspace", resp)
+	}
+	if len(resp.PickerWorkspaces) != 1 || resp.PickerWorkspaces[0].WorkspaceID != "ws-one" {
+		t.Fatalf("picker workspaces = %#v, want available workspace", resp.PickerWorkspaces)
 	}
 }
 
