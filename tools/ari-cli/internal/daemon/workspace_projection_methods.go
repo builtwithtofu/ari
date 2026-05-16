@@ -264,7 +264,7 @@ func workspaceOperationActivity(ctx context.Context, store *globaldb.Store, work
 		if err != nil {
 			return nil, err
 		}
-		if strings.HasPrefix(workspace.Name, "home") {
+		if workspace.Name == "home" || strings.HasPrefix(workspace.Name, "home-") {
 			globalRecords, err := store.ListOperationRecords(ctx, "")
 			if err != nil {
 				return nil, err

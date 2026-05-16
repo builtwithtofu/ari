@@ -372,11 +372,22 @@ func (d *Daemon) workspaceSetupExisting(ctx context.Context, store *globaldb.Sto
 	payload["workspace_id"] = created.WorkspaceID
 	contextResp, err := setActiveWorkspaceContext(ctx, store, ContextSetRequest{WorkspaceID: created.WorkspaceID})
 	if err != nil {
-		_ = store.DeleteSession(ctx, created.WorkspaceID)
+		if rollbackErr := store.DeleteSession(ctx, created.WorkspaceID); rollbackErr != nil && !errors.Is(rollbackErr, globaldb.ErrNotFound) {
+			return WorkspaceSetupExistingResponse{}, fmt.Errorf("rollback workspace setup after active context failure: %w", rollbackErr)
+		}
 		return WorkspaceSetupExistingResponse{}, err
 	}
 	if err := patchJSONConfigStrings(d.configPath, map[string]string{"active_workspace": created.WorkspaceID}); err != nil {
-		_ = store.DeleteSession(ctx, created.WorkspaceID)
+		if previousContext.WorkspaceID != "" {
+			if _, rollbackErr := setActiveWorkspaceContext(ctx, store, ContextSetRequest{WorkspaceID: previousContext.WorkspaceID}); rollbackErr != nil {
+				return WorkspaceSetupExistingResponse{}, fmt.Errorf("restore previous active workspace after config failure: %w", rollbackErr)
+			}
+		} else if rollbackErr := store.SetMeta(ctx, activeContextMetaKey, `{}`); rollbackErr != nil {
+			return WorkspaceSetupExistingResponse{}, fmt.Errorf("clear active workspace after config failure: %w", rollbackErr)
+		}
+		if rollbackErr := store.DeleteSession(ctx, created.WorkspaceID); rollbackErr != nil && !errors.Is(rollbackErr, globaldb.ErrNotFound) {
+			return WorkspaceSetupExistingResponse{}, fmt.Errorf("rollback workspace setup after config failure: %w", rollbackErr)
+		}
 		return WorkspaceSetupExistingResponse{}, err
 	}
 	if _, err := appendDaemonOperationRecord(ctx, store, daemonOperationRecordOptions{WorkspaceID: created.WorkspaceID, OperationType: "workspace_project_setup", OperationKind: daemonOperationKindMutating, Actor: "user", Source: daemonOperationSourceCLI, Scope: globaldb.OperationScopeWorkspace, RequestSummary: "create and select project workspace", ParentOperationID: checkpoint.OperationID, CheckpointOperationID: checkpoint.OperationID, RollbackPointID: checkpoint.OperationID, RollbackData: map[string]string{"workspace_id": created.WorkspaceID, "previous_workspace_id": previousContext.WorkspaceID, "scope": "ari_owned_state_only"}, PayloadSnapshot: payload}, daemonOperationResultSucceeded); err != nil {

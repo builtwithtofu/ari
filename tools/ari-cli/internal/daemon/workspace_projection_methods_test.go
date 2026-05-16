@@ -233,7 +233,12 @@ func TestWorkspaceStatusDoesNotLeakOtherWorkspaceOperations(t *testing.T) {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 	otherRoot := t.TempDir()
-	seedSessionWithPrimaryFolder(t, store, "ws-other", otherRoot)
+	if err := store.CreateSession(context.Background(), "ws-other", "homepage", otherRoot, "manual", "auto"); err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if err := store.AddFolder(context.Background(), "ws-other", otherRoot, "git", true); err != nil {
+		t.Fatalf("AddFolder returned error: %v", err)
+	}
 	repoRoot := t.TempDir()
 	if err := makeGitRoot(repoRoot); err != nil {
 		t.Fatalf("makeGitRoot returned error: %v", err)

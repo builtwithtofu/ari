@@ -158,6 +158,13 @@ func TestRollbackProjectSetupRemovesWorkspaceAndClearsActiveContext(t *testing.T
 	if active.Current.WorkspaceID != "" {
 		t.Fatalf("active context after rollback = %#v, want cleared", active.Current)
 	}
+	var persisted map[string]string
+	if err := readJSONFile(configPath, &persisted); err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if persisted["active_workspace"] != "" {
+		t.Fatalf("active_workspace after rollback = %q, want cleared", persisted["active_workspace"])
+	}
 	dashboard := callMethod[DashboardGetResponse](t, registry, "dashboard.get", DashboardGetRequest{})
 	if dashboard.State != "workspace_picker" || dashboard.EffectiveWorkspaceID != "" {
 		t.Fatalf("dashboard after rollback = %#v, want picker without stale workspace", dashboard)
@@ -181,6 +188,9 @@ func TestRollbackProjectSetupRemovesWorkspaceAndClearsActiveContext(t *testing.T
 	}
 	if !foundSetup || !foundRollback {
 		t.Fatalf("operation records after rollback = %#v, want preserved setup and appended rollback", records)
+	}
+	if err := callMethodError(registry, "rollback.apply", RollbackApplyRequest{RollbackPointID: setup.RollbackPointID}); err == nil || !strings.Contains(err.Error(), "already been applied") {
+		t.Fatalf("second rollback error = %v, want already applied", err)
 	}
 }
 
@@ -208,5 +218,12 @@ func TestRollbackProjectSetupRestoresPreviousActiveWorkspace(t *testing.T) {
 	active := callMethod[ContextGetResponse](t, registry, "context.get", ContextGetRequest{})
 	if active.Current.WorkspaceID != "ws-previous" {
 		t.Fatalf("active context after rollback = %#v, want previous workspace", active.Current)
+	}
+	var persisted map[string]string
+	if err := readJSONFile(configPath, &persisted); err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if persisted["active_workspace"] != "ws-previous" {
+		t.Fatalf("active_workspace after rollback = %q, want previous workspace", persisted["active_workspace"])
 	}
 }

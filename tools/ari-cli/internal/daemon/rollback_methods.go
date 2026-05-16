@@ -61,7 +61,7 @@ func (d *Daemon) applyRollback(ctx context.Context, store *globaldb.Store, req R
 			if err := d.rollbackInitState(ctx, store, payload); err != nil {
 				return err
 			}
-		} else if err := rollbackProjectWorkspaceSetup(ctx, store, payload); err != nil {
+		} else if err := d.rollbackProjectWorkspaceSetup(ctx, store, payload); err != nil {
 			return err
 		}
 		response = RollbackApplyResponse{Status: daemonOperationResultSucceeded, TargetOperationID: target.OperationID}
@@ -74,7 +74,7 @@ func (d *Daemon) applyRollback(ctx context.Context, store *globaldb.Store, req R
 	return response, nil
 }
 
-func rollbackProjectWorkspaceSetup(ctx context.Context, store *globaldb.Store, payload map[string]string) error {
+func (d *Daemon) rollbackProjectWorkspaceSetup(ctx context.Context, store *globaldb.Store, payload map[string]string) error {
 	workspaceID := strings.TrimSpace(payload["workspace_id"])
 	previousWorkspaceID := strings.TrimSpace(payload["previous_workspace_id"])
 	sessions, err := store.ListSessions(ctx)
@@ -94,8 +94,14 @@ func rollbackProjectWorkspaceSetup(ctx context.Context, store *globaldb.Store, p
 				if _, err := setActiveWorkspaceContext(ctx, store, ContextSetRequest{WorkspaceID: previousWorkspaceID}); err != nil {
 					return err
 				}
+				if err := patchJSONConfigStrings(d.configPath, map[string]string{"active_workspace": previousWorkspaceID}); err != nil {
+					return err
+				}
 			} else {
 				if err := store.SetMeta(ctx, activeContextMetaKey, `{}`); err != nil {
+					return err
+				}
+				if err := patchJSONConfigStrings(d.configPath, map[string]string{"active_workspace": ""}); err != nil {
 					return err
 				}
 			}
@@ -111,9 +117,13 @@ func findRollbackTarget(ctx context.Context, store *globaldb.Store, rollbackPoin
 		return globaldb.OperationRecord{}, err
 	}
 	for _, record := range records {
-		if record.RollbackPointID == rollbackPointID && record.OperationType != daemonOperationTypeRollbackCheckpoint {
-			return record, nil
+		if record.RollbackPointID != rollbackPointID || record.OperationType == daemonOperationTypeRollbackCheckpoint {
+			continue
 		}
+		if record.OperationType == daemonOperationTypeRollbackApplied {
+			return globaldb.OperationRecord{}, rpc.NewHandlerError(rpc.InvalidParams, "rollback point has already been applied", map[string]any{"rollback_point_id": rollbackPointID, "rollback_operation_id": record.OperationID})
+		}
+		return record, nil
 	}
 	return globaldb.OperationRecord{}, rpc.NewHandlerError(rpc.InvalidParams, "rollback point target not found", map[string]any{"rollback_point_id": rollbackPointID})
 }
