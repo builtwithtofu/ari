@@ -391,6 +391,24 @@ func (d *Daemon) workspaceSetupExisting(ctx context.Context, store *globaldb.Sto
 		return WorkspaceSetupExistingResponse{}, err
 	}
 	if _, err := appendDaemonOperationRecord(ctx, store, daemonOperationRecordOptions{WorkspaceID: created.WorkspaceID, OperationType: "workspace_project_setup", OperationKind: daemonOperationKindMutating, Actor: "user", Source: daemonOperationSourceCLI, Scope: globaldb.OperationScopeWorkspace, RequestSummary: "create and select project workspace", ParentOperationID: checkpoint.OperationID, CheckpointOperationID: checkpoint.OperationID, RollbackPointID: checkpoint.OperationID, RollbackData: map[string]string{"workspace_id": created.WorkspaceID, "previous_workspace_id": previousContext.WorkspaceID, "scope": "ari_owned_state_only"}, PayloadSnapshot: payload}, daemonOperationResultSucceeded); err != nil {
+		if previousContext.WorkspaceID != "" {
+			if _, rollbackErr := setActiveWorkspaceContext(ctx, store, ContextSetRequest{WorkspaceID: previousContext.WorkspaceID}); rollbackErr != nil {
+				return WorkspaceSetupExistingResponse{}, fmt.Errorf("restore previous active workspace after operation record failure: %w", rollbackErr)
+			}
+			if rollbackErr := patchJSONConfigStrings(d.configPath, map[string]string{"active_workspace": previousContext.WorkspaceID}); rollbackErr != nil {
+				return WorkspaceSetupExistingResponse{}, fmt.Errorf("restore persisted active workspace after operation record failure: %w", rollbackErr)
+			}
+		} else {
+			if rollbackErr := store.SetMeta(ctx, activeContextMetaKey, `{}`); rollbackErr != nil {
+				return WorkspaceSetupExistingResponse{}, fmt.Errorf("clear active workspace after operation record failure: %w", rollbackErr)
+			}
+			if rollbackErr := patchJSONConfigStrings(d.configPath, map[string]string{"active_workspace": ""}); rollbackErr != nil {
+				return WorkspaceSetupExistingResponse{}, fmt.Errorf("clear persisted active workspace after operation record failure: %w", rollbackErr)
+			}
+		}
+		if rollbackErr := store.DeleteSession(ctx, created.WorkspaceID); rollbackErr != nil && !errors.Is(rollbackErr, globaldb.ErrNotFound) {
+			return WorkspaceSetupExistingResponse{}, fmt.Errorf("rollback workspace setup after operation record failure: %w", rollbackErr)
+		}
 		return WorkspaceSetupExistingResponse{}, err
 	}
 	response = WorkspaceSetupExistingResponse{WorkspaceID: created.WorkspaceID, Name: created.Name, Folder: created.Folder, VCSType: created.VCSType, ActiveWorkspace: contextResp.Current.WorkspaceID, RollbackPointID: checkpoint.OperationID}

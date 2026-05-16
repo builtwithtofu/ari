@@ -120,8 +120,11 @@ func findRollbackTarget(ctx context.Context, store *globaldb.Store, rollbackPoin
 		if record.RollbackPointID != rollbackPointID || record.OperationType == daemonOperationTypeRollbackCheckpoint {
 			continue
 		}
-		if record.OperationType == daemonOperationTypeRollbackApplied {
+		if record.OperationType == daemonOperationTypeRollbackApplied && record.Result == daemonOperationResultSucceeded {
 			return globaldb.OperationRecord{}, rpc.NewHandlerError(rpc.InvalidParams, "rollback point has already been applied", map[string]any{"rollback_point_id": rollbackPointID, "rollback_operation_id": record.OperationID})
+		}
+		if record.OperationType == daemonOperationTypeRollbackApplied {
+			continue
 		}
 		return record, nil
 	}
@@ -129,7 +132,8 @@ func findRollbackTarget(ctx context.Context, store *globaldb.Store, rollbackPoin
 }
 
 func (d *Daemon) rollbackInitState(ctx context.Context, store *globaldb.Store, payload map[string]string) error {
-	if err := patchJSONConfigStrings(d.configPath, map[string]string{"default_harness": "", "preferred_model": "", "default_workspace_root": "", "active_workspace": ""}); err != nil {
+	previousWorkspaceID := strings.TrimSpace(payload["previous_workspace_id"])
+	if err := patchJSONConfigStrings(d.configPath, map[string]string{"default_harness": "", "preferred_model": "", "default_workspace_root": "", "active_workspace": previousWorkspaceID}); err != nil {
 		return err
 	}
 	root := strings.TrimSpace(payload["root"])
@@ -162,7 +166,11 @@ func (d *Daemon) rollbackInitState(ctx context.Context, store *globaldb.Store, p
 			return err
 		}
 		if current.WorkspaceID == session.ID {
-			if err := store.SetMeta(ctx, activeContextMetaKey, `{}`); err != nil {
+			if previousWorkspaceID != "" {
+				if _, err := setActiveWorkspaceContext(ctx, store, ContextSetRequest{WorkspaceID: previousWorkspaceID}); err != nil {
+					return err
+				}
+			} else if err := store.SetMeta(ctx, activeContextMetaKey, `{}`); err != nil {
 				return err
 			}
 		}

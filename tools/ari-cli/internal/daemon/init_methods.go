@@ -142,6 +142,12 @@ func (d *Daemon) applyInit(ctx context.Context, store *globaldb.Store, req InitA
 	}
 	payload := map[string]string{"harness": harness, "model": model, "root": root, "step": "init.apply"}
 	rollbackData := map[string]string{"scope": "ari_owned_state_only"}
+	previousContext, err := readActiveWorkspaceContext(ctx, store)
+	if err != nil {
+		return InitApplyResponse{}, err
+	}
+	payload["previous_workspace_id"] = previousContext.WorkspaceID
+	rollbackData["previous_workspace_id"] = previousContext.WorkspaceID
 	checkpoint, err := createDaemonOperationCheckpoint(ctx, store, daemonOperationCheckpointOptions{Actor: "user", Source: daemonOperationSourceDaemon, Scope: globaldb.OperationScopeGlobal, RequestSummary: "apply Ari init choices", PayloadSnapshot: payload})
 	if err != nil {
 		return InitApplyResponse{}, err

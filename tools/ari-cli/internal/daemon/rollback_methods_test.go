@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
 )
 
@@ -126,6 +127,48 @@ func TestRollbackInitPreservesPreExistingWorkspaceAtRoot(t *testing.T) {
 	}
 }
 
+func TestRollbackInitRestoresPreviousActiveWorkspace(t *testing.T) {
+	stubBootstrap(t)
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", configPath, "defaults", "test-version")
+	d.setHarnessFactoryForTest("codex", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return newFakeHarness("codex", nil), nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "ws-previous", t.TempDir())
+	callMethod[ContextSetResponse](t, registry, "context.set", ContextSetRequest{WorkspaceID: "ws-previous"})
+	callMethod[InitApplyResponse](t, registry, "init.apply", InitApplyRequest{Harness: "codex", Model: "gpt-5.5", Root: filepath.Join(t.TempDir(), "home")})
+	records, err := store.ListOperationRecords(context.Background(), "")
+	if err != nil {
+		t.Fatalf("ListOperationRecords returned error: %v", err)
+	}
+	var rollbackPointID string
+	for _, record := range records {
+		if record.OperationType == daemonOperationTypeInitApplied {
+			rollbackPointID = record.RollbackPointID
+		}
+	}
+	callMethod[RollbackApplyResponse](t, registry, "rollback.apply", RollbackApplyRequest{RollbackPointID: rollbackPointID})
+	active := callMethod[ContextGetResponse](t, registry, "context.get", ContextGetRequest{})
+	if active.Current.WorkspaceID != "ws-previous" {
+		t.Fatalf("active context after init rollback = %#v, want previous workspace", active.Current)
+	}
+	var persisted map[string]string
+	if err := readJSONFile(configPath, &persisted); err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if persisted["active_workspace"] != "ws-previous" {
+		t.Fatalf("active_workspace after init rollback = %q, want previous workspace", persisted["active_workspace"])
+	}
+}
+
 func TestRollbackProjectSetupRemovesWorkspaceAndClearsActiveContext(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
@@ -191,6 +234,44 @@ func TestRollbackProjectSetupRemovesWorkspaceAndClearsActiveContext(t *testing.T
 	}
 	if err := callMethodError(registry, "rollback.apply", RollbackApplyRequest{RollbackPointID: setup.RollbackPointID}); err == nil || !strings.Contains(err.Error(), "already been applied") {
 		t.Fatalf("second rollback error = %v, want already applied", err)
+	}
+}
+
+func TestRollbackProjectSetupIgnoresFailedRollbackAttempts(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"default_harness":"codex"}`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", configPath, "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	repoRoot := t.TempDir()
+	if err := makeGitRoot(repoRoot); err != nil {
+		t.Fatalf("makeGitRoot returned error: %v", err)
+	}
+	setup := callMethod[WorkspaceSetupExistingResponse](t, registry, "workspace.setup_existing", WorkspaceSetupExistingRequest{Name: "project", Folder: repoRoot})
+	records, err := store.ListOperationRecords(context.Background(), setup.WorkspaceID)
+	if err != nil || len(records) == 0 {
+		t.Fatalf("ListOperationRecords = (%#v, %v)", records, err)
+	}
+	failed := records[0]
+	failed.OperationID = "op-failed-rollback"
+	failed.OperationType = daemonOperationTypeRollbackApplied
+	failed.Result = "failed: transient"
+	failed.WorkspaceID = ""
+	failed.Scope = globaldb.OperationScopeGlobal
+	failed.PayloadHash = "sha256:failed"
+	failed.PayloadSnapshotJSON = `{"failed":"rollback"}`
+	if _, err := store.AppendOperationRecord(context.Background(), failed); err != nil {
+		t.Fatalf("AppendOperationRecord failed rollback returned error: %v", err)
+	}
+
+	rolledBack := callMethod[RollbackApplyResponse](t, registry, "rollback.apply", RollbackApplyRequest{RollbackPointID: setup.RollbackPointID})
+	if rolledBack.Status != daemonOperationResultSucceeded {
+		t.Fatalf("rollback response = %#v, want retry success", rolledBack)
 	}
 }
 
