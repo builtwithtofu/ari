@@ -182,6 +182,72 @@ func TestWorkspaceStatusProjectsPersistedAgentSessionsAfterDaemonRestart(t *test
 	}
 }
 
+func TestWorkspaceStatusShowsProjectStateAfterSetup(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"default_harness":"codex"}`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", configPath, "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	repoRoot := t.TempDir()
+	if err := makeGitRoot(repoRoot); err != nil {
+		t.Fatalf("makeGitRoot returned error: %v", err)
+	}
+	setup := callMethod[WorkspaceSetupExistingResponse](t, registry, "workspace.setup_existing", WorkspaceSetupExistingRequest{Name: "project", Folder: repoRoot})
+
+	resp := callMethod[WorkspaceStatusResponse](t, registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: setup.WorkspaceID})
+	if resp.WorkspaceName != "project" || len(resp.WorkspaceRoots) != 1 || resp.WorkspaceRoots[0] != repoRoot || resp.Attention.Level == "" {
+		t.Fatalf("workspace status = %#v, want project name/root/status/attention", resp)
+	}
+	if len(resp.Sessions) != 0 {
+		t.Fatalf("sessions = %#v, want no hidden helper session in project projection", resp.Sessions)
+	}
+	if len(resp.RecentOperations) != 1 || resp.RecentOperations[0].OperationType != "workspace_project_setup" || resp.RecentOperations[0].Source != daemonOperationSourceCLI || resp.RecentOperations[0].Status != daemonOperationResultSucceeded {
+		t.Fatalf("recent operations = %#v, want project setup operation", resp.RecentOperations)
+	}
+	if len(resp.RecentTimeline) != 1 {
+		t.Fatalf("recent timeline = %#v, want workspace state item", resp.RecentTimeline)
+	}
+	item := resp.RecentTimeline[0]
+	if item.Kind != "workspace_state" || item.SourceKind != "workspace" || item.WorkspaceID != setup.WorkspaceID {
+		t.Fatalf("recent timeline item = %#v, want workspace_state backed by daemon projection", item)
+	}
+	if item.Metadata["workspace_name"] != "project" || item.Metadata["attention_level"] != resp.Attention.Level {
+		t.Fatalf("recent timeline metadata = %#v, want project context and attention", item.Metadata)
+	}
+}
+
+func TestWorkspaceStatusDoesNotLeakOtherWorkspaceOperations(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"default_harness":"codex"}`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", configPath, "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	otherRoot := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "ws-other", otherRoot)
+	repoRoot := t.TempDir()
+	if err := makeGitRoot(repoRoot); err != nil {
+		t.Fatalf("makeGitRoot returned error: %v", err)
+	}
+	setup := callMethod[WorkspaceSetupExistingResponse](t, registry, "workspace.setup_existing", WorkspaceSetupExistingRequest{Name: "project", Folder: repoRoot})
+
+	otherStatus := callMethod[WorkspaceStatusResponse](t, registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-other"})
+	for _, operation := range otherStatus.RecentOperations {
+		if operation.OperationType == "workspace_project_setup" {
+			t.Fatalf("other workspace operations = %#v, leaked setup for %s", otherStatus.RecentOperations, setup.WorkspaceID)
+		}
+	}
+}
+
 func TestWorkspaceStatusProjectsMessageWorkflows(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()

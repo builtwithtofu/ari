@@ -188,6 +188,39 @@ CREATE TABLE IF NOT EXISTS agent_run_telemetry (
 CREATE INDEX IF NOT EXISTS agent_run_telemetry_workspace_created_idx
   ON agent_run_telemetry(workspace_id, created_at DESC, run_id ASC);
 
+CREATE TABLE IF NOT EXISTS operation_records (
+  operation_id TEXT PRIMARY KEY,
+  workspace_id TEXT,
+  operation_type TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  source TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  request_summary TEXT NOT NULL,
+  result TEXT NOT NULL,
+  trust_decision TEXT,
+  parent_operation_id TEXT,
+  checkpoint_operation_id TEXT,
+  rollback_point_id TEXT,
+  rollback_data_json TEXT NOT NULL DEFAULT '{}',
+  payload_hash TEXT NOT NULL,
+  payload_snapshot_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
+  FOREIGN KEY(parent_operation_id) REFERENCES operation_records(operation_id) ON DELETE RESTRICT,
+  FOREIGN KEY(checkpoint_operation_id) REFERENCES operation_records(operation_id) ON DELETE RESTRICT,
+  FOREIGN KEY(rollback_point_id) REFERENCES operation_records(operation_id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS operation_records_workspace_created_idx
+  ON operation_records(workspace_id, created_at DESC, operation_id ASC);
+
+CREATE INDEX IF NOT EXISTS operation_records_created_idx
+  ON operation_records(created_at DESC, operation_id ASC);
+
+CREATE INDEX IF NOT EXISTS operation_records_parent_idx
+  ON operation_records(parent_operation_id, created_at ASC, operation_id ASC)
+  WHERE parent_operation_id IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS agent_session_configs (
   agent_id TEXT PRIMARY KEY,
   workspace_id TEXT,

@@ -21,6 +21,7 @@ type Config struct {
 	ActiveWorkspace        string       `json:"active_workspace,omitempty" mapstructure:"active_workspace"`
 	DefaultHarness         string       `json:"default_harness,omitempty" mapstructure:"default_harness"`
 	PreferredModel         string       `json:"preferred_model,omitempty" mapstructure:"preferred_model"`
+	DefaultWorkspaceRoot   string       `json:"default_workspace_root,omitempty" mapstructure:"default_workspace_root"`
 	DefaultInvocationClass string       `json:"default_invocation_class,omitempty" mapstructure:"default_invocation_class"`
 }
 
@@ -55,6 +56,7 @@ func Load() (*Config, error) {
 	v.SetDefault("active_workspace", "")
 	v.SetDefault("default_harness", "")
 	v.SetDefault("preferred_model", "")
+	v.SetDefault("default_workspace_root", "")
 	v.SetDefault("default_invocation_class", "")
 
 	v.SetConfigName("config")
@@ -172,6 +174,13 @@ func normalizeConfig(cfg *Config) (*Config, error) {
 
 	logLevel := strings.ToLower(strings.TrimSpace(cfg.LogLevel))
 	vcsPreference := strings.ToLower(strings.TrimSpace(cfg.VCSPreference))
+	defaultWorkspaceRoot := strings.TrimSpace(cfg.DefaultWorkspaceRoot)
+	if defaultWorkspaceRoot != "" {
+		defaultWorkspaceRoot, err = normalizePath(defaultWorkspaceRoot)
+		if err != nil {
+			return nil, fmt.Errorf("normalize config: default workspace root: %w", err)
+		}
+	}
 
 	return &Config{
 		Daemon: DaemonConfig{
@@ -184,6 +193,7 @@ func normalizeConfig(cfg *Config) (*Config, error) {
 		ActiveWorkspace:        strings.TrimSpace(cfg.ActiveWorkspace),
 		DefaultHarness:         strings.TrimSpace(cfg.DefaultHarness),
 		PreferredModel:         strings.TrimSpace(cfg.PreferredModel),
+		DefaultWorkspaceRoot:   defaultWorkspaceRoot,
 		DefaultInvocationClass: strings.TrimSpace(cfg.DefaultInvocationClass),
 	}, nil
 }
@@ -250,6 +260,10 @@ func WriteDefaultHarness(harness string) error {
 
 func WritePreferredModel(model string) error {
 	return patchConfigKey("preferred_model", model, "write preferred model")
+}
+
+func WriteDefaultWorkspaceRoot(root string) error {
+	return patchConfigKey("default_workspace_root", root, "write default workspace root")
 }
 
 func WriteDefaultInvocationClass(invocationClass string) error {

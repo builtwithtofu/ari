@@ -83,7 +83,8 @@ func TestLoadExpandsTildePaths(t *testing.T) {
 			"pid_path": "~/.ari/custom.pid"
 		},
 		"log_level": "WARN",
-		"vcs_preference": "GIT"
+		"vcs_preference": "GIT",
+		"default_workspace_root": "~/Projects"
 	}`
 
 	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(configBody), 0o644); err != nil {
@@ -110,6 +111,9 @@ func TestLoadExpandsTildePaths(t *testing.T) {
 	}
 	if cfg.VCSPreference != "git" {
 		t.Fatalf("unexpected vcs preference: %q", cfg.VCSPreference)
+	}
+	if cfg.DefaultWorkspaceRoot != filepath.Join(tmpHome, "Projects") {
+		t.Fatalf("unexpected default workspace root: %q", cfg.DefaultWorkspaceRoot)
 	}
 }
 

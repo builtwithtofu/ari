@@ -68,6 +68,15 @@ func (d *Daemon) registerWorkspaceTimelineMethods(registry *rpc.MethodRegistry, 
 func (d *Daemon) workspaceTimeline(ctx context.Context, store *globaldb.Store, workspaceID string) ([]TimelineItem, error) {
 	sequence := 1
 	items := make([]TimelineItem, 0)
+	operationItems, err := workspaceOperationTimelineItems(ctx, store, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range operationItems {
+		item.Sequence = sequence
+		items = append(items, item)
+		sequence++
+	}
 	commands, err := store.ListCommands(ctx, workspaceID)
 	if err != nil {
 		return nil, mapCommandStoreError(err, workspaceID)
@@ -199,6 +208,18 @@ func (d *Daemon) workspaceTimeline(ctx context.Context, store *globaldb.Store, w
 		item.Sequence = sequence
 		items = append(items, item)
 		sequence++
+	}
+	return items, nil
+}
+
+func workspaceOperationTimelineItems(ctx context.Context, store *globaldb.Store, workspaceID string) ([]TimelineItem, error) {
+	operations, err := workspaceOperationActivity(ctx, store, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]TimelineItem, 0, len(operations))
+	for _, operation := range operations {
+		items = append(items, TimelineItem{ID: operation.OperationID, WorkspaceID: workspaceID, SourceKind: "operation", SourceID: operation.OperationID, Kind: operation.OperationType, Status: operation.Status, CreatedAt: operation.CreatedAt, Text: operation.RequestSummary, Metadata: map[string]any{"source": operation.Source, "rollback_point_id": operation.RollbackPointID}})
 	}
 	return items, nil
 }

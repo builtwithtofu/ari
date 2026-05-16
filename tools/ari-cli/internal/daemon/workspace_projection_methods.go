@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
@@ -18,17 +19,19 @@ type WorkspaceStatusRequest struct {
 }
 
 type WorkspaceStatusResponse struct {
-	WorkspaceID     string                   `json:"workspace_id"`
-	WorkspaceName   string                   `json:"workspace_name"`
-	VCS             DiffSummary              `json:"vcs"`
-	ActiveTaskID    string                   `json:"active_task_id,omitempty"`
-	Attention       AttentionSummary         `json:"attention"`
-	Processes       []ProcessActivity        `json:"processes"`
-	Sessions        []SessionActivity        `json:"sessions"`
-	Proofs          []ProofResultSummary     `json:"proofs"`
-	ContextExcerpts []ContextExcerptActivity `json:"context_excerpts"`
-	AgentMessages   []AgentMessageActivity   `json:"agent_messages"`
-	WorkspaceRoots  []string                 `json:"workspace_roots"`
+	WorkspaceID      string                   `json:"workspace_id"`
+	WorkspaceName    string                   `json:"workspace_name"`
+	VCS              DiffSummary              `json:"vcs"`
+	ActiveTaskID     string                   `json:"active_task_id,omitempty"`
+	Attention        AttentionSummary         `json:"attention"`
+	Processes        []ProcessActivity        `json:"processes"`
+	Sessions         []SessionActivity        `json:"sessions"`
+	Proofs           []ProofResultSummary     `json:"proofs"`
+	ContextExcerpts  []ContextExcerptActivity `json:"context_excerpts"`
+	AgentMessages    []AgentMessageActivity   `json:"agent_messages"`
+	WorkspaceRoots   []string                 `json:"workspace_roots"`
+	RecentOperations []OperationActivity      `json:"recent_operations"`
+	RecentTimeline   []TimelineItem           `json:"recent_timeline"`
 }
 
 type WorkspaceDiffRequest struct {
@@ -127,6 +130,16 @@ type ProofResultSummary struct {
 	LogSummary  string `json:"log_summary,omitempty"`
 }
 
+type OperationActivity struct {
+	OperationID     string `json:"operation_id"`
+	OperationType   string `json:"operation_type"`
+	Source          string `json:"source"`
+	Status          string `json:"status"`
+	RequestSummary  string `json:"request_summary"`
+	RollbackPointID string `json:"rollback_point_id,omitempty"`
+	CreatedAt       string `json:"created_at"`
+}
+
 func (d *Daemon) registerWorkspaceProjectionMethods(registry *rpc.MethodRegistry, store *globaldb.Store) error {
 	if registry == nil {
 		return fmt.Errorf("method registry is required")
@@ -214,19 +227,101 @@ func (d *Daemon) workspaceStatus(ctx context.Context, store *globaldb.Store, raw
 	if err != nil {
 		return WorkspaceStatusResponse{}, err
 	}
+	recentOperations, err := workspaceOperationActivity(ctx, store, workspaceID)
+	if err != nil {
+		return WorkspaceStatusResponse{}, err
+	}
+
+	attention := attentionFromActivity(proofs, sessions, authSlots)
+	recentTimeline, err := workspaceStateTimeline(ctx, store, session, roots, attention)
+	if err != nil {
+		return WorkspaceStatusResponse{}, err
+	}
 
 	return WorkspaceStatusResponse{
-		WorkspaceID:     workspaceID,
-		WorkspaceName:   session.Name,
-		VCS:             buildDiffSummary(roots),
-		Attention:       attentionFromActivity(proofs, sessions, authSlots),
-		Processes:       processes,
-		Sessions:        sessions,
-		Proofs:          proofs,
-		ContextExcerpts: contextExcerpts,
-		AgentMessages:   agentMessages,
-		WorkspaceRoots:  roots,
+		WorkspaceID:      workspaceID,
+		WorkspaceName:    session.Name,
+		VCS:              buildDiffSummary(roots),
+		Attention:        attention,
+		Processes:        processes,
+		Sessions:         sessions,
+		Proofs:           proofs,
+		ContextExcerpts:  contextExcerpts,
+		AgentMessages:    agentMessages,
+		WorkspaceRoots:   roots,
+		RecentOperations: recentOperations,
+		RecentTimeline:   recentTimeline,
 	}, nil
+}
+
+func workspaceOperationActivity(ctx context.Context, store *globaldb.Store, workspaceID string) ([]OperationActivity, error) {
+	records, err := store.ListOperationRecords(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	if workspaceID != "" {
+		workspace, err := store.GetSession(ctx, workspaceID)
+		if err != nil {
+			return nil, err
+		}
+		if strings.HasPrefix(workspace.Name, "home") {
+			globalRecords, err := store.ListOperationRecords(ctx, "")
+			if err != nil {
+				return nil, err
+			}
+			for _, record := range globalRecords {
+				if record.WorkspaceID == "" && (record.OperationType == daemonOperationTypeInitApplied || record.OperationType == daemonOperationTypeRollbackApplied) {
+					records = append(records, record)
+				}
+			}
+		}
+	}
+	out := make([]OperationActivity, 0, len(records))
+	seen := map[string]bool{}
+	for _, record := range records {
+		if seen[record.OperationID] || record.OperationType == daemonOperationTypeRollbackCheckpoint {
+			continue
+		}
+		seen[record.OperationID] = true
+		out = append(out, OperationActivity{OperationID: record.OperationID, OperationType: record.OperationType, Source: record.Source, Status: operationRecordStatus(record), RequestSummary: record.RequestSummary, RollbackPointID: record.RollbackPointID, CreatedAt: record.CreatedAt.Format(time.RFC3339Nano)})
+	}
+	return out, nil
+}
+
+func operationRecordStatus(record globaldb.OperationRecord) string {
+	if strings.HasPrefix(record.Result, "failed:") {
+		return "failed"
+	}
+	return record.Result
+}
+
+func workspaceStateTimeline(ctx context.Context, store *globaldb.Store, session *globaldb.Session, roots []string, attention AttentionSummary) ([]TimelineItem, error) {
+	profiles, err := store.ListAgentProfiles(ctx, session.ID)
+	if err != nil {
+		return nil, err
+	}
+	agentSessions, err := store.ListAgentSessions(ctx, session.ID)
+	if err != nil {
+		return nil, err
+	}
+	return []TimelineItem{{
+		ID:          session.ID + ":workspace_state",
+		WorkspaceID: session.ID,
+		SourceKind:  "workspace",
+		SourceID:    session.ID,
+		Kind:        "workspace_state",
+		Status:      session.Status,
+		Sequence:    1,
+		CreatedAt:   session.UpdatedAt,
+		Text:        session.Name,
+		Metadata: map[string]any{
+			"workspace_name":  session.Name,
+			"root_folders":    roots,
+			"profile_count":   len(profiles),
+			"session_count":   len(agentSessions),
+			"attention_level": attention.Level,
+		},
+	}}, nil
 }
 
 func workspaceContextExcerpts(ctx context.Context, store *globaldb.Store, workspaceID string) ([]ContextExcerptActivity, error) {

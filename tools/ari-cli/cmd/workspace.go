@@ -33,6 +33,14 @@ var (
 		}
 		return response, nil
 	}
+	workspaceSetupExistingRPC = func(ctx context.Context, socketPath string, req daemon.WorkspaceSetupExistingRequest) (daemon.WorkspaceSetupExistingResponse, error) {
+		rpcClient := client.New(socketPath)
+		var response daemon.WorkspaceSetupExistingResponse
+		if err := rpcClient.Call(ctx, "workspace.setup_existing", req, &response); err != nil {
+			return daemon.WorkspaceSetupExistingResponse{}, err
+		}
+		return response, nil
+	}
 	workspaceListRPC = func(ctx context.Context, socketPath string) (daemon.WorkspaceListResponse, error) {
 		rpcClient := client.New(socketPath)
 		var response daemon.WorkspaceListResponse
@@ -91,6 +99,7 @@ var (
 func NewWorkspaceCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "workspace", Short: "Manage Ari workspaces"}
 	cmd.AddCommand(newWorkspaceCreateCmd())
+	cmd.AddCommand(newWorkspaceSetupCmd())
 	cmd.AddCommand(newWorkspaceListCmd())
 	cmd.AddCommand(newWorkspaceShowCmd())
 	cmd.AddCommand(newWorkspaceSuspendCmd())
@@ -101,6 +110,54 @@ func NewWorkspaceCmd() *cobra.Command {
 	cmd.AddCommand(newWorkspaceSwitchCmd())
 	cmd.AddCommand(newWorkspaceClearCmd())
 	cmd.AddCommand(newWorkspaceFolderCmd())
+	return cmd
+}
+
+func newWorkspaceSetupCmd() *cobra.Command {
+	var vcsPreference string
+	cmd := &cobra.Command{
+		Use:   "setup <name> <folder>",
+		Short: "Create and select a project workspace from an existing folder",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := configuredDaemonConfig()
+			if err != nil {
+				return err
+			}
+			if err := workspaceEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
+				return err
+			}
+			cwd, err := os.Getwd()
+			if err != nil {
+				return err
+			}
+			folderPath, err := absolutizeInputPath(cwd, args[1])
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(vcsPreference) == "" {
+				vcsPreference = cfg.VCSPreference
+			}
+			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
+			defer cancel()
+			response, err := workspaceSetupExistingRPC(ctx, cfg.Daemon.SocketPath, daemon.WorkspaceSetupExistingRequest{Name: args[0], Folder: folderPath, VCSPreference: vcsPreference})
+			if err != nil {
+				return mapSessionRPCError(err)
+			}
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Project workspace ready: %s (%s)\n", response.Name, response.WorkspaceID); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  Folder: %s (%s)\n", response.Folder, response.VCSType); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  Active workspace: %s\n", response.ActiveWorkspace); err != nil {
+				return err
+			}
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), "  Inspect: ari workspace show")
+			return err
+		},
+	}
+	cmd.Flags().StringVar(&vcsPreference, "vcs-preference", "", "VCS preference: auto|jj|git (defaults to global config)")
 	return cmd
 }
 

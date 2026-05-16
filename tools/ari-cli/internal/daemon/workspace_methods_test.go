@@ -63,6 +63,48 @@ func TestWorkspaceMethodsCreateAndGet(t *testing.T) {
 	}
 }
 
+func TestWorkspaceSetupExistingCreatesSelectsAndRecordsRollbackPoint(t *testing.T) {
+	store := newSessionMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"default_harness":"codex"}`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", configPath, "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	repoRoot := t.TempDir()
+	if err := makeGitRoot(repoRoot); err != nil {
+		t.Fatalf("makeGitRoot returned error: %v", err)
+	}
+
+	setup := callMethod[WorkspaceSetupExistingResponse](t, registry, "workspace.setup_existing", WorkspaceSetupExistingRequest{Name: "project", Folder: repoRoot})
+	if setup.WorkspaceID == "" || setup.ActiveWorkspace != setup.WorkspaceID || setup.RollbackPointID == "" {
+		t.Fatalf("setup response = %#v, want workspace, active context, rollback point", setup)
+	}
+	get := callMethod[WorkspaceGetResponse](t, registry, "workspace.get", WorkspaceGetRequest{WorkspaceID: setup.WorkspaceID})
+	if get.Name != "project" || len(get.Folders) != 1 || get.Folders[0].Path != repoRoot {
+		t.Fatalf("workspace after setup = %#v, want project with existing folder", get)
+	}
+	active := callMethod[ContextGetResponse](t, registry, "context.get", ContextGetRequest{})
+	if active.Current.WorkspaceID != setup.WorkspaceID {
+		t.Fatalf("active context = %#v, want %q", active.Current, setup.WorkspaceID)
+	}
+	records, err := store.ListOperationRecords(context.Background(), "")
+	if err != nil {
+		t.Fatalf("ListOperationRecords returned error: %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("operation records = %#v, want checkpoint and visible setup operation", records)
+	}
+	setupRecord := records[0]
+	checkpoint := records[1]
+	if checkpoint.OperationType != daemonOperationTypeRollbackCheckpoint || setupRecord.OperationType != "workspace_project_setup" || setupRecord.RollbackPointID != checkpoint.OperationID {
+		t.Fatalf("operation records = %#v, want setup linked to checkpoint %#v", records, checkpoint)
+	}
+}
+
 func TestWorkspaceCreateWithoutDefaultHarnessDoesNotCreateUnusableHelper(t *testing.T) {
 	store := newSessionMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()

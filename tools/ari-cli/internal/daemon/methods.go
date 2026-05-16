@@ -80,6 +80,10 @@ func (d *Daemon) registerMethods(registry *rpc.MethodRegistry, store *globaldb.S
 		return err
 	}
 
+	if err := d.registerRollbackMethods(registry, store); err != nil {
+		return err
+	}
+
 	if err := d.registerContextMethods(registry, store); err != nil {
 		return err
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -64,9 +65,11 @@ type DashboardGetRequest struct {
 type DashboardGetResponse struct {
 	ActiveContext        ActiveWorkspaceContext  `json:"active_context"`
 	EffectiveWorkspaceID string                  `json:"effective_workspace_id"`
+	State                string                  `json:"state"`
 	Status               WorkspaceStatusResponse `json:"status"`
 	ResumeActions        []ResumeAction          `json:"resume_actions"`
 	CWDMemberships       []WorkspaceMembership   `json:"cwd_memberships"`
+	PickerWorkspaces     []WorkspaceSummary      `json:"picker_workspaces,omitempty"`
 }
 
 type ResumeAction struct {
@@ -176,18 +179,12 @@ func (d *Daemon) dashboardGet(ctx context.Context, store *globaldb.Store, req Da
 		return DashboardGetResponse{}, err
 	}
 	effectiveWorkspaceID := strings.TrimSpace(req.WorkspaceID)
+	explicitWorkspace := effectiveWorkspaceID != ""
 	if effectiveWorkspaceID == "" {
 		if err := rejectStaleObservedContextVersion(req.ObservedContextVersion, activeContext); err != nil {
 			return DashboardGetResponse{}, err
 		}
 		effectiveWorkspaceID = activeContext.WorkspaceID
-	}
-	if effectiveWorkspaceID == "" {
-		return DashboardGetResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "active workspace context is not set", map[string]any{"reason": "missing_active_context"})
-	}
-	status, err := d.workspaceStatus(ctx, store, effectiveWorkspaceID)
-	if err != nil {
-		return DashboardGetResponse{}, err
 	}
 	memberships := []WorkspaceMembership{}
 	if strings.TrimSpace(req.CWD) != "" {
@@ -197,7 +194,61 @@ func (d *Daemon) dashboardGet(ctx context.Context, store *globaldb.Store, req Da
 		}
 		memberships = membershipResp.Memberships
 	}
-	return DashboardGetResponse{ActiveContext: activeContext, EffectiveWorkspaceID: status.WorkspaceID, Status: status, ResumeActions: resumeActionsForStatus(status), CWDMemberships: memberships}, nil
+	if effectiveWorkspaceID == "" {
+		return dashboardPickerResponse(ctx, store, activeContext, memberships)
+	}
+	if !explicitWorkspace {
+		if _, err := store.GetSession(ctx, effectiveWorkspaceID); err != nil {
+			if errors.Is(err, globaldb.ErrNotFound) {
+				return dashboardPickerResponse(ctx, store, activeContext, memberships)
+			}
+			return DashboardGetResponse{}, mapWorkspaceStoreError(err, effectiveWorkspaceID)
+		}
+	}
+	status, err := d.workspaceStatus(ctx, store, effectiveWorkspaceID)
+	if err != nil {
+		return DashboardGetResponse{}, err
+	}
+	return DashboardGetResponse{ActiveContext: activeContext, EffectiveWorkspaceID: status.WorkspaceID, State: "workspace_active", Status: status, ResumeActions: resumeActionsForStatus(status), CWDMemberships: memberships}, nil
+}
+
+func dashboardPickerResponse(ctx context.Context, store *globaldb.Store, activeContext ActiveWorkspaceContext, memberships []WorkspaceMembership) (DashboardGetResponse, error) {
+	workspaces, err := workspacePickerSummaries(ctx, store)
+	if err != nil {
+		return DashboardGetResponse{}, err
+	}
+	return DashboardGetResponse{ActiveContext: activeContext, State: "workspace_picker", CWDMemberships: memberships, PickerWorkspaces: workspaces}, nil
+}
+
+func workspacePickerSummaries(ctx context.Context, store *globaldb.Store) ([]WorkspaceSummary, error) {
+	sessions, err := store.ListSessions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]WorkspaceSummary, 0, len(sessions))
+	for _, session := range sessions {
+		folders, err := store.ListFolders(ctx, session.ID)
+		if err != nil {
+			return nil, mapWorkspaceStoreError(err, session.ID)
+		}
+		primary := ""
+		for _, folder := range folders {
+			if folder.IsPrimary {
+				primary = folder.FolderPath
+				break
+			}
+		}
+		if primary != "" && !folderExists(primary) {
+			continue
+		}
+		out = append(out, WorkspaceSummary{WorkspaceID: session.ID, Name: session.Name, Status: session.Status, PrimaryFolder: primary, FolderCount: len(folders), CreatedAt: session.CreatedAt})
+	}
+	return out, nil
+}
+
+func folderExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 func resumeActionsForStatus(status WorkspaceStatusResponse) []ResumeAction {

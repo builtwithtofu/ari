@@ -199,6 +199,25 @@ type FinalResponse struct {
 	UpdatedAt       *string `json:"updated_at"`
 }
 
+type OperationRecord struct {
+	OperationID           string  `json:"operation_id"`
+	WorkspaceID           *string `json:"workspace_id"`
+	OperationType         string  `json:"operation_type"`
+	Actor                 string  `json:"actor"`
+	Source                string  `json:"source"`
+	Scope                 string  `json:"scope"`
+	RequestSummary        string  `json:"request_summary"`
+	Result                string  `json:"result"`
+	TrustDecision         *string `json:"trust_decision"`
+	ParentOperationID     *string `json:"parent_operation_id"`
+	CheckpointOperationID *string `json:"checkpoint_operation_id"`
+	RollbackPointID       *string `json:"rollback_point_id"`
+	RollbackDataJson      string  `json:"rollback_data_json"`
+	PayloadHash           string  `json:"payload_hash"`
+	PayloadSnapshotJson   string  `json:"payload_snapshot_json"`
+	CreatedAt             string  `json:"created_at"`
+}
+
 type RunLogMessage struct {
 	MessageID          string `json:"message_id"`
 	WorkspaceID        string `json:"workspace_id"`

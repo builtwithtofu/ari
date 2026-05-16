@@ -27,6 +27,8 @@ type AriToolSchema struct {
 	RequiredScopeFields []string `json:"required_scope_fields"`
 	ApprovalRequired    bool     `json:"approval_required"`
 	ReadOnly            bool     `json:"read_only"`
+	OperationKind       string   `json:"operation_kind"`
+	TrustChoices        []string `json:"trust_choices"`
 }
 
 type AriToolCallRequest struct {
@@ -73,16 +75,20 @@ type storedAriApproval struct {
 }
 
 var ariTools = []AriToolSchema{
-	{Name: "ari.defaults.get", Description: "Read Ari default harness, model, and invocation settings", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ReadOnly: true},
-	{Name: "ari.defaults.set", Description: "Update Ari defaults after scoped approval", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ApprovalRequired: true},
-	{Name: "ari.profile.draft", Description: "Draft a profile spec without persisting it", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ReadOnly: true},
-	{Name: "ari.profile.save", Description: "Persist an approved profile spec", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ApprovalRequired: true},
-	{Name: "ari.self_check", Description: "Read Ari daemon, config, workspace, profile, and harness health", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ReadOnly: true},
-	{Name: "ari.run.explain_latest", Description: "Summarize the latest available Ari run evidence", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ReadOnly: true},
+	{Name: "ari.defaults.get", Description: "Read Ari default harness, model, and invocation settings", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ReadOnly: true, OperationKind: daemonOperationKindReadOnly},
+	{Name: "ari.defaults.set", Description: "Update Ari defaults after scoped approval", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ApprovalRequired: true, OperationKind: daemonOperationKindMutating, TrustChoices: ariToolTrustChoices()},
+	{Name: "ari.profile.draft", Description: "Draft a profile spec without persisting it", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ReadOnly: true, OperationKind: daemonOperationKindReadOnly},
+	{Name: "ari.profile.save", Description: "Persist an approved profile spec", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ApprovalRequired: true, OperationKind: daemonOperationKindMutating, TrustChoices: ariToolTrustChoices()},
+	{Name: "ari.self_check", Description: "Read Ari daemon, config, workspace, profile, and harness health", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ReadOnly: true, OperationKind: daemonOperationKindReadOnly},
+	{Name: "ari.run.explain_latest", Description: "Summarize the latest available Ari run evidence", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ReadOnly: true, OperationKind: daemonOperationKindReadOnly},
 }
 
 func ariToolScopeFields() []string {
 	return []string{"source_run_id", "workspace_id", "profile_id", "profile_name", "tool_name", "within_default_scope"}
+}
+
+func ariToolTrustChoices() []string {
+	return []string{"trust_once", "trust_always_by_operation_type", "deny"}
 }
 
 func (d *Daemon) registerAriToolMethods(registry *rpc.MethodRegistry, store *globaldb.Store) error {
@@ -144,11 +150,24 @@ func (d *Daemon) callAriTool(ctx context.Context, store *globaldb.Store, req Ari
 	case "ari.defaults.get":
 		return d.ariDefaultsGet()
 	case "ari.defaults.set":
-		return d.ariDefaultsSet(req.Input)
+		var response AriToolCallResponse
+		_, err := recordDaemonOperation(ctx, store, daemonOperationRecordOptions{OperationType: "ari_defaults_set", OperationKind: daemonOperationKindMutating, Actor: req.Scope.ProfileName, Source: daemonOperationSourceTool, Scope: globaldb.OperationScopeGlobal, RequestSummary: "set Ari defaults from helper tool", TrustDecision: "approved_once", RollbackData: map[string]string{"scope": "ari_owned_config"}, PayloadSnapshot: map[string]string{"tool": name, "workspace_id": req.Scope.WorkspaceID, "request_hash": req.Approval.RequestHash}}, func(ctx context.Context) error {
+			_ = ctx
+			var err error
+			response, err = d.ariDefaultsSet(req.Input)
+			return err
+		})
+		return response, err
 	case "ari.profile.draft":
 		return ariProfileDraft(req.Input)
 	case "ari.profile.save":
-		return ariProfileSave(ctx, store, req.Scope, req.Input)
+		var response AriToolCallResponse
+		_, err := recordDaemonOperation(ctx, store, daemonOperationRecordOptions{WorkspaceID: req.Scope.WorkspaceID, OperationType: "ari_profile_save", OperationKind: daemonOperationKindMutating, Actor: req.Scope.ProfileName, Source: daemonOperationSourceTool, Scope: globaldb.OperationScopeWorkspace, RequestSummary: "save Ari helper profile", TrustDecision: "approved_once", RollbackData: map[string]string{"scope": "ari_owned_profile"}, PayloadSnapshot: map[string]string{"tool": name, "workspace_id": req.Scope.WorkspaceID, "request_hash": req.Approval.RequestHash}}, func(ctx context.Context) error {
+			var err error
+			response, err = ariProfileSave(ctx, store, req.Scope, req.Input)
+			return err
+		})
+		return response, err
 	case "ari.self_check":
 		return d.ariSelfCheck(ctx, store, req.Scope)
 	case "ari.run.explain_latest":

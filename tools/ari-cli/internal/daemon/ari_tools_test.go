@@ -40,9 +40,53 @@ func TestAriToolSchemaExposesStarterToolsAndScopeMetadata(t *testing.T) {
 	if !got["ari.defaults.set"].ApprovalRequired || got["ari.defaults.get"].ApprovalRequired {
 		t.Fatalf("unexpected approval flags: %#v", got)
 	}
+	if got["ari.defaults.get"].OperationKind != daemonOperationKindReadOnly || got["ari.defaults.set"].OperationKind != daemonOperationKindMutating {
+		t.Fatalf("unexpected operation kinds: defaults.get=%#v defaults.set=%#v", got["ari.defaults.get"], got["ari.defaults.set"])
+	}
+	if len(got["ari.defaults.get"].TrustChoices) != 0 || !containsAriToolTestString(got["ari.defaults.set"].TrustChoices, "trust_always_by_operation_type") {
+		t.Fatalf("unexpected trust choices: defaults.get=%#v defaults.set=%#v", got["ari.defaults.get"], got["ari.defaults.set"])
+	}
 	if _, ok := registry.Get("ari.approval.issue"); ok {
 		t.Fatalf("ari.approval.issue must not be helper-callable")
 	}
+	if _, ok := registry.Get("ari.trust_rule.save"); ok {
+		t.Fatalf("trust-rule storage must not be helper-callable in this tranche")
+	}
+}
+
+func TestAriToolCatalogIsPrunedAndDoesNotExposeRawDaemonRPCs(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	resp := callMethod[AriToolListResponse](t, registry, "ari.tool.list", AriToolListRequest{})
+	want := []string{"ari.defaults.get", "ari.defaults.set", "ari.profile.draft", "ari.profile.save", "ari.self_check", "ari.run.explain_latest"}
+	if len(resp.Tools) != len(want) {
+		t.Fatalf("tool catalog len = %d, want pruned %d: %#v", len(resp.Tools), len(want), resp.Tools)
+	}
+	for i, tool := range resp.Tools {
+		if tool.Name != want[i] {
+			t.Fatalf("tool[%d] = %q, want %q in pruned Ari-shaped catalog", i, tool.Name, want[i])
+		}
+		if strings.Contains(tool.Name, "workspace.create") || strings.Contains(tool.Name, "workspace.add_folder") || strings.Contains(tool.Name, "context.set") || strings.Contains(tool.Name, "init.apply") {
+			t.Fatalf("tool %q exposes raw daemon RPC/project setup surface", tool.Name)
+		}
+		if tool.OperationKind != daemonOperationKindReadOnly && tool.OperationKind != daemonOperationKindMutating {
+			t.Fatalf("tool %q missing helper/MCP operation kind metadata: %#v", tool.Name, tool)
+		}
+	}
+}
+
+func containsAriToolTestString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestAriDefaultsSetRequiresScopedSingleUseApproval(t *testing.T) {
@@ -278,6 +322,19 @@ func TestAriApprovalsRemainSingleUseAfterDaemonRestart(t *testing.T) {
 	if err := callMethodError(restarted, "ari.tool.call", req); err == nil || !strings.Contains(err.Error(), "approval_reused") {
 		t.Fatalf("post-restart reuse error = %v, want approval_reused", err)
 	}
+	records, err := store.ListOperationRecords(context.Background(), "")
+	if err != nil {
+		t.Fatalf("ListOperationRecords returned error: %v", err)
+	}
+	foundDefaultsSet := false
+	for _, record := range records {
+		if record.OperationType == "ari_defaults_set" && record.Source == daemonOperationSourceTool && record.TrustDecision == "approved_once" {
+			foundDefaultsSet = true
+		}
+	}
+	if !foundDefaultsSet {
+		t.Fatalf("operation records = %#v, want ari_defaults_set tool record", records)
+	}
 }
 
 func TestAriDefaultsSetValidatesWholeRequestBeforeWriting(t *testing.T) {
@@ -333,6 +390,19 @@ func TestAriProfileDraftAndSaveSeparateDraftFromPersistedWrite(t *testing.T) {
 	saved := callMethod[AriToolCallResponse](t, registry, "ari.tool.call", saveReq)
 	if saved.Status != "ok" || saved.Output["name"] != "frontend-reviewer" {
 		t.Fatalf("save response = %#v", saved)
+	}
+	records, err := store.ListOperationRecords(context.Background(), home.ID)
+	if err != nil {
+		t.Fatalf("ListOperationRecords returned error: %v", err)
+	}
+	foundProfileSave := false
+	for _, record := range records {
+		if record.OperationType == "ari_profile_save" && record.Source == daemonOperationSourceTool && record.TrustDecision == "approved_once" {
+			foundProfileSave = true
+		}
+	}
+	if !foundProfileSave {
+		t.Fatalf("operation records = %#v, want ari_profile_save tool record", records)
 	}
 }
 
