@@ -260,19 +260,13 @@ func workspaceOperationActivity(ctx context.Context, store *globaldb.Store, work
 		return nil, err
 	}
 	if workspaceID != "" {
-		workspace, err := store.GetSession(ctx, workspaceID)
+		globalRecords, err := store.ListOperationRecords(ctx, "")
 		if err != nil {
 			return nil, err
 		}
-		if workspace.Name == "home" || strings.HasPrefix(workspace.Name, "home-") {
-			globalRecords, err := store.ListOperationRecords(ctx, "")
-			if err != nil {
-				return nil, err
-			}
-			for _, record := range globalRecords {
-				if record.WorkspaceID == "" && (record.OperationType == daemonOperationTypeInitApplied || record.OperationType == daemonOperationTypeRollbackApplied) {
-					records = append(records, record)
-				}
+		for _, record := range globalRecords {
+			if record.WorkspaceID == "" && operationRecordHomeWorkspaceID(record) == workspaceID {
+				records = append(records, record)
 			}
 		}
 	}
@@ -286,6 +280,14 @@ func workspaceOperationActivity(ctx context.Context, store *globaldb.Store, work
 		out = append(out, OperationActivity{OperationID: record.OperationID, OperationType: record.OperationType, Source: record.Source, Status: operationRecordStatus(record), RequestSummary: record.RequestSummary, RollbackPointID: record.RollbackPointID, CreatedAt: record.CreatedAt.Format(time.RFC3339Nano)})
 	}
 	return out, nil
+}
+
+func operationRecordHomeWorkspaceID(record globaldb.OperationRecord) string {
+	var snapshot map[string]string
+	if err := json.Unmarshal([]byte(record.PayloadSnapshotJSON), &snapshot); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(snapshot["home_workspace_id"])
 }
 
 func operationRecordStatus(record globaldb.OperationRecord) string {

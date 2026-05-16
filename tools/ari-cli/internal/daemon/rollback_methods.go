@@ -133,7 +133,7 @@ func findRollbackTarget(ctx context.Context, store *globaldb.Store, rollbackPoin
 
 func (d *Daemon) rollbackInitState(ctx context.Context, store *globaldb.Store, payload map[string]string) error {
 	previousWorkspaceID := strings.TrimSpace(payload["previous_workspace_id"])
-	if err := patchJSONConfigStrings(d.configPath, map[string]string{"default_harness": "", "preferred_model": "", "default_workspace_root": "", "active_workspace": previousWorkspaceID}); err != nil {
+	if err := patchJSONConfigStrings(d.configPath, map[string]string{"default_harness": payload["previous_default_harness"], "preferred_model": payload["previous_preferred_model"], "default_workspace_root": payload["previous_default_workspace_root"]}); err != nil {
 		return err
 	}
 	root := strings.TrimSpace(payload["root"])
@@ -170,7 +170,12 @@ func (d *Daemon) rollbackInitState(ctx context.Context, store *globaldb.Store, p
 				if _, err := setActiveWorkspaceContext(ctx, store, ContextSetRequest{WorkspaceID: previousWorkspaceID}); err != nil {
 					return err
 				}
+				if err := patchJSONConfigStrings(d.configPath, map[string]string{"active_workspace": previousWorkspaceID}); err != nil {
+					return err
+				}
 			} else if err := store.SetMeta(ctx, activeContextMetaKey, `{}`); err != nil {
+				return err
+			} else if err := patchJSONConfigStrings(d.configPath, map[string]string{"active_workspace": ""}); err != nil {
 				return err
 			}
 		}

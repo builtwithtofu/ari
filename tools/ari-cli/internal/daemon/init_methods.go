@@ -142,12 +142,34 @@ func (d *Daemon) applyInit(ctx context.Context, store *globaldb.Store, req InitA
 	}
 	payload := map[string]string{"harness": harness, "model": model, "root": root, "step": "init.apply"}
 	rollbackData := map[string]string{"scope": "ari_owned_state_only"}
+	previousConfig, err := readJSONConfig(d.configPath)
+	if err != nil {
+		return InitApplyResponse{}, err
+	}
+	previousDefaultHarness, err := readJSONConfigString(previousConfig, "default_harness")
+	if err != nil {
+		return InitApplyResponse{}, err
+	}
+	previousPreferredModel, err := readJSONConfigString(previousConfig, "preferred_model")
+	if err != nil {
+		return InitApplyResponse{}, err
+	}
+	previousDefaultRoot, err := readJSONConfigString(previousConfig, "default_workspace_root")
+	if err != nil {
+		return InitApplyResponse{}, err
+	}
 	previousContext, err := readActiveWorkspaceContext(ctx, store)
 	if err != nil {
 		return InitApplyResponse{}, err
 	}
 	payload["previous_workspace_id"] = previousContext.WorkspaceID
+	payload["previous_default_harness"] = previousDefaultHarness
+	payload["previous_preferred_model"] = previousPreferredModel
+	payload["previous_default_workspace_root"] = previousDefaultRoot
 	rollbackData["previous_workspace_id"] = previousContext.WorkspaceID
+	rollbackData["previous_default_harness"] = previousDefaultHarness
+	rollbackData["previous_preferred_model"] = previousPreferredModel
+	rollbackData["previous_default_workspace_root"] = previousDefaultRoot
 	checkpoint, err := createDaemonOperationCheckpoint(ctx, store, daemonOperationCheckpointOptions{Actor: "user", Source: daemonOperationSourceDaemon, Scope: globaldb.OperationScopeGlobal, RequestSummary: "apply Ari init choices", PayloadSnapshot: payload})
 	if err != nil {
 		return InitApplyResponse{}, err
