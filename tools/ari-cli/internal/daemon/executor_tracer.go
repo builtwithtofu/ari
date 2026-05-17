@@ -47,6 +47,27 @@ type SessionListResponse struct {
 	Sessions []AgentSession `json:"sessions"`
 }
 
+type ClaudeSessionLogsRequest struct {
+	SessionID string `json:"session_id"`
+}
+
+type ClaudeSessionLogsResponse struct {
+	SessionID         string   `json:"session_id"`
+	ProviderSessionID string   `json:"provider_session_id"`
+	Command           []string `json:"command"`
+	Output            string   `json:"output"`
+}
+
+type ClaudeSessionAttachRequest struct {
+	SessionID string `json:"session_id"`
+}
+
+type ClaudeSessionAttachResponse struct {
+	SessionID         string   `json:"session_id"`
+	ProviderSessionID string   `json:"provider_session_id"`
+	Command           []string `json:"command"`
+}
+
 type AgentSession struct {
 	AgentSessionID    string                `json:"agent_session_id"`
 	SessionID         string                `json:"session_id,omitempty"`
@@ -58,6 +79,8 @@ type AgentSession struct {
 	Executor          string                `json:"executor"`
 	ProviderSessionID string                `json:"provider_session_id"`
 	ProviderRunID     string                `json:"provider_run_id,omitempty"`
+	InvocationMode    string                `json:"invocation_mode,omitempty"`
+	UsageBucket       string                `json:"usage_bucket,omitempty"`
 	AuthSlotID        string                `json:"auth_slot_id,omitempty"`
 	Status            string                `json:"status"`
 	ContextPacketID   string                `json:"context_packet_id"`
@@ -88,6 +111,7 @@ type AgentProfile struct {
 	AuthSlotID      string                 `json:"auth_slot_id,omitempty"`
 	AuthPool        HarnessAuthPool        `json:"auth_pool,omitempty"`
 	InvocationClass HarnessInvocationClass `json:"invocation_class"`
+	Defaults        map[string]any         `json:"defaults,omitempty"`
 }
 
 type AgentSessionDefaults struct {
@@ -97,6 +121,7 @@ type AgentSessionDefaults struct {
 	AuthSlotID      string                 `json:"auth_slot_id,omitempty"`
 	AuthPool        HarnessAuthPool        `json:"auth_pool,omitempty"`
 	InvocationClass HarnessInvocationClass `json:"invocation_class,omitempty"`
+	Settings        map[string]any         `json:"settings,omitempty"`
 }
 
 type AgentProfileRunRequest struct {
@@ -698,7 +723,7 @@ func agentSessionStartUsesProfile(req AgentSessionStartRequest) bool {
 }
 
 func agentSessionDefaultsSet(defaults AgentSessionDefaults) bool {
-	return strings.TrimSpace(defaults.Harness) != "" || strings.TrimSpace(defaults.Model) != "" || strings.TrimSpace(defaults.Prompt) != "" || strings.TrimSpace(defaults.AuthSlotID) != "" || len(defaults.AuthPool.SlotIDs) > 0 || defaults.InvocationClass != ""
+	return strings.TrimSpace(defaults.Harness) != "" || strings.TrimSpace(defaults.Model) != "" || strings.TrimSpace(defaults.Prompt) != "" || strings.TrimSpace(defaults.AuthSlotID) != "" || len(defaults.AuthPool.SlotIDs) > 0 || defaults.InvocationClass != "" || len(defaults.Settings) > 0
 }
 
 type harnessAuthStatuser interface {
@@ -1221,7 +1246,30 @@ func applyAgentSessionDefaults(profile AgentProfile, defaults AgentSessionDefaul
 	if profile.InvocationClass == "" {
 		profile.InvocationClass = HarnessInvocationAgent
 	}
+	profile.Defaults = mergeSettings(profile.Defaults, defaults.Settings)
 	return profile
+}
+
+func mergeSettings(base, override map[string]any) map[string]any {
+	if len(base) == 0 && len(override) == 0 {
+		return nil
+	}
+	merged := make(map[string]any, len(base)+len(override))
+	for key, value := range base {
+		merged[key] = value
+	}
+	for key, value := range override {
+		merged[key] = value
+	}
+	return merged
+}
+
+func decodeStoredDefaults(raw string) map[string]any {
+	defaults := map[string]any{}
+	if strings.TrimSpace(raw) != "" {
+		_ = json.Unmarshal([]byte(raw), &defaults)
+	}
+	return defaults
 }
 
 func (d *Daemon) resolveAgentProfile(ctx context.Context, store *globaldb.Store, workspaceID, name string) (AgentProfile, error) {
@@ -1250,7 +1298,7 @@ func resolveStoredAgentProfile(ctx context.Context, store *globaldb.Store, works
 		}
 		return AgentProfile{}, err
 	}
-	return AgentProfile{ProfileID: stored.ProfileID, WorkspaceID: stored.WorkspaceID, Name: stored.Name, Harness: stored.Harness, Model: stored.Model, Prompt: stored.Prompt, AuthSlotID: stored.AuthSlotID, AuthPool: decodeStoredAuthPool(stored.AuthPoolJSON), InvocationClass: HarnessInvocationClass(stored.InvocationClass)}, nil
+	return AgentProfile{ProfileID: stored.ProfileID, WorkspaceID: stored.WorkspaceID, Name: stored.Name, Harness: stored.Harness, Model: stored.Model, Prompt: stored.Prompt, AuthSlotID: stored.AuthSlotID, AuthPool: decodeStoredAuthPool(stored.AuthPoolJSON), InvocationClass: HarnessInvocationClass(stored.InvocationClass), Defaults: decodeStoredDefaults(stored.DefaultsJSON)}, nil
 }
 
 func tailRunLogMessages(ctx context.Context, store *globaldb.Store, req RunLogMessagesTailRequest) (RunLogMessagesTailResponse, error) {
@@ -1401,7 +1449,19 @@ func listWorkspaceSessions(ctx context.Context, store *globaldb.Store, req Sessi
 }
 
 func agentSessionResponseFromStore(session globaldb.AgentSession) AgentSession {
-	return AgentSession{AgentSessionID: session.SessionID, SessionID: session.SessionID, WorkspaceID: session.WorkspaceID, Usage: session.Usage, SourceSessionID: session.SourceSessionID, SourceAgentID: session.SourceAgentID, Executor: session.Harness, ProviderSessionID: session.ProviderSessionID, ProviderRunID: session.ProviderRunID, Status: session.Status}
+	invocationMode, usageBucket := agentSessionModeFromProviderMetadata(session.ProviderMetadataJSON)
+	return AgentSession{AgentSessionID: session.SessionID, SessionID: session.SessionID, WorkspaceID: session.WorkspaceID, Usage: session.Usage, SourceSessionID: session.SourceSessionID, SourceAgentID: session.SourceAgentID, Executor: session.Harness, ProviderSessionID: session.ProviderSessionID, ProviderRunID: session.ProviderRunID, InvocationMode: invocationMode, UsageBucket: usageBucket, Status: session.Status}
+}
+
+func agentSessionModeFromProviderMetadata(raw string) (string, string) {
+	metadata := map[string]any{}
+	if strings.TrimSpace(raw) == "" {
+		return "", ""
+	}
+	if err := json.Unmarshal([]byte(raw), &metadata); err != nil {
+		return "", ""
+	}
+	return stringMetadata(metadata, "invocation_mode"), stringMetadata(metadata, "usage_bucket")
 }
 
 func sendAgentMessage(ctx context.Context, store *globaldb.Store, req AgentMessageSendRequest) (AgentMessageSendResponse, error) {
@@ -1553,6 +1613,7 @@ func (d *Daemon) callEphemeralAgent(ctx context.Context, store *globaldb.Store, 
 		return EphemeralAgentCallResponse{}, err
 	}
 	targetAgent, err := store.GetAgentSessionConfig(ctx, targetAgentID)
+	targetProfile := AgentProfile{Harness: targetAgent.Harness}
 	if err != nil {
 		if !errors.Is(err, globaldb.ErrNotFound) {
 			return EphemeralAgentCallResponse{}, err
@@ -1571,6 +1632,7 @@ func (d *Daemon) callEphemeralAgent(ctx context.Context, store *globaldb.Store, 
 			}
 			return EphemeralAgentCallResponse{}, ensureErr
 		}
+		targetProfile = resolvedProfile
 	}
 	if targetAgent.WorkspaceID != sourceRun.WorkspaceID {
 		return EphemeralAgentCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "target_workspace_mismatch", "target_agent_id": targetAgent.AgentID, "source_workspace_id": sourceRun.WorkspaceID, "target_workspace_id": targetAgent.WorkspaceID, "start_invoked": false})
@@ -1653,7 +1715,12 @@ func (d *Daemon) callEphemeralAgent(ctx context.Context, store *globaldb.Store, 
 		_ = store.UpdateAgentSessionStatus(ctx, sessionID, "failed")
 		return EphemeralAgentCallResponse{}, mapHarnessRunError(err)
 	}
-	providerRun, err := executor.Start(ctx, ExecutorStartRequest{WorkspaceID: sourceRun.WorkspaceID, RunID: sessionID, SessionID: sessionID, ContextPacket: body, Model: targetAgent.Model, Prompt: targetAgent.Prompt, InvocationClass: HarnessInvocationTemporary})
+	options, err := harnessOptionsFromProfile(targetProfile)
+	if err != nil {
+		_ = store.UpdateAgentSessionStatus(ctx, sessionID, "failed")
+		return EphemeralAgentCallResponse{}, err
+	}
+	providerRun, err := executor.Start(ctx, ExecutorStartRequest{WorkspaceID: sourceRun.WorkspaceID, RunID: sessionID, SessionID: sessionID, ContextPacket: body, Model: targetAgent.Model, Prompt: targetAgent.Prompt, InvocationClass: HarnessInvocationTemporary, Options: options})
 	if err != nil {
 		_ = store.UpdateAgentSessionStatus(ctx, sessionID, "failed")
 		return EphemeralAgentCallResponse{}, mapHarnessRunError(err)
@@ -1661,6 +1728,10 @@ func (d *Daemon) callEphemeralAgent(ctx context.Context, store *globaldb.Store, 
 	providerSessionID := strings.TrimSpace(providerRun.SessionID)
 	if providerSessionID == "" {
 		providerSessionID = strings.TrimSpace(providerRun.RunID)
+	}
+	providerRunID := strings.TrimSpace(providerRun.ProviderRunID)
+	if providerRunID == "" {
+		providerRunID = strings.TrimSpace(providerRun.RunID)
 	}
 	items, err := executor.Items(ctx, providerSessionID)
 	if err != nil {
@@ -1670,6 +1741,23 @@ func (d *Daemon) callEphemeralAgent(ctx context.Context, store *globaldb.Store, 
 	if err := appendTimelineItemsAsRunLogMessages(ctx, store, sessionID, items); err != nil {
 		_ = store.UpdateAgentSessionStatus(ctx, sessionID, "failed")
 		return EphemeralAgentCallResponse{}, err
+	}
+	invocationMode, usageBucket := harnessModeMetadataFromItems(items)
+	providerMetadata, err := json.Marshal(map[string]any{"provider_session_id": providerSessionID, "provider_run_id": providerRunID, "invocation_mode": invocationMode, "usage_bucket": usageBucket})
+	if err != nil {
+		_ = store.UpdateAgentSessionStatus(ctx, sessionID, "failed")
+		return EphemeralAgentCallResponse{}, err
+	}
+	if err := store.UpdateAgentSessionProvider(ctx, sessionID, providerSessionID, providerRunID, string(providerMetadata)); err != nil {
+		_ = store.UpdateAgentSessionStatus(ctx, sessionID, "failed")
+		return EphemeralAgentCallResponse{}, err
+	}
+	if invocationMode == string(HarnessInvocationModeBackground) {
+		storedRun, err := store.GetAgentSession(ctx, sessionID)
+		if err != nil {
+			return EphemeralAgentCallResponse{}, err
+		}
+		return EphemeralAgentCallResponse{Run: storedRun, Request: agentMessageResponse(requestDM)}, nil
 	}
 	replyBody := lastAgentText(items)
 	if replyBody == "" {
@@ -1877,7 +1965,7 @@ func storeHarnessRunLogMessages(ctx context.Context, store *globaldb.Store, resu
 	if err := store.EnsureAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: agentID, WorkspaceID: agentConfigWorkspaceID, Name: agentName, Harness: run.Executor, Model: model, Prompt: prompt}); err != nil {
 		return err
 	}
-	providerMetadata, err := json.Marshal(map[string]any{"session_ref": result.SessionRef, "provider_session_id": run.ProviderSessionID, "capabilities": run.Capabilities})
+	providerMetadata, err := json.Marshal(map[string]any{"session_ref": result.SessionRef, "provider_session_id": run.ProviderSessionID, "capabilities": run.Capabilities, "invocation_mode": run.InvocationMode, "usage_bucket": run.UsageBucket})
 	if err != nil {
 		return err
 	}
@@ -2116,6 +2204,11 @@ func StartExecutorRunResult(ctx context.Context, executor Executor, packet Conte
 		if profile[0].InvocationClass != "" {
 			call.InvocationClass = profile[0].InvocationClass
 		}
+		options, err := harnessOptionsFromProfile(profile[0])
+		if err != nil {
+			return HarnessCallResult{}, err
+		}
+		call.Options = options
 	}
 	call.Input = json.RawMessage(renderContextPacket(packet))
 	return StartHarnessCallResult(ctx, executor, call)

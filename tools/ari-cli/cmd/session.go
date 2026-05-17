@@ -64,11 +64,31 @@ var (
 		}
 		return resp, nil
 	}
+	sessionClaudeLogsRPC = func(ctx context.Context, socketPath string, req daemon.ClaudeSessionLogsRequest) (daemon.ClaudeSessionLogsResponse, error) {
+		rpcClient := client.New(socketPath)
+		var resp daemon.ClaudeSessionLogsResponse
+		if err := rpcClient.Call(ctx, "session.claude.logs", req, &resp); err != nil {
+			return daemon.ClaudeSessionLogsResponse{}, err
+		}
+		return resp, nil
+	}
+	sessionClaudeAttachRPC = func(ctx context.Context, socketPath string, req daemon.ClaudeSessionAttachRequest) (daemon.ClaudeSessionAttachResponse, error) {
+		rpcClient := client.New(socketPath)
+		var resp daemon.ClaudeSessionAttachResponse
+		if err := rpcClient.Call(ctx, "session.claude.attach", req, &resp); err != nil {
+			return daemon.ClaudeSessionAttachResponse{}, err
+		}
+		return resp, nil
+	}
 )
 
 func NewSessionCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "session", Short: "Manage workspace sessions, messages, calls, and fan-out"}
-	cmd.AddCommand(newSessionStartCmd(), newSessionListCmd(), newSessionShowCmd(), newSessionMessageCmd(), newSessionCallCmd(), newSessionFanoutCmd())
+	cmd := &cobra.Command{
+		Use:   "session",
+		Short: "Manage workspace sessions, messages, calls, and fan-out",
+		Long:  "Manage workspace sessions, messages, calls, and fan-out. Claude Code sessions default to subscription-backed background mode; headless claude -p is opt-in API-credit automation.",
+	}
+	cmd.AddCommand(newSessionStartCmd(), newSessionListCmd(), newSessionShowCmd(), newSessionClaudeLogsCmd(), newSessionClaudeAttachCmd(), newSessionMessageCmd(), newSessionCallCmd(), newSessionFanoutCmd())
 	return cmd
 }
 
@@ -205,12 +225,63 @@ func newSessionShowCmd() *cobra.Command {
 			"Status: " + session.Status,
 			"Executor: " + session.Executor,
 			"Workspace: " + session.WorkspaceID,
+			"Provider session: " + session.ProviderSessionID,
+			"Invocation mode: " + session.InvocationMode,
+			"Usage bucket: " + session.UsageBucket,
 		} {
 			if _, err := fmt.Fprintln(cmd.OutOrStdout(), line); err != nil {
 				return err
 			}
 		}
 		return nil
+	}}
+	return cmd
+}
+
+func newSessionClaudeLogsCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "logs <session>", Short: "Show Claude Code background session logs", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := configuredDaemonConfig()
+		if err != nil {
+			return err
+		}
+		if err := sessionEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+		defer cancel()
+		resp, err := sessionClaudeLogsRPC(ctx, cfg.Daemon.SocketPath, daemon.ClaudeSessionLogsRequest{SessionID: strings.TrimSpace(args[0])})
+		if err != nil {
+			return mapSessionRPCError(err)
+		}
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Command: %s\n", strings.Join(resp.Command, " ")); err != nil {
+			return err
+		}
+		if strings.TrimSpace(resp.Output) == "" {
+			return nil
+		}
+		_, err = fmt.Fprintln(cmd.OutOrStdout(), resp.Output)
+		return err
+	}}
+	return cmd
+}
+
+func newSessionClaudeAttachCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "attach-command <session>", Short: "Print the native Claude Code attach command", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := configuredDaemonConfig()
+		if err != nil {
+			return err
+		}
+		if err := sessionEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+		defer cancel()
+		resp, err := sessionClaudeAttachRPC(ctx, cfg.Daemon.SocketPath, daemon.ClaudeSessionAttachRequest{SessionID: strings.TrimSpace(args[0])})
+		if err != nil {
+			return mapSessionRPCError(err)
+		}
+		_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s\n", strings.Join(resp.Command, " "))
+		return err
 	}}
 	return cmd
 }

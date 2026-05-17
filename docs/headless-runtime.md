@@ -52,6 +52,15 @@ ari api workspace.list --params '{}'
 
 `ari init` asks only for the default harness in this slice. It does not install or authenticate Codex, Claude Code, OpenCode, or other external tools. Preferred model setup, provider catalogs, broad MCP marketplaces, proactive coaching, and automatic model-release detection are deferred.
 
+## Claude Code workspace sessions
+
+Claude Code has two Ari invocation modes with different cost and behavior contracts:
+
+- `background` is Ari's default Claude workspace-session mode. Ari launches `claude --bg`, appends profile guidance with `--append-system-prompt`, passes the workspace task/context as the positional prompt, stores the native Claude background session id, and exposes `claude logs <id>` / `claude attach <id>` as native passthrough controls. This mode uses normal Claude Code subscription usage.
+- `headless` is opt-in automation mode. Ari launches `claude --bare -p - --output-format json`, maps profile guidance to replacement `--system-prompt`, and sends the task/context on stdin. This mode uses Agent SDK / `claude -p` credits, not normal Claude Code subscription usage.
+
+The same Ari profile can be reused across both modes. The invocation mode is runtime/settings state, not a separate profile role. `session.show` and `session.list` expose the native provider session id plus `invocation_mode` and `usage_bucket` so clients can distinguish subscription-backed background sessions from opt-in headless/API-credit sessions.
+
 ## Ari tools and approvals
 
 Starter helper tools are daemon-owned capabilities, not provider-specific magic:
