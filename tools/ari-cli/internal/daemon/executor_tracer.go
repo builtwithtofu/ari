@@ -1264,12 +1264,14 @@ func mergeSettings(base, override map[string]any) map[string]any {
 	return merged
 }
 
-func decodeStoredDefaults(raw string) map[string]any {
+func decodeStoredDefaults(raw string) (map[string]any, error) {
 	defaults := map[string]any{}
 	if strings.TrimSpace(raw) != "" {
-		_ = json.Unmarshal([]byte(raw), &defaults)
+		if err := json.Unmarshal([]byte(raw), &defaults); err != nil {
+			return nil, fmt.Errorf("decode profile defaults: %w", err)
+		}
 	}
-	return defaults
+	return defaults, nil
 }
 
 func (d *Daemon) resolveAgentProfile(ctx context.Context, store *globaldb.Store, workspaceID, name string) (AgentProfile, error) {
@@ -1298,7 +1300,11 @@ func resolveStoredAgentProfile(ctx context.Context, store *globaldb.Store, works
 		}
 		return AgentProfile{}, err
 	}
-	return AgentProfile{ProfileID: stored.ProfileID, WorkspaceID: stored.WorkspaceID, Name: stored.Name, Harness: stored.Harness, Model: stored.Model, Prompt: stored.Prompt, AuthSlotID: stored.AuthSlotID, AuthPool: decodeStoredAuthPool(stored.AuthPoolJSON), InvocationClass: HarnessInvocationClass(stored.InvocationClass), Defaults: decodeStoredDefaults(stored.DefaultsJSON)}, nil
+	defaults, err := decodeStoredDefaults(stored.DefaultsJSON)
+	if err != nil {
+		return AgentProfile{}, err
+	}
+	return AgentProfile{ProfileID: stored.ProfileID, WorkspaceID: stored.WorkspaceID, Name: stored.Name, Harness: stored.Harness, Model: stored.Model, Prompt: stored.Prompt, AuthSlotID: stored.AuthSlotID, AuthPool: decodeStoredAuthPool(stored.AuthPoolJSON), InvocationClass: HarnessInvocationClass(stored.InvocationClass), Defaults: defaults}, nil
 }
 
 func tailRunLogMessages(ctx context.Context, store *globaldb.Store, req RunLogMessagesTailRequest) (RunLogMessagesTailResponse, error) {
@@ -1633,6 +1639,12 @@ func (d *Daemon) callEphemeralAgent(ctx context.Context, store *globaldb.Store, 
 			return EphemeralAgentCallResponse{}, ensureErr
 		}
 		targetProfile = resolvedProfile
+	} else if strings.TrimSpace(targetAgent.Name) != "" {
+		if resolvedProfile, resolveErr := resolveStoredAgentProfile(ctx, store, sourceRun.WorkspaceID, targetAgent.Name); resolveErr == nil {
+			targetProfile = resolvedProfile
+		} else if strings.Contains(resolveErr.Error(), "decode profile defaults") {
+			return EphemeralAgentCallResponse{}, resolveErr
+		}
 	}
 	if targetAgent.WorkspaceID != sourceRun.WorkspaceID {
 		return EphemeralAgentCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "target_workspace_mismatch", "target_agent_id": targetAgent.AgentID, "source_workspace_id": sourceRun.WorkspaceID, "target_workspace_id": targetAgent.WorkspaceID, "start_invoked": false})

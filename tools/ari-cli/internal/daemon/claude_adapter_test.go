@@ -108,6 +108,21 @@ func TestClaudeTemporaryInvocationDefaultsToBackground(t *testing.T) {
 	}
 }
 
+func TestClaudeBackgroundInvocationOmitsEmptyPromptArgument(t *testing.T) {
+	runner := &fakeClaudeRunner{output: []byte(`backgrounded · 7c5dcf5d`)}
+	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunCommand: runner.Run})
+
+	_, err := executor.Start(context.Background(), ExecutorStartRequest{WorkspaceID: "ws-1", Options: []HarnessOption{ClaudeWithInvocationMode(HarnessInvocationModeBackground)}})
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	for _, arg := range runner.args {
+		if arg == "" {
+			t.Fatalf("claude args = %#v, want no empty positional prompt", runner.args)
+		}
+	}
+}
+
 func TestClaudeExecutorUsesTypedBackgroundOption(t *testing.T) {
 	runner := &fakeClaudeRunner{output: []byte(`Started background session 550e8400-e29b-41d4-a716-446655440000`)}
 	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunCommand: runner.Run})
@@ -157,6 +172,13 @@ backgrounded · 7c5dcf5d
   claude attach 7c5dcf5d`)
 	if got := claudeBackgroundSessionIDFromOutput(output); got != "7c5dcf5d" {
 		t.Fatalf("session id = %q, want background session id", got)
+	}
+}
+
+func TestDecodeStoredDefaultsRejectsMalformedJSON(t *testing.T) {
+	_, err := decodeStoredDefaults(`{`)
+	if err == nil || !strings.Contains(err.Error(), "decode profile defaults") {
+		t.Fatalf("error = %v, want malformed defaults error", err)
 	}
 }
 
@@ -374,6 +396,37 @@ func TestClaudeSessionLogsAndAttachUsePersistedProviderID(t *testing.T) {
 	attach := callMethod[ClaudeSessionAttachResponse](t, registry, "session.claude.attach", ClaudeSessionAttachRequest{SessionID: "ari-session"})
 	if attach.ProviderSessionID != logs.ProviderSessionID || strings.Join(attach.Command, " ") != "/opt/agents/claude attach 550e8400-e29b-41d4-a716-446655440000" {
 		t.Fatalf("attach = %#v, want native attach command", attach)
+	}
+}
+
+func TestClaudeSessionLogsAllowPreMetadataBackgroundSession(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	ctx := context.Background()
+	seedSessionWithPrimaryFolder(t, store, "ws-1", "/repo")
+	if err := store.EnsureAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-1", Name: "claude", Harness: HarnessNameClaude}); err != nil {
+		t.Fatalf("EnsureAgentSessionConfig returned error: %v", err)
+	}
+	if err := store.CreateAgentSession(ctx, globaldb.AgentSession{SessionID: "ari-session", WorkspaceID: "ws-1", AgentID: "agent-1", Harness: HarnessNameClaude, Status: "running", Usage: globaldb.AgentSessionUsageSticky, ProviderSessionID: "7c5dcf5d", CWD: "/repo", ProviderMetadataJSON: `{}`}); err != nil {
+		t.Fatalf("CreateAgentSession returned error: %v", err)
+	}
+	originalRunner := runClaudeSessionCommand
+	t.Cleanup(func() { runClaudeSessionCommand = originalRunner })
+	runClaudeSessionCommand = func(ctx context.Context, cwd string, args []string) ([]byte, error) {
+		_ = ctx
+		if strings.Join(args, " ") != "logs 7c5dcf5d" {
+			t.Fatalf("args=%q, want legacy Claude logs invocation", strings.Join(args, " "))
+		}
+		return []byte("legacy log line\n"), nil
+	}
+
+	logs := callMethod[ClaudeSessionLogsResponse](t, registry, "session.claude.logs", ClaudeSessionLogsRequest{SessionID: "ari-session"})
+	if logs.ProviderSessionID != "7c5dcf5d" || logs.Output != "legacy log line" {
+		t.Fatalf("logs = %#v, want legacy provider id logs", logs)
 	}
 }
 

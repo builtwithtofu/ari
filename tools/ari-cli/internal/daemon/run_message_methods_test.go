@@ -454,6 +454,9 @@ func TestEphemeralClaudeCallHonorsExplicitHeadlessProfileDefault(t *testing.T) {
 	if err := store.UpsertAgentProfile(ctx, globaldb.AgentProfile{ProfileID: "ap_librarian", WorkspaceID: "ws-1", Name: "librarian", Harness: HarnessNameClaude, Model: "sonnet", Prompt: "research", DefaultsJSON: `{"invocation_mode":"headless"}`}); err != nil {
 		t.Fatalf("UpsertAgentProfile returned error: %v", err)
 	}
+	if err := store.EnsureAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "ap_librarian", WorkspaceID: "ws-1", Name: "librarian", Harness: HarnessNameClaude, Model: "sonnet", Prompt: "research"}); err != nil {
+		t.Fatalf("EnsureAgentSessionConfig returned error: %v", err)
+	}
 	runner := &fakeClaudeRunner{output: []byte(`{"result":"Done","session_id":"550e8400-e29b-41d4-a716-446655440000"}`)}
 
 	registry := rpc.NewMethodRegistry()
@@ -468,7 +471,7 @@ func TestEphemeralClaudeCallHonorsExplicitHeadlessProfileDefault(t *testing.T) {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
-	got := callMethod[EphemeralAgentCallResponse](t, registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-headless", SourceSessionID: "run-1", TargetAgentID: "librarian", Body: "Explore this", ReplyAgentMessageID: "reply-headless"})
+	got := callMethod[EphemeralAgentCallResponse](t, registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-headless", SourceSessionID: "run-1", TargetAgentID: "ap_librarian", Body: "Explore this", ReplyAgentMessageID: "reply-headless"})
 	args := strings.Join(runner.args, " ")
 	if got.Run.Status != "completed" || !strings.Contains(args, "--bare") || !strings.Contains(args, "-p") || strings.Contains(args, "--bg") || got.Reply.AgentMessageID != "reply-headless" {
 		t.Fatalf("call = %#v args = %q, want explicit headless profile to remain opt-in", got, args)

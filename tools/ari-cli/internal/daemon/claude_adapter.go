@@ -310,7 +310,9 @@ func runClaudeCommand(ctx context.Context, options claudeExecutorOptions, prompt
 	}
 	args := claudeArgs(options)
 	if options.InvocationMode == HarnessInvocationModeBackground {
-		args = append(args, strings.TrimSpace(prompt))
+		if trimmed := strings.TrimSpace(prompt); trimmed != "" {
+			args = append(args, trimmed)
+		}
 	}
 	cmd := exec.CommandContext(ctx, path, args...)
 	cmd.Dir = strings.TrimSpace(options.Cwd)

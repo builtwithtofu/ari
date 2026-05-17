@@ -59,7 +59,7 @@ func claudeBackgroundSessionRef(ctx context.Context, store *globaldb.Store, sess
 		return globaldb.AgentSession{}, "", rpc.NewHandlerError(rpc.InvalidParams, "session is not a Claude session", map[string]any{"reason": "not_claude_session", "session_id": sessionID})
 	}
 	invocationMode, _ := agentSessionModeFromProviderMetadata(session.ProviderMetadataJSON)
-	if invocationMode != string(HarnessInvocationModeBackground) {
+	if invocationMode != "" && invocationMode != string(HarnessInvocationModeBackground) {
 		return globaldb.AgentSession{}, "", rpc.NewHandlerError(rpc.InvalidParams, "session is not a Claude background session", map[string]any{"reason": "not_claude_background_session", "session_id": sessionID})
 	}
 	providerID := strings.TrimSpace(session.ProviderSessionID)
