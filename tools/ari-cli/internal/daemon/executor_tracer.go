@@ -1642,7 +1642,7 @@ func (d *Daemon) callEphemeralAgent(ctx context.Context, store *globaldb.Store, 
 	} else if strings.TrimSpace(targetAgent.Name) != "" {
 		if resolvedProfile, resolveErr := resolveStoredAgentProfile(ctx, store, sourceRun.WorkspaceID, targetAgent.Name); resolveErr == nil {
 			targetProfile = resolvedProfile
-		} else if strings.Contains(resolveErr.Error(), "decode profile defaults") {
+		} else if !isUnknownProfileError(resolveErr) {
 			return EphemeralAgentCallResponse{}, resolveErr
 		}
 	}
@@ -2160,6 +2160,19 @@ func mapHarnessRunError(err error) error {
 
 func unknownProfileError(profile string) error {
 	return rpc.NewHandlerError(rpc.InvalidParams, "profile is not available", map[string]any{"profile": strings.TrimSpace(profile), "reason": "unknown_profile", "start_invoked": false})
+}
+
+func isUnknownProfileError(err error) bool {
+	handlerErr := &rpc.HandlerError{}
+	if !errors.As(err, &handlerErr) {
+		return false
+	}
+	data, ok := handlerErr.Data.(map[string]any)
+	if !ok {
+		return false
+	}
+	reason, _ := data["reason"].(string)
+	return reason == "unknown_profile"
 }
 
 func unknownHarnessError(harness string) error {

@@ -383,7 +383,7 @@ func TestClaudeSessionLogsAndAttachUsePersistedProviderID(t *testing.T) {
 	t.Cleanup(func() { runClaudeSessionCommand = originalRunner })
 	runClaudeSessionCommand = func(ctx context.Context, cwd string, args []string) ([]byte, error) {
 		_ = ctx
-		if cwd != "/repo" || strings.Join(args, " ") != "logs 550e8400-e29b-41d4-a716-446655440000" {
+		if cwd != "" || strings.Join(args, " ") != "logs 550e8400-e29b-41d4-a716-446655440000" {
 			t.Fatalf("cwd=%q args=%q, want Claude logs invocation", cwd, strings.Join(args, " "))
 		}
 		return []byte("background log line\n"), nil
@@ -547,6 +547,11 @@ func (foreignHarnessOption) harnessOption() {}
 func (r *fakeClaudeRunner) Run(ctx context.Context, opts claudeExecutorOptions, prompt string) (commandRunResult, error) {
 	_ = ctx
 	r.args = claudeArgs(opts)
+	if opts.InvocationMode == HarnessInvocationModeBackground {
+		if trimmed := strings.TrimSpace(prompt); trimmed != "" {
+			r.args = append(r.args, trimmed)
+		}
+	}
 	r.prompt = prompt
 	return commandRunResult{Output: append([]byte(nil), r.output...)}, nil
 }

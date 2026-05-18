@@ -31,7 +31,7 @@ func claudeSessionLogs(ctx context.Context, store *globaldb.Store, req ClaudeSes
 		return ClaudeSessionLogsResponse{}, err
 	}
 	command := claudeLogsCommand(providerID)
-	output, err := runClaudeSessionCommand(ctx, session.CWD, command[1:])
+	output, err := runClaudeSessionCommand(ctx, "", command[1:])
 	if err != nil {
 		return ClaudeSessionLogsResponse{}, err
 	}
