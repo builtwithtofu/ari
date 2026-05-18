@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 )
@@ -17,8 +18,32 @@ type claudeExecutorOptions struct {
 	Cwd            string
 	Model          string
 	SystemPrompt   string
+	InvocationMode HarnessInvocationMode
 	RunCommand     claudeCommandRunner
 	RunAuthCommand claudeAuthCommandRunner
+}
+
+type claudeOption struct {
+	apply func(*claudeExecutorOptions)
+}
+
+func (claudeOption) harnessOption() {}
+
+func ClaudeWithInvocationMode(mode HarnessInvocationMode) HarnessOption {
+	return claudeOption{apply: func(options *claudeExecutorOptions) {
+		options.InvocationMode = mode
+	}}
+}
+
+func claudeOptionsFromSettings(settings map[string]any) ([]HarnessOption, error) {
+	mode, ok, err := invocationModeFromSettings(settings, HarnessNameClaude)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
+	}
+	return []HarnessOption{ClaudeWithInvocationMode(mode)}, nil
 }
 
 type commandRunResult struct {
@@ -49,6 +74,9 @@ func NewClaudeExecutorForTest(options claudeExecutorOptions) *ClaudeExecutor {
 func newClaudeExecutor(options claudeExecutorOptions) *ClaudeExecutor {
 	if strings.TrimSpace(options.Executable) == "" {
 		options.Executable = "claude"
+	}
+	if options.InvocationMode == "" {
+		options.InvocationMode = HarnessInvocationModeBackground
 	}
 	if options.RunCommand == nil {
 		options.RunCommand = runClaudeCommand
@@ -121,6 +149,13 @@ func (e *ClaudeExecutor) Start(ctx context.Context, req ExecutorStartRequest) (E
 		return ExecutorRun{}, fmt.Errorf("workspace id is required")
 	}
 	options := e.options
+	for _, option := range req.Options {
+		claudeOpt, ok := option.(claudeOption)
+		if !ok {
+			return ExecutorRun{}, fmt.Errorf("unsupported claude option %T", option)
+		}
+		claudeOpt.apply(&options)
+	}
 	if strings.TrimSpace(req.Model) != "" {
 		options.Model = strings.TrimSpace(req.Model)
 	}
@@ -129,7 +164,7 @@ func (e *ClaudeExecutor) Start(ctx context.Context, req ExecutorStartRequest) (E
 	if err != nil {
 		return ExecutorRun{}, err
 	}
-	result, err := parseClaudeJSONResult(commandResult.Output)
+	result, err := parseClaudeResult(options, commandResult.Output)
 	if err != nil {
 		return ExecutorRun{}, err
 	}
@@ -137,7 +172,7 @@ func (e *ClaudeExecutor) Start(ctx context.Context, req ExecutorStartRequest) (E
 	if sessionID == "" {
 		return ExecutorRun{}, fmt.Errorf("claude session id is required")
 	}
-	items := claudeTimelineItemsFromResult(workspaceID, sessionID, result)
+	items := claudeTimelineItemsFromResult(workspaceID, sessionID, result, options.InvocationMode)
 	e.mu.Lock()
 	e.runs[sessionID] = items
 	e.mu.Unlock()
@@ -182,19 +217,61 @@ func parseClaudeJSONResult(output []byte) (claudeJSONResult, error) {
 	return result, nil
 }
 
-func claudeTimelineItemsFromResult(workspaceID, sessionID string, result claudeJSONResult) []TimelineItem {
-	items := []TimelineItem{{ID: sessionID + ":started", WorkspaceID: workspaceID, RunID: sessionID, SourceKind: "executor", SourceID: sessionID, Kind: "lifecycle", Status: "running", Sequence: 1, Text: "claude run started", Metadata: map[string]any{"provider_session_id": sessionID}}}
+func parseClaudeResult(options claudeExecutorOptions, output []byte) (claudeJSONResult, error) {
+	if options.InvocationMode != HarnessInvocationModeBackground {
+		return parseClaudeJSONResult(output)
+	}
+	if result, err := parseClaudeJSONResult(output); err == nil && strings.TrimSpace(result.SessionID) != "" {
+		return result, nil
+	}
+	sessionID := claudeBackgroundSessionIDFromOutput(output)
+	if sessionID == "" {
+		return claudeJSONResult{}, fmt.Errorf("claude background session id is required")
+	}
+	return claudeJSONResult{SessionID: sessionID}, nil
+}
+
+var claudeBackgroundSessionPattern = regexp.MustCompile(`(?i)(?:backgrounded|background session)\s*[·: -]+\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{6,})`)
+
+func claudeBackgroundSessionIDFromOutput(output []byte) string {
+	matches := claudeBackgroundSessionPattern.FindAllStringSubmatch(string(output), -1)
+	if len(matches) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(matches[len(matches)-1][1])
+}
+
+func claudeTimelineItemsFromResult(workspaceID, sessionID string, result claudeJSONResult, mode HarnessInvocationMode) []TimelineItem {
+	metadata := map[string]any{"provider_session_id": sessionID, "invocation_mode": string(mode), "usage_bucket": claudeUsageBucket(mode)}
+	items := []TimelineItem{{ID: sessionID + ":started", WorkspaceID: workspaceID, RunID: sessionID, SourceKind: "executor", SourceID: sessionID, Kind: "lifecycle", Status: "running", Sequence: 1, Text: "claude run started", Metadata: metadata}}
 	sequence := 2
 	if text := strings.TrimSpace(result.Result); text != "" {
-		items = append(items, TimelineItem{ID: sessionID + ":result", WorkspaceID: workspaceID, RunID: sessionID, SourceKind: "executor", SourceID: sessionID, Kind: "agent_text", Status: "completed", Sequence: sequence, Text: text})
+		status := "completed"
+		if mode == HarnessInvocationModeBackground {
+			status = "running"
+		}
+		items = append(items, TimelineItem{ID: sessionID + ":result", WorkspaceID: workspaceID, RunID: sessionID, SourceKind: "executor", SourceID: sessionID, Kind: "agent_text", Status: status, Sequence: sequence, Text: text})
 		sequence++
 	}
 	if result.Usage.InputTokens > 0 || result.Usage.OutputTokens > 0 {
-		items = append(items, TimelineItem{ID: sessionID + ":usage", WorkspaceID: workspaceID, RunID: sessionID, SourceKind: "executor", SourceID: sessionID, Kind: "telemetry", Status: "completed", Sequence: sequence, Text: "claude usage updated", Metadata: map[string]any{"input_tokens": fmt.Sprintf("%d", result.Usage.InputTokens), "output_tokens": fmt.Sprintf("%d", result.Usage.OutputTokens)}})
+		status := "completed"
+		if mode == HarnessInvocationModeBackground {
+			status = "running"
+		}
+		items = append(items, TimelineItem{ID: sessionID + ":usage", WorkspaceID: workspaceID, RunID: sessionID, SourceKind: "executor", SourceID: sessionID, Kind: "telemetry", Status: status, Sequence: sequence, Text: "claude usage updated", Metadata: map[string]any{"input_tokens": fmt.Sprintf("%d", result.Usage.InputTokens), "output_tokens": fmt.Sprintf("%d", result.Usage.OutputTokens)}})
 		sequence++
 	}
-	items = append(items, TimelineItem{ID: sessionID + ":completed", WorkspaceID: workspaceID, RunID: sessionID, SourceKind: "executor", SourceID: sessionID, Kind: "lifecycle", Status: "completed", Sequence: sequence, Text: "claude run completed"})
+	if mode != HarnessInvocationModeBackground {
+		items = append(items, TimelineItem{ID: sessionID + ":completed", WorkspaceID: workspaceID, RunID: sessionID, SourceKind: "executor", SourceID: sessionID, Kind: "lifecycle", Status: "completed", Sequence: sequence, Text: "claude run completed"})
+	}
 	return items
+}
+
+func claudeUsageBucket(mode HarnessInvocationMode) string {
+	if mode == HarnessInvocationModeBackground {
+		return "subscription"
+	}
+	return "agent_sdk_credit"
 }
 
 func claudePromptFromRequest(req ExecutorStartRequest) string {
@@ -202,6 +279,16 @@ func claudePromptFromRequest(req ExecutorStartRequest) string {
 }
 
 func claudeArgs(options claudeExecutorOptions) []string {
+	if options.InvocationMode == HarnessInvocationModeBackground {
+		args := []string{"--bg"}
+		if model := strings.TrimSpace(options.Model); model != "" {
+			args = append(args, "--model", model)
+		}
+		if systemPrompt := strings.TrimSpace(options.SystemPrompt); systemPrompt != "" {
+			args = append(args, "--append-system-prompt", systemPrompt)
+		}
+		return args
+	}
 	args := []string{"--bare", "-p", "-", "--output-format", "json"}
 	if model := strings.TrimSpace(options.Model); model != "" {
 		args = append(args, "--model", model)
@@ -221,11 +308,21 @@ func runClaudeCommand(ctx context.Context, options claudeExecutorOptions, prompt
 	if err != nil {
 		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityAgentSessionFromContext, StartInvoked: false}
 	}
-	cmd := exec.CommandContext(ctx, path, claudeArgs(options)...)
+	args := claudeArgs(options)
+	if options.InvocationMode == HarnessInvocationModeBackground {
+		if trimmed := strings.TrimSpace(prompt); trimmed != "" {
+			args = append(args, trimmed)
+		}
+	}
+	cmd := exec.CommandContext(ctx, path, args...)
 	cmd.Dir = strings.TrimSpace(options.Cwd)
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return commandRunResult{}, err
+	var stdin io.WriteCloser
+	if options.InvocationMode != HarnessInvocationModeBackground {
+		var err error
+		stdin, err = cmd.StdinPipe()
+		if err != nil {
+			return commandRunResult{}, err
+		}
 	}
 	var output strings.Builder
 	cmd.Stdout = &output
@@ -233,13 +330,15 @@ func runClaudeCommand(ctx context.Context, options claudeExecutorOptions, prompt
 	if err := cmd.Start(); err != nil {
 		return commandRunResult{}, err
 	}
-	_, _ = io.WriteString(stdin, prompt)
-	_ = stdin.Close()
+	if stdin != nil {
+		_, _ = io.WriteString(stdin, prompt)
+		_ = stdin.Close()
+	}
 	sample := sampleLinuxProcessMetrics(ctx, AgentSession{PID: cmd.Process.Pid})
 	err = cmd.Wait()
 	exitCode := cmd.ProcessState.ExitCode()
 	if err != nil {
-		return commandRunResult{}, fmt.Errorf("run claude headless: %w: %s", err, strings.TrimSpace(output.String()))
+		return commandRunResult{}, fmt.Errorf("run claude: %w: %s", err, strings.TrimSpace(output.String()))
 	}
 	return commandRunResult{Output: []byte(output.String()), ProcessSample: &sample, ExitCode: &exitCode}, nil
 }

@@ -320,6 +320,24 @@ func (s *Store) UpdateAgentSessionStatus(ctx context.Context, sessionID, status 
 	return nil
 }
 
+func (s *Store) UpdateAgentSessionProvider(ctx context.Context, sessionID, providerSessionID, providerRunID, providerMetadataJSON string) error {
+	if strings.TrimSpace(sessionID) == "" {
+		return ErrInvalidInput
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE agent_sessions SET provider_session_id = ?, provider_run_id = ?, provider_metadata_json = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE session_id = ?`, strings.TrimSpace(providerSessionID), strings.TrimSpace(providerRunID), defaultJSON(providerMetadataJSON, "{}"), strings.TrimSpace(sessionID))
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) GetAgentSession(ctx context.Context, sessionID string) (AgentSession, error) {
 	row, err := s.sqlc.GetAgentSession(ctx, dbsqlc.GetAgentSessionParams{SessionID: strings.TrimSpace(sessionID)})
 	if err != nil {

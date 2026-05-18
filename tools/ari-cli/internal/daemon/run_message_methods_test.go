@@ -411,6 +411,73 @@ func TestEphemeralAgentCallRunsTargetAndRoutesReplyToCaller(t *testing.T) {
 	}
 }
 
+func TestEphemeralClaudeCallStartsBackgroundSessionWithoutSyntheticReply(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "librarian", Harness: HarnessNameClaude, Model: "sonnet", Prompt: "research"}); err != nil {
+		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	}
+
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest(HarnessNameClaude, func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return newFakeHarness(HarnessNameClaude, []TimelineItem{{Kind: "lifecycle", Status: "running", Text: "claude background started", Metadata: map[string]any{"invocation_mode": "background", "usage_bucket": "subscription", "provider_session_id": "claude-bg-1"}}}), nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	got := callMethod[EphemeralAgentCallResponse](t, registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-bg", SessionID: "call-bg-run", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Explore this"})
+	if got.Run.Status != "running" || got.Run.ProviderSessionID == "" || got.Reply.AgentMessageID != "" {
+		t.Fatalf("ephemeral Claude call = %#v, want running background session without synthetic reply", got)
+	}
+	stored, err := store.GetAgentSession(ctx, got.Run.SessionID)
+	if err != nil {
+		t.Fatalf("GetAgentSession returned error: %v", err)
+	}
+	if stored.ProviderSessionID == "" || !strings.Contains(stored.ProviderMetadataJSON, `"invocation_mode":"background"`) || !strings.Contains(stored.ProviderMetadataJSON, `"usage_bucket":"subscription"`) {
+		t.Fatalf("stored run = %#v, want provider background metadata", stored)
+	}
+	if _, err := getFinalResponse(ctx, store, FinalResponseGetRequest{SessionID: got.Run.SessionID}); err == nil {
+		t.Fatalf("final response unexpectedly exists for running background session")
+	}
+}
+
+func TestEphemeralClaudeCallHonorsExplicitHeadlessProfileDefault(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.UpsertAgentProfile(ctx, globaldb.AgentProfile{ProfileID: "ap_librarian", WorkspaceID: "ws-1", Name: "librarian", Harness: HarnessNameClaude, Model: "sonnet", Prompt: "research", DefaultsJSON: `{"invocation_mode":"headless"}`}); err != nil {
+		t.Fatalf("UpsertAgentProfile returned error: %v", err)
+	}
+	if err := store.EnsureAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "ap_librarian", WorkspaceID: "ws-1", Name: "librarian", Harness: HarnessNameClaude, Model: "sonnet", Prompt: "research"}); err != nil {
+		t.Fatalf("EnsureAgentSessionConfig returned error: %v", err)
+	}
+	runner := &fakeClaudeRunner{output: []byte(`{"result":"Done","session_id":"550e8400-e29b-41d4-a716-446655440000"}`)}
+
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest(HarnessNameClaude, func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunCommand: runner.Run}), nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	got := callMethod[EphemeralAgentCallResponse](t, registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-headless", SourceSessionID: "run-1", TargetAgentID: "ap_librarian", Body: "Explore this", ReplyAgentMessageID: "reply-headless"})
+	args := strings.Join(runner.args, " ")
+	if got.Run.Status != "completed" || !strings.Contains(args, "--bare") || !strings.Contains(args, "-p") || strings.Contains(args, "--bg") || got.Reply.AgentMessageID != "reply-headless" {
+		t.Fatalf("call = %#v args = %q, want explicit headless profile to remain opt-in", got, args)
+	}
+}
+
 func TestEphemeralAgentCallResolvesTargetByProfileName(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()

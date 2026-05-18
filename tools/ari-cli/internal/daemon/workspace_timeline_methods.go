@@ -273,6 +273,7 @@ type ExecutorStartRequest struct {
 	Prompt          string
 	AuthSlotID      string
 	InvocationClass HarnessInvocationClass
+	Options         []HarnessOption
 }
 
 type ExecutorRun struct {

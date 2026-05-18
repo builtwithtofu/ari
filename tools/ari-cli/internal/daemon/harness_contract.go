@@ -31,6 +31,7 @@ type HarnessCall struct {
 	ResultSchemaVersion string                 `json:"result_schema_version"`
 	Required            []HarnessCapability    `json:"required,omitempty"`
 	Timeout             time.Duration          `json:"-"`
+	Options             []HarnessOption        `json:"-"`
 }
 
 type HarnessCapability string
@@ -491,9 +492,11 @@ func StartHarnessCallResult(ctx context.Context, executor Executor, call Harness
 	if err != nil {
 		return HarnessCallResult{}, err
 	}
-	finishedAt := time.Now().UTC()
 	run.StartedAt = startedAt.Format(time.RFC3339Nano)
-	run.FinishedAt = finishedAt.Format(time.RFC3339Nano)
+	if agentSessionStatusIsTerminal(run.Status) {
+		finishedAt := time.Now().UTC()
+		run.FinishedAt = finishedAt.Format(time.RFC3339Nano)
+	}
 	return HarnessCallResult{
 		CallID:       call.CallID,
 		Status:       harnessCallStatusFromAgentSession(run),
@@ -612,6 +615,26 @@ func harnessCallStatusFromAgentSession(run AgentSession) HarnessCallStatus {
 	return HarnessCallCompleted
 }
 
+func agentSessionStatusIsTerminal(status string) bool {
+	switch strings.TrimSpace(status) {
+	case "completed", "failed", "cancelled":
+		return true
+	default:
+		return false
+	}
+}
+
+func harnessModeMetadataFromItems(items []TimelineItem) (string, string) {
+	for _, item := range items {
+		invocationMode := stringMetadata(item.Metadata, "invocation_mode")
+		usageBucket := stringMetadata(item.Metadata, "usage_bucket")
+		if invocationMode != "" || usageBucket != "" {
+			return invocationMode, usageBucket
+		}
+	}
+	return "", ""
+}
+
 func harnessRuntimeEventsFromItems(run AgentSession, items []TimelineItem) []HarnessRuntimeEvent {
 	events := make([]HarnessRuntimeEvent, 0, len(items))
 	for i, item := range items {
@@ -727,7 +750,7 @@ func startHarnessCallAfterCapabilityCheck(ctx context.Context, executor Executor
 			return AgentSession{}, nil, err
 		}
 	}
-	providerRun, err := executor.Start(ctx, ExecutorStartRequest{WorkspaceID: call.WorkspaceID, RunID: ariRunID, SessionID: ariRunID, ContextPacket: string(call.Input), SourceProfileID: call.SourceProfileID, Model: call.Model, Prompt: call.Prompt, AuthSlotID: call.AuthSlotID, InvocationClass: call.InvocationClass})
+	providerRun, err := executor.Start(ctx, ExecutorStartRequest{WorkspaceID: call.WorkspaceID, RunID: ariRunID, SessionID: ariRunID, ContextPacket: string(call.Input), SourceProfileID: call.SourceProfileID, Model: call.Model, Prompt: call.Prompt, AuthSlotID: call.AuthSlotID, InvocationClass: call.InvocationClass, Options: call.Options})
 	if err != nil {
 		return AgentSession{}, nil, err
 	}
@@ -755,6 +778,7 @@ func startHarnessCallAfterCapabilityCheck(ctx context.Context, executor Executor
 	if err != nil {
 		return AgentSession{}, nil, err
 	}
+	invocationMode, usageBucket := harnessModeMetadataFromItems(items)
 	agentSession := AgentSession{
 		AgentSessionID:    ariRunID,
 		SessionID:         ariRunID,
@@ -763,6 +787,8 @@ func startHarnessCallAfterCapabilityCheck(ctx context.Context, executor Executor
 		Executor:          providerRun.Executor,
 		ProviderSessionID: providerSessionID,
 		ProviderRunID:     providerRunID,
+		InvocationMode:    invocationMode,
+		UsageBucket:       usageBucket,
 		AuthSlotID:        call.AuthSlotID,
 		Status:            executorRunStatusFromItems(items),
 		ContextPacketID:   call.ContextPacketID,

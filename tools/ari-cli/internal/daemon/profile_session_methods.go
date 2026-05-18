@@ -74,5 +74,23 @@ func (d *Daemon) registerProfileSessionMethods(registry *rpc.MethodRegistry, sto
 	}); err != nil {
 		return fmt.Errorf("register session.list: %w", err)
 	}
+	if err := rpc.RegisterMethod(registry, rpc.Method[ClaudeSessionLogsRequest, ClaudeSessionLogsResponse]{
+		Name:        "session.claude.logs",
+		Description: "Fetch Claude Code background session logs",
+		Handler: func(ctx context.Context, req ClaudeSessionLogsRequest) (ClaudeSessionLogsResponse, error) {
+			return claudeSessionLogs(ctx, store, req)
+		},
+	}); err != nil {
+		return fmt.Errorf("register session.claude.logs: %w", err)
+	}
+	if err := rpc.RegisterMethod(registry, rpc.Method[ClaudeSessionAttachRequest, ClaudeSessionAttachResponse]{
+		Name:        "session.claude.attach",
+		Description: "Return the native Claude Code attach command for a background session",
+		Handler: func(ctx context.Context, req ClaudeSessionAttachRequest) (ClaudeSessionAttachResponse, error) {
+			return claudeSessionAttach(ctx, store, req)
+		},
+	}); err != nil {
+		return fmt.Errorf("register session.claude.attach: %w", err)
+	}
 	return nil
 }

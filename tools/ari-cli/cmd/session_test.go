@@ -169,7 +169,7 @@ func TestSessionShowCallsPublicSessionGetRPC(t *testing.T) {
 		if req.SessionID != "executor-main" {
 			t.Fatalf("session.get request = %#v", req)
 		}
-		return daemon.SessionGetResponse{Session: daemon.AgentSession{SessionID: "executor-main", Status: "running", Executor: "codex", WorkspaceID: "ws-1"}}, nil
+		return daemon.SessionGetResponse{Session: daemon.AgentSession{SessionID: "executor-main", Status: "running", Executor: "claude", WorkspaceID: "ws-1", ProviderSessionID: "provider-1", InvocationMode: "background", UsageBucket: "subscription"}}, nil
 	}
 	t.Cleanup(func() {
 		sessionEnsureDaemonRunning = originalEnsure
@@ -180,9 +180,61 @@ func TestSessionShowCallsPublicSessionGetRPC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("session show returned error: %v", err)
 	}
-	for _, want := range []string{"executor-main", "running", "codex", "ws-1"} {
+	for _, want := range []string{"executor-main", "running", "claude", "ws-1", "provider-1", "background", "subscription"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("session show output = %q, want %q", out, want)
+		}
+	}
+}
+
+func TestSessionClaudeLogsAndAttachCommands(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	originalEnsure := sessionEnsureDaemonRunning
+	originalLogs := sessionClaudeLogsRPC
+	originalAttach := sessionClaudeAttachRPC
+	sessionEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	sessionClaudeLogsRPC = func(_ context.Context, _ string, req daemon.ClaudeSessionLogsRequest) (daemon.ClaudeSessionLogsResponse, error) {
+		if req.SessionID != "executor-main" {
+			t.Fatalf("session.claude.logs request = %#v", req)
+		}
+		return daemon.ClaudeSessionLogsResponse{SessionID: req.SessionID, ProviderSessionID: "provider-1", Command: []string{"claude", "logs", "provider-1"}, Output: "log line"}, nil
+	}
+	sessionClaudeAttachRPC = func(_ context.Context, _ string, req daemon.ClaudeSessionAttachRequest) (daemon.ClaudeSessionAttachResponse, error) {
+		if req.SessionID != "executor-main" {
+			t.Fatalf("session.claude.attach request = %#v", req)
+		}
+		return daemon.ClaudeSessionAttachResponse{SessionID: req.SessionID, ProviderSessionID: "provider-1", Command: []string{"claude", "attach", "provider-1"}}, nil
+	}
+	t.Cleanup(func() {
+		sessionEnsureDaemonRunning = originalEnsure
+		sessionClaudeLogsRPC = originalLogs
+		sessionClaudeAttachRPC = originalAttach
+	})
+
+	logsOut, err := executeRootCommand("session", "logs", "executor-main")
+	if err != nil {
+		t.Fatalf("session logs returned error: %v", err)
+	}
+	if !strings.Contains(logsOut, "claude logs provider-1") || !strings.Contains(logsOut, "log line") {
+		t.Fatalf("session logs output = %q, want command and logs", logsOut)
+	}
+	attachOut, err := executeRootCommand("session", "attach-command", "executor-main")
+	if err != nil {
+		t.Fatalf("session attach-command returned error: %v", err)
+	}
+	if strings.TrimSpace(attachOut) != "claude attach provider-1" {
+		t.Fatalf("session attach-command output = %q", attachOut)
+	}
+}
+
+func TestSessionHelpDescribesClaudeBackgroundDefault(t *testing.T) {
+	out, err := executeRootCommand("session", "--help")
+	if err != nil {
+		t.Fatalf("session help returned error: %v", err)
+	}
+	for _, want := range []string{"Claude Code", "subscription-backed background", "headless claude -p", "opt-in API-credit"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("session help = %q, want %q", out, want)
 		}
 	}
 }
