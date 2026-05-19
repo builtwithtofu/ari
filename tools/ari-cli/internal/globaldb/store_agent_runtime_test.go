@@ -35,7 +35,7 @@ func TestAgentRuntimeSchemaUsesADRTerminology(t *testing.T) {
 func TestRunLogMessagesTailReturnsLastNInRunOrder(t *testing.T) {
 	store := newGlobalDBTestStore(t, "run-message-tail")
 	ctx := context.Background()
-	seedAgentSessionConfigSession(t, store, ctx)
+	seedHarnessSessionConfigSession(t, store, ctx)
 
 	for _, msg := range []RunLogMessage{
 		{MessageID: "msg-1", WorkspaceID: "ws-1", SessionID: "run-1", AgentID: "agent-1", Sequence: 1, Role: "user", Status: "completed", Parts: []RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "text", Text: "one"}}},
@@ -72,7 +72,7 @@ func TestRunLogMessagesTailRejectsUnknownRun(t *testing.T) {
 func TestRunLogMessagesListReturnsCursorLimitedPageInRunOrder(t *testing.T) {
 	store := newGlobalDBTestStore(t, "run-message-list")
 	ctx := context.Background()
-	seedAgentSessionConfigSession(t, store, ctx)
+	seedHarnessSessionConfigSession(t, store, ctx)
 	for _, msg := range []RunLogMessage{
 		{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "user", Parts: []RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "text", Text: "one"}}},
 		{MessageID: "msg-2", SessionID: "run-1", Sequence: 2, Role: "assistant", Parts: []RunLogMessagePart{{PartID: "part-2", Sequence: 1, Kind: "text", Text: "two"}}},
@@ -92,21 +92,21 @@ func TestRunLogMessagesListReturnsCursorLimitedPageInRunOrder(t *testing.T) {
 	}
 }
 
-func TestAgentSessionMetadataRoundTrips(t *testing.T) {
+func TestHarnessSessionMetadataRoundTrips(t *testing.T) {
 	store := newGlobalDBTestStore(t, "run-metadata")
 	ctx := context.Background()
-	if err := store.CreateSession(ctx, "ws-1", "workspace", t.TempDir(), "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "ws-1", "workspace", t.TempDir(), "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
-	if err := store.CreateAgentSessionConfig(ctx, AgentSessionConfig{AgentID: "agent-1", WorkspaceID: "ws-1", Name: "executor", Harness: "codex"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, HarnessSessionConfig{AgentID: "agent-1", WorkspaceID: "ws-1", Name: "executor", Harness: "codex"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig returned error: %v", err)
 	}
-	if err := store.CreateAgentSession(ctx, AgentSession{SessionID: "run-1", WorkspaceID: "ws-1", AgentID: "agent-1", Harness: "codex", Model: "gpt-5", ProviderSessionID: "thread-1", CWD: t.TempDir(), FolderScopeJSON: `["/repo"]`, Status: "running", SourceSessionID: "source-run", SourceAgentID: "source-agent", PromptHash: "sha256:prompt", ContextPayloadIDsJSON: `["ctx-1"]`, PermissionMode: "ask", SandboxMode: "workspace-write", ToolScopeJSON: `{"shell":true}`, ProviderMetadataJSON: `{"native":"yes"}`}); err != nil {
-		t.Fatalf("CreateAgentSession returned error: %v", err)
+	if err := store.CreateHarnessSession(ctx, HarnessSession{SessionID: "run-1", WorkspaceID: "ws-1", AgentID: "agent-1", Harness: "codex", Model: "gpt-5", ProviderSessionID: "thread-1", CWD: t.TempDir(), FolderScopeJSON: `["/repo"]`, Status: "running", SourceSessionID: "source-run", SourceAgentID: "source-agent", PromptHash: "sha256:prompt", ContextPayloadIDsJSON: `["ctx-1"]`, PermissionMode: "ask", SandboxMode: "workspace-write", ToolScopeJSON: `{"shell":true}`, ProviderMetadataJSON: `{"native":"yes"}`}); err != nil {
+		t.Fatalf("CreateHarnessSession returned error: %v", err)
 	}
-	runs, err := store.ListAgentSessions(ctx, "ws-1")
+	runs, err := store.ListHarnessSessions(ctx, "ws-1")
 	if err != nil {
-		t.Fatalf("ListAgentSessions returned error: %v", err)
+		t.Fatalf("ListHarnessSessions returned error: %v", err)
 	}
 	if len(runs) != 1 || runs[0].FolderScopeJSON != `["/repo"]` || runs[0].ContextPayloadIDsJSON != `["ctx-1"]` || runs[0].PermissionMode != "ask" || runs[0].SandboxMode != "workspace-write" || runs[0].ProviderMetadataJSON != `{"native":"yes"}` {
 		t.Fatalf("runs = %#v, want run metadata round-tripped", runs)
@@ -138,7 +138,7 @@ func TestRunLogMessagesRejectUnknownRun(t *testing.T) {
 func TestContextExcerptCopiesOrderedExcerptAndIsImmutable(t *testing.T) {
 	store := newGlobalDBTestStore(t, "context-excerpt")
 	ctx := context.Background()
-	seedAgentSessionConfigSession(t, store, ctx)
+	seedHarnessSessionConfigSession(t, store, ctx)
 	for _, msg := range []RunLogMessage{
 		{MessageID: "msg-1", WorkspaceID: "ws-1", SessionID: "run-1", AgentID: "agent-1", Sequence: 1, Role: "user", Status: "completed", Parts: []RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "text", Text: "question"}}},
 		{MessageID: "msg-2", WorkspaceID: "ws-1", SessionID: "run-1", AgentID: "agent-1", Sequence: 2, Role: "assistant", Status: "completed", Parts: []RunLogMessagePart{{PartID: "part-2", Sequence: 1, Kind: "text", Text: "answer"}}},
@@ -183,7 +183,7 @@ func TestContextExcerptCopiesOrderedExcerptAndIsImmutable(t *testing.T) {
 func TestContextExcerptFromRangeCopiesInclusiveOrderedExcerpt(t *testing.T) {
 	store := newGlobalDBTestStore(t, "message-excerpt-range")
 	ctx := context.Background()
-	seedAgentSessionConfigSession(t, store, ctx)
+	seedHarnessSessionConfigSession(t, store, ctx)
 	for _, msg := range []RunLogMessage{
 		{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "user", Parts: []RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "text", Text: "one"}}},
 		{MessageID: "msg-2", SessionID: "run-1", Sequence: 2, Role: "assistant", Parts: []RunLogMessagePart{{PartID: "part-2", Sequence: 1, Kind: "text", Text: "two"}}},
@@ -210,7 +210,7 @@ func TestContextExcerptFromRangeCopiesInclusiveOrderedExcerpt(t *testing.T) {
 func TestContextExcerptFromExplicitIDsCopiesMessagesInRequestedOrder(t *testing.T) {
 	store := newGlobalDBTestStore(t, "message-excerpt-explicit")
 	ctx := context.Background()
-	seedAgentSessionConfigSession(t, store, ctx)
+	seedHarnessSessionConfigSession(t, store, ctx)
 	for _, msg := range []RunLogMessage{
 		{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "user", Parts: []RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "text", Text: "one"}}},
 		{MessageID: "msg-2", SessionID: "run-1", Sequence: 2, Role: "assistant", Parts: []RunLogMessagePart{{PartID: "part-2", Sequence: 1, Kind: "text", Text: "two"}}},
@@ -236,7 +236,7 @@ func TestContextExcerptFromExplicitIDsCopiesMessagesInRequestedOrder(t *testing.
 func TestContextExcerptPreservesNonTextParts(t *testing.T) {
 	store := newGlobalDBTestStore(t, "message-excerpt-parts")
 	ctx := context.Background()
-	seedAgentSessionConfigSession(t, store, ctx)
+	seedHarnessSessionConfigSession(t, store, ctx)
 	if err := store.AppendRunLogMessage(ctx, RunLogMessage{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "tool", Parts: []RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "tool_result", Text: "tests passed"}}}); err != nil {
 		t.Fatalf("AppendRunLogMessage returned error: %v", err)
 	}
@@ -253,7 +253,7 @@ func TestContextExcerptPreservesNonTextParts(t *testing.T) {
 func TestContextExcerptPreservesPartMetadata(t *testing.T) {
 	store := newGlobalDBTestStore(t, "message-excerpt-part-metadata")
 	ctx := context.Background()
-	seedAgentSessionConfigSession(t, store, ctx)
+	seedHarnessSessionConfigSession(t, store, ctx)
 	if err := store.AppendRunLogMessage(ctx, RunLogMessage{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "assistant", Parts: []RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "tool_call", Text: "search", ToolName: "web.search", ToolCallID: "call-1", RawJSON: `{"query":"ari"}`}}}); err != nil {
 		t.Fatalf("AppendRunLogMessage returned error: %v", err)
 	}
@@ -281,7 +281,7 @@ func TestContextExcerptPreservesPartMetadata(t *testing.T) {
 func TestContextExcerptPersistsCopiedPartsWithNormalizedJSONKeys(t *testing.T) {
 	store := newGlobalDBTestStore(t, "message-excerpt-part-json-shape")
 	ctx := context.Background()
-	seedAgentSessionConfigSession(t, store, ctx)
+	seedHarnessSessionConfigSession(t, store, ctx)
 	if err := store.AppendRunLogMessage(ctx, RunLogMessage{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "assistant", Parts: []RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "tool_call", ToolName: "web.search", ToolCallID: "call-1", RawJSON: `{"query":"ari"}`}}}); err != nil {
 		t.Fatalf("AppendRunLogMessage returned error: %v", err)
 	}
@@ -304,7 +304,7 @@ func TestContextExcerptPersistsCopiedPartsWithNormalizedJSONKeys(t *testing.T) {
 func TestContextExcerptCopiesOrderedPartsAndIsImmutable(t *testing.T) {
 	store := newGlobalDBTestStore(t, "message-excerpt-parts")
 	ctx := context.Background()
-	seedAgentSessionConfigSession(t, store, ctx)
+	seedHarnessSessionConfigSession(t, store, ctx)
 	if err := store.AppendRunLogMessage(ctx, RunLogMessage{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "assistant", Parts: []RunLogMessagePart{
 		{PartID: "part-1", Sequence: 1, Kind: "text", Text: "result"},
 		{PartID: "part-2", Sequence: 2, Kind: "tool_call", Text: "call search"},
@@ -335,7 +335,7 @@ func TestContextExcerptCopiesOrderedPartsAndIsImmutable(t *testing.T) {
 func TestMessageWritesDeriveWorkspaceAndAgentFromRun(t *testing.T) {
 	store := newGlobalDBTestStore(t, "message-identity")
 	ctx := context.Background()
-	seedAgentSessionConfigSession(t, store, ctx)
+	seedHarnessSessionConfigSession(t, store, ctx)
 
 	if err := store.AppendRunLogMessage(ctx, RunLogMessage{MessageID: "msg-1", WorkspaceID: "wrong-workspace", SessionID: "run-1", AgentID: "agent-2", Sequence: 1, Role: "user"}); err != nil {
 		t.Fatalf("AppendRunLogMessage returned error: %v", err)
@@ -352,7 +352,7 @@ func TestMessageWritesDeriveWorkspaceAndAgentFromRun(t *testing.T) {
 func TestContextExcerptDerivesSourceIdentityFromRun(t *testing.T) {
 	store := newGlobalDBTestStore(t, "excerpt-identity")
 	ctx := context.Background()
-	seedAgentSessionConfigSession(t, store, ctx)
+	seedHarnessSessionConfigSession(t, store, ctx)
 	if err := store.AppendRunLogMessage(ctx, RunLogMessage{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "user", Parts: []RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "text", Text: "question"}}}); err != nil {
 		t.Fatalf("AppendRunLogMessage returned error: %v", err)
 	}
@@ -369,7 +369,7 @@ func TestContextExcerptDerivesSourceIdentityFromRun(t *testing.T) {
 func TestContextExcerptContentHashIncludesAppendedMessage(t *testing.T) {
 	store := newGlobalDBTestStore(t, "excerpt-hash-appended")
 	ctx := context.Background()
-	seedAgentSessionConfigSession(t, store, ctx)
+	seedHarnessSessionConfigSession(t, store, ctx)
 	if err := store.AppendRunLogMessage(ctx, RunLogMessage{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "assistant", Parts: []RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "text", Text: "plan"}}}); err != nil {
 		t.Fatalf("AppendRunLogMessage returned error: %v", err)
 	}
@@ -390,7 +390,7 @@ func TestContextExcerptContentHashIncludesAppendedMessage(t *testing.T) {
 func TestAgentMessageAttachesExcerptAndStartsTargetRunWhenNeeded(t *testing.T) {
 	store := newGlobalDBTestStore(t, "agent-message")
 	ctx := context.Background()
-	seedAgentSessionConfigSession(t, store, ctx)
+	seedHarnessSessionConfigSession(t, store, ctx)
 	if err := store.AppendRunLogMessage(ctx, RunLogMessage{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "assistant", Parts: []RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "text", Text: "plan"}}}); err != nil {
 		t.Fatalf("AppendRunLogMessage returned error: %v", err)
 	}
@@ -406,9 +406,9 @@ func TestAgentMessageAttachesExcerptAndStartsTargetRunWhenNeeded(t *testing.T) {
 	if dm.WorkspaceID != "ws-1" || dm.SourceAgentID != "agent-1" || dm.TargetSessionID != "run-2" || dm.Status != "delivered" {
 		t.Fatalf("direct message = %#v, want delivered message with derived source and started target run", dm)
 	}
-	targetRun, err := store.GetAgentSession(ctx, "run-2")
+	targetRun, err := store.GetHarnessSession(ctx, "run-2")
 	if err != nil {
-		t.Fatalf("GetAgentSession target returned error: %v", err)
+		t.Fatalf("GetHarnessSession target returned error: %v", err)
 	}
 	if targetRun.Status != "waiting" {
 		t.Fatalf("target run status = %q, want waiting until a harness is started", targetRun.Status)
@@ -432,7 +432,7 @@ func TestAgentMessageAttachesExcerptAndStartsTargetRunWhenNeeded(t *testing.T) {
 func TestAgentMessageDeliversExcerptAppendedMessageBeforeBody(t *testing.T) {
 	store := newGlobalDBTestStore(t, "agent-message-appended-excerpt-message")
 	ctx := context.Background()
-	seedAgentSessionConfigSession(t, store, ctx)
+	seedHarnessSessionConfigSession(t, store, ctx)
 	if err := store.AppendRunLogMessage(ctx, RunLogMessage{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "assistant", Parts: []RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "text", Text: "plan"}}}); err != nil {
 		t.Fatalf("AppendRunLogMessage returned error: %v", err)
 	}
@@ -456,7 +456,7 @@ func TestAgentMessageDeliversExcerptAppendedMessageBeforeBody(t *testing.T) {
 func TestAgentMessageCanDeliverSameImmutableExcerptToMultipleRuns(t *testing.T) {
 	store := newGlobalDBTestStore(t, "agent-message-excerpt-multi-delivery")
 	ctx := context.Background()
-	seedAgentSessionConfigSession(t, store, ctx)
+	seedHarnessSessionConfigSession(t, store, ctx)
 	if err := store.AppendRunLogMessage(ctx, RunLogMessage{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "assistant", Parts: []RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "text", Text: "plan"}}}); err != nil {
 		t.Fatalf("AppendRunLogMessage returned error: %v", err)
 	}
@@ -483,7 +483,7 @@ func TestAgentMessageCanDeliverSameImmutableExcerptToMultipleRuns(t *testing.T) 
 func TestAgentMessageDeliversExcerptAppendedMessageAfterCopiedExcerpt(t *testing.T) {
 	store := newGlobalDBTestStore(t, "agent-message-excerpt-appended")
 	ctx := context.Background()
-	seedAgentSessionConfigSession(t, store, ctx)
+	seedHarnessSessionConfigSession(t, store, ctx)
 	if err := store.AppendRunLogMessage(ctx, RunLogMessage{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "assistant", Parts: []RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "text", Text: "plan"}}}); err != nil {
 		t.Fatalf("AppendRunLogMessage returned error: %v", err)
 	}
@@ -507,9 +507,9 @@ func TestAgentMessageDeliversExcerptAppendedMessageAfterCopiedExcerpt(t *testing
 func TestAgentMessageToExistingRunAppendsAfterCurrentTail(t *testing.T) {
 	store := newGlobalDBTestStore(t, "agent-message-existing-run")
 	ctx := context.Background()
-	seedAgentSessionConfigSession(t, store, ctx)
-	if err := store.CreateAgentSession(ctx, AgentSession{SessionID: "run-2", WorkspaceID: "ws-1", AgentID: "agent-2", Harness: "opencode", Status: "running", Usage: "durable", CWD: t.TempDir()}); err != nil {
-		t.Fatalf("CreateAgentSession target returned error: %v", err)
+	seedHarnessSessionConfigSession(t, store, ctx)
+	if err := store.CreateHarnessSession(ctx, HarnessSession{SessionID: "run-2", WorkspaceID: "ws-1", AgentID: "agent-2", Harness: "opencode", Status: "running", Usage: HarnessSessionUsageSticky, CWD: t.TempDir()}); err != nil {
+		t.Fatalf("CreateHarnessSession target returned error: %v", err)
 	}
 	if err := store.AppendRunLogMessage(ctx, RunLogMessage{MessageID: "existing-msg", SessionID: "run-2", Sequence: 1, Role: "assistant", Parts: []RunLogMessagePart{{PartID: "existing-part", Sequence: 1, Kind: "text", Text: "ready"}}}); err != nil {
 		t.Fatalf("AppendRunLogMessage existing returned error: %v", err)
@@ -534,9 +534,9 @@ func TestAgentMessageToExistingRunAppendsAfterCurrentTail(t *testing.T) {
 func TestAgentMessageResolvesTargetAgentFromTargetSession(t *testing.T) {
 	store := newGlobalDBTestStore(t, "agent-message-resolve-target-session")
 	ctx := context.Background()
-	seedAgentSessionConfigSession(t, store, ctx)
-	if err := store.CreateAgentSession(ctx, AgentSession{SessionID: "run-2", WorkspaceID: "ws-1", AgentID: "agent-2", Harness: "opencode", Status: "running", Usage: "durable", CWD: t.TempDir()}); err != nil {
-		t.Fatalf("CreateAgentSession target returned error: %v", err)
+	seedHarnessSessionConfigSession(t, store, ctx)
+	if err := store.CreateHarnessSession(ctx, HarnessSession{SessionID: "run-2", WorkspaceID: "ws-1", AgentID: "agent-2", Harness: "opencode", Status: "running", Usage: HarnessSessionUsageSticky, CWD: t.TempDir()}); err != nil {
+		t.Fatalf("CreateHarnessSession target returned error: %v", err)
 	}
 
 	dm, err := store.SendAgentMessage(ctx, AgentMessageSendParams{AgentMessageID: "dm-1", SourceSessionID: "run-1", TargetSessionID: "run-2", Body: "continue"})
@@ -551,9 +551,9 @@ func TestAgentMessageResolvesTargetAgentFromTargetSession(t *testing.T) {
 func TestAgentMessageAppendsToExistingTargetRun(t *testing.T) {
 	store := newGlobalDBTestStore(t, "agent-message-existing-run")
 	ctx := context.Background()
-	seedAgentSessionConfigSession(t, store, ctx)
-	if err := store.CreateAgentSession(ctx, AgentSession{SessionID: "run-2", WorkspaceID: "ws-1", AgentID: "agent-2", Harness: "opencode", Status: "running", Usage: "durable", CWD: t.TempDir()}); err != nil {
-		t.Fatalf("CreateAgentSession target returned error: %v", err)
+	seedHarnessSessionConfigSession(t, store, ctx)
+	if err := store.CreateHarnessSession(ctx, HarnessSession{SessionID: "run-2", WorkspaceID: "ws-1", AgentID: "agent-2", Harness: "opencode", Status: "running", Usage: HarnessSessionUsageSticky, CWD: t.TempDir()}); err != nil {
+		t.Fatalf("CreateHarnessSession target returned error: %v", err)
 	}
 	if _, err := store.SendAgentMessage(ctx, AgentMessageSendParams{AgentMessageID: "dm-1", SourceSessionID: "run-1", TargetAgentID: "agent-2", TargetSessionID: "run-2", Body: "first"}); err != nil {
 		t.Fatalf("SendAgentMessage first returned error: %v", err)
@@ -573,9 +573,9 @@ func TestAgentMessageAppendsToExistingTargetRun(t *testing.T) {
 func TestAgentMessageConcurrentSendsToExistingRunAppendContiguousMessages(t *testing.T) {
 	store := newGlobalDBTestStore(t, "agent-message-concurrent-existing-run")
 	ctx := context.Background()
-	seedAgentSessionConfigSession(t, store, ctx)
-	if err := store.CreateAgentSession(ctx, AgentSession{SessionID: "run-2", WorkspaceID: "ws-1", AgentID: "agent-2", Harness: "opencode", Status: "running", Usage: "durable", CWD: t.TempDir()}); err != nil {
-		t.Fatalf("CreateAgentSession target returned error: %v", err)
+	seedHarnessSessionConfigSession(t, store, ctx)
+	if err := store.CreateHarnessSession(ctx, HarnessSession{SessionID: "run-2", WorkspaceID: "ws-1", AgentID: "agent-2", Harness: "opencode", Status: "running", Usage: HarnessSessionUsageSticky, CWD: t.TempDir()}); err != nil {
+		t.Fatalf("CreateHarnessSession target returned error: %v", err)
 	}
 
 	var wg sync.WaitGroup
@@ -607,12 +607,12 @@ func TestAgentMessageConcurrentSendsToExistingRunAppendContiguousMessages(t *tes
 func TestAgentMessageRejectsTargetAgentFromDifferentWorkspace(t *testing.T) {
 	store := newGlobalDBTestStore(t, "agent-message-cross-workspace")
 	ctx := context.Background()
-	seedAgentSessionConfigSession(t, store, ctx)
-	if err := store.CreateSession(ctx, "ws-2", "other workspace", t.TempDir(), "manual", "auto"); err != nil {
+	seedHarnessSessionConfigSession(t, store, ctx)
+	if err := store.CreateWorkspace(ctx, "ws-2", "other workspace", t.TempDir(), "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession ws-2 returned error: %v", err)
 	}
-	if err := store.CreateAgentSessionConfig(ctx, AgentSessionConfig{AgentID: "agent-ws-2", WorkspaceID: "ws-2", Name: "reviewer", Harness: "opencode"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig cross-workspace target returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, HarnessSessionConfig{AgentID: "agent-ws-2", WorkspaceID: "ws-2", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig cross-workspace target returned error: %v", err)
 	}
 
 	if _, err := store.SendAgentMessage(ctx, AgentMessageSendParams{AgentMessageID: "dm-1", SourceSessionID: "run-1", TargetAgentID: "agent-ws-2", Body: "wrong workspace", StartSessionID: "run-2"}); err != ErrInvalidInput {
@@ -620,159 +620,159 @@ func TestAgentMessageRejectsTargetAgentFromDifferentWorkspace(t *testing.T) {
 	}
 }
 
-func TestAgentSessionConfigCreateDoesNotCreateRun(t *testing.T) {
+func TestHarnessSessionConfigCreateDoesNotCreateRun(t *testing.T) {
 	store := newGlobalDBTestStore(t, "agent-create")
 	ctx := context.Background()
-	if err := store.CreateSession(ctx, "ws-1", "workspace", t.TempDir(), "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "ws-1", "workspace", t.TempDir(), "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
-	if err := store.CreateAgentSessionConfig(ctx, AgentSessionConfig{AgentID: "agent-1", WorkspaceID: "ws-1", Name: "planner", Harness: "codex"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, HarnessSessionConfig{AgentID: "agent-1", WorkspaceID: "ws-1", Name: "planner", Harness: "codex"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig returned error: %v", err)
 	}
-	runs, err := store.ListAgentSessions(ctx, "ws-1")
+	runs, err := store.ListHarnessSessions(ctx, "ws-1")
 	if err != nil {
-		t.Fatalf("ListAgentSessions returned error: %v", err)
+		t.Fatalf("ListHarnessSessions returned error: %v", err)
 	}
 	if len(runs) != 0 {
 		t.Fatalf("runs = %#v, want creating an agent to create no runs", runs)
 	}
 }
 
-func TestAgentSessionConfigRosterListGetUpdateDelete(t *testing.T) {
+func TestHarnessSessionConfigRosterListGetUpdateDelete(t *testing.T) {
 	store := newGlobalDBTestStore(t, "agent-session-config-roster")
 	ctx := context.Background()
-	if err := store.CreateSession(ctx, "ws-1", "workspace", t.TempDir(), "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "ws-1", "workspace", t.TempDir(), "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
-	if err := store.CreateAgentSessionConfig(ctx, AgentSessionConfig{AgentID: "agent-1", WorkspaceID: "ws-1", Name: "planner", Harness: "codex", Model: "gpt-5", Prompt: "plan"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, HarnessSessionConfig{AgentID: "agent-1", WorkspaceID: "ws-1", Name: "planner", Harness: "codex", Model: "gpt-5", Prompt: "plan"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig returned error: %v", err)
 	}
 
-	listed, err := store.ListAgentSessionConfigs(ctx, "ws-1")
+	listed, err := store.ListHarnessSessionConfigs(ctx, "ws-1")
 	if err != nil {
-		t.Fatalf("ListAgentSessionConfigs returned error: %v", err)
+		t.Fatalf("ListHarnessSessionConfigs returned error: %v", err)
 	}
 	if len(listed) != 1 || listed[0].Name != "planner" {
 		t.Fatalf("listed = %#v, want planner", listed)
 	}
-	got, err := store.GetAgentSessionConfig(ctx, "agent-1")
+	got, err := store.GetHarnessSessionConfig(ctx, "agent-1")
 	if err != nil {
-		t.Fatalf("GetAgentSessionConfig returned error: %v", err)
+		t.Fatalf("GetHarnessSessionConfig returned error: %v", err)
 	}
 	if got.Prompt != "plan" || got.Model != "gpt-5" {
 		t.Fatalf("got = %#v, want persisted prompt/model", got)
 	}
-	updated, err := store.UpdateAgentSessionConfig(ctx, AgentSessionConfig{AgentID: "agent-1", WorkspaceID: "ws-1", Name: "planner", Harness: "claude", Model: "sonnet", Prompt: "revise"})
+	updated, err := store.UpdateHarnessSessionConfig(ctx, HarnessSessionConfig{AgentID: "agent-1", WorkspaceID: "ws-1", Name: "planner", Harness: "claude", Model: "sonnet", Prompt: "revise"})
 	if err != nil {
-		t.Fatalf("UpdateAgentSessionConfig returned error: %v", err)
+		t.Fatalf("UpdateHarnessSessionConfig returned error: %v", err)
 	}
 	if updated.Harness != "claude" || updated.Prompt != "revise" {
 		t.Fatalf("updated = %#v, want new harness/prompt", updated)
 	}
-	if err := store.DeleteAgentSessionConfig(ctx, "agent-1"); err != nil {
-		t.Fatalf("DeleteAgentSessionConfig returned error: %v", err)
+	if err := store.DeleteHarnessSessionConfig(ctx, "agent-1"); err != nil {
+		t.Fatalf("DeleteHarnessSessionConfig returned error: %v", err)
 	}
-	if _, err := store.GetAgentSessionConfig(ctx, "agent-1"); err != ErrNotFound {
-		t.Fatalf("GetAgentSessionConfig after delete error = %v, want ErrNotFound", err)
+	if _, err := store.GetHarnessSessionConfig(ctx, "agent-1"); err != ErrNotFound {
+		t.Fatalf("GetHarnessSessionConfig after delete error = %v, want ErrNotFound", err)
 	}
 }
 
-func TestAgentSessionConfigSessionCreatesRunFromAgentDefaults(t *testing.T) {
+func TestHarnessSessionConfigCreatesRunFromProfileDefaults(t *testing.T) {
 	store := newGlobalDBTestStore(t, "agent-session-config-run")
 	ctx := context.Background()
-	if err := store.CreateSession(ctx, "ws-1", "workspace", t.TempDir(), "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "ws-1", "workspace", t.TempDir(), "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
-	if err := store.CreateAgentSessionConfig(ctx, AgentSessionConfig{AgentID: "agent-1", WorkspaceID: "ws-1", Name: "planner", Harness: "codex", Model: "gpt-5", Prompt: "plan"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, HarnessSessionConfig{AgentID: "agent-1", WorkspaceID: "ws-1", Name: "planner", Harness: "codex", Model: "gpt-5", Prompt: "plan"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig returned error: %v", err)
 	}
-	run, err := store.CreateSessionFromAgentSessionConfig(ctx, "run-1", "agent-1", t.TempDir())
+	run, err := store.CreateHarnessSessionFromConfig(ctx, "run-1", "agent-1", t.TempDir())
 	if err != nil {
-		t.Fatalf("CreateSessionFromAgentSessionConfig returned error: %v", err)
+		t.Fatalf("CreateHarnessSessionFromConfig returned error: %v", err)
 	}
 	if run.SessionID != "run-1" || run.AgentID != "agent-1" || run.Harness != "codex" || run.Model != "gpt-5" || run.Status != "waiting" {
 		t.Fatalf("run = %#v, want run from agent defaults", run)
 	}
 }
 
-func TestAgentSessionConfigRosterRejectsDuplicateNamesWithinWorkspace(t *testing.T) {
+func TestHarnessSessionConfigRosterRejectsDuplicateNamesWithinWorkspace(t *testing.T) {
 	store := newGlobalDBTestStore(t, "agent-session-config-duplicate-name")
 	ctx := context.Background()
-	if err := store.CreateSession(ctx, "ws-1", "workspace", t.TempDir(), "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "ws-1", "workspace", t.TempDir(), "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession ws-1 returned error: %v", err)
 	}
-	if err := store.CreateSession(ctx, "ws-2", "workspace-2", t.TempDir(), "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "ws-2", "workspace-2", t.TempDir(), "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession ws-2 returned error: %v", err)
 	}
-	if err := store.CreateAgentSessionConfig(ctx, AgentSessionConfig{AgentID: "agent-1", WorkspaceID: "ws-1", Name: "planner", Harness: "codex"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig first returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, HarnessSessionConfig{AgentID: "agent-1", WorkspaceID: "ws-1", Name: "planner", Harness: "codex"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig first returned error: %v", err)
 	}
-	if err := store.CreateAgentSessionConfig(ctx, AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "planner", Harness: "claude"}); err == nil {
-		t.Fatal("CreateAgentSessionConfig duplicate returned nil error")
+	if err := store.CreateHarnessSessionConfig(ctx, HarnessSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "planner", Harness: "claude"}); err == nil {
+		t.Fatal("CreateHarnessSessionConfig duplicate returned nil error")
 	}
-	if err := store.CreateAgentSessionConfig(ctx, AgentSessionConfig{AgentID: "agent-3", WorkspaceID: "ws-2", Name: "planner", Harness: "claude"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig same name different workspace returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, HarnessSessionConfig{AgentID: "agent-3", WorkspaceID: "ws-2", Name: "planner", Harness: "claude"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig same name different workspace returned error: %v", err)
 	}
 }
 
-func TestAgentSessionConfigUpdatePreservesWorkspaceScope(t *testing.T) {
+func TestHarnessSessionConfigUpdatePreservesWorkspaceScope(t *testing.T) {
 	store := newGlobalDBTestStore(t, "agent-session-config-update-scope")
 	ctx := context.Background()
-	if err := store.CreateSession(ctx, "ws-1", "workspace", t.TempDir(), "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "ws-1", "workspace", t.TempDir(), "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession ws-1 returned error: %v", err)
 	}
-	if err := store.CreateSession(ctx, "ws-2", "workspace-2", t.TempDir(), "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "ws-2", "workspace-2", t.TempDir(), "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession ws-2 returned error: %v", err)
 	}
-	if err := store.CreateAgentSessionConfig(ctx, AgentSessionConfig{AgentID: "agent-1", WorkspaceID: "ws-1", Name: "planner", Harness: "codex"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, HarnessSessionConfig{AgentID: "agent-1", WorkspaceID: "ws-1", Name: "planner", Harness: "codex"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig returned error: %v", err)
 	}
-	if _, err := store.UpdateAgentSessionConfig(ctx, AgentSessionConfig{AgentID: "agent-1", WorkspaceID: "ws-2", Name: "planner", Harness: "claude"}); err != ErrNotFound {
-		t.Fatalf("UpdateAgentSessionConfig wrong workspace error = %v, want ErrNotFound", err)
+	if _, err := store.UpdateHarnessSessionConfig(ctx, HarnessSessionConfig{AgentID: "agent-1", WorkspaceID: "ws-2", Name: "planner", Harness: "claude"}); err != ErrNotFound {
+		t.Fatalf("UpdateHarnessSessionConfig wrong workspace error = %v, want ErrNotFound", err)
 	}
 }
 
-func TestAgentSessionConfigCreateRejectsMissingWorkspace(t *testing.T) {
+func TestHarnessSessionConfigCreateRejectsMissingWorkspace(t *testing.T) {
 	store := newGlobalDBTestStore(t, "agent-create-missing-workspace")
 	ctx := context.Background()
 
-	err := store.CreateAgentSessionConfig(ctx, AgentSessionConfig{AgentID: "agent-1", WorkspaceID: "missing-workspace", Name: "planner", Harness: "codex"})
+	err := store.CreateHarnessSessionConfig(ctx, HarnessSessionConfig{AgentID: "agent-1", WorkspaceID: "missing-workspace", Name: "planner", Harness: "codex"})
 	if err != ErrInvalidInput {
-		t.Fatalf("CreateAgentSessionConfig error = %v, want ErrInvalidInput", err)
+		t.Fatalf("CreateHarnessSessionConfig error = %v, want ErrInvalidInput", err)
 	}
 }
 
-func TestCreateAgentSessionRejectsAgentSessionConfigFromDifferentWorkspace(t *testing.T) {
+func TestCreateHarnessSessionRejectsHarnessSessionConfigFromDifferentWorkspace(t *testing.T) {
 	store := newGlobalDBTestStore(t, "agent-session-cross-workspace")
 	ctx := context.Background()
-	if err := store.CreateSession(ctx, "ws-1", "workspace one", t.TempDir(), "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "ws-1", "workspace one", t.TempDir(), "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession ws-1 returned error: %v", err)
 	}
-	if err := store.CreateSession(ctx, "ws-2", "workspace two", t.TempDir(), "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "ws-2", "workspace two", t.TempDir(), "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession ws-2 returned error: %v", err)
 	}
-	if err := store.CreateAgentSessionConfig(ctx, AgentSessionConfig{AgentID: "agent-ws-2", WorkspaceID: "ws-2", Name: "reviewer", Harness: "opencode"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, HarnessSessionConfig{AgentID: "agent-ws-2", WorkspaceID: "ws-2", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig returned error: %v", err)
 	}
 
-	err := store.CreateAgentSession(ctx, AgentSession{SessionID: "run-1", WorkspaceID: "ws-1", AgentID: "agent-ws-2", Harness: "opencode", Status: "running"})
+	err := store.CreateHarnessSession(ctx, HarnessSession{SessionID: "run-1", WorkspaceID: "ws-1", AgentID: "agent-ws-2", Harness: "opencode", Status: "running"})
 	if err != ErrInvalidInput {
-		t.Fatalf("CreateAgentSession error = %v, want ErrInvalidInput", err)
+		t.Fatalf("CreateHarnessSession error = %v, want ErrInvalidInput", err)
 	}
 }
 
-func seedAgentSessionConfigSession(t *testing.T, store *Store, ctx context.Context) {
+func seedHarnessSessionConfigSession(t *testing.T, store *Store, ctx context.Context) {
 	t.Helper()
-	if err := store.CreateSession(ctx, "ws-1", "workspace", t.TempDir(), "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "ws-1", "workspace", t.TempDir(), "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
-	if err := store.CreateAgentSessionConfig(ctx, AgentSessionConfig{AgentID: "agent-1", WorkspaceID: "ws-1", Name: "executor", Harness: "codex", Model: "gpt-5", Prompt: "do work"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig agent-1 returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, HarnessSessionConfig{AgentID: "agent-1", WorkspaceID: "ws-1", Name: "executor", Harness: "codex", Model: "gpt-5", Prompt: "do work"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig agent-1 returned error: %v", err)
 	}
-	if err := store.CreateAgentSessionConfig(ctx, AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig agent-2 returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, HarnessSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig agent-2 returned error: %v", err)
 	}
-	if err := store.CreateAgentSession(ctx, AgentSession{SessionID: "run-1", WorkspaceID: "ws-1", AgentID: "agent-1", Harness: "codex", Model: "gpt-5", Status: "running", Usage: "durable", ProviderSessionID: "thread-1", CWD: t.TempDir()}); err != nil {
-		t.Fatalf("CreateAgentSession returned error: %v", err)
+	if err := store.CreateHarnessSession(ctx, HarnessSession{SessionID: "run-1", WorkspaceID: "ws-1", AgentID: "agent-1", Harness: "codex", Model: "gpt-5", Status: "running", Usage: HarnessSessionUsageSticky, ProviderSessionID: "thread-1", CWD: t.TempDir()}); err != nil {
+		t.Fatalf("CreateHarnessSession returned error: %v", err)
 	}
 }

@@ -9,7 +9,7 @@ import (
 	"context"
 )
 
-const getGlobalAgentProfileByName = `-- name: GetGlobalAgentProfileByName :one
+const getGlobalProfileByName = `-- name: GetGlobalProfileByName :one
 SELECT
   profile_id,
   workspace_id,
@@ -28,11 +28,11 @@ WHERE workspace_id IS NULL AND name = ?
 LIMIT 1
 `
 
-type GetGlobalAgentProfileByNameParams struct {
+type GetGlobalProfileByNameParams struct {
 	Name string `json:"name"`
 }
 
-type GetGlobalAgentProfileByNameRow struct {
+type GetGlobalProfileByNameRow struct {
 	ProfileID       string  `json:"profile_id"`
 	WorkspaceID     *string `json:"workspace_id"`
 	Name            string  `json:"name"`
@@ -47,9 +47,9 @@ type GetGlobalAgentProfileByNameRow struct {
 	UpdatedAt       string  `json:"updated_at"`
 }
 
-func (q *Queries) GetGlobalAgentProfileByName(ctx context.Context, arg GetGlobalAgentProfileByNameParams) (GetGlobalAgentProfileByNameRow, error) {
-	row := q.db.QueryRowContext(ctx, getGlobalAgentProfileByName, arg.Name)
-	var i GetGlobalAgentProfileByNameRow
+func (q *Queries) GetGlobalProfileByName(ctx context.Context, arg GetGlobalProfileByNameParams) (GetGlobalProfileByNameRow, error) {
+	row := q.db.QueryRowContext(ctx, getGlobalProfileByName, arg.Name)
+	var i GetGlobalProfileByNameRow
 	err := row.Scan(
 		&i.ProfileID,
 		&i.WorkspaceID,
@@ -67,7 +67,7 @@ func (q *Queries) GetGlobalAgentProfileByName(ctx context.Context, arg GetGlobal
 	return i, err
 }
 
-const getWorkspaceAgentProfileByName = `-- name: GetWorkspaceAgentProfileByName :one
+const getWorkspaceProfileByName = `-- name: GetWorkspaceProfileByName :one
 SELECT
   profile_id,
   workspace_id,
@@ -86,12 +86,12 @@ WHERE workspace_id = ? AND name = ?
 LIMIT 1
 `
 
-type GetWorkspaceAgentProfileByNameParams struct {
+type GetWorkspaceProfileByNameParams struct {
 	WorkspaceID *string `json:"workspace_id"`
 	Name        string  `json:"name"`
 }
 
-type GetWorkspaceAgentProfileByNameRow struct {
+type GetWorkspaceProfileByNameRow struct {
 	ProfileID       string  `json:"profile_id"`
 	WorkspaceID     *string `json:"workspace_id"`
 	Name            string  `json:"name"`
@@ -106,9 +106,9 @@ type GetWorkspaceAgentProfileByNameRow struct {
 	UpdatedAt       string  `json:"updated_at"`
 }
 
-func (q *Queries) GetWorkspaceAgentProfileByName(ctx context.Context, arg GetWorkspaceAgentProfileByNameParams) (GetWorkspaceAgentProfileByNameRow, error) {
-	row := q.db.QueryRowContext(ctx, getWorkspaceAgentProfileByName, arg.WorkspaceID, arg.Name)
-	var i GetWorkspaceAgentProfileByNameRow
+func (q *Queries) GetWorkspaceProfileByName(ctx context.Context, arg GetWorkspaceProfileByNameParams) (GetWorkspaceProfileByNameRow, error) {
+	row := q.db.QueryRowContext(ctx, getWorkspaceProfileByName, arg.WorkspaceID, arg.Name)
+	var i GetWorkspaceProfileByNameRow
 	err := row.Scan(
 		&i.ProfileID,
 		&i.WorkspaceID,
@@ -126,7 +126,7 @@ func (q *Queries) GetWorkspaceAgentProfileByName(ctx context.Context, arg GetWor
 	return i, err
 }
 
-const listGlobalAgentProfiles = `-- name: ListGlobalAgentProfiles :many
+const listGlobalProfiles = `-- name: ListGlobalProfiles :many
 SELECT
   profile_id,
   workspace_id,
@@ -145,7 +145,7 @@ WHERE workspace_id IS NULL
 ORDER BY name ASC, profile_id ASC
 `
 
-type ListGlobalAgentProfilesRow struct {
+type ListGlobalProfilesRow struct {
 	ProfileID       string  `json:"profile_id"`
 	WorkspaceID     *string `json:"workspace_id"`
 	Name            string  `json:"name"`
@@ -160,15 +160,15 @@ type ListGlobalAgentProfilesRow struct {
 	UpdatedAt       string  `json:"updated_at"`
 }
 
-func (q *Queries) ListGlobalAgentProfiles(ctx context.Context) ([]ListGlobalAgentProfilesRow, error) {
-	rows, err := q.db.QueryContext(ctx, listGlobalAgentProfiles)
+func (q *Queries) ListGlobalProfiles(ctx context.Context) ([]ListGlobalProfilesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listGlobalProfiles)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ListGlobalAgentProfilesRow{}
+	items := []ListGlobalProfilesRow{}
 	for rows.Next() {
-		var i ListGlobalAgentProfilesRow
+		var i ListGlobalProfilesRow
 		if err := rows.Scan(
 			&i.ProfileID,
 			&i.WorkspaceID,
@@ -196,7 +196,7 @@ func (q *Queries) ListGlobalAgentProfiles(ctx context.Context) ([]ListGlobalAgen
 	return items, nil
 }
 
-const listWorkspaceAgentProfiles = `-- name: ListWorkspaceAgentProfiles :many
+const listWorkspaceProfiles = `-- name: ListWorkspaceProfiles :many
 SELECT
   profile_id,
   workspace_id,
@@ -215,11 +215,11 @@ WHERE workspace_id = ?
 ORDER BY name ASC, profile_id ASC
 `
 
-type ListWorkspaceAgentProfilesParams struct {
+type ListWorkspaceProfilesParams struct {
 	WorkspaceID *string `json:"workspace_id"`
 }
 
-type ListWorkspaceAgentProfilesRow struct {
+type ListWorkspaceProfilesRow struct {
 	ProfileID       string  `json:"profile_id"`
 	WorkspaceID     *string `json:"workspace_id"`
 	Name            string  `json:"name"`
@@ -234,15 +234,15 @@ type ListWorkspaceAgentProfilesRow struct {
 	UpdatedAt       string  `json:"updated_at"`
 }
 
-func (q *Queries) ListWorkspaceAgentProfiles(ctx context.Context, arg ListWorkspaceAgentProfilesParams) ([]ListWorkspaceAgentProfilesRow, error) {
-	rows, err := q.db.QueryContext(ctx, listWorkspaceAgentProfiles, arg.WorkspaceID)
+func (q *Queries) ListWorkspaceProfiles(ctx context.Context, arg ListWorkspaceProfilesParams) ([]ListWorkspaceProfilesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listWorkspaceProfiles, arg.WorkspaceID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ListWorkspaceAgentProfilesRow{}
+	items := []ListWorkspaceProfilesRow{}
 	for rows.Next() {
-		var i ListWorkspaceAgentProfilesRow
+		var i ListWorkspaceProfilesRow
 		if err := rows.Scan(
 			&i.ProfileID,
 			&i.WorkspaceID,
@@ -270,7 +270,7 @@ func (q *Queries) ListWorkspaceAgentProfiles(ctx context.Context, arg ListWorksp
 	return items, nil
 }
 
-const upsertAgentProfile = `-- name: UpsertAgentProfile :exec
+const upsertProfile = `-- name: UpsertProfile :exec
 INSERT INTO agent_profiles (
   profile_id,
   workspace_id,
@@ -298,7 +298,7 @@ ON CONFLICT(profile_id) DO UPDATE SET
   updated_at = excluded.updated_at
 `
 
-type UpsertAgentProfileParams struct {
+type UpsertProfileParams struct {
 	ProfileID       string  `json:"profile_id"`
 	WorkspaceID     *string `json:"workspace_id"`
 	Name            string  `json:"name"`
@@ -313,8 +313,8 @@ type UpsertAgentProfileParams struct {
 	UpdatedAt       string  `json:"updated_at"`
 }
 
-func (q *Queries) UpsertAgentProfile(ctx context.Context, arg UpsertAgentProfileParams) error {
-	_, err := q.db.ExecContext(ctx, upsertAgentProfile,
+func (q *Queries) UpsertProfile(ctx context.Context, arg UpsertProfileParams) error {
+	_, err := q.db.ExecContext(ctx, upsertProfile,
 		arg.ProfileID,
 		arg.WorkspaceID,
 		arg.Name,

@@ -43,7 +43,7 @@ func TestWorkspaceStatusProjectsCommandsAgentsProofsAndVCS(t *testing.T) {
 	}
 	d.setCommandOutput("cmd-1", "unit test failed\nfull log")
 
-	d.recordExecutorRun(AgentSession{AgentSessionID: "run-1", WorkspaceID: "ws-1", Executor: "codex", Status: "running", StartedAt: "2026-04-25T00:00:01Z"}, nil)
+	d.recordExecutorRun(HarnessSession{HarnessSessionID: "run-1", WorkspaceID: "ws-1", Executor: "codex", Status: "running", StartedAt: "2026-04-25T00:00:01Z"}, nil)
 
 	resp := callMethod[WorkspaceStatusResponse](t, registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-1"})
 	if resp.WorkspaceID != "ws-1" {
@@ -145,8 +145,8 @@ func TestWorkspaceStatusOrdersExecutorRunsDeterministically(t *testing.T) {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
-	d.recordExecutorRun(AgentSession{AgentSessionID: "z-run", WorkspaceID: "ws-1", Status: "running", Executor: "fake", StartedAt: "2026-04-25T00:00:02Z"}, nil)
-	d.recordExecutorRun(AgentSession{AgentSessionID: "a-run", WorkspaceID: "ws-1", Status: "running", Executor: "fake", StartedAt: "2026-04-25T00:00:01Z"}, nil)
+	d.recordExecutorRun(HarnessSession{HarnessSessionID: "z-run", WorkspaceID: "ws-1", Status: "running", Executor: "fake", StartedAt: "2026-04-25T00:00:02Z"}, nil)
+	d.recordExecutorRun(HarnessSession{HarnessSessionID: "a-run", WorkspaceID: "ws-1", Status: "running", Executor: "fake", StartedAt: "2026-04-25T00:00:01Z"}, nil)
 
 	resp := callMethod[WorkspaceStatusResponse](t, registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-1"})
 	if len(resp.Sessions) != 2 {
@@ -157,7 +157,7 @@ func TestWorkspaceStatusOrdersExecutorRunsDeterministically(t *testing.T) {
 	}
 }
 
-func TestWorkspaceStatusProjectsPersistedAgentSessionsAfterDaemonRestart(t *testing.T) {
+func TestWorkspaceStatusProjectsPersistedHarnessSessionsAfterDaemonRestart(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
@@ -166,11 +166,11 @@ func TestWorkspaceStatusProjectsPersistedAgentSessionsAfterDaemonRestart(t *test
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
-	if err := store.CreateAgentSessionConfig(context.Background(), globaldb.AgentSessionConfig{AgentID: "agent-1", WorkspaceID: "ws-1", Name: "executor", Harness: "codex"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(context.Background(), globaldb.HarnessSessionConfig{AgentID: "agent-1", WorkspaceID: "ws-1", Name: "executor", Harness: "codex"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig returned error: %v", err)
 	}
-	if err := store.CreateAgentSession(context.Background(), globaldb.AgentSession{SessionID: "run-1", WorkspaceID: "ws-1", AgentID: "agent-1", Harness: "codex", Status: "running", Usage: "durable"}); err != nil {
-		t.Fatalf("CreateAgentSession returned error: %v", err)
+	if err := store.CreateHarnessSession(context.Background(), globaldb.HarnessSession{SessionID: "run-1", WorkspaceID: "ws-1", AgentID: "agent-1", Harness: "codex", Status: "running", Usage: globaldb.HarnessSessionUsageSticky}); err != nil {
+		t.Fatalf("CreateHarnessSession returned error: %v", err)
 	}
 
 	resp := callMethod[WorkspaceStatusResponse](t, registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-1"})
@@ -233,7 +233,7 @@ func TestWorkspaceStatusDoesNotLeakOtherWorkspaceOperations(t *testing.T) {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 	otherRoot := t.TempDir()
-	if err := store.CreateSession(context.Background(), "ws-other", "homepage", otherRoot, "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(context.Background(), "ws-other", "homepage", otherRoot, "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
 	if err := store.AddFolder(context.Background(), "ws-other", otherRoot, "git", true); err != nil {
@@ -262,17 +262,17 @@ func TestWorkspaceStatusProjectsMessageWorkflows(t *testing.T) {
 	}
 	ctx := context.Background()
 	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "executor", WorkspaceID: "ws-1", Name: "executor", Harness: "codex"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig executor returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "executor", WorkspaceID: "ws-1", Name: "executor", Harness: "codex"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig executor returned error: %v", err)
 	}
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "reviewer", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig reviewer returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "reviewer", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig reviewer returned error: %v", err)
 	}
-	if err := store.CreateAgentSession(ctx, globaldb.AgentSession{SessionID: "run-1", WorkspaceID: "ws-1", AgentID: "executor", Harness: "codex", Status: "waiting", Usage: "durable"}); err != nil {
-		t.Fatalf("CreateAgentSession source returned error: %v", err)
+	if err := store.CreateHarnessSession(ctx, globaldb.HarnessSession{SessionID: "run-1", WorkspaceID: "ws-1", AgentID: "executor", Harness: "codex", Status: "waiting", Usage: globaldb.HarnessSessionUsageSticky}); err != nil {
+		t.Fatalf("CreateHarnessSession source returned error: %v", err)
 	}
-	if err := store.CreateAgentSession(ctx, globaldb.AgentSession{SessionID: "call-1-run", WorkspaceID: "ws-1", AgentID: "reviewer", Harness: "opencode", Status: "running", Usage: "ephemeral", SourceSessionID: "run-1", SourceAgentID: "executor"}); err != nil {
-		t.Fatalf("CreateAgentSession ephemeral returned error: %v", err)
+	if err := store.CreateHarnessSession(ctx, globaldb.HarnessSession{SessionID: "call-1-run", WorkspaceID: "ws-1", AgentID: "reviewer", Harness: "opencode", Status: "running", Usage: "ephemeral", SourceSessionID: "run-1", SourceAgentID: "executor"}); err != nil {
+		t.Fatalf("CreateHarnessSession ephemeral returned error: %v", err)
 	}
 	if err := store.AppendRunLogMessage(ctx, globaldb.RunLogMessage{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "assistant", Parts: []globaldb.RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "text", Text: "please review"}}}); err != nil {
 		t.Fatalf("AppendRunLogMessage returned error: %v", err)
@@ -322,14 +322,14 @@ func TestWorkspaceStatusAttentionIncludesRunningSessions(t *testing.T) {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
-	if err := store.UpsertAgentProfile(context.Background(), globaldb.AgentProfile{ProfileID: "profile-1", WorkspaceID: "ws-1", Name: "executor", Harness: "codex"}); err != nil {
-		t.Fatalf("UpsertAgentProfile returned error: %v", err)
+	if err := store.UpsertProfile(context.Background(), globaldb.Profile{ProfileID: "profile-1", WorkspaceID: "ws-1", Name: "executor", Harness: "codex"}); err != nil {
+		t.Fatalf("UpsertProfile returned error: %v", err)
 	}
-	if err := store.EnsureAgentSessionConfig(context.Background(), globaldb.AgentSessionConfig{AgentID: "profile-1", WorkspaceID: "ws-1", Name: "executor", Harness: "codex"}); err != nil {
-		t.Fatalf("EnsureAgentSessionConfig returned error: %v", err)
+	if err := store.EnsureHarnessSessionConfig(context.Background(), globaldb.HarnessSessionConfig{AgentID: "profile-1", WorkspaceID: "ws-1", Name: "executor", Harness: "codex"}); err != nil {
+		t.Fatalf("EnsureHarnessSessionConfig returned error: %v", err)
 	}
-	if err := store.CreateAgentSession(context.Background(), globaldb.AgentSession{SessionID: "session-running", WorkspaceID: "ws-1", AgentID: "profile-1", Harness: "codex", Status: "running", Usage: globaldb.AgentSessionUsageSticky}); err != nil {
-		t.Fatalf("CreateAgentSession returned error: %v", err)
+	if err := store.CreateHarnessSession(context.Background(), globaldb.HarnessSession{SessionID: "session-running", WorkspaceID: "ws-1", AgentID: "profile-1", Harness: "codex", Status: "running", Usage: globaldb.HarnessSessionUsageSticky}); err != nil {
+		t.Fatalf("CreateHarnessSession returned error: %v", err)
 	}
 
 	resp := callMethod[WorkspaceStatusResponse](t, registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-1"})
@@ -375,8 +375,8 @@ func TestWorkspaceStatusAttentionIncludesAuthRequired(t *testing.T) {
 	if err := store.UpsertAuthSlot(context.Background(), globaldb.AuthSlot{AuthSlotID: "codex-default", Harness: "codex", Label: "default", Status: "auth_required"}); err != nil {
 		t.Fatalf("UpsertAuthSlot returned error: %v", err)
 	}
-	if err := store.UpsertAgentProfile(context.Background(), globaldb.AgentProfile{ProfileID: "ap-helper", WorkspaceID: "ws-1", Name: "helper", Harness: "codex", AuthSlotID: "codex-default"}); err != nil {
-		t.Fatalf("UpsertAgentProfile returned error: %v", err)
+	if err := store.UpsertProfile(context.Background(), globaldb.Profile{ProfileID: "ap-helper", WorkspaceID: "ws-1", Name: "helper", Harness: "codex", AuthSlotID: "codex-default"}); err != nil {
+		t.Fatalf("UpsertProfile returned error: %v", err)
 	}
 
 	resp := callMethod[WorkspaceStatusResponse](t, registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-1"})
@@ -406,8 +406,8 @@ func TestWorkspaceStatusAttentionTreatsBrokenAuthAsActionRequired(t *testing.T) 
 			if err := store.UpsertAuthSlot(context.Background(), globaldb.AuthSlot{AuthSlotID: "codex-default", Harness: "codex", Label: "default", Status: status}); err != nil {
 				t.Fatalf("UpsertAuthSlot returned error: %v", err)
 			}
-			if err := store.UpsertAgentProfile(context.Background(), globaldb.AgentProfile{ProfileID: "ap-helper", WorkspaceID: "ws-1", Name: "helper", Harness: "codex", AuthSlotID: "codex-default"}); err != nil {
-				t.Fatalf("UpsertAgentProfile returned error: %v", err)
+			if err := store.UpsertProfile(context.Background(), globaldb.Profile{ProfileID: "ap-helper", WorkspaceID: "ws-1", Name: "helper", Harness: "codex", AuthSlotID: "codex-default"}); err != nil {
+				t.Fatalf("UpsertProfile returned error: %v", err)
 			}
 
 			resp := callMethod[WorkspaceStatusResponse](t, registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-1"})
@@ -433,17 +433,17 @@ func TestWorkspaceStatusAttentionIncludesMixedSourcesWithHighestLevel(t *testing
 	if err := store.UpsertAuthSlot(context.Background(), globaldb.AuthSlot{AuthSlotID: "codex-default", Harness: "codex", Label: "default", Status: "auth_required"}); err != nil {
 		t.Fatalf("UpsertAuthSlot returned error: %v", err)
 	}
-	if err := store.UpsertAgentProfile(context.Background(), globaldb.AgentProfile{ProfileID: "ap-helper", WorkspaceID: "ws-1", Name: "helper", Harness: "codex", AuthSlotID: "codex-default"}); err != nil {
-		t.Fatalf("UpsertAgentProfile returned error: %v", err)
+	if err := store.UpsertProfile(context.Background(), globaldb.Profile{ProfileID: "ap-helper", WorkspaceID: "ws-1", Name: "helper", Harness: "codex", AuthSlotID: "codex-default"}); err != nil {
+		t.Fatalf("UpsertProfile returned error: %v", err)
 	}
-	if err := store.UpsertAgentProfile(context.Background(), globaldb.AgentProfile{ProfileID: "profile-1", WorkspaceID: "ws-1", Name: "executor", Harness: "codex"}); err != nil {
-		t.Fatalf("UpsertAgentProfile executor returned error: %v", err)
+	if err := store.UpsertProfile(context.Background(), globaldb.Profile{ProfileID: "profile-1", WorkspaceID: "ws-1", Name: "executor", Harness: "codex"}); err != nil {
+		t.Fatalf("UpsertProfile executor returned error: %v", err)
 	}
-	if err := store.EnsureAgentSessionConfig(context.Background(), globaldb.AgentSessionConfig{AgentID: "profile-1", WorkspaceID: "ws-1", Name: "executor", Harness: "codex"}); err != nil {
-		t.Fatalf("EnsureAgentSessionConfig returned error: %v", err)
+	if err := store.EnsureHarnessSessionConfig(context.Background(), globaldb.HarnessSessionConfig{AgentID: "profile-1", WorkspaceID: "ws-1", Name: "executor", Harness: "codex"}); err != nil {
+		t.Fatalf("EnsureHarnessSessionConfig returned error: %v", err)
 	}
-	if err := store.CreateAgentSession(context.Background(), globaldb.AgentSession{SessionID: "session-running", WorkspaceID: "ws-1", AgentID: "profile-1", Harness: "codex", Status: "running", Usage: globaldb.AgentSessionUsageSticky}); err != nil {
-		t.Fatalf("CreateAgentSession returned error: %v", err)
+	if err := store.CreateHarnessSession(context.Background(), globaldb.HarnessSession{SessionID: "session-running", WorkspaceID: "ws-1", AgentID: "profile-1", Harness: "codex", Status: "running", Usage: globaldb.HarnessSessionUsageSticky}); err != nil {
+		t.Fatalf("CreateHarnessSession returned error: %v", err)
 	}
 
 	resp := callMethod[WorkspaceStatusResponse](t, registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-1"})

@@ -199,7 +199,7 @@ func (d *Daemon) workspaceStatus(ctx context.Context, store *globaldb.Store, raw
 	if err != nil {
 		return WorkspaceStatusResponse{}, err
 	}
-	session, err := store.GetSession(ctx, workspaceID)
+	session, err := store.GetWorkspace(ctx, workspaceID)
 	if err != nil {
 		return WorkspaceStatusResponse{}, mapWorkspaceStoreError(err, workspaceID)
 	}
@@ -297,12 +297,12 @@ func operationRecordStatus(record globaldb.OperationRecord) string {
 	return record.Result
 }
 
-func workspaceStateTimeline(ctx context.Context, store *globaldb.Store, session *globaldb.Session, roots []string, attention AttentionSummary) ([]TimelineItem, error) {
-	profiles, err := store.ListAgentProfiles(ctx, session.ID)
+func workspaceStateTimeline(ctx context.Context, store *globaldb.Store, session *globaldb.Workspace, roots []string, attention AttentionSummary) ([]TimelineItem, error) {
+	profiles, err := store.ListProfiles(ctx, session.ID)
 	if err != nil {
 		return nil, err
 	}
-	agentSessions, err := store.ListAgentSessions(ctx, session.ID)
+	agentSessions, err := store.ListHarnessSessions(ctx, session.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -351,7 +351,7 @@ func agentSessionConfigMessages(ctx context.Context, store *globaldb.Store, work
 }
 
 func workspaceAuthSlots(ctx context.Context, store *globaldb.Store, workspaceID string) ([]globaldb.AuthSlot, error) {
-	profiles, err := store.ListAgentProfiles(ctx, workspaceID)
+	profiles, err := store.ListProfiles(ctx, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -475,10 +475,10 @@ func (d *Daemon) workspaceSessionActivity(ctx context.Context, store *globaldb.S
 	seen := make(map[string]bool)
 	executorRuns := d.executorRunsForWorkspace(workspaceID)
 	for _, run := range executorRuns {
-		out = append(out, SessionActivity{ID: run.AgentSessionID, Status: run.Status, Executor: run.Executor, WorkspaceID: run.WorkspaceID, ActiveTaskID: run.TaskID, StartedAt: run.StartedAt, LastActivityAt: run.StartedAt})
-		seen[run.AgentSessionID] = true
+		out = append(out, SessionActivity{ID: run.HarnessSessionID, Status: run.Status, Executor: run.Executor, WorkspaceID: run.WorkspaceID, ActiveTaskID: run.TaskID, StartedAt: run.StartedAt, LastActivityAt: run.StartedAt})
+		seen[run.HarnessSessionID] = true
 	}
-	persistedRuns, err := store.ListAgentSessions(ctx, workspaceID)
+	persistedRuns, err := store.ListHarnessSessions(ctx, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -491,9 +491,9 @@ func (d *Daemon) workspaceSessionActivity(ctx context.Context, store *globaldb.S
 	return out, nil
 }
 
-func (d *Daemon) executorRunsForWorkspace(workspaceID string) []AgentSession {
+func (d *Daemon) executorRunsForWorkspace(workspaceID string) []HarnessSession {
 	d.executorMu.RLock()
-	runs := make([]AgentSession, 0, len(d.executorRuns))
+	runs := make([]HarnessSession, 0, len(d.executorRuns))
 	for _, run := range d.executorRuns {
 		if run.WorkspaceID != workspaceID {
 			continue
@@ -503,7 +503,7 @@ func (d *Daemon) executorRunsForWorkspace(workspaceID string) []AgentSession {
 	d.executorMu.RUnlock()
 	sort.Slice(runs, func(i int, j int) bool {
 		if runs[i].StartedAt == runs[j].StartedAt {
-			return runs[i].AgentSessionID < runs[j].AgentSessionID
+			return runs[i].HarnessSessionID < runs[j].HarnessSessionID
 		}
 		return runs[i].StartedAt < runs[j].StartedAt
 	})
@@ -540,7 +540,7 @@ func requireWorkspaceRoots(ctx context.Context, store *globaldb.Store, rawWorksp
 	if workspaceID == "" {
 		return "", nil, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
 	}
-	session, err := store.GetSession(ctx, workspaceID)
+	session, err := store.GetWorkspace(ctx, workspaceID)
 	if err != nil {
 		return "", nil, mapWorkspaceStoreError(err, workspaceID)
 	}

@@ -17,7 +17,7 @@ func TestRollbackInitRemovesAriOwnedStateAndAppendsRecord(t *testing.T) {
 	registry := rpc.NewMethodRegistry()
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", configPath, "defaults", "test-version")
-	d.setHarnessFactoryForTest("codex", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("codex", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -57,7 +57,7 @@ func TestRollbackInitRemovesAriOwnedStateAndAppendsRecord(t *testing.T) {
 	if persisted["default_harness"] != "" || persisted["preferred_model"] != "" || persisted["default_workspace_root"] != "" {
 		t.Fatalf("config after rollback = %#v, want init-owned config cleared", persisted)
 	}
-	sessions, err := store.ListSessions(context.Background())
+	sessions, err := store.ListWorkspaces(context.Background())
 	if err != nil {
 		t.Fatalf("ListSessions returned error: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestRollbackInitPreservesPreExistingWorkspaceAtRoot(t *testing.T) {
 	registry := rpc.NewMethodRegistry()
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", configPath, "defaults", "test-version")
-	d.setHarnessFactoryForTest("codex", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("codex", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -104,7 +104,7 @@ func TestRollbackInitPreservesPreExistingWorkspaceAtRoot(t *testing.T) {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 	root := t.TempDir()
-	if err := store.CreateSession(context.Background(), "ws-existing", "existing", root, "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(context.Background(), "ws-existing", "existing", root, "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
 	if err := store.AddFolder(context.Background(), "ws-existing", root, "git", true); err != nil {
@@ -122,7 +122,7 @@ func TestRollbackInitPreservesPreExistingWorkspaceAtRoot(t *testing.T) {
 		}
 	}
 	callMethod[RollbackApplyResponse](t, registry, "rollback.apply", RollbackApplyRequest{RollbackPointID: rollbackPointID})
-	if _, err := store.GetSession(context.Background(), "ws-existing"); err != nil {
+	if _, err := store.GetWorkspace(context.Background(), "ws-existing"); err != nil {
 		t.Fatalf("pre-existing workspace was removed: %v", err)
 	}
 }
@@ -133,7 +133,7 @@ func TestRollbackInitRestoresPreviousActiveWorkspace(t *testing.T) {
 	registry := rpc.NewMethodRegistry()
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", configPath, "defaults", "test-version")
-	d.setHarnessFactoryForTest("codex", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("codex", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -178,7 +178,7 @@ func TestRollbackInitRestoresPreviousDefaults(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", configPath, "defaults", "test-version")
-	d.setHarnessFactoryForTest("codex", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("codex", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -214,7 +214,7 @@ func TestRollbackInitDoesNotOverwriteCurrentProjectActiveWorkspace(t *testing.T)
 	registry := rpc.NewMethodRegistry()
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", configPath, "defaults", "test-version")
-	d.setHarnessFactoryForTest("codex", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("codex", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -278,7 +278,7 @@ func TestRollbackProjectSetupRemovesWorkspaceAndClearsActiveContext(t *testing.T
 	if rolledBack.Status != daemonOperationResultSucceeded || rolledBack.RollbackOperationID == "" {
 		t.Fatalf("rollback response = %#v, want success", rolledBack)
 	}
-	if _, err := store.GetSession(context.Background(), setup.WorkspaceID); err == nil {
+	if _, err := store.GetWorkspace(context.Background(), setup.WorkspaceID); err == nil {
 		t.Fatalf("workspace %q still exists after rollback", setup.WorkspaceID)
 	}
 	active = callMethod[ContextGetResponse](t, registry, "context.get", ContextGetRequest{})

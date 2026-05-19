@@ -10,7 +10,7 @@ func TestAgentStoreLifecycleAndReconciliation(t *testing.T) {
 	store := newAgentTestStore(t)
 	ctx := context.Background()
 
-	if err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
 
@@ -25,7 +25,7 @@ func TestAgentStoreLifecycleAndReconciliation(t *testing.T) {
 		Harness:            stringPtr("claude-code"),
 		HarnessResumableID: stringPtr("sess-resume-1"),
 		HarnessMetadata:    `{"resume_source":"argv"}`,
-		InvocationClass:    "temporary",
+		InvocationClass:    HarnessSessionUsageEphemeral,
 	}
 	if err := store.CreateAgent(ctx, createReq); err != nil {
 		t.Fatalf("CreateAgent returned error: %v", err)
@@ -50,8 +50,8 @@ func TestAgentStoreLifecycleAndReconciliation(t *testing.T) {
 	if gotByID.HarnessMetadata != `{"resume_source":"argv"}` {
 		t.Fatalf("GetAgent HarnessMetadata = %q, want %q", gotByID.HarnessMetadata, `{"resume_source":"argv"}`)
 	}
-	if gotByID.InvocationClass != "temporary" {
-		t.Fatalf("GetAgent InvocationClass = %q, want temporary", gotByID.InvocationClass)
+	if gotByID.InvocationClass != HarnessSessionUsageEphemeral {
+		t.Fatalf("GetAgent InvocationClass = %q, want ephemeral", gotByID.InvocationClass)
 	}
 
 	gotByName, err := store.GetAgentByName(ctx, "sess-1", "claude")
@@ -72,8 +72,8 @@ func TestAgentStoreLifecycleAndReconciliation(t *testing.T) {
 	if list[0].Name == nil || *list[0].Name != "claude" {
 		t.Fatalf("ListAgents[0].Name = %v, want %q", list[0].Name, "claude")
 	}
-	if list[0].InvocationClass != "temporary" {
-		t.Fatalf("ListAgents[0].InvocationClass = %q, want temporary", list[0].InvocationClass)
+	if list[0].InvocationClass != HarnessSessionUsageEphemeral {
+		t.Fatalf("ListAgents[0].InvocationClass = %q, want ephemeral", list[0].InvocationClass)
 	}
 
 	updateReq := UpdateAgentStatusParams{
@@ -126,7 +126,7 @@ func TestGetAgentMissingReturnsNotFound(t *testing.T) {
 	store := newAgentTestStore(t)
 	ctx := context.Background()
 
-	if err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
 
@@ -171,10 +171,10 @@ func TestCreateAgentAllowsSameNameAcrossSessions(t *testing.T) {
 	store := newAgentTestStore(t)
 	ctx := context.Background()
 
-	if err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin-a", "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "sess-1", "alpha", "/tmp/origin-a", "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession sess-1 returned error: %v", err)
 	}
-	if err := store.CreateSession(ctx, "sess-2", "beta", "/tmp/origin-b", "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "sess-2", "beta", "/tmp/origin-b", "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession sess-2 returned error: %v", err)
 	}
 
@@ -208,11 +208,11 @@ func TestNewAgentTestStoreUsesIsolatedDatabase(t *testing.T) {
 	storeB := newAgentTestStore(t)
 	ctx := context.Background()
 
-	if err := storeA.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
+	if err := storeA.CreateWorkspace(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
 		t.Fatalf("storeA CreateSession returned error: %v", err)
 	}
 
-	sessions, err := storeB.ListSessions(ctx)
+	sessions, err := storeB.ListWorkspaces(ctx)
 	if err != nil {
 		t.Fatalf("storeB ListSessions returned error: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestCreateAgentRejectsDuplicateNameInSameSession(t *testing.T) {
 	store := newAgentTestStore(t)
 	ctx := context.Background()
 
-	if err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
 

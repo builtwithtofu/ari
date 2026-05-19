@@ -12,22 +12,22 @@ import (
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
 )
 
-type AgentSessionStartRequest struct {
-	Executor          string               `json:"executor"`
-	Packet            ContextPacket        `json:"packet"`
-	Command           string               `json:"command,omitempty"`
-	Args              []string             `json:"args,omitempty"`
-	WorkspaceID       string               `json:"workspace_id,omitempty"`
-	Profile           string               `json:"profile,omitempty"`
-	ProfileDefinition *AgentProfile        `json:"profile_definition,omitempty"`
-	Defaults          AgentSessionDefaults `json:"defaults,omitempty"`
-	SessionID         string               `json:"session_id,omitempty"`
-	Message           string               `json:"message,omitempty"`
-	Prompt            string               `json:"prompt,omitempty"`
+type HarnessSessionStartRequest struct {
+	Executor          string                 `json:"executor"`
+	Packet            ContextPacket          `json:"packet"`
+	Command           string                 `json:"command,omitempty"`
+	Args              []string               `json:"args,omitempty"`
+	WorkspaceID       string                 `json:"workspace_id,omitempty"`
+	Profile           string                 `json:"profile,omitempty"`
+	ProfileDefinition *Profile               `json:"profile_definition,omitempty"`
+	Defaults          HarnessSessionDefaults `json:"defaults,omitempty"`
+	SessionID         string                 `json:"session_id,omitempty"`
+	Message           string                 `json:"message,omitempty"`
+	Prompt            string                 `json:"prompt,omitempty"`
 }
 
-type AgentSessionStartResponse struct {
-	Run   AgentSession   `json:"run"`
+type HarnessSessionStartResponse struct {
+	Run   HarnessSession `json:"run"`
 	Items []TimelineItem `json:"items"`
 }
 
@@ -36,7 +36,7 @@ type SessionGetRequest struct {
 }
 
 type SessionGetResponse struct {
-	Session AgentSession `json:"session"`
+	Session HarnessSession `json:"session"`
 }
 
 type SessionListRequest struct {
@@ -44,7 +44,7 @@ type SessionListRequest struct {
 }
 
 type SessionListResponse struct {
-	Sessions []AgentSession `json:"sessions"`
+	Sessions []HarnessSession `json:"sessions"`
 }
 
 type ClaudeSessionLogsRequest struct {
@@ -68,8 +68,8 @@ type ClaudeSessionAttachResponse struct {
 	Command           []string `json:"command"`
 }
 
-type AgentSession struct {
-	AgentSessionID    string                `json:"agent_session_id"`
+type HarnessSession struct {
+	HarnessSessionID  string                `json:"harness_session_id"`
 	SessionID         string                `json:"session_id,omitempty"`
 	WorkspaceID       string                `json:"workspace_id"`
 	Usage             string                `json:"usage,omitempty"`
@@ -99,9 +99,9 @@ const (
 	HarnessNamePTY      = "pty"
 )
 
-type HarnessFactory func(AgentSessionStartRequest, string, func(string, []TimelineItem)) (Executor, error)
+type HarnessFactory func(HarnessSessionStartRequest, string, func(string, []TimelineItem)) (Executor, error)
 
-type AgentProfile struct {
+type Profile struct {
 	ProfileID       string                 `json:"profile_id,omitempty"`
 	WorkspaceID     string                 `json:"workspace_id,omitempty"`
 	Name            string                 `json:"name"`
@@ -114,7 +114,7 @@ type AgentProfile struct {
 	Defaults        map[string]any         `json:"defaults,omitempty"`
 }
 
-type AgentSessionDefaults struct {
+type HarnessSessionDefaults struct {
 	Harness         string                 `json:"harness,omitempty"`
 	Model           string                 `json:"model,omitempty"`
 	Prompt          string                 `json:"prompt,omitempty"`
@@ -124,22 +124,22 @@ type AgentSessionDefaults struct {
 	Settings        map[string]any         `json:"settings,omitempty"`
 }
 
-type AgentProfileRunRequest struct {
-	Profile           string               `json:"profile,omitempty"`
-	Executor          string               `json:"executor,omitempty"`
-	ProfileDefinition *AgentProfile        `json:"profile_definition,omitempty"`
-	Defaults          AgentSessionDefaults `json:"defaults,omitempty"`
-	Packet            ContextPacket        `json:"packet"`
+type ProfileRunRequest struct {
+	Profile           string                 `json:"profile,omitempty"`
+	Executor          string                 `json:"executor,omitempty"`
+	ProfileDefinition *Profile               `json:"profile_definition,omitempty"`
+	Defaults          HarnessSessionDefaults `json:"defaults,omitempty"`
+	Packet            ContextPacket          `json:"packet"`
 }
 
-type AgentProfileRunResponse struct {
+type ProfileRunResponse struct {
 	Profile string         `json:"profile"`
 	Harness string         `json:"harness"`
-	Run     AgentSession   `json:"run"`
+	Run     HarnessSession `json:"run"`
 	Items   []TimelineItem `json:"items"`
 }
 
-type AgentProfileCreateRequest struct {
+type ProfileCreateRequest struct {
 	WorkspaceID     string                 `json:"workspace_id,omitempty"`
 	Name            string                 `json:"name"`
 	Harness         string                 `json:"harness,omitempty"`
@@ -151,17 +151,17 @@ type AgentProfileCreateRequest struct {
 	Defaults        map[string]any         `json:"defaults,omitempty"`
 }
 
-type AgentProfileGetRequest struct {
+type ProfileGetRequest struct {
 	WorkspaceID string `json:"workspace_id,omitempty"`
 	Name        string `json:"name"`
 }
 
-type AgentProfileListRequest struct {
+type ProfileListRequest struct {
 	WorkspaceID string `json:"workspace_id,omitempty"`
 }
 
-type AgentProfileListResponse struct {
-	Profiles []AgentProfileResponse `json:"profiles"`
+type ProfileListResponse struct {
+	Profiles []ProfileResponse `json:"profiles"`
 }
 
 type RunLogMessagesTailRequest struct {
@@ -266,7 +266,7 @@ type ContextExcerptItemResponse struct {
 	CopiedParts     []RunLogMessagePartResponse `json:"copied_parts"`
 }
 
-type AgentSessionConfigCreateRequest struct {
+type HarnessSessionConfigCreateRequest struct {
 	AgentID     string `json:"agent_id"`
 	WorkspaceID string `json:"workspace_id,omitempty"`
 	Name        string `json:"name"`
@@ -275,19 +275,19 @@ type AgentSessionConfigCreateRequest struct {
 	Prompt      string `json:"prompt,omitempty"`
 }
 
-type AgentSessionConfigCreateResponse struct {
-	Agent AgentSessionConfigResponse `json:"agent"`
+type HarnessSessionConfigCreateResponse struct {
+	Config HarnessSessionConfigResponse `json:"config"`
 }
 
-type AgentSessionConfigListRequest struct {
+type HarnessSessionConfigListRequest struct {
 	WorkspaceID string `json:"workspace_id"`
 }
 
-type AgentSessionConfigListResponse struct {
-	Agents []AgentSessionConfigResponse `json:"agents"`
+type HarnessSessionConfigListResponse struct {
+	Configs []HarnessSessionConfigResponse `json:"configs"`
 }
 
-type AgentSessionConfigUpdateRequest struct {
+type HarnessSessionConfigUpdateRequest struct {
 	AgentID     string `json:"agent_id"`
 	WorkspaceID string `json:"workspace_id"`
 	Name        string `json:"name"`
@@ -296,25 +296,25 @@ type AgentSessionConfigUpdateRequest struct {
 	Prompt      string `json:"prompt,omitempty"`
 }
 
-type AgentSessionConfigDeleteRequest struct {
+type HarnessSessionConfigDeleteRequest struct {
 	AgentID string `json:"agent_id"`
 }
 
-type AgentSessionConfigDeleteResponse struct {
+type HarnessSessionConfigDeleteResponse struct {
 	Deleted bool `json:"deleted"`
 }
 
-type AgentSessionConfigSessionRequest struct {
+type HarnessSessionConfigSessionRequest struct {
 	SessionID string `json:"session_id"`
 	AgentID   string `json:"agent_id"`
 	CWD       string `json:"cwd,omitempty"`
 }
 
-type AgentSessionConfigSessionResponse struct {
-	Run globaldb.AgentSession `json:"run"`
+type HarnessSessionConfigSessionResponse struct {
+	Run globaldb.HarnessSession `json:"run"`
 }
 
-type AgentSessionConfigResponse struct {
+type HarnessSessionConfigResponse struct {
 	AgentID     string `json:"agent_id"`
 	WorkspaceID string `json:"workspace_id,omitempty"`
 	Name        string `json:"name"`
@@ -350,7 +350,7 @@ type AgentMessageResponse struct {
 	ContextExcerptIDs  []string `json:"context_excerpt_ids,omitempty"`
 }
 
-type EphemeralAgentCallRequest struct {
+type EphemeralCallRequest struct {
 	CallID              string   `json:"call_id"`
 	SourceSessionID     string   `json:"source_session_id"`
 	TargetAgentID       string   `json:"target_agent_id"`
@@ -360,10 +360,10 @@ type EphemeralAgentCallRequest struct {
 	ReplyAgentMessageID string   `json:"reply_agent_message_id,omitempty"`
 }
 
-type EphemeralAgentCallResponse struct {
-	Run     globaldb.AgentSession `json:"run"`
-	Request AgentMessageResponse  `json:"request"`
-	Reply   AgentMessageResponse  `json:"reply"`
+type EphemeralCallResponse struct {
+	Run     globaldb.HarnessSession `json:"run"`
+	Request AgentMessageResponse    `json:"request"`
+	Reply   AgentMessageResponse    `json:"reply"`
 }
 
 type DefaultHelperEnsureRequest struct {
@@ -541,7 +541,7 @@ type FinalResponseResponse struct {
 	UpdatedAt       string                      `json:"updated_at,omitempty"`
 }
 
-type AgentProfileResponse struct {
+type ProfileResponse struct {
 	ProfileID       string                 `json:"profile_id"`
 	WorkspaceID     string                 `json:"workspace_id,omitempty"`
 	Name            string                 `json:"name"`
@@ -554,11 +554,11 @@ type AgentProfileResponse struct {
 	Defaults        map[string]any         `json:"defaults,omitempty"`
 }
 
-func defaultAgentProfiles() map[string]AgentProfile {
-	return make(map[string]AgentProfile)
+func defaultProfiles() map[string]Profile {
+	return make(map[string]Profile)
 }
 
-var agentSessionProcessMetricsSampler = func(ctx context.Context, run AgentSession) ProcessMetricsSample {
+var agentSessionProcessMetricsSampler = func(ctx context.Context, run HarnessSession) ProcessMetricsSample {
 	return sampleLinuxProcessMetrics(ctx, run)
 }
 
@@ -566,7 +566,7 @@ func unknownProcessMetric(confidence string) ProcessMetricValue {
 	return ProcessMetricValue{Known: false, Confidence: strings.TrimSpace(confidence)}
 }
 
-func (d *Daemon) resolveHarness(req AgentSessionStartRequest, primaryFolder string) (Executor, error) {
+func (d *Daemon) resolveHarness(req HarnessSessionStartRequest, primaryFolder string) (Executor, error) {
 	if d == nil {
 		return nil, fmt.Errorf("daemon is required")
 	}
@@ -593,12 +593,12 @@ func (d *Daemon) setHarnessFactoryForTest(name string, factory HarnessFactory) {
 	}
 }
 
-func (d *Daemon) setAgentProfileForTest(profile AgentProfile) {
+func (d *Daemon) setProfileForTest(profile Profile) {
 	if d == nil {
 		return
 	}
 	if d.agentProfiles == nil {
-		d.agentProfiles = make(map[string]AgentProfile)
+		d.agentProfiles = make(map[string]Profile)
 	}
 	d.agentProfiles[strings.TrimSpace(profile.Name)] = profile
 }
@@ -616,11 +616,11 @@ func (d *Daemon) registerExecutorMethods(registry *rpc.MethodRegistry, store *gl
 	if err := d.registerMessageContextMethods(registry, store); err != nil {
 		return err
 	}
-	if err := rpc.RegisterMethod(registry, rpc.Method[EphemeralAgentCallRequest, EphemeralAgentCallResponse]{
+	if err := rpc.RegisterMethod(registry, rpc.Method[EphemeralCallRequest, EphemeralCallResponse]{
 		Name:        "session.call.ephemeral",
 		Description: "Run a task-scoped target profile and route its response back to the caller",
-		Handler: func(ctx context.Context, req EphemeralAgentCallRequest) (EphemeralAgentCallResponse, error) {
-			return d.callEphemeralAgent(ctx, store, req)
+		Handler: func(ctx context.Context, req EphemeralCallRequest) (EphemeralCallResponse, error) {
+			return d.callEphemeral(ctx, store, req)
 		},
 	}); err != nil {
 		return fmt.Errorf("register session.call.ephemeral: %w", err)
@@ -718,11 +718,11 @@ func (d *Daemon) registerExecutorMethods(registry *rpc.MethodRegistry, store *gl
 	return nil
 }
 
-func agentSessionStartUsesProfile(req AgentSessionStartRequest) bool {
+func agentSessionStartUsesProfile(req HarnessSessionStartRequest) bool {
 	return strings.TrimSpace(req.Profile) != "" || req.ProfileDefinition != nil || agentSessionDefaultsSet(req.Defaults)
 }
 
-func agentSessionDefaultsSet(defaults AgentSessionDefaults) bool {
+func agentSessionDefaultsSet(defaults HarnessSessionDefaults) bool {
 	return strings.TrimSpace(defaults.Harness) != "" || strings.TrimSpace(defaults.Model) != "" || strings.TrimSpace(defaults.Prompt) != "" || strings.TrimSpace(defaults.AuthSlotID) != "" || len(defaults.AuthPool.SlotIDs) > 0 || defaults.InvocationClass != "" || len(defaults.Settings) > 0
 }
 
@@ -762,7 +762,7 @@ func (d *Daemon) harnessAuthStart(ctx context.Context, store *globaldb.Store, re
 	if !ok {
 		return HarnessAuthStartResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "harness is not available", map[string]any{"harness": strings.TrimSpace(slot.Harness), "reason": "unknown_harness", "start_invoked": false})
 	}
-	executor, err := factory(AgentSessionStartRequest{Executor: slot.Harness}, primaryFolder, d.appendExecutorItems)
+	executor, err := factory(HarnessSessionStartRequest{Executor: slot.Harness}, primaryFolder, d.appendExecutorItems)
 	if err != nil {
 		return HarnessAuthStartResponse{}, mapHarnessRunError(err)
 	}
@@ -807,7 +807,7 @@ func (d *Daemon) harnessAuthCancel(ctx context.Context, store *globaldb.Store, r
 	if !ok {
 		return HarnessAuthCancelResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "harness is not available", map[string]any{"harness": strings.TrimSpace(slot.Harness), "reason": "unknown_harness", "cancel_invoked": false})
 	}
-	executor, err := factory(AgentSessionStartRequest{Executor: slot.Harness}, primaryFolder, d.appendExecutorItems)
+	executor, err := factory(HarnessSessionStartRequest{Executor: slot.Harness}, primaryFolder, d.appendExecutorItems)
 	if err != nil {
 		return HarnessAuthCancelResponse{}, mapHarnessRunError(err)
 	}
@@ -848,7 +848,7 @@ func (d *Daemon) harnessAuthLogout(ctx context.Context, store *globaldb.Store, r
 	if !ok {
 		return HarnessAuthLogoutResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "harness is not available", map[string]any{"harness": strings.TrimSpace(slot.Harness), "reason": "unknown_harness", "logout_invoked": false})
 	}
-	executor, err := factory(AgentSessionStartRequest{Executor: slot.Harness}, primaryFolder, d.appendExecutorItems)
+	executor, err := factory(HarnessSessionStartRequest{Executor: slot.Harness}, primaryFolder, d.appendExecutorItems)
 	if err != nil {
 		return HarnessAuthLogoutResponse{}, mapHarnessRunError(err)
 	}
@@ -915,7 +915,7 @@ func (d *Daemon) harnessAuthStatus(ctx context.Context, store *globaldb.Store, r
 			statuses = append(statuses, status)
 			continue
 		}
-		executor, err := factory(AgentSessionStartRequest{Executor: harness}, primaryFolder, d.appendExecutorItems)
+		executor, err := factory(HarnessSessionStartRequest{Executor: harness}, primaryFolder, d.appendExecutorItems)
 		if err != nil {
 			status := NewHarnessAuthRequired(harness, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, SecretOwnedBy: harness})
 			status.Name = authStatusName(slot, harness)
@@ -1007,23 +1007,23 @@ func harnessAuthSlotFromGlobal(slot globaldb.AuthSlot) HarnessAuthSlot {
 	return HarnessAuthSlot{AuthSlotID: slot.AuthSlotID, Harness: slot.Harness, Label: slot.Label, ProviderLabel: slot.ProviderLabel, CredentialOwner: HarnessCredentialOwner(slot.CredentialOwner), Status: HarnessAuthState(slot.Status)}
 }
 
-func createStoredAgentProfile(ctx context.Context, store *globaldb.Store, req AgentProfileCreateRequest) (AgentProfileResponse, error) {
+func createStoredProfile(ctx context.Context, store *globaldb.Store, req ProfileCreateRequest) (ProfileResponse, error) {
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
-		return AgentProfileResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "profile name is required", map[string]any{"reason": "missing_profile_name"})
+		return ProfileResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "profile name is required", map[string]any{"reason": "missing_profile_name"})
 	}
-	if req.InvocationClass != "" && req.InvocationClass != HarnessInvocationAgent && req.InvocationClass != HarnessInvocationTemporary {
-		return AgentProfileResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "invocation class is invalid", map[string]any{"reason": "invalid_invocation_class"})
+	if req.InvocationClass != "" && req.InvocationClass != HarnessInvocationSticky && req.InvocationClass != HarnessInvocationEphemeral {
+		return ProfileResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "invocation class is invalid", map[string]any{"reason": "invalid_invocation_class"})
 	}
 	profileID, err := newAriULID()
 	if err != nil {
-		return AgentProfileResponse{}, err
+		return ProfileResponse{}, err
 	}
 	defaultsJSON := "{}"
 	if len(req.Defaults) > 0 {
 		encoded, err := json.Marshal(req.Defaults)
 		if err != nil {
-			return AgentProfileResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "profile defaults are invalid", map[string]any{"reason": "invalid_defaults"})
+			return ProfileResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "profile defaults are invalid", map[string]any{"reason": "invalid_defaults"})
 		}
 		defaultsJSON = string(encoded)
 	}
@@ -1031,32 +1031,32 @@ func createStoredAgentProfile(ctx context.Context, store *globaldb.Store, req Ag
 	if len(req.AuthPool.SlotIDs) > 0 || req.AuthPool.Strategy != "" {
 		encoded, err := json.Marshal(req.AuthPool)
 		if err != nil {
-			return AgentProfileResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "profile auth pool is invalid", map[string]any{"reason": "invalid_auth_pool"})
+			return ProfileResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "profile auth pool is invalid", map[string]any{"reason": "invalid_auth_pool"})
 		}
 		authPoolJSON = string(encoded)
 	}
-	stored := globaldb.AgentProfile{ProfileID: "ap_" + profileID, WorkspaceID: strings.TrimSpace(req.WorkspaceID), Name: name, Harness: strings.TrimSpace(req.Harness), Model: strings.TrimSpace(req.Model), Prompt: strings.TrimSpace(req.Prompt), AuthSlotID: strings.TrimSpace(req.AuthSlotID), AuthPoolJSON: authPoolJSON, InvocationClass: string(req.InvocationClass), DefaultsJSON: defaultsJSON}
-	if err := store.UpsertAgentProfile(ctx, stored); err != nil {
-		return AgentProfileResponse{}, err
+	stored := globaldb.Profile{ProfileID: "ap_" + profileID, WorkspaceID: strings.TrimSpace(req.WorkspaceID), Name: name, Harness: strings.TrimSpace(req.Harness), Model: strings.TrimSpace(req.Model), Prompt: strings.TrimSpace(req.Prompt), AuthSlotID: strings.TrimSpace(req.AuthSlotID), AuthPoolJSON: authPoolJSON, InvocationClass: string(req.InvocationClass), DefaultsJSON: defaultsJSON}
+	if err := store.UpsertProfile(ctx, stored); err != nil {
+		return ProfileResponse{}, err
 	}
-	persisted, err := store.GetAgentProfile(ctx, stored.WorkspaceID, stored.Name)
+	persisted, err := store.GetProfile(ctx, stored.WorkspaceID, stored.Name)
 	if err != nil {
-		return AgentProfileResponse{}, err
+		return ProfileResponse{}, err
 	}
 	return agentProfileResponseFromStore(persisted, req.Defaults), nil
 }
 
-func getStoredAgentProfile(ctx context.Context, store *globaldb.Store, req AgentProfileGetRequest) (AgentProfileResponse, error) {
+func getStoredProfile(ctx context.Context, store *globaldb.Store, req ProfileGetRequest) (ProfileResponse, error) {
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
-		return AgentProfileResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "profile name is required", map[string]any{"reason": "missing_profile_name"})
+		return ProfileResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "profile name is required", map[string]any{"reason": "missing_profile_name"})
 	}
-	stored, err := store.GetAgentProfile(ctx, req.WorkspaceID, name)
+	stored, err := store.GetProfile(ctx, req.WorkspaceID, name)
 	if err != nil {
 		if errors.Is(err, globaldb.ErrNotFound) {
-			return AgentProfileResponse{}, unknownProfileError(name)
+			return ProfileResponse{}, unknownProfileError(name)
 		}
-		return AgentProfileResponse{}, err
+		return ProfileResponse{}, err
 	}
 	defaults := map[string]any{}
 	if strings.TrimSpace(stored.DefaultsJSON) != "" {
@@ -1065,12 +1065,12 @@ func getStoredAgentProfile(ctx context.Context, store *globaldb.Store, req Agent
 	return agentProfileResponseFromStore(stored, defaults), nil
 }
 
-func listStoredAgentProfiles(ctx context.Context, store *globaldb.Store, req AgentProfileListRequest) (AgentProfileListResponse, error) {
-	stored, err := store.ListAgentProfiles(ctx, req.WorkspaceID)
+func listStoredProfiles(ctx context.Context, store *globaldb.Store, req ProfileListRequest) (ProfileListResponse, error) {
+	stored, err := store.ListProfiles(ctx, req.WorkspaceID)
 	if err != nil {
-		return AgentProfileListResponse{}, err
+		return ProfileListResponse{}, err
 	}
-	profiles := make([]AgentProfileResponse, 0, len(stored))
+	profiles := make([]ProfileResponse, 0, len(stored))
 	for _, profile := range stored {
 		defaults := map[string]any{}
 		if strings.TrimSpace(profile.DefaultsJSON) != "" {
@@ -1078,12 +1078,12 @@ func listStoredAgentProfiles(ctx context.Context, store *globaldb.Store, req Age
 		}
 		profiles = append(profiles, agentProfileResponseFromStore(profile, defaults))
 	}
-	return AgentProfileListResponse{Profiles: profiles}, nil
+	return ProfileListResponse{Profiles: profiles}, nil
 }
 
-func agentProfileResponseFromStore(profile globaldb.AgentProfile, defaults map[string]any) AgentProfileResponse {
+func agentProfileResponseFromStore(profile globaldb.Profile, defaults map[string]any) ProfileResponse {
 	authPool := decodeStoredAuthPool(profile.AuthPoolJSON)
-	return AgentProfileResponse{ProfileID: profile.ProfileID, WorkspaceID: profile.WorkspaceID, Name: profile.Name, Harness: profile.Harness, Model: profile.Model, Prompt: profile.Prompt, AuthSlotID: profile.AuthSlotID, AuthPool: authPool, InvocationClass: HarnessInvocationClass(profile.InvocationClass), Defaults: defaults}
+	return ProfileResponse{ProfileID: profile.ProfileID, WorkspaceID: profile.WorkspaceID, Name: profile.Name, Harness: profile.Harness, Model: profile.Model, Prompt: profile.Prompt, AuthSlotID: profile.AuthSlotID, AuthPool: authPool, InvocationClass: HarnessInvocationClass(profile.InvocationClass), Defaults: defaults}
 }
 
 func decodeStoredAuthPool(raw string) HarnessAuthPool {
@@ -1095,10 +1095,10 @@ func decodeStoredAuthPool(raw string) HarnessAuthPool {
 	return pool
 }
 
-func ensureDefaultHelperProfile(ctx context.Context, store *globaldb.Store, req DefaultHelperEnsureRequest) (AgentProfileResponse, error) {
+func ensureDefaultHelperProfile(ctx context.Context, store *globaldb.Store, req DefaultHelperEnsureRequest) (ProfileResponse, error) {
 	workspaceID := strings.TrimSpace(req.WorkspaceID)
 	if workspaceID == "" {
-		return AgentProfileResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", map[string]any{"reason": "missing_workspace_id"})
+		return ProfileResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", map[string]any{"reason": "missing_workspace_id"})
 	}
 	prompt := strings.TrimSpace(req.Prompt)
 	if prompt == "" {
@@ -1106,22 +1106,22 @@ func ensureDefaultHelperProfile(ctx context.Context, store *globaldb.Store, req 
 	}
 	stored, err := store.EnsureDefaultHelperProfile(ctx, workspaceID, req.Harness, prompt)
 	if err != nil {
-		return AgentProfileResponse{}, err
+		return ProfileResponse{}, err
 	}
 	return agentProfileResponseFromStore(stored, map[string]any{}), nil
 }
 
-func getDefaultHelperProfile(ctx context.Context, store *globaldb.Store, req DefaultHelperGetRequest) (AgentProfileResponse, error) {
+func getDefaultHelperProfile(ctx context.Context, store *globaldb.Store, req DefaultHelperGetRequest) (ProfileResponse, error) {
 	workspaceID := strings.TrimSpace(req.WorkspaceID)
 	if workspaceID == "" {
-		return AgentProfileResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", map[string]any{"reason": "missing_workspace_id"})
+		return ProfileResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", map[string]any{"reason": "missing_workspace_id"})
 	}
 	stored, err := store.GetDefaultHelperProfile(ctx, workspaceID)
 	if err != nil {
 		if errors.Is(err, globaldb.ErrNotFound) {
-			return AgentProfileResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "default helper profile is not set up for this workspace", map[string]any{"reason": "helper_setup_required", "workspace_id": workspaceID})
+			return ProfileResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "default helper profile is not set up for this workspace", map[string]any{"reason": "helper_setup_required", "workspace_id": workspaceID})
 		}
-		return AgentProfileResponse{}, err
+		return ProfileResponse{}, err
 	}
 	return agentProfileResponseFromStore(stored, map[string]any{}), nil
 }
@@ -1170,7 +1170,7 @@ func finalResponseResponseFromStore(stored globaldb.FinalResponse) FinalResponse
 }
 
 func telemetryRollup(ctx context.Context, store *globaldb.Store, req TelemetryRollupRequest) (TelemetryRollupResponse, error) {
-	rollups, err := store.RollupAgentSessionTelemetry(ctx, req.WorkspaceID)
+	rollups, err := store.RollupHarnessSessionTelemetry(ctx, req.WorkspaceID)
 	if err != nil {
 		return TelemetryRollupResponse{}, err
 	}
@@ -1181,7 +1181,7 @@ func telemetryRollup(ctx context.Context, store *globaldb.Store, req TelemetryRo
 	return TelemetryRollupResponse{Rollups: out}, nil
 }
 
-func telemetryRollupFromStore(rollup globaldb.AgentSessionTelemetryRollup) TelemetryRollup {
+func telemetryRollupFromStore(rollup globaldb.HarnessSessionTelemetryRollup) TelemetryRollup {
 	ports := []ProcessPortObservation{}
 	if strings.TrimSpace(rollup.PortsJSON) != "" {
 		_ = json.Unmarshal([]byte(rollup.PortsJSON), &ports)
@@ -1197,34 +1197,34 @@ func telemetryKnownInt64FromStore(value globaldb.KnownInt64) TelemetryKnownInt64
 	return TelemetryKnownInt64{Known: value.Known, Value: value.Value}
 }
 
-func (d *Daemon) resolveAgentProfileRunRequest(ctx context.Context, store *globaldb.Store, req AgentProfileRunRequest) (AgentProfile, error) {
+func (d *Daemon) resolveProfileRunRequest(ctx context.Context, store *globaldb.Store, req ProfileRunRequest) (Profile, error) {
 	name := strings.TrimSpace(req.Profile)
 	if name != "" && req.ProfileDefinition != nil {
-		return AgentProfile{}, rpc.NewHandlerError(rpc.InvalidParams, "profile input is ambiguous", map[string]any{"profile": name, "profile_definition": strings.TrimSpace(req.ProfileDefinition.Name), "reason": "ambiguous_profile", "start_invoked": false})
+		return Profile{}, rpc.NewHandlerError(rpc.InvalidParams, "profile input is ambiguous", map[string]any{"profile": name, "profile_definition": strings.TrimSpace(req.ProfileDefinition.Name), "reason": "ambiguous_profile", "start_invoked": false})
 	}
-	var profile AgentProfile
+	var profile Profile
 	if req.ProfileDefinition != nil {
 		profile = *req.ProfileDefinition
 		if strings.TrimSpace(profile.Name) == "" {
 			profile.Name = name
 		}
 	} else if name != "" {
-		resolved, err := d.resolveAgentProfile(ctx, store, req.Packet.WorkspaceID, name)
+		resolved, err := d.resolveProfile(ctx, store, req.Packet.WorkspaceID, name)
 		if err != nil {
-			return AgentProfile{}, err
+			return Profile{}, err
 		}
 		profile = resolved
 	} else if executor := strings.TrimSpace(req.Executor); executor != "" {
-		profile = AgentProfile{Name: executor, Harness: executor}
+		profile = Profile{Name: executor, Harness: executor}
 	}
-	profile = applyAgentSessionDefaults(profile, req.Defaults)
+	profile = applyHarnessSessionDefaults(profile, req.Defaults)
 	if strings.TrimSpace(profile.Harness) == "" {
-		return AgentProfile{}, rpc.NewHandlerError(rpc.InvalidParams, "harness is required", map[string]any{"profile": strings.TrimSpace(profile.Name), "reason": "missing_harness", "start_invoked": false})
+		return Profile{}, rpc.NewHandlerError(rpc.InvalidParams, "harness is required", map[string]any{"profile": strings.TrimSpace(profile.Name), "reason": "missing_harness", "start_invoked": false})
 	}
 	return profile, nil
 }
 
-func applyAgentSessionDefaults(profile AgentProfile, defaults AgentSessionDefaults) AgentProfile {
+func applyHarnessSessionDefaults(profile Profile, defaults HarnessSessionDefaults) Profile {
 	if strings.TrimSpace(profile.Harness) == "" {
 		profile.Harness = strings.TrimSpace(defaults.Harness)
 	}
@@ -1244,7 +1244,7 @@ func applyAgentSessionDefaults(profile AgentProfile, defaults AgentSessionDefaul
 		profile.InvocationClass = defaults.InvocationClass
 	}
 	if profile.InvocationClass == "" {
-		profile.InvocationClass = HarnessInvocationAgent
+		profile.InvocationClass = HarnessInvocationSticky
 	}
 	profile.Defaults = mergeSettings(profile.Defaults, defaults.Settings)
 	return profile
@@ -1274,37 +1274,37 @@ func decodeStoredDefaults(raw string) (map[string]any, error) {
 	return defaults, nil
 }
 
-func (d *Daemon) resolveAgentProfile(ctx context.Context, store *globaldb.Store, workspaceID, name string) (AgentProfile, error) {
+func (d *Daemon) resolveProfile(ctx context.Context, store *globaldb.Store, workspaceID, name string) (Profile, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return AgentProfile{}, rpc.NewHandlerError(rpc.InvalidParams, "profile is required", map[string]any{"reason": "missing_profile", "start_invoked": false})
+		return Profile{}, rpc.NewHandlerError(rpc.InvalidParams, "profile is required", map[string]any{"reason": "missing_profile", "start_invoked": false})
 	}
 	if d == nil || d.agentProfiles == nil {
-		return resolveStoredAgentProfile(ctx, store, workspaceID, name)
+		return resolveStoredProfile(ctx, store, workspaceID, name)
 	}
 	profile, ok := d.agentProfiles[name]
 	if !ok {
-		return resolveStoredAgentProfile(ctx, store, workspaceID, name)
+		return resolveStoredProfile(ctx, store, workspaceID, name)
 	}
 	return profile, nil
 }
 
-func resolveStoredAgentProfile(ctx context.Context, store *globaldb.Store, workspaceID, name string) (AgentProfile, error) {
+func resolveStoredProfile(ctx context.Context, store *globaldb.Store, workspaceID, name string) (Profile, error) {
 	if store == nil {
-		return AgentProfile{}, unknownProfileError(name)
+		return Profile{}, unknownProfileError(name)
 	}
-	stored, err := store.GetAgentProfile(ctx, workspaceID, name)
+	stored, err := store.GetProfile(ctx, workspaceID, name)
 	if err != nil {
 		if errors.Is(err, globaldb.ErrNotFound) {
-			return AgentProfile{}, unknownProfileError(name)
+			return Profile{}, unknownProfileError(name)
 		}
-		return AgentProfile{}, err
+		return Profile{}, err
 	}
 	defaults, err := decodeStoredDefaults(stored.DefaultsJSON)
 	if err != nil {
-		return AgentProfile{}, err
+		return Profile{}, err
 	}
-	return AgentProfile{ProfileID: stored.ProfileID, WorkspaceID: stored.WorkspaceID, Name: stored.Name, Harness: stored.Harness, Model: stored.Model, Prompt: stored.Prompt, AuthSlotID: stored.AuthSlotID, AuthPool: decodeStoredAuthPool(stored.AuthPoolJSON), InvocationClass: HarnessInvocationClass(stored.InvocationClass), Defaults: defaults}, nil
+	return Profile{ProfileID: stored.ProfileID, WorkspaceID: stored.WorkspaceID, Name: stored.Name, Harness: stored.Harness, Model: stored.Model, Prompt: stored.Prompt, AuthSlotID: stored.AuthSlotID, AuthPool: decodeStoredAuthPool(stored.AuthPoolJSON), InvocationClass: HarnessInvocationClass(stored.InvocationClass), Defaults: defaults}, nil
 }
 
 func tailRunLogMessages(ctx context.Context, store *globaldb.Store, req RunLogMessagesTailRequest) (RunLogMessagesTailResponse, error) {
@@ -1423,40 +1423,40 @@ func runLogMessageResponse(msg globaldb.RunLogMessage) RunLogMessageResponse {
 	return resp
 }
 
-func getWorkspaceSession(ctx context.Context, store *globaldb.Store, req SessionGetRequest) (AgentSession, error) {
+func getWorkspaceSession(ctx context.Context, store *globaldb.Store, req SessionGetRequest) (HarnessSession, error) {
 	sessionID := strings.TrimSpace(req.SessionID)
 	if sessionID == "" {
-		return AgentSession{}, rpc.NewHandlerError(rpc.InvalidParams, "session_id is required", map[string]any{"reason": "missing_session_id"})
+		return HarnessSession{}, rpc.NewHandlerError(rpc.InvalidParams, "session_id is required", map[string]any{"reason": "missing_session_id"})
 	}
-	session, err := store.GetAgentSession(ctx, sessionID)
+	session, err := store.GetHarnessSession(ctx, sessionID)
 	if err != nil {
 		if errors.Is(err, globaldb.ErrNotFound) {
-			return AgentSession{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "unknown_session", "session_id": sessionID})
+			return HarnessSession{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "unknown_session", "session_id": sessionID})
 		}
-		return AgentSession{}, err
+		return HarnessSession{}, err
 	}
 	return agentSessionResponseFromStore(session), nil
 }
 
-func listWorkspaceSessions(ctx context.Context, store *globaldb.Store, req SessionListRequest) ([]AgentSession, error) {
+func listWorkspaceSessions(ctx context.Context, store *globaldb.Store, req SessionListRequest) ([]HarnessSession, error) {
 	workspaceID := strings.TrimSpace(req.WorkspaceID)
 	if workspaceID == "" {
 		return nil, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", map[string]any{"reason": "missing_workspace"})
 	}
-	sessions, err := store.ListAgentSessions(ctx, workspaceID)
+	sessions, err := store.ListHarnessSessions(ctx, workspaceID)
 	if err != nil {
 		return nil, err
 	}
-	resp := make([]AgentSession, 0, len(sessions))
+	resp := make([]HarnessSession, 0, len(sessions))
 	for _, session := range sessions {
 		resp = append(resp, agentSessionResponseFromStore(session))
 	}
 	return resp, nil
 }
 
-func agentSessionResponseFromStore(session globaldb.AgentSession) AgentSession {
+func agentSessionResponseFromStore(session globaldb.HarnessSession) HarnessSession {
 	invocationMode, usageBucket := agentSessionModeFromProviderMetadata(session.ProviderMetadataJSON)
-	return AgentSession{AgentSessionID: session.SessionID, SessionID: session.SessionID, WorkspaceID: session.WorkspaceID, Usage: session.Usage, SourceSessionID: session.SourceSessionID, SourceAgentID: session.SourceAgentID, Executor: session.Harness, ProviderSessionID: session.ProviderSessionID, ProviderRunID: session.ProviderRunID, InvocationMode: invocationMode, UsageBucket: usageBucket, Status: session.Status}
+	return HarnessSession{HarnessSessionID: session.SessionID, SessionID: session.SessionID, WorkspaceID: session.WorkspaceID, Usage: session.Usage, SourceSessionID: session.SourceSessionID, SourceAgentID: session.SourceAgentID, Executor: session.Harness, ProviderSessionID: session.ProviderSessionID, ProviderRunID: session.ProviderRunID, InvocationMode: invocationMode, UsageBucket: usageBucket, Status: session.Status}
 }
 
 func agentSessionModeFromProviderMetadata(raw string) (string, string) {
@@ -1505,7 +1505,7 @@ func sendAgentMessage(ctx context.Context, store *globaldb.Store, req AgentMessa
 		if errors.Is(err, globaldb.ErrInvalidInput) || errors.Is(err, globaldb.ErrNotFound) {
 			resolvedTargetAgentID := targetAgentID
 			if resolvedTargetAgentID == "" && effectiveTargetSessionID != "" {
-				if targetRun, targetErr := store.GetAgentSession(ctx, effectiveTargetSessionID); targetErr == nil {
+				if targetRun, targetErr := store.GetHarnessSession(ctx, effectiveTargetSessionID); targetErr == nil {
 					resolvedTargetAgentID = strings.TrimSpace(targetRun.AgentID)
 				}
 			}
@@ -1528,15 +1528,15 @@ func sendAgentMessage(ctx context.Context, store *globaldb.Store, req AgentMessa
 				}
 			}
 			if errors.Is(err, globaldb.ErrInvalidInput) && effectiveTargetSessionID != "" && targetAgentID != "" {
-				if targetRun, targetErr := store.GetAgentSession(ctx, effectiveTargetSessionID); targetErr == nil {
+				if targetRun, targetErr := store.GetHarnessSession(ctx, effectiveTargetSessionID); targetErr == nil {
 					if strings.TrimSpace(targetRun.AgentID) != "" && targetRun.AgentID != targetAgentID {
 						return AgentMessageSendResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "target_session_mismatch", "target_session_id": effectiveTargetSessionID, "target_agent_id": targetAgentID, "start_invoked": false})
 					}
 				}
 			}
 			if errors.Is(err, globaldb.ErrInvalidInput) && effectiveTargetSessionID != "" {
-				if sourceRun, sourceErr := store.GetAgentSession(ctx, sourceSessionID); sourceErr == nil {
-					if targetRun, targetErr := store.GetAgentSession(ctx, effectiveTargetSessionID); targetErr == nil {
+				if sourceRun, sourceErr := store.GetHarnessSession(ctx, sourceSessionID); sourceErr == nil {
+					if targetRun, targetErr := store.GetHarnessSession(ctx, effectiveTargetSessionID); targetErr == nil {
 						if strings.TrimSpace(targetRun.WorkspaceID) != "" && targetRun.WorkspaceID != sourceRun.WorkspaceID {
 							return AgentMessageSendResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "target_workspace_mismatch", "target_session_id": effectiveTargetSessionID, "source_workspace_id": sourceRun.WorkspaceID, "target_workspace_id": targetRun.WorkspaceID, "start_invoked": false})
 						}
@@ -1544,8 +1544,8 @@ func sendAgentMessage(ctx context.Context, store *globaldb.Store, req AgentMessa
 				}
 			}
 			if errors.Is(err, globaldb.ErrInvalidInput) && targetAgentID != "" {
-				if sourceRun, sourceErr := store.GetAgentSession(ctx, sourceSessionID); sourceErr == nil {
-					if targetCfg, targetErr := store.GetAgentSessionConfig(ctx, targetAgentID); targetErr == nil {
+				if sourceRun, sourceErr := store.GetHarnessSession(ctx, sourceSessionID); sourceErr == nil {
+					if targetCfg, targetErr := store.GetHarnessSessionConfig(ctx, targetAgentID); targetErr == nil {
 						if strings.TrimSpace(targetCfg.WorkspaceID) != "" && targetCfg.WorkspaceID != sourceRun.WorkspaceID {
 							return AgentMessageSendResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "target_workspace_mismatch", "target_agent_id": targetAgentID, "source_workspace_id": sourceRun.WorkspaceID, "target_workspace_id": targetCfg.WorkspaceID, "start_invoked": false})
 						}
@@ -1554,12 +1554,12 @@ func sendAgentMessage(ctx context.Context, store *globaldb.Store, req AgentMessa
 			}
 			if errors.Is(err, globaldb.ErrNotFound) {
 				if sourceSessionID != "" {
-					if _, sourceErr := store.GetAgentSession(ctx, sourceSessionID); errors.Is(sourceErr, globaldb.ErrNotFound) {
+					if _, sourceErr := store.GetHarnessSession(ctx, sourceSessionID); errors.Is(sourceErr, globaldb.ErrNotFound) {
 						return AgentMessageSendResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "unknown_source_session", "source_session_id": sourceSessionID, "start_invoked": false})
 					}
 				}
 				if effectiveTargetSessionID != "" && (targetSessionID != "" || targetAgentID == "") {
-					if _, targetErr := store.GetAgentSession(ctx, effectiveTargetSessionID); errors.Is(targetErr, globaldb.ErrNotFound) {
+					if _, targetErr := store.GetHarnessSession(ctx, effectiveTargetSessionID); errors.Is(targetErr, globaldb.ErrNotFound) {
 						return AgentMessageSendResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "unknown_target_session", "target_session_id": effectiveTargetSessionID, "start_invoked": false})
 					}
 				}
@@ -1592,7 +1592,7 @@ func agentMessageResponse(dm globaldb.AgentMessage) AgentMessageResponse {
 	return AgentMessageResponse{AgentMessageID: dm.AgentMessageID, WorkspaceID: dm.WorkspaceID, SourceAgentID: dm.SourceAgentID, SourceSessionID: dm.SourceSessionID, TargetAgentID: dm.TargetAgentID, TargetSessionID: dm.TargetSessionID, Body: dm.Body, Status: dm.Status, DeliveredSessionID: dm.DeliveredSessionID, ContextExcerptIDs: dm.ContextExcerptIDs}
 }
 
-func (d *Daemon) callEphemeralAgent(ctx context.Context, store *globaldb.Store, req EphemeralAgentCallRequest) (EphemeralAgentCallResponse, error) {
+func (d *Daemon) callEphemeral(ctx context.Context, store *globaldb.Store, req EphemeralCallRequest) (EphemeralCallResponse, error) {
 	callID := strings.TrimSpace(req.CallID)
 	sourceSessionID := strings.TrimSpace(req.SourceSessionID)
 	targetAgentID := strings.TrimSpace(req.TargetAgentID)
@@ -1609,45 +1609,45 @@ func (d *Daemon) callEphemeralAgent(ctx context.Context, store *globaldb.Store, 
 		case body == "":
 			missingField = "body"
 		}
-		return EphemeralAgentCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "call_id, source_session_id, target_agent_id, and body are required", map[string]any{"reason": "missing_required_fields", "missing_field": missingField, "start_invoked": false})
+		return EphemeralCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "call_id, source_session_id, target_agent_id, and body are required", map[string]any{"reason": "missing_required_fields", "missing_field": missingField, "start_invoked": false})
 	}
-	sourceRun, err := store.GetAgentSession(ctx, sourceSessionID)
+	sourceRun, err := store.GetHarnessSession(ctx, sourceSessionID)
 	if err != nil {
 		if errors.Is(err, globaldb.ErrNotFound) {
-			return EphemeralAgentCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "unknown_source_session", "source_session_id": sourceSessionID, "start_invoked": false})
+			return EphemeralCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "unknown_source_session", "source_session_id": sourceSessionID, "start_invoked": false})
 		}
-		return EphemeralAgentCallResponse{}, err
+		return EphemeralCallResponse{}, err
 	}
-	targetAgent, err := store.GetAgentSessionConfig(ctx, targetAgentID)
-	targetProfile := AgentProfile{Harness: targetAgent.Harness}
+	targetAgent, err := store.GetHarnessSessionConfig(ctx, targetAgentID)
+	targetProfile := Profile{Harness: targetAgent.Harness}
 	if err != nil {
 		if !errors.Is(err, globaldb.ErrNotFound) {
-			return EphemeralAgentCallResponse{}, err
+			return EphemeralCallResponse{}, err
 		}
-		resolvedProfile, resolveErr := resolveStoredAgentProfile(ctx, store, sourceRun.WorkspaceID, targetAgentID)
+		resolvedProfile, resolveErr := resolveStoredProfile(ctx, store, sourceRun.WorkspaceID, targetAgentID)
 		if resolveErr != nil {
 			if errors.Is(resolveErr, globaldb.ErrNotFound) {
-				return EphemeralAgentCallResponse{}, unknownProfileError(targetAgentID)
+				return EphemeralCallResponse{}, unknownProfileError(targetAgentID)
 			}
-			return EphemeralAgentCallResponse{}, resolveErr
+			return EphemeralCallResponse{}, resolveErr
 		}
-		targetAgent = globaldb.AgentSessionConfig{AgentID: resolvedProfile.ProfileID, WorkspaceID: resolvedProfile.WorkspaceID, Name: resolvedProfile.Name, Harness: resolvedProfile.Harness, Model: resolvedProfile.Model, Prompt: resolvedProfile.Prompt}
-		if ensureErr := store.EnsureAgentSessionConfig(ctx, targetAgent); ensureErr != nil {
+		targetAgent = globaldb.HarnessSessionConfig{AgentID: resolvedProfile.ProfileID, WorkspaceID: resolvedProfile.WorkspaceID, Name: resolvedProfile.Name, Harness: resolvedProfile.Harness, Model: resolvedProfile.Model, Prompt: resolvedProfile.Prompt}
+		if ensureErr := store.EnsureHarnessSessionConfig(ctx, targetAgent); ensureErr != nil {
 			if errors.Is(ensureErr, globaldb.ErrInvalidInput) || errors.Is(ensureErr, globaldb.ErrNotFound) {
-				return EphemeralAgentCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, ensureErr.Error(), map[string]any{"reason": "profile_unavailable", "profile": targetAgentID, "target_agent_id": targetAgent.AgentID, "start_invoked": false})
+				return EphemeralCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, ensureErr.Error(), map[string]any{"reason": "profile_unavailable", "profile": targetAgentID, "target_agent_id": targetAgent.AgentID, "start_invoked": false})
 			}
-			return EphemeralAgentCallResponse{}, ensureErr
+			return EphemeralCallResponse{}, ensureErr
 		}
 		targetProfile = resolvedProfile
 	} else if strings.TrimSpace(targetAgent.Name) != "" {
-		if resolvedProfile, resolveErr := resolveStoredAgentProfile(ctx, store, sourceRun.WorkspaceID, targetAgent.Name); resolveErr == nil {
+		if resolvedProfile, resolveErr := resolveStoredProfile(ctx, store, sourceRun.WorkspaceID, targetAgent.Name); resolveErr == nil {
 			targetProfile = resolvedProfile
 		} else if !isUnknownProfileError(resolveErr) {
-			return EphemeralAgentCallResponse{}, resolveErr
+			return EphemeralCallResponse{}, resolveErr
 		}
 	}
 	if targetAgent.WorkspaceID != sourceRun.WorkspaceID {
-		return EphemeralAgentCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "target_workspace_mismatch", "target_agent_id": targetAgent.AgentID, "source_workspace_id": sourceRun.WorkspaceID, "target_workspace_id": targetAgent.WorkspaceID, "start_invoked": false})
+		return EphemeralCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "target_workspace_mismatch", "target_agent_id": targetAgent.AgentID, "source_workspace_id": sourceRun.WorkspaceID, "target_workspace_id": targetAgent.WorkspaceID, "start_invoked": false})
 	}
 	sessionID := strings.TrimSpace(req.SessionID)
 	if sessionID == "" {
@@ -1659,11 +1659,11 @@ func (d *Daemon) callEphemeralAgent(ctx context.Context, store *globaldb.Store, 
 	if messages, listErr := store.ListAgentMessages(ctx, sourceRun.WorkspaceID); listErr == nil {
 		for _, message := range messages {
 			if message.AgentMessageID == requestAgentMessageID {
-				return EphemeralAgentCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "agent message already exists", map[string]any{"reason": "request_agent_message_id_conflict", "agent_message_id": requestAgentMessageID, "start_invoked": false})
+				return EphemeralCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "agent message already exists", map[string]any{"reason": "request_agent_message_id_conflict", "agent_message_id": requestAgentMessageID, "start_invoked": false})
 			}
 		}
 	} else {
-		return EphemeralAgentCallResponse{}, listErr
+		return EphemeralCallResponse{}, listErr
 	}
 	for _, rawContextExcerptID := range req.ContextExcerptIDs {
 		contextExcerptID := strings.TrimSpace(rawContextExcerptID)
@@ -1672,38 +1672,38 @@ func (d *Daemon) callEphemeralAgent(ctx context.Context, store *globaldb.Store, 
 		}
 		excerpt, excerptErr := store.GetContextExcerpt(ctx, contextExcerptID)
 		if errors.Is(excerptErr, globaldb.ErrNotFound) {
-			return EphemeralAgentCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, excerptErr.Error(), map[string]any{"reason": "unknown_context_excerpt", "context_excerpt_id": contextExcerptID, "start_invoked": false})
+			return EphemeralCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, excerptErr.Error(), map[string]any{"reason": "unknown_context_excerpt", "context_excerpt_id": contextExcerptID, "start_invoked": false})
 		}
 		if excerptErr != nil {
-			return EphemeralAgentCallResponse{}, excerptErr
+			return EphemeralCallResponse{}, excerptErr
 		}
 		if excerpt.TargetAgentID != "" && excerpt.TargetAgentID != targetAgent.AgentID {
-			return EphemeralAgentCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "context_excerpt_mismatch", "context_excerpt_id": contextExcerptID, "start_invoked": false})
+			return EphemeralCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "context_excerpt_mismatch", "context_excerpt_id": contextExcerptID, "start_invoked": false})
 		}
 	}
-	run := globaldb.AgentSession{SessionID: sessionID, WorkspaceID: sourceRun.WorkspaceID, AgentID: targetAgent.AgentID, Harness: targetAgent.Harness, Model: targetAgent.Model, Status: "running", Usage: "ephemeral", SourceSessionID: sourceRun.SessionID, SourceAgentID: sourceRun.AgentID}
-	if err := store.CreateAgentSession(ctx, run); err != nil {
+	run := globaldb.HarnessSession{SessionID: sessionID, WorkspaceID: sourceRun.WorkspaceID, AgentID: targetAgent.AgentID, Harness: targetAgent.Harness, Model: targetAgent.Model, Status: "running", Usage: "ephemeral", SourceSessionID: sourceRun.SessionID, SourceAgentID: sourceRun.AgentID}
+	if err := store.CreateHarnessSession(ctx, run); err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "unique constraint failed") {
-			return EphemeralAgentCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "session_id_conflict", "session_id": sessionID, "start_invoked": false})
+			return EphemeralCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "session_id_conflict", "session_id": sessionID, "start_invoked": false})
 		}
 		if errors.Is(err, globaldb.ErrInvalidInput) || errors.Is(err, globaldb.ErrNotFound) {
-			return EphemeralAgentCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "invalid_ephemeral_session", "call_id": callID, "session_id": sessionID, "target_agent_id": targetAgent.AgentID, "start_invoked": false})
+			return EphemeralCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "invalid_ephemeral_session", "call_id": callID, "session_id": sessionID, "target_agent_id": targetAgent.AgentID, "start_invoked": false})
 		}
-		return EphemeralAgentCallResponse{}, err
+		return EphemeralCallResponse{}, err
 	}
 	requestDM, err := store.SendAgentMessage(ctx, globaldb.AgentMessageSendParams{AgentMessageID: requestAgentMessageID, SourceSessionID: sourceRun.SessionID, TargetAgentID: targetAgent.AgentID, TargetSessionID: sessionID, Body: body, ContextExcerptIDs: req.ContextExcerptIDs})
 	if err != nil {
-		_ = store.UpdateAgentSessionStatus(ctx, sessionID, "failed")
+		_ = store.UpdateHarnessSessionStatus(ctx, sessionID, "failed")
 		errText := strings.ToLower(err.Error())
 		if strings.Contains(errText, "unique constraint failed") && strings.Contains(errText, "agent_messages.agent_message_id") {
-			return EphemeralAgentCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "request_agent_message_id_conflict", "agent_message_id": requestAgentMessageID, "start_invoked": false})
+			return EphemeralCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "request_agent_message_id_conflict", "agent_message_id": requestAgentMessageID, "start_invoked": false})
 		}
 		if errors.Is(err, globaldb.ErrInvalidInput) || errors.Is(err, globaldb.ErrNotFound) {
 			if errors.Is(err, globaldb.ErrNotFound) && len(req.ContextExcerptIDs) > 0 {
 				contextExcerptID := strings.TrimSpace(req.ContextExcerptIDs[0])
 				if contextExcerptID != "" {
 					if _, excerptErr := store.GetContextExcerpt(ctx, contextExcerptID); errors.Is(excerptErr, globaldb.ErrNotFound) {
-						return EphemeralAgentCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "unknown_context_excerpt", "context_excerpt_id": contextExcerptID, "start_invoked": false})
+						return EphemeralCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "unknown_context_excerpt", "context_excerpt_id": contextExcerptID, "start_invoked": false})
 					}
 				}
 			}
@@ -1712,30 +1712,30 @@ func (d *Daemon) callEphemeralAgent(ctx context.Context, store *globaldb.Store, 
 				if contextExcerptID != "" {
 					if excerpt, excerptErr := store.GetContextExcerpt(ctx, contextExcerptID); excerptErr == nil {
 						if excerpt.TargetAgentID != "" && excerpt.TargetAgentID != targetAgent.AgentID {
-							return EphemeralAgentCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "context_excerpt_mismatch", "context_excerpt_id": contextExcerptID, "start_invoked": false})
+							return EphemeralCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "context_excerpt_mismatch", "context_excerpt_id": contextExcerptID, "start_invoked": false})
 						}
 					}
 				}
 			}
-			return EphemeralAgentCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "invalid_ephemeral_request_message", "call_id": callID, "agent_message_id": requestAgentMessageID, "source_session_id": sourceRun.SessionID, "target_session_id": sessionID, "target_agent_id": targetAgent.AgentID, "start_invoked": false})
+			return EphemeralCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "invalid_ephemeral_request_message", "call_id": callID, "agent_message_id": requestAgentMessageID, "source_session_id": sourceRun.SessionID, "target_session_id": sessionID, "target_agent_id": targetAgent.AgentID, "start_invoked": false})
 		}
-		return EphemeralAgentCallResponse{}, err
+		return EphemeralCallResponse{}, err
 	}
 	primaryFolder, _ := lookupPrimaryFolder(ctx, store, sourceRun.WorkspaceID)
-	executor, err := d.resolveHarness(AgentSessionStartRequest{Executor: targetAgent.Harness}, primaryFolder)
+	executor, err := d.resolveHarness(HarnessSessionStartRequest{Executor: targetAgent.Harness}, primaryFolder)
 	if err != nil {
-		_ = store.UpdateAgentSessionStatus(ctx, sessionID, "failed")
-		return EphemeralAgentCallResponse{}, mapHarnessRunError(err)
+		_ = store.UpdateHarnessSessionStatus(ctx, sessionID, "failed")
+		return EphemeralCallResponse{}, mapHarnessRunError(err)
 	}
 	options, err := harnessOptionsFromProfile(targetProfile)
 	if err != nil {
-		_ = store.UpdateAgentSessionStatus(ctx, sessionID, "failed")
-		return EphemeralAgentCallResponse{}, err
+		_ = store.UpdateHarnessSessionStatus(ctx, sessionID, "failed")
+		return EphemeralCallResponse{}, err
 	}
-	providerRun, err := executor.Start(ctx, ExecutorStartRequest{WorkspaceID: sourceRun.WorkspaceID, RunID: sessionID, SessionID: sessionID, ContextPacket: body, Model: targetAgent.Model, Prompt: targetAgent.Prompt, InvocationClass: HarnessInvocationTemporary, Options: options})
+	providerRun, err := executor.Start(ctx, ExecutorStartRequest{WorkspaceID: sourceRun.WorkspaceID, RunID: sessionID, SessionID: sessionID, ContextPacket: body, Model: targetAgent.Model, Prompt: targetAgent.Prompt, InvocationClass: HarnessInvocationEphemeral, Options: options})
 	if err != nil {
-		_ = store.UpdateAgentSessionStatus(ctx, sessionID, "failed")
-		return EphemeralAgentCallResponse{}, mapHarnessRunError(err)
+		_ = store.UpdateHarnessSessionStatus(ctx, sessionID, "failed")
+		return EphemeralCallResponse{}, mapHarnessRunError(err)
 	}
 	providerSessionID := strings.TrimSpace(providerRun.SessionID)
 	if providerSessionID == "" {
@@ -1747,29 +1747,29 @@ func (d *Daemon) callEphemeralAgent(ctx context.Context, store *globaldb.Store, 
 	}
 	items, err := executor.Items(ctx, providerSessionID)
 	if err != nil {
-		_ = store.UpdateAgentSessionStatus(ctx, sessionID, "failed")
-		return EphemeralAgentCallResponse{}, err
+		_ = store.UpdateHarnessSessionStatus(ctx, sessionID, "failed")
+		return EphemeralCallResponse{}, err
 	}
 	if err := appendTimelineItemsAsRunLogMessages(ctx, store, sessionID, items); err != nil {
-		_ = store.UpdateAgentSessionStatus(ctx, sessionID, "failed")
-		return EphemeralAgentCallResponse{}, err
+		_ = store.UpdateHarnessSessionStatus(ctx, sessionID, "failed")
+		return EphemeralCallResponse{}, err
 	}
 	invocationMode, usageBucket := harnessModeMetadataFromItems(items)
 	providerMetadata, err := json.Marshal(map[string]any{"provider_session_id": providerSessionID, "provider_run_id": providerRunID, "invocation_mode": invocationMode, "usage_bucket": usageBucket})
 	if err != nil {
-		_ = store.UpdateAgentSessionStatus(ctx, sessionID, "failed")
-		return EphemeralAgentCallResponse{}, err
+		_ = store.UpdateHarnessSessionStatus(ctx, sessionID, "failed")
+		return EphemeralCallResponse{}, err
 	}
-	if err := store.UpdateAgentSessionProvider(ctx, sessionID, providerSessionID, providerRunID, string(providerMetadata)); err != nil {
-		_ = store.UpdateAgentSessionStatus(ctx, sessionID, "failed")
-		return EphemeralAgentCallResponse{}, err
+	if err := store.UpdateHarnessSessionProvider(ctx, sessionID, providerSessionID, providerRunID, string(providerMetadata)); err != nil {
+		_ = store.UpdateHarnessSessionStatus(ctx, sessionID, "failed")
+		return EphemeralCallResponse{}, err
 	}
 	if invocationMode == string(HarnessInvocationModeBackground) {
-		storedRun, err := store.GetAgentSession(ctx, sessionID)
+		storedRun, err := store.GetHarnessSession(ctx, sessionID)
 		if err != nil {
-			return EphemeralAgentCallResponse{}, err
+			return EphemeralCallResponse{}, err
 		}
-		return EphemeralAgentCallResponse{Run: storedRun, Request: agentMessageResponse(requestDM)}, nil
+		return EphemeralCallResponse{Run: storedRun, Request: agentMessageResponse(requestDM)}, nil
 	}
 	replyBody := lastAgentText(items)
 	if replyBody == "" {
@@ -1781,27 +1781,27 @@ func (d *Daemon) callEphemeralAgent(ctx context.Context, store *globaldb.Store, 
 	}
 	replyDM, err := store.SendAgentMessage(ctx, globaldb.AgentMessageSendParams{AgentMessageID: replyID, SourceSessionID: sessionID, TargetAgentID: sourceRun.AgentID, TargetSessionID: sourceRun.SessionID, Body: replyBody})
 	if err != nil {
-		_ = store.UpdateAgentSessionStatus(ctx, sessionID, "failed")
+		_ = store.UpdateHarnessSessionStatus(ctx, sessionID, "failed")
 		if errors.Is(err, globaldb.ErrInvalidInput) || errors.Is(err, globaldb.ErrNotFound) {
 			if errors.Is(err, globaldb.ErrNotFound) {
-				return EphemeralAgentCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "unknown_reply_target_agent", "target_agent_id": sourceRun.AgentID, "start_invoked": false})
+				return EphemeralCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "unknown_reply_target_agent", "target_agent_id": sourceRun.AgentID, "start_invoked": false})
 			}
-			return EphemeralAgentCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "invalid_ephemeral_reply_message", "call_id": callID, "agent_message_id": replyID, "source_session_id": sessionID, "target_session_id": sourceRun.SessionID, "target_agent_id": sourceRun.AgentID, "start_invoked": false})
+			return EphemeralCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "invalid_ephemeral_reply_message", "call_id": callID, "agent_message_id": replyID, "source_session_id": sessionID, "target_session_id": sourceRun.SessionID, "target_agent_id": sourceRun.AgentID, "start_invoked": false})
 		}
-		return EphemeralAgentCallResponse{}, err
+		return EphemeralCallResponse{}, err
 	}
-	if err := store.UpdateAgentSessionStatus(ctx, sessionID, "completed"); err != nil {
-		return EphemeralAgentCallResponse{}, err
+	if err := store.UpdateHarnessSessionStatus(ctx, sessionID, "completed"); err != nil {
+		return EphemeralCallResponse{}, err
 	}
-	storedRun, err := store.GetAgentSession(ctx, sessionID)
+	storedRun, err := store.GetHarnessSession(ctx, sessionID)
 	if err != nil {
-		return EphemeralAgentCallResponse{}, err
+		return EphemeralCallResponse{}, err
 	}
-	links, _ := json.Marshal([]FinalResponseEvidenceLink{{Kind: "agent_session", ID: storedRun.SessionID}, {Kind: "agent_message", ID: requestDM.AgentMessageID}, {Kind: "agent_message", ID: replyDM.AgentMessageID}})
+	links, _ := json.Marshal([]FinalResponseEvidenceLink{{Kind: "harness_session", ID: storedRun.SessionID}, {Kind: "agent_message", ID: requestDM.AgentMessageID}, {Kind: "agent_message", ID: replyDM.AgentMessageID}})
 	if err := store.UpsertFinalResponse(ctx, globaldb.FinalResponse{FinalResponseID: "fr_" + replyID, SessionID: storedRun.SessionID, RunID: storedRun.SessionID, WorkspaceID: storedRun.WorkspaceID, TaskID: taskID, ContextPacketID: contextPacketID, ProfileID: storedRun.AgentID, Status: "completed", Text: replyBody, EvidenceLinksJSON: string(links)}); err != nil {
-		return EphemeralAgentCallResponse{}, err
+		return EphemeralCallResponse{}, err
 	}
-	return EphemeralAgentCallResponse{Run: storedRun, Request: agentMessageResponse(requestDM), Reply: agentMessageResponse(replyDM)}, nil
+	return EphemeralCallResponse{Run: storedRun, Request: agentMessageResponse(requestDM), Reply: agentMessageResponse(replyDM)}, nil
 }
 
 func appendTimelineItemsAsRunLogMessages(ctx context.Context, store *globaldb.Store, sessionID string, items []TimelineItem) error {
@@ -1835,17 +1835,17 @@ func lastAgentText(items []TimelineItem) string {
 	return ""
 }
 
-func startProfileSession(d *Daemon, ctx context.Context, store *globaldb.Store, req AgentSessionStartRequest) (AgentSessionStartResponse, error) {
+func startProfileSession(d *Daemon, ctx context.Context, store *globaldb.Store, req HarnessSessionStartRequest) (HarnessSessionStartResponse, error) {
 	workspaceID := strings.TrimSpace(req.WorkspaceID)
 	if workspaceID == "" {
 		workspaceID = strings.TrimSpace(req.Packet.WorkspaceID)
 	}
 	if workspaceID == "" {
-		return AgentSessionStartResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", map[string]any{"reason": "missing_workspace", "start_invoked": false})
+		return HarnessSessionStartResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", map[string]any{"reason": "missing_workspace", "start_invoked": false})
 	}
-	profile, err := d.resolveAgentProfileRunRequest(ctx, store, AgentProfileRunRequest{Profile: req.Profile, Executor: req.Executor, ProfileDefinition: req.ProfileDefinition, Defaults: req.Defaults, Packet: ContextPacket{WorkspaceID: workspaceID}})
+	profile, err := d.resolveProfileRunRequest(ctx, store, ProfileRunRequest{Profile: req.Profile, Executor: req.Executor, ProfileDefinition: req.ProfileDefinition, Defaults: req.Defaults, Packet: ContextPacket{WorkspaceID: workspaceID}})
 	if err != nil {
-		return AgentSessionStartResponse{}, err
+		return HarnessSessionStartResponse{}, err
 	}
 	if override := strings.TrimSpace(req.Prompt); override != "" {
 		profile.Prompt = override
@@ -1854,26 +1854,26 @@ func startProfileSession(d *Daemon, ctx context.Context, store *globaldb.Store, 
 	if sessionID == "" {
 		generated, err := newAriULID()
 		if err != nil {
-			return AgentSessionStartResponse{}, err
+			return HarnessSessionStartResponse{}, err
 		}
 		sessionID = "as_" + generated
 	} else {
-		existing, err := store.GetAgentSession(ctx, sessionID)
+		existing, err := store.GetHarnessSession(ctx, sessionID)
 		if err == nil {
 			if existing.WorkspaceID != workspaceID {
-				return AgentSessionStartResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "session_id belongs to a different workspace", map[string]any{"reason": "session_workspace_mismatch", "session_id": sessionID, "workspace_id": workspaceID, "existing_workspace_id": existing.WorkspaceID, "start_invoked": false})
+				return HarnessSessionStartResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "session_id belongs to a different workspace", map[string]any{"reason": "session_workspace_mismatch", "session_id": sessionID, "workspace_id": workspaceID, "existing_workspace_id": existing.WorkspaceID, "start_invoked": false})
 			}
 			if strings.TrimSpace(existing.AgentID) != "" && strings.TrimSpace(profile.ProfileID) != "" && existing.AgentID != profile.ProfileID {
 				existingProfile := strings.TrimSpace(existing.AgentID)
-				if storedProfile, profileErr := store.GetAgentSessionConfig(ctx, existing.AgentID); profileErr == nil && strings.TrimSpace(storedProfile.Name) != "" {
+				if storedProfile, profileErr := store.GetHarnessSessionConfig(ctx, existing.AgentID); profileErr == nil && strings.TrimSpace(storedProfile.Name) != "" {
 					existingProfile = strings.TrimSpace(storedProfile.Name)
 				}
-				return AgentSessionStartResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "session_id belongs to a different profile", map[string]any{"reason": "session_profile_mismatch", "session_id": sessionID, "profile": strings.TrimSpace(profile.Name), "existing_profile": existingProfile, "start_invoked": false})
+				return HarnessSessionStartResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "session_id belongs to a different profile", map[string]any{"reason": "session_profile_mismatch", "session_id": sessionID, "profile": strings.TrimSpace(profile.Name), "existing_profile": existingProfile, "start_invoked": false})
 			}
-			return AgentSessionStartResponse{Run: agentSessionResponseFromStore(existing)}, nil
+			return HarnessSessionStartResponse{Run: agentSessionResponseFromStore(existing)}, nil
 		}
 		if !errors.Is(err, globaldb.ErrNotFound) {
-			return AgentSessionStartResponse{}, err
+			return HarnessSessionStartResponse{}, err
 		}
 	}
 	harnessReq := req
@@ -1886,7 +1886,7 @@ func startProfileSession(d *Daemon, ctx context.Context, store *globaldb.Store, 
 		} else {
 			id, err := newAriULID()
 			if err != nil {
-				return AgentSessionStartResponse{}, err
+				return HarnessSessionStartResponse{}, err
 			}
 			harnessReq.Packet.ID = "ctx_" + id
 		}
@@ -1897,59 +1897,59 @@ func startProfileSession(d *Daemon, ctx context.Context, store *globaldb.Store, 
 	if strings.TrimSpace(req.Message) != "" && len(harnessReq.Packet.Sections) == 0 {
 		harnessReq.Packet.Sections = []ContextSection{{Name: "message", Content: strings.TrimSpace(req.Message)}}
 	}
-	return d.startAgentSession(ctx, store, harnessReq, profile)
+	return d.startHarnessSession(ctx, store, harnessReq, profile)
 }
 
-func (d *Daemon) startAgentSession(ctx context.Context, store *globaldb.Store, req AgentSessionStartRequest, profile ...AgentProfile) (AgentSessionStartResponse, error) {
+func (d *Daemon) startHarnessSession(ctx context.Context, store *globaldb.Store, req HarnessSessionStartRequest, profile ...Profile) (HarnessSessionStartResponse, error) {
 	executorName := strings.TrimSpace(req.Executor)
 	if executorName == "" {
-		return AgentSessionStartResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "executor is required", nil)
+		return HarnessSessionStartResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "executor is required", nil)
 	}
 	primaryFolder, err := lookupPrimaryFolder(ctx, store, req.Packet.WorkspaceID)
 	if err != nil {
-		return AgentSessionStartResponse{}, mapWorkspaceStoreError(err, req.Packet.WorkspaceID)
+		return HarnessSessionStartResponse{}, mapWorkspaceStoreError(err, req.Packet.WorkspaceID)
 	}
 	executor, err := d.resolveHarness(req, primaryFolder)
 	if err != nil {
-		return AgentSessionStartResponse{}, mapHarnessRunError(err)
+		return HarnessSessionStartResponse{}, mapHarnessRunError(err)
 	}
 	if len(profile) > 0 {
 		selected, err := resolveProfileAuthSlot(ctx, store, executor, req.Executor, profile[0])
 		if err != nil {
-			return AgentSessionStartResponse{}, mapHarnessRunError(err)
+			return HarnessSessionStartResponse{}, mapHarnessRunError(err)
 		}
 		profile[0].AuthSlotID = selected
 	}
-	if _, err := store.GetSession(ctx, req.Packet.WorkspaceID); err != nil {
-		return AgentSessionStartResponse{}, mapWorkspaceStoreError(err, req.Packet.WorkspaceID)
+	if _, err := store.GetWorkspace(ctx, req.Packet.WorkspaceID); err != nil {
+		return HarnessSessionStartResponse{}, mapWorkspaceStoreError(err, req.Packet.WorkspaceID)
 	}
 	result, err := StartExecutorRunResult(ctx, executor, req.Packet, strings.TrimSpace(req.SessionID), profile...)
 	if err != nil {
-		return AgentSessionStartResponse{}, mapHarnessRunError(err)
+		return HarnessSessionStartResponse{}, mapHarnessRunError(err)
 	}
-	run := result.AgentSession
+	run := result.HarnessSession
 	items := result.Items
 	d.recordExecutorRun(run, items)
 	if err := storeHarnessRunLogMessages(ctx, store, result, primaryFolder, profile...); err != nil {
-		return AgentSessionStartResponse{}, err
+		return HarnessSessionStartResponse{}, err
 	}
 	if result.FinalResponse != nil {
 		if err := storeFinalResponse(ctx, store, result, profile...); err != nil {
-			return AgentSessionStartResponse{}, err
+			return HarnessSessionStartResponse{}, err
 		}
 	}
 	sample := agentSessionProcessMetricsSampler(ctx, run)
 	if run.ProcessSample != nil {
 		sample = *run.ProcessSample
 	}
-	if err := storeAgentSessionTelemetry(ctx, store, result, sample, profile...); err != nil {
-		return AgentSessionStartResponse{}, err
+	if err := storeHarnessSessionTelemetry(ctx, store, result, sample, profile...); err != nil {
+		return HarnessSessionStartResponse{}, err
 	}
-	return AgentSessionStartResponse{Run: run, Items: items}, nil
+	return HarnessSessionStartResponse{Run: run, Items: items}, nil
 }
 
-func storeHarnessRunLogMessages(ctx context.Context, store *globaldb.Store, result HarnessCallResult, primaryFolder string, profile ...AgentProfile) error {
-	run := result.AgentSession
+func storeHarnessRunLogMessages(ctx context.Context, store *globaldb.Store, result HarnessCallResult, primaryFolder string, profile ...Profile) error {
+	run := result.HarnessSession
 	agentName := strings.TrimSpace(run.Executor)
 	agentID := ""
 	agentConfigWorkspaceID := strings.TrimSpace(run.WorkspaceID)
@@ -1974,7 +1974,7 @@ func storeHarnessRunLogMessages(ctx context.Context, store *globaldb.Store, resu
 	if agentID == "" {
 		agentID = "wa_" + stableRuntimeAgentIDSegment(run.WorkspaceID) + "_" + stableRuntimeAgentIDSegment(agentName)
 	}
-	if err := store.EnsureAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: agentID, WorkspaceID: agentConfigWorkspaceID, Name: agentName, Harness: run.Executor, Model: model, Prompt: prompt}); err != nil {
+	if err := store.EnsureHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: agentID, WorkspaceID: agentConfigWorkspaceID, Name: agentName, Harness: run.Executor, Model: model, Prompt: prompt}); err != nil {
 		return err
 	}
 	providerMetadata, err := json.Marshal(map[string]any{"session_ref": result.SessionRef, "provider_session_id": run.ProviderSessionID, "capabilities": run.Capabilities, "invocation_mode": run.InvocationMode, "usage_bucket": run.UsageBucket})
@@ -1989,7 +1989,7 @@ func storeHarnessRunLogMessages(ctx context.Context, store *globaldb.Store, resu
 		}
 		folderScopeJSON = string(encoded)
 	}
-	if err := store.CreateAgentSession(ctx, globaldb.AgentSession{SessionID: run.AgentSessionID, WorkspaceID: run.WorkspaceID, AgentID: agentID, Harness: run.Executor, Model: model, ProviderSessionID: result.SessionRef.ProviderSessionID, ProviderRunID: run.ProviderRunID, ProviderThreadID: result.SessionRef.ProviderThreadID, CWD: strings.TrimSpace(primaryFolder), FolderScopeJSON: folderScopeJSON, Status: run.Status, Usage: globaldb.AgentSessionUsageSticky, ContextPayloadIDsJSON: fmt.Sprintf("[%q]", run.ContextPacketID), ProviderMetadataJSON: string(providerMetadata)}); err != nil {
+	if err := store.CreateHarnessSession(ctx, globaldb.HarnessSession{SessionID: run.HarnessSessionID, WorkspaceID: run.WorkspaceID, AgentID: agentID, Harness: run.Executor, Model: model, ProviderSessionID: result.SessionRef.ProviderSessionID, ProviderRunID: run.ProviderRunID, ProviderThreadID: result.SessionRef.ProviderThreadID, CWD: strings.TrimSpace(primaryFolder), FolderScopeJSON: folderScopeJSON, Status: run.Status, Usage: globaldb.HarnessSessionUsageSticky, ContextPayloadIDsJSON: fmt.Sprintf("[%q]", run.ContextPacketID), ProviderMetadataJSON: string(providerMetadata)}); err != nil {
 		return err
 	}
 	sequence := 1
@@ -2004,7 +2004,7 @@ func storeHarnessRunLogMessages(ctx context.Context, store *globaldb.Store, resu
 		}
 		messageID := strings.TrimSpace(item.ID)
 		if messageID == "" {
-			messageID = fmt.Sprintf("%s-message-%d", run.AgentSessionID, sequence)
+			messageID = fmt.Sprintf("%s-message-%d", run.HarnessSessionID, sequence)
 		}
 		rawMetadata := "{}"
 		if len(item.Metadata) > 0 {
@@ -2015,7 +2015,7 @@ func storeHarnessRunLogMessages(ctx context.Context, store *globaldb.Store, resu
 			rawMetadata = string(encoded)
 		}
 		providerFields := providerMessageFieldsFromTimelineItem(item)
-		if err := store.AppendRunLogMessage(ctx, globaldb.RunLogMessage{MessageID: messageID, SessionID: run.AgentSessionID, Sequence: sequence, Role: role, Status: "completed", ProviderMessageID: providerFields.messageID, ProviderItemID: providerFields.itemID, ProviderTurnID: providerFields.turnID, ProviderResponseID: providerFields.responseID, ProviderCallID: providerFields.callID, ProviderChannel: providerFields.channel, ProviderKind: providerFields.kind, RawMetadataJSON: rawMetadata, Parts: []globaldb.RunLogMessagePart{{PartID: messageID + "-part-1", Sequence: 1, Kind: kind, Text: item.Text, ToolName: providerFields.toolName, ToolCallID: providerFields.callID}}}); err != nil {
+		if err := store.AppendRunLogMessage(ctx, globaldb.RunLogMessage{MessageID: messageID, SessionID: run.HarnessSessionID, Sequence: sequence, Role: role, Status: "completed", ProviderMessageID: providerFields.messageID, ProviderItemID: providerFields.itemID, ProviderTurnID: providerFields.turnID, ProviderResponseID: providerFields.responseID, ProviderCallID: providerFields.callID, ProviderChannel: providerFields.channel, ProviderKind: providerFields.kind, RawMetadataJSON: rawMetadata, Parts: []globaldb.RunLogMessagePart{{PartID: messageID + "-part-1", Sequence: 1, Kind: kind, Text: item.Text, ToolName: providerFields.toolName, ToolCallID: providerFields.callID}}}); err != nil {
 			return err
 		}
 		sequence++
@@ -2090,13 +2090,13 @@ func metadataString(metadata map[string]any, keys ...string) string {
 	return ""
 }
 
-func resolveProfileAuthSlot(ctx context.Context, store *globaldb.Store, executor Executor, harness string, profile AgentProfile) (string, error) {
+func resolveProfileAuthSlot(ctx context.Context, store *globaldb.Store, executor Executor, harness string, profile Profile) (string, error) {
 	if strings.TrimSpace(profile.AuthSlotID) == "" && len(profile.AuthPool.SlotIDs) == 0 {
 		return "", nil
 	}
 	statuser, ok := executor.(harnessAuthStatuser)
 	if !ok {
-		return "", &HarnessUnavailableError{Harness: harness, Reason: "auth_slot_selection_unsupported", RequiredCapability: HarnessCapabilityAgentSessionFromContext, StartInvoked: false}
+		return "", &HarnessUnavailableError{Harness: harness, Reason: "auth_slot_selection_unsupported", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
 	}
 	slotIDs := []string{}
 	if strings.TrimSpace(profile.AuthSlotID) != "" {
@@ -2117,13 +2117,13 @@ func resolveProfileAuthSlot(ctx context.Context, store *globaldb.Store, executor
 				if isPoolSelection {
 					continue
 				}
-				return "", &HarnessUnavailableError{Harness: harness, Reason: "unknown_auth_slot", RequiredCapability: HarnessCapabilityAgentSessionFromContext, StartInvoked: false}
+				return "", &HarnessUnavailableError{Harness: harness, Reason: "unknown_auth_slot", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
 			}
 			return "", err
 		}
 		slot := harnessAuthSlotFromGlobal(stored)
 		if strings.TrimSpace(slot.Harness) != strings.TrimSpace(harness) {
-			return "", &HarnessUnavailableError{Harness: harness, Reason: "auth_slot_harness_mismatch", RequiredCapability: HarnessCapabilityAgentSessionFromContext, StartInvoked: false}
+			return "", &HarnessUnavailableError{Harness: harness, Reason: "auth_slot_harness_mismatch", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
 		}
 		status, err := statuser.AuthStatus(ctx, slot)
 		if err != nil {
@@ -2134,7 +2134,7 @@ func resolveProfileAuthSlot(ctx context.Context, store *globaldb.Store, executor
 	}
 	selected, _, err := ResolveHarnessAuthSlot(HarnessAuthSelection{ProfileSlotID: profile.AuthSlotID, ProfilePool: profile.AuthPool, Harness: harness}, slots)
 	if err != nil {
-		return "", &HarnessUnavailableError{Harness: harness, Reason: "auth_slot_not_ready", RequiredCapability: HarnessCapabilityAgentSessionFromContext, StartInvoked: false}
+		return "", &HarnessUnavailableError{Harness: harness, Reason: "auth_slot_not_ready", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
 	}
 	return selected.AuthSlotID, nil
 }
@@ -2189,15 +2189,15 @@ func (d *Daemon) appendExecutorItems(sessionID string, items []TimelineItem) {
 	d.executorMu.Unlock()
 }
 
-func StartExecutorRun(ctx context.Context, executor Executor, packet ContextPacket, profile ...AgentProfile) (AgentSession, []TimelineItem, error) {
+func StartExecutorRun(ctx context.Context, executor Executor, packet ContextPacket, profile ...Profile) (HarnessSession, []TimelineItem, error) {
 	result, err := StartExecutorRunResult(ctx, executor, packet, "", profile...)
 	if err != nil {
-		return AgentSession{}, nil, err
+		return HarnessSession{}, nil, err
 	}
-	return result.AgentSession, result.Items, nil
+	return result.HarnessSession, result.Items, nil
 }
 
-func StartExecutorRunResult(ctx context.Context, executor Executor, packet ContextPacket, ariSessionID string, profile ...AgentProfile) (HarnessCallResult, error) {
+func StartExecutorRunResult(ctx context.Context, executor Executor, packet ContextPacket, ariSessionID string, profile ...Profile) (HarnessCallResult, error) {
 	if ctx == nil {
 		return HarnessCallResult{}, fmt.Errorf("context is required")
 	}
@@ -2213,7 +2213,7 @@ func StartExecutorRunResult(ctx context.Context, executor Executor, packet Conte
 	if strings.TrimSpace(packet.TaskID) == "" {
 		return HarnessCallResult{}, &HarnessValidationError{Message: "task id is required", Field: "packet.task_id"}
 	}
-	call, err := NewAgentSessionHarnessCall(packet, nil)
+	call, err := NewHarnessSessionHarnessCall(packet, nil)
 	if err != nil {
 		return HarnessCallResult{}, err
 	}
@@ -2239,7 +2239,7 @@ func StartExecutorRunResult(ctx context.Context, executor Executor, packet Conte
 	return StartHarnessCallResult(ctx, executor, call)
 }
 
-func storeFinalResponse(ctx context.Context, store *globaldb.Store, result HarnessCallResult, profile ...AgentProfile) error {
+func storeFinalResponse(ctx context.Context, store *globaldb.Store, result HarnessCallResult, profile ...Profile) error {
 	responseID, err := newAriULID()
 	if err != nil {
 		return err
@@ -2248,7 +2248,7 @@ func storeFinalResponse(ctx context.Context, store *globaldb.Store, result Harne
 	if len(profile) > 0 {
 		profileID = strings.TrimSpace(profile[0].ProfileID)
 	}
-	links := []FinalResponseEvidenceLink{{Kind: "context_packet", ID: result.AgentSession.ContextPacketID}, {Kind: "agent_session", ID: result.AgentSession.AgentSessionID}}
+	links := []FinalResponseEvidenceLink{{Kind: "context_packet", ID: result.HarnessSession.ContextPacketID}, {Kind: "harness_session", ID: result.HarnessSession.HarnessSessionID}}
 	for _, item := range result.Items {
 		if strings.TrimSpace(item.ID) != "" {
 			links = append(links, FinalResponseEvidenceLink{Kind: "timeline_item", ID: item.ID})
@@ -2258,13 +2258,13 @@ func storeFinalResponse(ctx context.Context, store *globaldb.Store, result Harne
 	if err != nil {
 		return err
 	}
-	return store.UpsertFinalResponse(ctx, globaldb.FinalResponse{FinalResponseID: "fr_" + responseID, SessionID: result.AgentSession.AgentSessionID, WorkspaceID: result.AgentSession.WorkspaceID, TaskID: result.AgentSession.TaskID, ContextPacketID: result.AgentSession.ContextPacketID, ProfileID: profileID, Status: result.FinalResponse.Status, Text: result.FinalResponse.Text, EvidenceLinksJSON: string(encodedLinks)})
+	return store.UpsertFinalResponse(ctx, globaldb.FinalResponse{FinalResponseID: "fr_" + responseID, SessionID: result.HarnessSession.HarnessSessionID, WorkspaceID: result.HarnessSession.WorkspaceID, TaskID: result.HarnessSession.TaskID, ContextPacketID: result.HarnessSession.ContextPacketID, ProfileID: profileID, Status: result.FinalResponse.Status, Text: result.FinalResponse.Text, EvidenceLinksJSON: string(encodedLinks)})
 }
 
-func storeAgentSessionTelemetry(ctx context.Context, store *globaldb.Store, result HarnessCallResult, sample ProcessMetricsSample, profile ...AgentProfile) error {
+func storeHarnessSessionTelemetry(ctx context.Context, store *globaldb.Store, result HarnessCallResult, sample ProcessMetricsSample, profile ...Profile) error {
 	profileID := ""
 	profileName := ""
-	invocationClass := string(HarnessInvocationAgent)
+	invocationClass := string(HarnessInvocationSticky)
 	if len(profile) > 0 {
 		profileID = strings.TrimSpace(profile[0].ProfileID)
 		profileName = strings.TrimSpace(profile[0].Name)
@@ -2284,11 +2284,11 @@ func storeAgentSessionTelemetry(ctx context.Context, store *globaldb.Store, resu
 	if model == "" {
 		model = "unknown"
 	}
-	durationMS, durationKnown := agentSessionDurationMS(result.AgentSession)
-	return store.UpsertAgentRunTelemetry(ctx, globaldb.AgentRunTelemetry{RunID: result.AgentSession.AgentSessionID, WorkspaceID: result.AgentSession.WorkspaceID, TaskID: result.AgentSession.TaskID, ProfileID: profileID, ProfileName: profileName, Harness: result.AgentSession.Executor, Model: model, InvocationClass: invocationClass, Status: result.AgentSession.Status, InputTokensKnown: result.Telemetry.InputTokens != nil, InputTokens: result.Telemetry.InputTokens, OutputTokensKnown: result.Telemetry.OutputTokens != nil, OutputTokens: result.Telemetry.OutputTokens, DurationMSKnown: durationKnown, DurationMS: durationMS, OwnedByAri: sample.OwnedByAri, PIDKnown: sample.PID.Known, PID: sample.PID.Value, CPUTimeMSKnown: sample.CPUTimeMS.Known, CPUTimeMS: sample.CPUTimeMS.Value, MemoryRSSBytesPeakKnown: sample.MemoryRSSBytesPeak.Known, MemoryRSSBytesPeak: sample.MemoryRSSBytesPeak.Value, ChildProcessesPeakKnown: sample.ChildProcessesPeak.Known, ChildProcessesPeak: sample.ChildProcessesPeak.Value, PortsJSON: portsJSON, OrphanState: sample.OrphanState, ExitCodeKnown: sample.ExitCode.Known, ExitCode: sample.ExitCode.Value})
+	durationMS, durationKnown := agentSessionDurationMS(result.HarnessSession)
+	return store.UpsertHarnessSessionTelemetry(ctx, globaldb.HarnessSessionTelemetry{RunID: result.HarnessSession.HarnessSessionID, WorkspaceID: result.HarnessSession.WorkspaceID, TaskID: result.HarnessSession.TaskID, ProfileID: profileID, ProfileName: profileName, Harness: result.HarnessSession.Executor, Model: model, InvocationClass: invocationClass, Status: result.HarnessSession.Status, InputTokensKnown: result.Telemetry.InputTokens != nil, InputTokens: result.Telemetry.InputTokens, OutputTokensKnown: result.Telemetry.OutputTokens != nil, OutputTokens: result.Telemetry.OutputTokens, DurationMSKnown: durationKnown, DurationMS: durationMS, OwnedByAri: sample.OwnedByAri, PIDKnown: sample.PID.Known, PID: sample.PID.Value, CPUTimeMSKnown: sample.CPUTimeMS.Known, CPUTimeMS: sample.CPUTimeMS.Value, MemoryRSSBytesPeakKnown: sample.MemoryRSSBytesPeak.Known, MemoryRSSBytesPeak: sample.MemoryRSSBytesPeak.Value, ChildProcessesPeakKnown: sample.ChildProcessesPeak.Known, ChildProcessesPeak: sample.ChildProcessesPeak.Value, PortsJSON: portsJSON, OrphanState: sample.OrphanState, ExitCodeKnown: sample.ExitCode.Known, ExitCode: sample.ExitCode.Value})
 }
 
-func agentSessionDurationMS(run AgentSession) (*int64, bool) {
+func agentSessionDurationMS(run HarnessSession) (*int64, bool) {
 	startedAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(run.StartedAt))
 	if err != nil {
 		return nil, false
@@ -2304,15 +2304,15 @@ func agentSessionDurationMS(run AgentSession) (*int64, bool) {
 	return &value, true
 }
 
-func (d *Daemon) recordExecutorRun(run AgentSession, items []TimelineItem) {
-	if d == nil || strings.TrimSpace(run.AgentSessionID) == "" {
+func (d *Daemon) recordExecutorRun(run HarnessSession, items []TimelineItem) {
+	if d == nil || strings.TrimSpace(run.HarnessSessionID) == "" {
 		return
 	}
 	d.executorMu.Lock()
-	d.executorRuns[run.AgentSessionID] = run
-	buffered := append([]TimelineItem(nil), d.executorItems[run.AgentSessionID]...)
-	d.executorItems[run.AgentSessionID] = mergeExecutorItems(items, buffered)
-	d.updateExecutorRunStatusLocked(run.AgentSessionID, d.executorItems[run.AgentSessionID])
+	d.executorRuns[run.HarnessSessionID] = run
+	buffered := append([]TimelineItem(nil), d.executorItems[run.HarnessSessionID]...)
+	d.executorItems[run.HarnessSessionID] = mergeExecutorItems(items, buffered)
+	d.updateExecutorRunStatusLocked(run.HarnessSessionID, d.executorItems[run.HarnessSessionID])
 	d.executorMu.Unlock()
 }
 

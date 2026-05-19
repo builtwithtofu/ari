@@ -46,28 +46,28 @@ func claudeSessionAttach(ctx context.Context, store *globaldb.Store, req ClaudeS
 	return ClaudeSessionAttachResponse{SessionID: session.SessionID, ProviderSessionID: providerID, Command: claudeAttachCommand(providerID)}, nil
 }
 
-func claudeBackgroundSessionRef(ctx context.Context, store *globaldb.Store, sessionID string) (globaldb.AgentSession, string, error) {
+func claudeBackgroundSessionRef(ctx context.Context, store *globaldb.Store, sessionID string) (globaldb.HarnessSession, string, error) {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
-		return globaldb.AgentSession{}, "", rpc.NewHandlerError(rpc.InvalidParams, "session_id is required", map[string]any{"reason": "missing_session_id"})
+		return globaldb.HarnessSession{}, "", rpc.NewHandlerError(rpc.InvalidParams, "session_id is required", map[string]any{"reason": "missing_session_id"})
 	}
-	session, err := store.GetAgentSession(ctx, sessionID)
+	session, err := store.GetHarnessSession(ctx, sessionID)
 	if err != nil {
-		return globaldb.AgentSession{}, "", mapWorkspaceStoreError(err, sessionID)
+		return globaldb.HarnessSession{}, "", mapWorkspaceStoreError(err, sessionID)
 	}
 	if strings.TrimSpace(session.Harness) != HarnessNameClaude {
-		return globaldb.AgentSession{}, "", rpc.NewHandlerError(rpc.InvalidParams, "session is not a Claude session", map[string]any{"reason": "not_claude_session", "session_id": sessionID})
+		return globaldb.HarnessSession{}, "", rpc.NewHandlerError(rpc.InvalidParams, "session is not a Claude session", map[string]any{"reason": "not_claude_session", "session_id": sessionID})
 	}
 	invocationMode, _ := agentSessionModeFromProviderMetadata(session.ProviderMetadataJSON)
 	if invocationMode != "" && invocationMode != string(HarnessInvocationModeBackground) {
-		return globaldb.AgentSession{}, "", rpc.NewHandlerError(rpc.InvalidParams, "session is not a Claude background session", map[string]any{"reason": "not_claude_background_session", "session_id": sessionID})
+		return globaldb.HarnessSession{}, "", rpc.NewHandlerError(rpc.InvalidParams, "session is not a Claude background session", map[string]any{"reason": "not_claude_background_session", "session_id": sessionID})
 	}
 	providerID := strings.TrimSpace(session.ProviderSessionID)
 	if providerID == "" {
 		providerID = strings.TrimSpace(session.ProviderRunID)
 	}
 	if providerID == "" {
-		return globaldb.AgentSession{}, "", rpc.NewHandlerError(rpc.InvalidParams, "Claude provider session id is missing", map[string]any{"reason": "missing_provider_session_id", "session_id": sessionID})
+		return globaldb.HarnessSession{}, "", rpc.NewHandlerError(rpc.InvalidParams, "Claude provider session id is missing", map[string]any{"reason": "missing_provider_session_id", "session_id": sessionID})
 	}
 	return session, providerID, nil
 }

@@ -41,10 +41,10 @@ type Daemon struct {
 	commandLogOrder []string
 	commandWG       sync.WaitGroup
 	executorMu      sync.RWMutex
-	executorRuns    map[string]AgentSession
+	executorRuns    map[string]HarnessSession
 	executorItems   map[string][]TimelineItem
 	harnessRegistry *HarnessRegistry
-	agentProfiles   map[string]AgentProfile
+	agentProfiles   map[string]Profile
 }
 
 var bootstrapDatabase = globaldb.Bootstrap
@@ -92,10 +92,10 @@ func NewWithSignalChannel(socketPath, dbPath, pidPath, configPath, configSource,
 		commands:        make(map[string]*process.Process),
 		commandLogs:     make(map[string]string),
 		commandLogOrder: make([]string, 0),
-		executorRuns:    make(map[string]AgentSession),
+		executorRuns:    make(map[string]HarnessSession),
 		executorItems:   make(map[string][]TimelineItem),
 		harnessRegistry: NewDefaultHarnessRegistry(),
-		agentProfiles:   defaultAgentProfiles(),
+		agentProfiles:   defaultProfiles(),
 	}
 }
 
@@ -159,6 +159,10 @@ func (d *Daemon) Start(ctx context.Context) error {
 	if err := store.MarkRunningCommandsLost(ctx); err != nil {
 		_ = dbConn.Close()
 		return fmt.Errorf("reconcile running commands: %w", err)
+	}
+	if err := store.MarkRunningHarnessSessionsLost(ctx); err != nil {
+		_ = dbConn.Close()
+		return fmt.Errorf("reconcile running harness sessions: %w", err)
 	}
 	if err := store.MarkRunningAgentsLost(ctx); err != nil {
 		_ = dbConn.Close()

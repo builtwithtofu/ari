@@ -1,4 +1,4 @@
--- name: UpsertAgentProfile :exec
+-- name: UpsertProfile :exec
 INSERT INTO agent_profiles (
   profile_id,
   workspace_id,
@@ -25,7 +25,7 @@ ON CONFLICT(profile_id) DO UPDATE SET
   defaults_json = excluded.defaults_json,
   updated_at = excluded.updated_at;
 
--- name: GetWorkspaceAgentProfileByName :one
+-- name: GetWorkspaceProfileByName :one
 SELECT
   profile_id,
   workspace_id,
@@ -43,7 +43,7 @@ FROM agent_profiles
 WHERE workspace_id = ? AND name = ?
 LIMIT 1;
 
--- name: GetGlobalAgentProfileByName :one
+-- name: GetGlobalProfileByName :one
 SELECT
   profile_id,
   workspace_id,
@@ -61,7 +61,7 @@ FROM agent_profiles
 WHERE workspace_id IS NULL AND name = ?
 LIMIT 1;
 
--- name: ListGlobalAgentProfiles :many
+-- name: ListGlobalProfiles :many
 SELECT
   profile_id,
   workspace_id,
@@ -79,7 +79,7 @@ FROM agent_profiles
 WHERE workspace_id IS NULL
 ORDER BY name ASC, profile_id ASC;
 
--- name: ListWorkspaceAgentProfiles :many
+-- name: ListWorkspaceProfiles :many
 SELECT
   profile_id,
   workspace_id,

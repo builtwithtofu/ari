@@ -26,7 +26,7 @@ func newJourneyHarnessFactory(t *testing.T, harness string, items []TimelineItem
 
 func (f *journeyHarnessFactory) register(d *Daemon) {
 	f.t.Helper()
-	d.setHarnessFactoryForTest(f.harness, func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest(f.harness, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -74,25 +74,25 @@ func (j *journeyRuntime) seedWorkspace(workspaceID string, folders ...string) {
 	}
 }
 
-func (j *journeyRuntime) createProfile(workspaceID, name, harness string) AgentProfileResponse {
+func (j *journeyRuntime) createProfile(workspaceID, name, harness string) ProfileResponse {
 	j.t.Helper()
-	return callMethod[AgentProfileResponse](j.t, j.registry, "profile.create", AgentProfileCreateRequest{WorkspaceID: workspaceID, Name: name, Harness: harness, Model: "model-1", Prompt: fmt.Sprintf("%s behavior", name), InvocationClass: HarnessInvocationAgent})
+	return callMethod[ProfileResponse](j.t, j.registry, "profile.create", ProfileCreateRequest{WorkspaceID: workspaceID, Name: name, Harness: harness, Model: "model-1", Prompt: fmt.Sprintf("%s behavior", name), InvocationClass: HarnessInvocationSticky})
 }
 
 func (j *journeyRuntime) createSessionConfig(agentID, workspaceID, name, harness string) {
 	j.t.Helper()
-	if err := j.store.CreateAgentSessionConfig(j.ctx, globaldb.AgentSessionConfig{AgentID: agentID, WorkspaceID: workspaceID, Name: name, Harness: harness, Model: "model-1", Prompt: name + " behavior"}); err != nil {
-		j.t.Fatalf("CreateAgentSessionConfig(%s) returned error: %v", agentID, err)
+	if err := j.store.CreateHarnessSessionConfig(j.ctx, globaldb.HarnessSessionConfig{AgentID: agentID, WorkspaceID: workspaceID, Name: name, Harness: harness, Model: "model-1", Prompt: name + " behavior"}); err != nil {
+		j.t.Fatalf("CreateHarnessSessionConfig(%s) returned error: %v", agentID, err)
 	}
 }
 
-func (j *journeyRuntime) createAgentSession(sessionID, workspaceID, agentID, harness, status, usage string) {
+func (j *journeyRuntime) createHarnessSession(sessionID, workspaceID, agentID, harness, status, usage string) {
 	j.t.Helper()
 	if usage == "" {
-		usage = globaldb.AgentSessionUsageSticky
+		usage = globaldb.HarnessSessionUsageSticky
 	}
-	if err := j.store.CreateAgentSession(j.ctx, globaldb.AgentSession{SessionID: sessionID, WorkspaceID: workspaceID, AgentID: agentID, Harness: harness, Model: "model-1", Status: status, Usage: usage, CWD: j.t.TempDir()}); err != nil {
-		j.t.Fatalf("CreateAgentSession(%s) returned error: %v", sessionID, err)
+	if err := j.store.CreateHarnessSession(j.ctx, globaldb.HarnessSession{SessionID: sessionID, WorkspaceID: workspaceID, AgentID: agentID, Harness: harness, Model: "model-1", Status: status, Usage: usage, CWD: j.t.TempDir()}); err != nil {
+		j.t.Fatalf("CreateHarnessSession(%s) returned error: %v", sessionID, err)
 	}
 }
 

@@ -198,7 +198,7 @@ func (d *Daemon) dashboardGet(ctx context.Context, store *globaldb.Store, req Da
 		return dashboardPickerResponse(ctx, store, activeContext, memberships)
 	}
 	if !explicitWorkspace {
-		if _, err := store.GetSession(ctx, effectiveWorkspaceID); err != nil {
+		if _, err := store.GetWorkspace(ctx, effectiveWorkspaceID); err != nil {
 			if errors.Is(err, globaldb.ErrNotFound) {
 				return dashboardPickerResponse(ctx, store, activeContext, memberships)
 			}
@@ -221,7 +221,7 @@ func dashboardPickerResponse(ctx context.Context, store *globaldb.Store, activeC
 }
 
 func workspacePickerSummaries(ctx context.Context, store *globaldb.Store) ([]WorkspaceSummary, error) {
-	sessions, err := store.ListSessions(ctx)
+	sessions, err := store.ListWorkspaces(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -290,7 +290,7 @@ func workspaceMembershipsForPath(ctx context.Context, store *globaldb.Store, req
 	if err != nil {
 		return WorkspaceMembershipsForPathResponse{}, err
 	}
-	workspaces, err := store.ListSessions(ctx)
+	workspaces, err := store.ListWorkspaces(ctx)
 	if err != nil {
 		return WorkspaceMembershipsForPathResponse{}, err
 	}
@@ -358,7 +358,7 @@ func setActiveWorkspaceContext(ctx context.Context, store *globaldb.Store, req C
 	if workspaceID == "" {
 		return ContextSetResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
 	}
-	workspace, err := store.GetSession(ctx, workspaceID)
+	workspace, err := store.GetWorkspace(ctx, workspaceID)
 	if err != nil {
 		return ContextSetResponse{}, mapWorkspaceStoreError(err, workspaceID)
 	}

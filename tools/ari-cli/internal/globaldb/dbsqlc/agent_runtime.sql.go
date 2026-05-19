@@ -172,106 +172,6 @@ func (q *Queries) CreateAgentMessageContextExcerpt(ctx context.Context, arg Crea
 	return err
 }
 
-const createAgentSession = `-- name: CreateAgentSession :exec
-INSERT INTO agent_sessions (
-  session_id,
-  workspace_id,
-  agent_id,
-  harness,
-  model,
-  provider_session_id,
-  provider_run_id,
-  provider_thread_id,
-  cwd,
-  folder_scope_json,
-  status,
-  usage,
-  source_session_id,
-  source_agent_id,
-  prompt_hash,
-  context_payload_ids_json,
-  permission_mode,
-  sandbox_mode,
-  tool_scope_json,
-  provider_metadata_json
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`
-
-type CreateAgentSessionParams struct {
-	SessionID             string `json:"session_id"`
-	WorkspaceID           string `json:"workspace_id"`
-	AgentID               string `json:"agent_id"`
-	Harness               string `json:"harness"`
-	Model                 string `json:"model"`
-	ProviderSessionID     string `json:"provider_session_id"`
-	ProviderRunID         string `json:"provider_run_id"`
-	ProviderThreadID      string `json:"provider_thread_id"`
-	Cwd                   string `json:"cwd"`
-	FolderScopeJson       string `json:"folder_scope_json"`
-	Status                string `json:"status"`
-	Usage                 string `json:"usage"`
-	SourceSessionID       string `json:"source_session_id"`
-	SourceAgentID         string `json:"source_agent_id"`
-	PromptHash            string `json:"prompt_hash"`
-	ContextPayloadIdsJson string `json:"context_payload_ids_json"`
-	PermissionMode        string `json:"permission_mode"`
-	SandboxMode           string `json:"sandbox_mode"`
-	ToolScopeJson         string `json:"tool_scope_json"`
-	ProviderMetadataJson  string `json:"provider_metadata_json"`
-}
-
-func (q *Queries) CreateAgentSession(ctx context.Context, arg CreateAgentSessionParams) error {
-	_, err := q.db.ExecContext(ctx, createAgentSession,
-		arg.SessionID,
-		arg.WorkspaceID,
-		arg.AgentID,
-		arg.Harness,
-		arg.Model,
-		arg.ProviderSessionID,
-		arg.ProviderRunID,
-		arg.ProviderThreadID,
-		arg.Cwd,
-		arg.FolderScopeJson,
-		arg.Status,
-		arg.Usage,
-		arg.SourceSessionID,
-		arg.SourceAgentID,
-		arg.PromptHash,
-		arg.ContextPayloadIdsJson,
-		arg.PermissionMode,
-		arg.SandboxMode,
-		arg.ToolScopeJson,
-		arg.ProviderMetadataJson,
-	)
-	return err
-}
-
-const createAgentSessionConfig = `-- name: CreateAgentSessionConfig :exec
-INSERT INTO agent_session_configs (agent_id, workspace_id, name, harness, model, prompt)
-VALUES (?, ?, ?, ?, ?, ?)
-`
-
-type CreateAgentSessionConfigParams struct {
-	AgentID     string  `json:"agent_id"`
-	WorkspaceID *string `json:"workspace_id"`
-	Name        string  `json:"name"`
-	Harness     string  `json:"harness"`
-	Model       string  `json:"model"`
-	Prompt      string  `json:"prompt"`
-}
-
-func (q *Queries) CreateAgentSessionConfig(ctx context.Context, arg CreateAgentSessionConfigParams) error {
-	_, err := q.db.ExecContext(ctx, createAgentSessionConfig,
-		arg.AgentID,
-		arg.WorkspaceID,
-		arg.Name,
-		arg.Harness,
-		arg.Model,
-		arg.Prompt,
-	)
-	return err
-}
-
 const createContextExcerpt = `-- name: CreateContextExcerpt :exec
 INSERT INTO context_excerpts (
   context_excerpt_id,
@@ -351,57 +251,32 @@ func (q *Queries) CreateContextExcerptItem(ctx context.Context, arg CreateContex
 	return err
 }
 
-const deleteAgentSessionConfig = `-- name: DeleteAgentSessionConfig :exec
-DELETE FROM agent_session_configs
-WHERE agent_id = ?
+const createHarnessSession = `-- name: CreateHarnessSession :exec
+INSERT INTO agent_sessions (
+  session_id,
+  workspace_id,
+  agent_id,
+  harness,
+  model,
+  provider_session_id,
+  provider_run_id,
+  provider_thread_id,
+  cwd,
+  folder_scope_json,
+  status,
+  usage,
+  source_session_id,
+  source_agent_id,
+  prompt_hash,
+  context_payload_ids_json,
+  permission_mode,
+  sandbox_mode,
+  tool_scope_json,
+  provider_metadata_json
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
-type DeleteAgentSessionConfigParams struct {
-	AgentID string `json:"agent_id"`
-}
-
-func (q *Queries) DeleteAgentSessionConfig(ctx context.Context, arg DeleteAgentSessionConfigParams) error {
-	_, err := q.db.ExecContext(ctx, deleteAgentSessionConfig, arg.AgentID)
-	return err
-}
-
-const ensureAgentSessionConfig = `-- name: EnsureAgentSessionConfig :exec
-INSERT OR IGNORE INTO agent_session_configs (agent_id, workspace_id, name, harness, model, prompt)
-VALUES (?, ?, ?, ?, ?, ?)
-`
-
-type EnsureAgentSessionConfigParams struct {
-	AgentID     string  `json:"agent_id"`
-	WorkspaceID *string `json:"workspace_id"`
-	Name        string  `json:"name"`
-	Harness     string  `json:"harness"`
-	Model       string  `json:"model"`
-	Prompt      string  `json:"prompt"`
-}
-
-func (q *Queries) EnsureAgentSessionConfig(ctx context.Context, arg EnsureAgentSessionConfigParams) error {
-	_, err := q.db.ExecContext(ctx, ensureAgentSessionConfig,
-		arg.AgentID,
-		arg.WorkspaceID,
-		arg.Name,
-		arg.Harness,
-		arg.Model,
-		arg.Prompt,
-	)
-	return err
-}
-
-const getAgentSession = `-- name: GetAgentSession :one
-SELECT session_id, workspace_id, agent_id, harness, model, provider_session_id, provider_run_id, provider_thread_id, cwd, folder_scope_json, status, usage, source_session_id, source_agent_id, prompt_hash, context_payload_ids_json, permission_mode, sandbox_mode, tool_scope_json, provider_metadata_json
-FROM agent_sessions
-WHERE session_id = ?
-`
-
-type GetAgentSessionParams struct {
-	SessionID string `json:"session_id"`
-}
-
-type GetAgentSessionRow struct {
+type CreateHarnessSessionParams struct {
 	SessionID             string `json:"session_id"`
 	WorkspaceID           string `json:"workspace_id"`
 	AgentID               string `json:"agent_id"`
@@ -424,45 +299,38 @@ type GetAgentSessionRow struct {
 	ProviderMetadataJson  string `json:"provider_metadata_json"`
 }
 
-func (q *Queries) GetAgentSession(ctx context.Context, arg GetAgentSessionParams) (GetAgentSessionRow, error) {
-	row := q.db.QueryRowContext(ctx, getAgentSession, arg.SessionID)
-	var i GetAgentSessionRow
-	err := row.Scan(
-		&i.SessionID,
-		&i.WorkspaceID,
-		&i.AgentID,
-		&i.Harness,
-		&i.Model,
-		&i.ProviderSessionID,
-		&i.ProviderRunID,
-		&i.ProviderThreadID,
-		&i.Cwd,
-		&i.FolderScopeJson,
-		&i.Status,
-		&i.Usage,
-		&i.SourceSessionID,
-		&i.SourceAgentID,
-		&i.PromptHash,
-		&i.ContextPayloadIdsJson,
-		&i.PermissionMode,
-		&i.SandboxMode,
-		&i.ToolScopeJson,
-		&i.ProviderMetadataJson,
+func (q *Queries) CreateHarnessSession(ctx context.Context, arg CreateHarnessSessionParams) error {
+	_, err := q.db.ExecContext(ctx, createHarnessSession,
+		arg.SessionID,
+		arg.WorkspaceID,
+		arg.AgentID,
+		arg.Harness,
+		arg.Model,
+		arg.ProviderSessionID,
+		arg.ProviderRunID,
+		arg.ProviderThreadID,
+		arg.Cwd,
+		arg.FolderScopeJson,
+		arg.Status,
+		arg.Usage,
+		arg.SourceSessionID,
+		arg.SourceAgentID,
+		arg.PromptHash,
+		arg.ContextPayloadIdsJson,
+		arg.PermissionMode,
+		arg.SandboxMode,
+		arg.ToolScopeJson,
+		arg.ProviderMetadataJson,
 	)
-	return i, err
+	return err
 }
 
-const getAgentSessionConfig = `-- name: GetAgentSessionConfig :one
-SELECT agent_id, workspace_id, name, harness, model, prompt
-FROM agent_session_configs
-WHERE agent_id = ?
+const createHarnessSessionConfig = `-- name: CreateHarnessSessionConfig :exec
+INSERT INTO agent_session_configs (agent_id, workspace_id, name, harness, model, prompt)
+VALUES (?, ?, ?, ?, ?, ?)
 `
 
-type GetAgentSessionConfigParams struct {
-	AgentID string `json:"agent_id"`
-}
-
-type GetAgentSessionConfigRow struct {
+type CreateHarnessSessionConfigParams struct {
 	AgentID     string  `json:"agent_id"`
 	WorkspaceID *string `json:"workspace_id"`
 	Name        string  `json:"name"`
@@ -471,40 +339,56 @@ type GetAgentSessionConfigRow struct {
 	Prompt      string  `json:"prompt"`
 }
 
-func (q *Queries) GetAgentSessionConfig(ctx context.Context, arg GetAgentSessionConfigParams) (GetAgentSessionConfigRow, error) {
-	row := q.db.QueryRowContext(ctx, getAgentSessionConfig, arg.AgentID)
-	var i GetAgentSessionConfigRow
-	err := row.Scan(
-		&i.AgentID,
-		&i.WorkspaceID,
-		&i.Name,
-		&i.Harness,
-		&i.Model,
-		&i.Prompt,
+func (q *Queries) CreateHarnessSessionConfig(ctx context.Context, arg CreateHarnessSessionConfigParams) error {
+	_, err := q.db.ExecContext(ctx, createHarnessSessionConfig,
+		arg.AgentID,
+		arg.WorkspaceID,
+		arg.Name,
+		arg.Harness,
+		arg.Model,
+		arg.Prompt,
 	)
-	return i, err
+	return err
 }
 
-const getAgentSessionIdentity = `-- name: GetAgentSessionIdentity :one
-SELECT workspace_id, agent_id
-FROM agent_sessions
-WHERE session_id = ?
+const deleteHarnessSessionConfig = `-- name: DeleteHarnessSessionConfig :exec
+DELETE FROM agent_session_configs
+WHERE agent_id = ?
 `
 
-type GetAgentSessionIdentityParams struct {
-	SessionID string `json:"session_id"`
+type DeleteHarnessSessionConfigParams struct {
+	AgentID string `json:"agent_id"`
 }
 
-type GetAgentSessionIdentityRow struct {
-	WorkspaceID string `json:"workspace_id"`
-	AgentID     string `json:"agent_id"`
+func (q *Queries) DeleteHarnessSessionConfig(ctx context.Context, arg DeleteHarnessSessionConfigParams) error {
+	_, err := q.db.ExecContext(ctx, deleteHarnessSessionConfig, arg.AgentID)
+	return err
 }
 
-func (q *Queries) GetAgentSessionIdentity(ctx context.Context, arg GetAgentSessionIdentityParams) (GetAgentSessionIdentityRow, error) {
-	row := q.db.QueryRowContext(ctx, getAgentSessionIdentity, arg.SessionID)
-	var i GetAgentSessionIdentityRow
-	err := row.Scan(&i.WorkspaceID, &i.AgentID)
-	return i, err
+const ensureHarnessSessionConfig = `-- name: EnsureHarnessSessionConfig :exec
+INSERT OR IGNORE INTO agent_session_configs (agent_id, workspace_id, name, harness, model, prompt)
+VALUES (?, ?, ?, ?, ?, ?)
+`
+
+type EnsureHarnessSessionConfigParams struct {
+	AgentID     string  `json:"agent_id"`
+	WorkspaceID *string `json:"workspace_id"`
+	Name        string  `json:"name"`
+	Harness     string  `json:"harness"`
+	Model       string  `json:"model"`
+	Prompt      string  `json:"prompt"`
+}
+
+func (q *Queries) EnsureHarnessSessionConfig(ctx context.Context, arg EnsureHarnessSessionConfigParams) error {
+	_, err := q.db.ExecContext(ctx, ensureHarnessSessionConfig,
+		arg.AgentID,
+		arg.WorkspaceID,
+		arg.Name,
+		arg.Harness,
+		arg.Model,
+		arg.Prompt,
+	)
+	return err
 }
 
 const getContextExcerpt = `-- name: GetContextExcerpt :one
@@ -561,68 +445,17 @@ func (q *Queries) GetContextExcerpt(ctx context.Context, arg GetContextExcerptPa
 	return i, err
 }
 
-const listAgentSessionConfigs = `-- name: ListAgentSessionConfigs :many
-SELECT agent_id, workspace_id, name, harness, model, prompt
-FROM agent_session_configs
-WHERE workspace_id = ?
-ORDER BY name ASC, agent_id ASC
-`
-
-type ListAgentSessionConfigsParams struct {
-	WorkspaceID *string `json:"workspace_id"`
-}
-
-type ListAgentSessionConfigsRow struct {
-	AgentID     string  `json:"agent_id"`
-	WorkspaceID *string `json:"workspace_id"`
-	Name        string  `json:"name"`
-	Harness     string  `json:"harness"`
-	Model       string  `json:"model"`
-	Prompt      string  `json:"prompt"`
-}
-
-func (q *Queries) ListAgentSessionConfigs(ctx context.Context, arg ListAgentSessionConfigsParams) ([]ListAgentSessionConfigsRow, error) {
-	rows, err := q.db.QueryContext(ctx, listAgentSessionConfigs, arg.WorkspaceID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ListAgentSessionConfigsRow{}
-	for rows.Next() {
-		var i ListAgentSessionConfigsRow
-		if err := rows.Scan(
-			&i.AgentID,
-			&i.WorkspaceID,
-			&i.Name,
-			&i.Harness,
-			&i.Model,
-			&i.Prompt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listAgentSessions = `-- name: ListAgentSessions :many
+const getHarnessSession = `-- name: GetHarnessSession :one
 SELECT session_id, workspace_id, agent_id, harness, model, provider_session_id, provider_run_id, provider_thread_id, cwd, folder_scope_json, status, usage, source_session_id, source_agent_id, prompt_hash, context_payload_ids_json, permission_mode, sandbox_mode, tool_scope_json, provider_metadata_json
 FROM agent_sessions
-WHERE workspace_id = ?
-ORDER BY created_at ASC, session_id ASC
+WHERE session_id = ?
 `
 
-type ListAgentSessionsParams struct {
-	WorkspaceID string `json:"workspace_id"`
+type GetHarnessSessionParams struct {
+	SessionID string `json:"session_id"`
 }
 
-type ListAgentSessionsRow struct {
+type GetHarnessSessionRow struct {
 	SessionID             string `json:"session_id"`
 	WorkspaceID           string `json:"workspace_id"`
 	AgentID               string `json:"agent_id"`
@@ -645,48 +478,87 @@ type ListAgentSessionsRow struct {
 	ProviderMetadataJson  string `json:"provider_metadata_json"`
 }
 
-func (q *Queries) ListAgentSessions(ctx context.Context, arg ListAgentSessionsParams) ([]ListAgentSessionsRow, error) {
-	rows, err := q.db.QueryContext(ctx, listAgentSessions, arg.WorkspaceID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ListAgentSessionsRow{}
-	for rows.Next() {
-		var i ListAgentSessionsRow
-		if err := rows.Scan(
-			&i.SessionID,
-			&i.WorkspaceID,
-			&i.AgentID,
-			&i.Harness,
-			&i.Model,
-			&i.ProviderSessionID,
-			&i.ProviderRunID,
-			&i.ProviderThreadID,
-			&i.Cwd,
-			&i.FolderScopeJson,
-			&i.Status,
-			&i.Usage,
-			&i.SourceSessionID,
-			&i.SourceAgentID,
-			&i.PromptHash,
-			&i.ContextPayloadIdsJson,
-			&i.PermissionMode,
-			&i.SandboxMode,
-			&i.ToolScopeJson,
-			&i.ProviderMetadataJson,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+func (q *Queries) GetHarnessSession(ctx context.Context, arg GetHarnessSessionParams) (GetHarnessSessionRow, error) {
+	row := q.db.QueryRowContext(ctx, getHarnessSession, arg.SessionID)
+	var i GetHarnessSessionRow
+	err := row.Scan(
+		&i.SessionID,
+		&i.WorkspaceID,
+		&i.AgentID,
+		&i.Harness,
+		&i.Model,
+		&i.ProviderSessionID,
+		&i.ProviderRunID,
+		&i.ProviderThreadID,
+		&i.Cwd,
+		&i.FolderScopeJson,
+		&i.Status,
+		&i.Usage,
+		&i.SourceSessionID,
+		&i.SourceAgentID,
+		&i.PromptHash,
+		&i.ContextPayloadIdsJson,
+		&i.PermissionMode,
+		&i.SandboxMode,
+		&i.ToolScopeJson,
+		&i.ProviderMetadataJson,
+	)
+	return i, err
+}
+
+const getHarnessSessionConfig = `-- name: GetHarnessSessionConfig :one
+SELECT agent_id, workspace_id, name, harness, model, prompt
+FROM agent_session_configs
+WHERE agent_id = ?
+`
+
+type GetHarnessSessionConfigParams struct {
+	AgentID string `json:"agent_id"`
+}
+
+type GetHarnessSessionConfigRow struct {
+	AgentID     string  `json:"agent_id"`
+	WorkspaceID *string `json:"workspace_id"`
+	Name        string  `json:"name"`
+	Harness     string  `json:"harness"`
+	Model       string  `json:"model"`
+	Prompt      string  `json:"prompt"`
+}
+
+func (q *Queries) GetHarnessSessionConfig(ctx context.Context, arg GetHarnessSessionConfigParams) (GetHarnessSessionConfigRow, error) {
+	row := q.db.QueryRowContext(ctx, getHarnessSessionConfig, arg.AgentID)
+	var i GetHarnessSessionConfigRow
+	err := row.Scan(
+		&i.AgentID,
+		&i.WorkspaceID,
+		&i.Name,
+		&i.Harness,
+		&i.Model,
+		&i.Prompt,
+	)
+	return i, err
+}
+
+const getHarnessSessionIdentity = `-- name: GetHarnessSessionIdentity :one
+SELECT workspace_id, agent_id
+FROM agent_sessions
+WHERE session_id = ?
+`
+
+type GetHarnessSessionIdentityParams struct {
+	SessionID string `json:"session_id"`
+}
+
+type GetHarnessSessionIdentityRow struct {
+	WorkspaceID string `json:"workspace_id"`
+	AgentID     string `json:"agent_id"`
+}
+
+func (q *Queries) GetHarnessSessionIdentity(ctx context.Context, arg GetHarnessSessionIdentityParams) (GetHarnessSessionIdentityRow, error) {
+	row := q.db.QueryRowContext(ctx, getHarnessSessionIdentity, arg.SessionID)
+	var i GetHarnessSessionIdentityRow
+	err := row.Scan(&i.WorkspaceID, &i.AgentID)
+	return i, err
 }
 
 const listContextExcerptItems = `-- name: ListContextExcerptItems :many
@@ -728,6 +600,134 @@ func (q *Queries) ListContextExcerptItems(ctx context.Context, arg ListContextEx
 			&i.CopiedRole,
 			&i.CopiedText,
 			&i.CopiedPartsJson,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listHarnessSessionConfigs = `-- name: ListHarnessSessionConfigs :many
+SELECT agent_id, workspace_id, name, harness, model, prompt
+FROM agent_session_configs
+WHERE workspace_id = ?
+ORDER BY name ASC, agent_id ASC
+`
+
+type ListHarnessSessionConfigsParams struct {
+	WorkspaceID *string `json:"workspace_id"`
+}
+
+type ListHarnessSessionConfigsRow struct {
+	AgentID     string  `json:"agent_id"`
+	WorkspaceID *string `json:"workspace_id"`
+	Name        string  `json:"name"`
+	Harness     string  `json:"harness"`
+	Model       string  `json:"model"`
+	Prompt      string  `json:"prompt"`
+}
+
+func (q *Queries) ListHarnessSessionConfigs(ctx context.Context, arg ListHarnessSessionConfigsParams) ([]ListHarnessSessionConfigsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listHarnessSessionConfigs, arg.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListHarnessSessionConfigsRow{}
+	for rows.Next() {
+		var i ListHarnessSessionConfigsRow
+		if err := rows.Scan(
+			&i.AgentID,
+			&i.WorkspaceID,
+			&i.Name,
+			&i.Harness,
+			&i.Model,
+			&i.Prompt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listHarnessSessions = `-- name: ListHarnessSessions :many
+SELECT session_id, workspace_id, agent_id, harness, model, provider_session_id, provider_run_id, provider_thread_id, cwd, folder_scope_json, status, usage, source_session_id, source_agent_id, prompt_hash, context_payload_ids_json, permission_mode, sandbox_mode, tool_scope_json, provider_metadata_json
+FROM agent_sessions
+WHERE workspace_id = ?
+ORDER BY created_at ASC, session_id ASC
+`
+
+type ListHarnessSessionsParams struct {
+	WorkspaceID string `json:"workspace_id"`
+}
+
+type ListHarnessSessionsRow struct {
+	SessionID             string `json:"session_id"`
+	WorkspaceID           string `json:"workspace_id"`
+	AgentID               string `json:"agent_id"`
+	Harness               string `json:"harness"`
+	Model                 string `json:"model"`
+	ProviderSessionID     string `json:"provider_session_id"`
+	ProviderRunID         string `json:"provider_run_id"`
+	ProviderThreadID      string `json:"provider_thread_id"`
+	Cwd                   string `json:"cwd"`
+	FolderScopeJson       string `json:"folder_scope_json"`
+	Status                string `json:"status"`
+	Usage                 string `json:"usage"`
+	SourceSessionID       string `json:"source_session_id"`
+	SourceAgentID         string `json:"source_agent_id"`
+	PromptHash            string `json:"prompt_hash"`
+	ContextPayloadIdsJson string `json:"context_payload_ids_json"`
+	PermissionMode        string `json:"permission_mode"`
+	SandboxMode           string `json:"sandbox_mode"`
+	ToolScopeJson         string `json:"tool_scope_json"`
+	ProviderMetadataJson  string `json:"provider_metadata_json"`
+}
+
+func (q *Queries) ListHarnessSessions(ctx context.Context, arg ListHarnessSessionsParams) ([]ListHarnessSessionsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listHarnessSessions, arg.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListHarnessSessionsRow{}
+	for rows.Next() {
+		var i ListHarnessSessionsRow
+		if err := rows.Scan(
+			&i.SessionID,
+			&i.WorkspaceID,
+			&i.AgentID,
+			&i.Harness,
+			&i.Model,
+			&i.ProviderSessionID,
+			&i.ProviderRunID,
+			&i.ProviderThreadID,
+			&i.Cwd,
+			&i.FolderScopeJson,
+			&i.Status,
+			&i.Usage,
+			&i.SourceSessionID,
+			&i.SourceAgentID,
+			&i.PromptHash,
+			&i.ContextPayloadIdsJson,
+			&i.PermissionMode,
+			&i.SandboxMode,
+			&i.ToolScopeJson,
+			&i.ProviderMetadataJson,
 		); err != nil {
 			return nil, err
 		}
@@ -896,6 +896,17 @@ func (q *Queries) ListRunLogMessages(ctx context.Context, arg ListRunLogMessages
 	return items, nil
 }
 
+const markRunningHarnessSessionsLost = `-- name: MarkRunningHarnessSessionsLost :exec
+UPDATE agent_sessions
+SET status = 'lost'
+WHERE status = 'running'
+`
+
+func (q *Queries) MarkRunningHarnessSessionsLost(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, markRunningHarnessSessionsLost)
+	return err
+}
+
 const nextRunLogMessageSequence = `-- name: NextRunLogMessageSequence :one
 SELECT CAST(COALESCE(MAX(sequence), 0) + 1 AS INTEGER) AS next_sequence
 FROM run_log_messages
@@ -1017,13 +1028,13 @@ func (q *Queries) TailRunLogMessages(ctx context.Context, arg TailRunLogMessages
 	return items, nil
 }
 
-const updateAgentSessionConfig = `-- name: UpdateAgentSessionConfig :exec
+const updateHarnessSessionConfig = `-- name: UpdateHarnessSessionConfig :exec
 UPDATE agent_session_configs
 SET name = ?, harness = ?, model = ?, prompt = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 WHERE agent_id = ? AND workspace_id = ?
 `
 
-type UpdateAgentSessionConfigParams struct {
+type UpdateHarnessSessionConfigParams struct {
 	Name        string  `json:"name"`
 	Harness     string  `json:"harness"`
 	Model       string  `json:"model"`
@@ -1032,8 +1043,8 @@ type UpdateAgentSessionConfigParams struct {
 	WorkspaceID *string `json:"workspace_id"`
 }
 
-func (q *Queries) UpdateAgentSessionConfig(ctx context.Context, arg UpdateAgentSessionConfigParams) error {
-	_, err := q.db.ExecContext(ctx, updateAgentSessionConfig,
+func (q *Queries) UpdateHarnessSessionConfig(ctx context.Context, arg UpdateHarnessSessionConfigParams) error {
+	_, err := q.db.ExecContext(ctx, updateHarnessSessionConfig,
 		arg.Name,
 		arg.Harness,
 		arg.Model,

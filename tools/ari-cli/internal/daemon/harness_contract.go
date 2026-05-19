@@ -39,18 +39,18 @@ type HarnessCapability string
 type HarnessInvocationClass string
 
 const (
-	HarnessInvocationAgent     HarnessInvocationClass = "agent"
-	HarnessInvocationTemporary HarnessInvocationClass = "temporary"
+	HarnessInvocationSticky    HarnessInvocationClass = "sticky"
+	HarnessInvocationEphemeral HarnessInvocationClass = "ephemeral"
 )
 
 const (
-	HarnessCapabilityAgentSessionFromContext    HarnessCapability = "agent.run.from_context"
-	HarnessCapabilityContextPacket              HarnessCapability = "context_packet"
-	HarnessCapabilityTimelineItems              HarnessCapability = "timeline_items"
-	HarnessCapabilityFinalResponse              HarnessCapability = "final_response"
-	HarnessCapabilityMeasuredTokenTelemetry     HarnessCapability = "measured_token_telemetry"
-	HarnessInputSchemaAgentSessionFromContextV1                   = "agent.run.from_context.v1"
-	HarnessResultSchemaV1                                         = "harness.call.result.v1"
+	HarnessCapabilityHarnessSessionFromContext    HarnessCapability = "harness_session.from_context"
+	HarnessCapabilityContextPacket                HarnessCapability = "context_packet"
+	HarnessCapabilityTimelineItems                HarnessCapability = "timeline_items"
+	HarnessCapabilityFinalResponse                HarnessCapability = "final_response"
+	HarnessCapabilityMeasuredTokenTelemetry       HarnessCapability = "measured_token_telemetry"
+	HarnessInputSchemaHarnessSessionFromContextV1                   = "harness_session.from_context.v1"
+	HarnessResultSchemaV1                                           = "harness.call.result.v1"
 )
 
 type HarnessCallStatus string
@@ -62,15 +62,15 @@ const (
 )
 
 type HarnessCallResult struct {
-	CallID        string                    `json:"call_id"`
-	Status        HarnessCallStatus         `json:"status"`
-	Unsupported   []HarnessCapability       `json:"unsupported,omitempty"`
-	AgentSession  AgentSession              `json:"agent_session"`
-	SessionRef    HarnessSessionRef         `json:"session_ref"`
-	Items         []TimelineItem            `json:"items,omitempty"`
-	Events        []HarnessRuntimeEvent     `json:"events,omitempty"`
-	FinalResponse *HarnessFinalResponseSeed `json:"final_response,omitempty"`
-	Telemetry     HarnessTelemetrySeed      `json:"telemetry"`
+	CallID         string                    `json:"call_id"`
+	Status         HarnessCallStatus         `json:"status"`
+	Unsupported    []HarnessCapability       `json:"unsupported,omitempty"`
+	HarnessSession HarnessSession            `json:"harness_session"`
+	SessionRef     HarnessSessionRef         `json:"session_ref"`
+	Items          []TimelineItem            `json:"items,omitempty"`
+	Events         []HarnessRuntimeEvent     `json:"events,omitempty"`
+	FinalResponse  *HarnessFinalResponseSeed `json:"final_response,omitempty"`
+	Telemetry      HarnessTelemetrySeed      `json:"telemetry"`
 }
 
 type HarnessRuntimeEvent struct {
@@ -439,33 +439,33 @@ func (e *HarnessUnavailableError) Data() map[string]any {
 	return data
 }
 
-func NewAgentSessionHarnessCall(packet ContextPacket, required []HarnessCapability) (HarnessCall, error) {
+func NewHarnessSessionHarnessCall(packet ContextPacket, required []HarnessCapability) (HarnessCall, error) {
 	callID, err := newAriULID()
 	if err != nil {
 		return HarnessCall{}, err
 	}
 	if len(required) == 0 {
-		required = []HarnessCapability{HarnessCapabilityAgentSessionFromContext, HarnessCapabilityTimelineItems}
+		required = []HarnessCapability{HarnessCapabilityHarnessSessionFromContext, HarnessCapabilityTimelineItems}
 	}
 	return HarnessCall{
 		CallID:              callID,
 		WorkspaceID:         packet.WorkspaceID,
 		TaskID:              packet.TaskID,
-		InvocationClass:     HarnessInvocationAgent,
-		Capability:          HarnessCapabilityAgentSessionFromContext,
+		InvocationClass:     HarnessInvocationSticky,
+		Capability:          HarnessCapabilityHarnessSessionFromContext,
 		ContextPacketID:     packet.ID,
-		InputSchemaVersion:  HarnessInputSchemaAgentSessionFromContextV1,
+		InputSchemaVersion:  HarnessInputSchemaHarnessSessionFromContextV1,
 		ResultSchemaVersion: HarnessResultSchemaV1,
 		Required:            append([]HarnessCapability(nil), required...),
 	}, nil
 }
 
-func StartHarnessCall(ctx context.Context, executor Executor, call HarnessCall) (AgentSession, []TimelineItem, error) {
+func StartHarnessCall(ctx context.Context, executor Executor, call HarnessCall) (HarnessSession, []TimelineItem, error) {
 	result, err := StartHarnessCallResult(ctx, executor, call)
 	if err != nil {
-		return AgentSession{}, nil, err
+		return HarnessSession{}, nil, err
 	}
-	return result.AgentSession, result.Items, nil
+	return result.HarnessSession, result.Items, nil
 }
 
 func StartHarnessCallResult(ctx context.Context, executor Executor, call HarnessCall) (HarnessCallResult, error) {
@@ -498,11 +498,11 @@ func StartHarnessCallResult(ctx context.Context, executor Executor, call Harness
 		run.FinishedAt = finishedAt.Format(time.RFC3339Nano)
 	}
 	return HarnessCallResult{
-		CallID:       call.CallID,
-		Status:       harnessCallStatusFromAgentSession(run),
-		AgentSession: run,
+		CallID:         call.CallID,
+		Status:         harnessCallStatusFromHarnessSession(run),
+		HarnessSession: run,
 		SessionRef: HarnessSessionRef{
-			AriSessionID:           run.AgentSessionID,
+			AriSessionID:           run.HarnessSessionID,
 			ProviderSessionID:      run.ProviderSessionID,
 			ProviderCanUseClientID: HarnessUnknown,
 			Persistence:            HarnessSessionUnknown,
@@ -558,7 +558,7 @@ func metadataInt64(metadata map[string]any, key string) (int64, bool) {
 	}
 }
 
-func harnessFinalResponseFromItems(run AgentSession, descriptor HarnessAdapterDescriptor, items []TimelineItem) *HarnessFinalResponseSeed {
+func harnessFinalResponseFromItems(run HarnessSession, descriptor HarnessAdapterDescriptor, items []TimelineItem) *HarnessFinalResponseSeed {
 	if !harnessCapabilitiesContain(descriptor.Capabilities, HarnessCapabilityFinalResponse) {
 		return nil
 	}
@@ -575,7 +575,7 @@ func harnessFinalResponseFromItems(run AgentSession, descriptor HarnessAdapterDe
 		if status == "" {
 			status = "completed"
 		}
-		return &HarnessFinalResponseSeed{Status: status, Text: text, EvidenceEventID: fmt.Sprintf("%s:event-%d", run.AgentSessionID, i+1)}
+		return &HarnessFinalResponseSeed{Status: status, Text: text, EvidenceEventID: fmt.Sprintf("%s:event-%d", run.HarnessSessionID, i+1)}
 	}
 	return nil
 }
@@ -590,10 +590,10 @@ func harnessCapabilitiesContain(capabilities []HarnessCapability, target Harness
 }
 
 func validateHarnessCallEnvelope(call HarnessCall) error {
-	if call.Capability != HarnessCapabilityAgentSessionFromContext {
+	if call.Capability != HarnessCapabilityHarnessSessionFromContext {
 		return nil
 	}
-	if call.InputSchemaVersion != HarnessInputSchemaAgentSessionFromContextV1 {
+	if call.InputSchemaVersion != HarnessInputSchemaHarnessSessionFromContextV1 {
 		return &HarnessValidationError{Message: fmt.Sprintf("input schema version %q is not supported for %s", call.InputSchemaVersion, call.Capability), Field: "input_schema_version"}
 	}
 	if call.ResultSchemaVersion != HarnessResultSchemaV1 {
@@ -608,7 +608,7 @@ func validateHarnessCallEnvelope(call HarnessCall) error {
 	return nil
 }
 
-func harnessCallStatusFromAgentSession(run AgentSession) HarnessCallStatus {
+func harnessCallStatusFromHarnessSession(run HarnessSession) HarnessCallStatus {
 	if strings.TrimSpace(run.Status) == "failed" {
 		return HarnessCallFailed
 	}
@@ -635,7 +635,7 @@ func harnessModeMetadataFromItems(items []TimelineItem) (string, string) {
 	return "", ""
 }
 
-func harnessRuntimeEventsFromItems(run AgentSession, items []TimelineItem) []HarnessRuntimeEvent {
+func harnessRuntimeEventsFromItems(run HarnessSession, items []TimelineItem) []HarnessRuntimeEvent {
 	events := make([]HarnessRuntimeEvent, 0, len(items))
 	for i, item := range items {
 		kind := normalizedHarnessEventKind(item.Kind)
@@ -644,9 +644,9 @@ func harnessRuntimeEventsFromItems(run AgentSession, items []TimelineItem) []Har
 			panic(fmt.Sprintf("encode harness runtime event payload: %v", err))
 		}
 		events = append(events, HarnessRuntimeEvent{
-			EventID:      fmt.Sprintf("%s:event-%d", run.AgentSessionID, i+1),
-			RunID:        run.AgentSessionID,
-			SessionID:    run.AgentSessionID,
+			EventID:      fmt.Sprintf("%s:event-%d", run.HarnessSessionID, i+1),
+			RunID:        run.HarnessSessionID,
+			SessionID:    run.HarnessSessionID,
 			Kind:         string(kind),
 			Sequence:     item.Sequence,
 			CreatedAt:    time.Now().UTC(),
@@ -741,18 +741,18 @@ func trimOrDefault(value, fallback string) string {
 	return value
 }
 
-func startHarnessCallAfterCapabilityCheck(ctx context.Context, executor Executor, call HarnessCall, descriptor HarnessAdapterDescriptor) (AgentSession, []TimelineItem, error) {
+func startHarnessCallAfterCapabilityCheck(ctx context.Context, executor Executor, call HarnessCall, descriptor HarnessAdapterDescriptor) (HarnessSession, []TimelineItem, error) {
 	ariRunID := strings.TrimSpace(call.AriSessionID)
 	if ariRunID == "" {
 		var err error
 		ariRunID, err = newAriULID()
 		if err != nil {
-			return AgentSession{}, nil, err
+			return HarnessSession{}, nil, err
 		}
 	}
 	providerRun, err := executor.Start(ctx, ExecutorStartRequest{WorkspaceID: call.WorkspaceID, RunID: ariRunID, SessionID: ariRunID, ContextPacket: string(call.Input), SourceProfileID: call.SourceProfileID, Model: call.Model, Prompt: call.Prompt, AuthSlotID: call.AuthSlotID, InvocationClass: call.InvocationClass, Options: call.Options})
 	if err != nil {
-		return AgentSession{}, nil, err
+		return HarnessSession{}, nil, err
 	}
 	providerSessionID := strings.TrimSpace(providerRun.SessionID)
 	if providerSessionID == "" {
@@ -776,11 +776,11 @@ func startHarnessCallAfterCapabilityCheck(ctx context.Context, executor Executor
 	}
 	items, err := executor.Items(ctx, providerSessionID)
 	if err != nil {
-		return AgentSession{}, nil, err
+		return HarnessSession{}, nil, err
 	}
 	invocationMode, usageBucket := harnessModeMetadataFromItems(items)
-	agentSession := AgentSession{
-		AgentSessionID:    ariRunID,
+	agentSession := HarnessSession{
+		HarnessSessionID:  ariRunID,
 		SessionID:         ariRunID,
 		WorkspaceID:       call.WorkspaceID,
 		TaskID:            call.TaskID,
@@ -799,16 +799,16 @@ func startHarnessCallAfterCapabilityCheck(ctx context.Context, executor Executor
 		Capabilities:      harnessCapabilitiesToStrings(descriptor.Capabilities),
 	}
 	for i := range items {
-		items[i].RunID = agentSession.AgentSessionID
-		items[i].SessionID = agentSession.AgentSessionID
+		items[i].RunID = agentSession.HarnessSessionID
+		items[i].SessionID = agentSession.HarnessSessionID
 		items[i].WorkspaceID = agentSession.WorkspaceID
 		if strings.TrimSpace(items[i].SourceID) == "" || items[i].SourceID == providerRun.RunID || items[i].SourceID == providerRun.SessionID || items[i].SourceID == providerRun.ProviderRunID || items[i].SourceID == providerRun.ProviderSessionID {
-			items[i].SourceID = agentSession.AgentSessionID
+			items[i].SourceID = agentSession.HarnessSessionID
 		}
 		if strings.HasPrefix(items[i].ID, providerRun.RunID+":") || strings.HasPrefix(items[i].ID, providerRun.SessionID+":") || strings.HasPrefix(items[i].ID, providerRun.ProviderRunID+":") || strings.HasPrefix(items[i].ID, providerRun.ProviderSessionID+":") {
 			_, suffix, ok := strings.Cut(items[i].ID, ":")
 			if ok {
-				items[i].ID = agentSession.AgentSessionID + ":" + suffix
+				items[i].ID = agentSession.HarnessSessionID + ":" + suffix
 			}
 		}
 	}

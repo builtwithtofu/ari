@@ -1,12 +1,12 @@
--- name: CreateAgentSessionConfig :exec
+-- name: CreateHarnessSessionConfig :exec
 INSERT INTO agent_session_configs (agent_id, workspace_id, name, harness, model, prompt)
 VALUES (?, ?, ?, ?, ?, ?);
 
--- name: EnsureAgentSessionConfig :exec
+-- name: EnsureHarnessSessionConfig :exec
 INSERT OR IGNORE INTO agent_session_configs (agent_id, workspace_id, name, harness, model, prompt)
 VALUES (?, ?, ?, ?, ?, ?);
 
--- name: CreateAgentSession :exec
+-- name: CreateHarnessSession :exec
 INSERT INTO agent_sessions (
   session_id,
   workspace_id,
@@ -30,18 +30,18 @@ INSERT INTO agent_sessions (
   provider_metadata_json
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
--- name: GetAgentSession :one
+-- name: GetHarnessSession :one
 SELECT session_id, workspace_id, agent_id, harness, model, provider_session_id, provider_run_id, provider_thread_id, cwd, folder_scope_json, status, usage, source_session_id, source_agent_id, prompt_hash, context_payload_ids_json, permission_mode, sandbox_mode, tool_scope_json, provider_metadata_json
 FROM agent_sessions
 WHERE session_id = ?;
 
--- name: ListAgentSessions :many
+-- name: ListHarnessSessions :many
 SELECT session_id, workspace_id, agent_id, harness, model, provider_session_id, provider_run_id, provider_thread_id, cwd, folder_scope_json, status, usage, source_session_id, source_agent_id, prompt_hash, context_payload_ids_json, permission_mode, sandbox_mode, tool_scope_json, provider_metadata_json
 FROM agent_sessions
 WHERE workspace_id = ?
 ORDER BY created_at ASC, session_id ASC;
 
--- name: GetAgentSessionIdentity :one
+-- name: GetHarnessSessionIdentity :one
 SELECT workspace_id, agent_id
 FROM agent_sessions
 WHERE session_id = ?;
@@ -233,22 +233,27 @@ INSERT INTO agent_messages (
 INSERT INTO agent_message_context_excerpts (agent_message_id, context_excerpt_id, sequence)
 VALUES (?, ?, ?);
 
--- name: GetAgentSessionConfig :one
+-- name: GetHarnessSessionConfig :one
 SELECT agent_id, workspace_id, name, harness, model, prompt
 FROM agent_session_configs
 WHERE agent_id = ?;
 
--- name: ListAgentSessionConfigs :many
+-- name: ListHarnessSessionConfigs :many
 SELECT agent_id, workspace_id, name, harness, model, prompt
 FROM agent_session_configs
 WHERE workspace_id = ?
 ORDER BY name ASC, agent_id ASC;
 
--- name: UpdateAgentSessionConfig :exec
+-- name: UpdateHarnessSessionConfig :exec
 UPDATE agent_session_configs
 SET name = ?, harness = ?, model = ?, prompt = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 WHERE agent_id = ? AND workspace_id = ?;
 
--- name: DeleteAgentSessionConfig :exec
+-- name: DeleteHarnessSessionConfig :exec
 DELETE FROM agent_session_configs
 WHERE agent_id = ?;
+
+-- name: MarkRunningHarnessSessionsLost :exec
+UPDATE agent_sessions
+SET status = 'lost'
+WHERE status = 'running';

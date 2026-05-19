@@ -223,7 +223,7 @@ func TestCommandRunInvalidSessionStateAndFolderGuards(t *testing.T) {
 	}{
 		{name: "missing primary folder", setup: func(t *testing.T, store *globaldb.Store) {
 			t.Helper()
-			if err := store.CreateSession(context.Background(), "sess-1", "alpha", t.TempDir(), "manual", "auto"); err != nil {
+			if err := store.CreateWorkspace(context.Background(), "sess-1", "alpha", t.TempDir(), "manual", "auto"); err != nil {
 				t.Fatalf("CreateSession returned error: %v", err)
 			}
 		}},
@@ -671,8 +671,8 @@ func waitForCommandStatus(t *testing.T, registry *rpc.MethodRegistry, sessionID,
 func seedSessionWithPrimaryFolder(t *testing.T, store *globaldb.Store, sessionID, folder string) {
 	t.Helper()
 
-	if err := store.CreateSession(context.Background(), sessionID, sessionID, t.TempDir(), "manual", "auto"); err != nil {
-		t.Fatalf("CreateSession(%s) returned error: %v", sessionID, err)
+	if err := store.CreateWorkspace(context.Background(), sessionID, sessionID, t.TempDir(), "manual", "auto"); err != nil {
+		t.Fatalf("CreateWorkspace(%s) returned error: %v", sessionID, err)
 	}
 	if err := store.AddFolder(context.Background(), sessionID, folder, "git", true); err != nil {
 		t.Fatalf("AddFolder(%s) returned error: %v", sessionID, err)

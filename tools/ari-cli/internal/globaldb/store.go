@@ -40,7 +40,7 @@ const (
 	agentStatusLost    = "lost"
 )
 
-type Session struct {
+type Workspace struct {
 	ID            string
 	Name          string
 	Status        string
@@ -51,7 +51,7 @@ type Session struct {
 	UpdatedAt     string
 }
 
-type SessionFolder struct {
+type WorkspaceFolder struct {
 	WorkspaceID string
 	FolderPath  string
 	VCSType     string
@@ -153,7 +153,7 @@ type Store struct {
 	agentMessageMu sync.Mutex
 }
 
-type AgentProfile struct {
+type Profile struct {
 	ProfileID       string
 	WorkspaceID     string
 	Name            string
@@ -202,7 +202,7 @@ type KnownInt64 struct {
 	Value *int64
 }
 
-type AgentRunTelemetry struct {
+type HarnessSessionTelemetry struct {
 	RunID                   string
 	SessionID               string
 	WorkspaceID             string
@@ -238,7 +238,7 @@ type AgentRunTelemetry struct {
 	UpdatedAt               time.Time
 }
 
-type AgentRunTelemetryGroup struct {
+type HarnessSessionTelemetryGroup struct {
 	ProfileID       string
 	ProfileName     string
 	Harness         string
@@ -246,8 +246,8 @@ type AgentRunTelemetryGroup struct {
 	InvocationClass string
 }
 
-type AgentRunTelemetryRollup struct {
-	Group         AgentRunTelemetryGroup
+type HarnessSessionTelemetryRollup struct {
+	Group         HarnessSessionTelemetryGroup
 	Runs          int
 	Completed     int
 	Failed        int
@@ -264,12 +264,6 @@ type AgentRunTelemetryRollup struct {
 	PortsJSON     string
 	OrphanState   string
 }
-
-type (
-	AgentSessionTelemetry       = AgentRunTelemetry
-	AgentSessionTelemetryGroup  = AgentRunTelemetryGroup
-	AgentSessionTelemetryRollup = AgentRunTelemetryRollup
-)
 
 func NewSQLStore(db *sql.DB) (*Store, error) {
 	if db == nil {
@@ -318,7 +312,7 @@ func (s *Store) CompareAndSwapMeta(ctx context.Context, key, oldValue, newValue 
 	return changed == 1, nil
 }
 
-func (s *Store) UpsertAgentProfile(ctx context.Context, profile AgentProfile) error {
+func (s *Store) UpsertProfile(ctx context.Context, profile Profile) error {
 	profile.ProfileID = strings.TrimSpace(profile.ProfileID)
 	profile.WorkspaceID = strings.TrimSpace(profile.WorkspaceID)
 	profile.Name = strings.TrimSpace(profile.Name)
@@ -332,7 +326,7 @@ func (s *Store) UpsertAgentProfile(ctx context.Context, profile AgentProfile) er
 	if profile.Name == "" {
 		return fmt.Errorf("%w: profile name is required", ErrInvalidInput)
 	}
-	if existing, err := s.getExactAgentProfile(ctx, profile.WorkspaceID, profile.Name); err == nil {
+	if existing, err := s.getExactProfile(ctx, profile.WorkspaceID, profile.Name); err == nil {
 		profile.ProfileID = existing.ProfileID
 		if profile.CreatedAt.IsZero() {
 			profile.CreatedAt = existing.CreatedAt
@@ -357,37 +351,37 @@ func (s *Store) UpsertAgentProfile(ctx context.Context, profile AgentProfile) er
 		profile.CreatedAt = now
 	}
 	profile.UpdatedAt = now
-	if err := s.sqlcQueries().UpsertAgentProfile(ctx, dbsqlc.UpsertAgentProfileParams{ProfileID: profile.ProfileID, WorkspaceID: optionalString(profile.WorkspaceID), Name: profile.Name, Harness: optionalString(profile.Harness), Model: optionalString(profile.Model), Prompt: optionalString(profile.Prompt), AuthSlotID: optionalString(profile.AuthSlotID), AuthPoolJson: profile.AuthPoolJSON, InvocationClass: optionalString(profile.InvocationClass), DefaultsJson: profile.DefaultsJSON, CreatedAt: profile.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: profile.UpdatedAt.Format(time.RFC3339Nano)}); err != nil {
+	if err := s.sqlcQueries().UpsertProfile(ctx, dbsqlc.UpsertProfileParams{ProfileID: profile.ProfileID, WorkspaceID: optionalString(profile.WorkspaceID), Name: profile.Name, Harness: optionalString(profile.Harness), Model: optionalString(profile.Model), Prompt: optionalString(profile.Prompt), AuthSlotID: optionalString(profile.AuthSlotID), AuthPoolJson: profile.AuthPoolJSON, InvocationClass: optionalString(profile.InvocationClass), DefaultsJson: profile.DefaultsJSON, CreatedAt: profile.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: profile.UpdatedAt.Format(time.RFC3339Nano)}); err != nil {
 		return fmt.Errorf("upsert agent profile %q: %w", profile.Name, err)
 	}
 	return nil
 }
 
-func (s *Store) EnsureDefaultHelperProfile(ctx context.Context, workspaceID, harness, prompt string) (AgentProfile, error) {
+func (s *Store) EnsureDefaultHelperProfile(ctx context.Context, workspaceID, harness, prompt string) (Profile, error) {
 	workspaceID = strings.TrimSpace(workspaceID)
 	if workspaceID == "" {
-		return AgentProfile{}, fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
+		return Profile{}, fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
 	}
-	if _, err := s.GetSession(ctx, workspaceID); err != nil {
-		return AgentProfile{}, err
+	if _, err := s.GetWorkspace(ctx, workspaceID); err != nil {
+		return Profile{}, err
 	}
-	if existing, err := s.getExactAgentProfile(ctx, workspaceID, DefaultHelperProfileName); err == nil {
+	if existing, err := s.getExactProfile(ctx, workspaceID, DefaultHelperProfileName); err == nil {
 		return existing, nil
 	} else if !errors.Is(err, ErrNotFound) {
-		return AgentProfile{}, err
+		return Profile{}, err
 	}
-	profileID, err := newAgentProfileID()
+	profileID, err := newProfileID()
 	if err != nil {
-		return AgentProfile{}, err
+		return Profile{}, err
 	}
-	profile := AgentProfile{ProfileID: profileID, WorkspaceID: workspaceID, Name: DefaultHelperProfileName, Harness: strings.TrimSpace(harness), Prompt: strings.TrimSpace(prompt), InvocationClass: "agent", DefaultsJSON: "{}"}
-	if err := s.UpsertAgentProfile(ctx, profile); err != nil {
-		return AgentProfile{}, err
+	profile := Profile{ProfileID: profileID, WorkspaceID: workspaceID, Name: DefaultHelperProfileName, Harness: strings.TrimSpace(harness), Prompt: strings.TrimSpace(prompt), InvocationClass: HarnessSessionUsageSticky, DefaultsJSON: "{}"}
+	if err := s.UpsertProfile(ctx, profile); err != nil {
+		return Profile{}, err
 	}
-	return s.getExactAgentProfile(ctx, workspaceID, DefaultHelperProfileName)
+	return s.getExactProfile(ctx, workspaceID, DefaultHelperProfileName)
 }
 
-func newAgentProfileID() (string, error) {
+func newProfileID() (string, error) {
 	var data [16]byte
 	if _, err := rand.Read(data[:]); err != nil {
 		return "", fmt.Errorf("generate agent profile id: %w", err)
@@ -395,75 +389,75 @@ func newAgentProfileID() (string, error) {
 	return "ap_" + hex.EncodeToString(data[:]), nil
 }
 
-func (s *Store) GetDefaultHelperProfile(ctx context.Context, workspaceID string) (AgentProfile, error) {
+func (s *Store) GetDefaultHelperProfile(ctx context.Context, workspaceID string) (Profile, error) {
 	workspaceID = strings.TrimSpace(workspaceID)
 	if workspaceID == "" {
-		return AgentProfile{}, fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
+		return Profile{}, fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
 	}
-	return s.getExactAgentProfile(ctx, workspaceID, DefaultHelperProfileName)
+	return s.getExactProfile(ctx, workspaceID, DefaultHelperProfileName)
 }
 
-func (s *Store) getExactAgentProfile(ctx context.Context, workspaceID, name string) (AgentProfile, error) {
+func (s *Store) getExactProfile(ctx context.Context, workspaceID, name string) (Profile, error) {
 	if strings.TrimSpace(workspaceID) != "" {
-		profile, err := s.sqlcQueries().GetWorkspaceAgentProfileByName(ctx, dbsqlc.GetWorkspaceAgentProfileByNameParams{WorkspaceID: optionalString(workspaceID), Name: name})
+		profile, err := s.sqlcQueries().GetWorkspaceProfileByName(ctx, dbsqlc.GetWorkspaceProfileByNameParams{WorkspaceID: optionalString(workspaceID), Name: name})
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				return AgentProfile{}, ErrNotFound
+				return Profile{}, ErrNotFound
 			}
-			return AgentProfile{}, fmt.Errorf("query exact workspace agent profile: %w", err)
+			return Profile{}, fmt.Errorf("query exact workspace agent profile: %w", err)
 		}
 		return agentProfileFromWorkspaceNameRow(profile), nil
 	}
-	profile, err := s.sqlcQueries().GetGlobalAgentProfileByName(ctx, dbsqlc.GetGlobalAgentProfileByNameParams{Name: name})
+	profile, err := s.sqlcQueries().GetGlobalProfileByName(ctx, dbsqlc.GetGlobalProfileByNameParams{Name: name})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return AgentProfile{}, ErrNotFound
+			return Profile{}, ErrNotFound
 		}
-		return AgentProfile{}, fmt.Errorf("query exact global agent profile: %w", err)
+		return Profile{}, fmt.Errorf("query exact global agent profile: %w", err)
 	}
 	return agentProfileFromGlobalNameRow(profile), nil
 }
 
-func (s *Store) GetAgentProfile(ctx context.Context, workspaceID, name string) (AgentProfile, error) {
+func (s *Store) GetProfile(ctx context.Context, workspaceID, name string) (Profile, error) {
 	workspaceID = strings.TrimSpace(workspaceID)
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return AgentProfile{}, fmt.Errorf("%w: profile name is required", ErrInvalidInput)
+		return Profile{}, fmt.Errorf("%w: profile name is required", ErrInvalidInput)
 	}
 	if workspaceID != "" {
-		profile, err := s.sqlcQueries().GetWorkspaceAgentProfileByName(ctx, dbsqlc.GetWorkspaceAgentProfileByNameParams{WorkspaceID: optionalString(workspaceID), Name: name})
+		profile, err := s.sqlcQueries().GetWorkspaceProfileByName(ctx, dbsqlc.GetWorkspaceProfileByNameParams{WorkspaceID: optionalString(workspaceID), Name: name})
 		if err == nil {
 			return agentProfileFromWorkspaceNameRow(profile), nil
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
-			return AgentProfile{}, fmt.Errorf("query workspace agent profile: %w", err)
+			return Profile{}, fmt.Errorf("query workspace agent profile: %w", err)
 		}
 	}
-	profile, err := s.sqlcQueries().GetGlobalAgentProfileByName(ctx, dbsqlc.GetGlobalAgentProfileByNameParams{Name: name})
+	profile, err := s.sqlcQueries().GetGlobalProfileByName(ctx, dbsqlc.GetGlobalProfileByNameParams{Name: name})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return AgentProfile{}, ErrNotFound
+			return Profile{}, ErrNotFound
 		}
-		return AgentProfile{}, fmt.Errorf("query global agent profile: %w", err)
+		return Profile{}, fmt.Errorf("query global agent profile: %w", err)
 	}
 	return agentProfileFromGlobalNameRow(profile), nil
 }
 
-func (s *Store) ListAgentProfiles(ctx context.Context, workspaceID string) ([]AgentProfile, error) {
+func (s *Store) ListProfiles(ctx context.Context, workspaceID string) ([]Profile, error) {
 	workspaceID = strings.TrimSpace(workspaceID)
 	var err error
-	var profiles []AgentProfile
+	var profiles []Profile
 	if workspaceID == "" {
-		rows, listErr := s.sqlcQueries().ListGlobalAgentProfiles(ctx)
+		rows, listErr := s.sqlcQueries().ListGlobalProfiles(ctx)
 		err = listErr
-		profiles = make([]AgentProfile, 0, len(rows))
+		profiles = make([]Profile, 0, len(rows))
 		for _, row := range rows {
 			profiles = append(profiles, agentProfileFromGlobalListRow(row))
 		}
 	} else {
-		rows, listErr := s.sqlcQueries().ListWorkspaceAgentProfiles(ctx, dbsqlc.ListWorkspaceAgentProfilesParams{WorkspaceID: optionalString(workspaceID)})
+		rows, listErr := s.sqlcQueries().ListWorkspaceProfiles(ctx, dbsqlc.ListWorkspaceProfilesParams{WorkspaceID: optionalString(workspaceID)})
 		err = listErr
-		profiles = make([]AgentProfile, 0, len(rows))
+		profiles = make([]Profile, 0, len(rows))
 		for _, row := range rows {
 			profiles = append(profiles, agentProfileFromWorkspaceListRow(row))
 		}
@@ -713,7 +707,7 @@ func validFinalResponseStatus(status string) bool {
 	}
 }
 
-func (s *Store) UpsertAgentRunTelemetry(ctx context.Context, telemetry AgentRunTelemetry) error {
+func (s *Store) UpsertHarnessSessionTelemetry(ctx context.Context, telemetry HarnessSessionTelemetry) error {
 	telemetry.RunID = strings.TrimSpace(telemetry.RunID)
 	if telemetry.RunID == "" {
 		telemetry.RunID = strings.TrimSpace(telemetry.SessionID)
@@ -742,7 +736,7 @@ func (s *Store) UpsertAgentRunTelemetry(ctx context.Context, telemetry AgentRunT
 		telemetry.Model = "unknown"
 	}
 	if telemetry.InvocationClass == "" {
-		telemetry.InvocationClass = "agent"
+		telemetry.InvocationClass = HarnessSessionUsageSticky
 	}
 	if telemetry.Status == "" {
 		telemetry.Status = "unknown"
@@ -763,29 +757,29 @@ func (s *Store) UpsertAgentRunTelemetry(ctx context.Context, telemetry AgentRunT
 	if telemetry.UpdatedAt.IsZero() {
 		telemetry.UpdatedAt = now
 	}
-	params := dbsqlc.UpsertAgentRunTelemetryParams{RunID: telemetry.RunID, WorkspaceID: telemetry.WorkspaceID, TaskID: telemetry.TaskID, ProfileID: optionalString(telemetry.ProfileID), ProfileName: optionalString(telemetry.ProfileName), Harness: telemetry.Harness, Model: telemetry.Model, InvocationClass: telemetry.InvocationClass, Status: telemetry.Status, InputTokensKnown: boolInt64(telemetry.InputTokensKnown), InputTokens: telemetry.InputTokens, OutputTokensKnown: boolInt64(telemetry.OutputTokensKnown), OutputTokens: telemetry.OutputTokens, EstimatedCostKnown: boolInt64(telemetry.EstimatedCostKnown), EstimatedCostMicros: telemetry.EstimatedCostMicros, DurationMsKnown: boolInt64(telemetry.DurationMSKnown), DurationMs: telemetry.DurationMS, ExitCodeKnown: boolInt64(telemetry.ExitCodeKnown), ExitCode: telemetry.ExitCode, OwnedByAri: boolInt64(telemetry.OwnedByAri), PidKnown: boolInt64(telemetry.PIDKnown), Pid: telemetry.PID, CpuTimeMsKnown: boolInt64(telemetry.CPUTimeMSKnown), CpuTimeMs: telemetry.CPUTimeMS, MemoryRssBytesPeakKnown: boolInt64(telemetry.MemoryRSSBytesPeakKnown), MemoryRssBytesPeak: telemetry.MemoryRSSBytesPeak, ChildProcessesPeakKnown: boolInt64(telemetry.ChildProcessesPeakKnown), ChildProcessesPeak: telemetry.ChildProcessesPeak, PortsJson: telemetry.PortsJSON, OrphanState: telemetry.OrphanState, CreatedAt: telemetry.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: telemetry.UpdatedAt.Format(time.RFC3339Nano)}
-	if err := s.sqlcQueries().UpsertAgentRunTelemetry(ctx, params); err != nil {
+	params := dbsqlc.UpsertHarnessSessionTelemetryParams{RunID: telemetry.RunID, WorkspaceID: telemetry.WorkspaceID, TaskID: telemetry.TaskID, ProfileID: optionalString(telemetry.ProfileID), ProfileName: optionalString(telemetry.ProfileName), Harness: telemetry.Harness, Model: telemetry.Model, InvocationClass: telemetry.InvocationClass, Status: telemetry.Status, InputTokensKnown: boolInt64(telemetry.InputTokensKnown), InputTokens: telemetry.InputTokens, OutputTokensKnown: boolInt64(telemetry.OutputTokensKnown), OutputTokens: telemetry.OutputTokens, EstimatedCostKnown: boolInt64(telemetry.EstimatedCostKnown), EstimatedCostMicros: telemetry.EstimatedCostMicros, DurationMsKnown: boolInt64(telemetry.DurationMSKnown), DurationMs: telemetry.DurationMS, ExitCodeKnown: boolInt64(telemetry.ExitCodeKnown), ExitCode: telemetry.ExitCode, OwnedByAri: boolInt64(telemetry.OwnedByAri), PidKnown: boolInt64(telemetry.PIDKnown), Pid: telemetry.PID, CpuTimeMsKnown: boolInt64(telemetry.CPUTimeMSKnown), CpuTimeMs: telemetry.CPUTimeMS, MemoryRssBytesPeakKnown: boolInt64(telemetry.MemoryRSSBytesPeakKnown), MemoryRssBytesPeak: telemetry.MemoryRSSBytesPeak, ChildProcessesPeakKnown: boolInt64(telemetry.ChildProcessesPeakKnown), ChildProcessesPeak: telemetry.ChildProcessesPeak, PortsJson: telemetry.PortsJSON, OrphanState: telemetry.OrphanState, CreatedAt: telemetry.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: telemetry.UpdatedAt.Format(time.RFC3339Nano)}
+	if err := s.sqlcQueries().UpsertHarnessSessionTelemetry(ctx, params); err != nil {
 		return fmt.Errorf("upsert agent run telemetry %q: %w", telemetry.RunID, err)
 	}
 	return nil
 }
 
-func (s *Store) RollupAgentRunTelemetry(ctx context.Context, workspaceID string) ([]AgentRunTelemetryRollup, error) {
+func (s *Store) RollupHarnessSessionTelemetry(ctx context.Context, workspaceID string) ([]HarnessSessionTelemetryRollup, error) {
 	workspaceID = strings.TrimSpace(workspaceID)
 	if workspaceID == "" {
 		return nil, fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
 	}
-	rows, err := s.sqlcQueries().ListAgentRunTelemetryByWorkspace(ctx, dbsqlc.ListAgentRunTelemetryByWorkspaceParams{WorkspaceID: workspaceID})
+	rows, err := s.sqlcQueries().ListHarnessSessionTelemetryByWorkspace(ctx, dbsqlc.ListHarnessSessionTelemetryByWorkspaceParams{WorkspaceID: workspaceID})
 	if err != nil {
 		return nil, fmt.Errorf("list agent run telemetry: %w", err)
 	}
-	byGroup := map[AgentRunTelemetryGroup]*AgentRunTelemetryRollup{}
-	order := []AgentRunTelemetryGroup{}
+	byGroup := map[HarnessSessionTelemetryGroup]*HarnessSessionTelemetryRollup{}
+	order := []HarnessSessionTelemetryGroup{}
 	for _, row := range rows {
-		group := AgentRunTelemetryGroup{ProfileID: stringValue(row.ProfileID), ProfileName: stringValue(row.ProfileName), Harness: row.Harness, Model: row.Model, InvocationClass: row.InvocationClass}
+		group := HarnessSessionTelemetryGroup{ProfileID: stringValue(row.ProfileID), ProfileName: stringValue(row.ProfileName), Harness: row.Harness, Model: row.Model, InvocationClass: row.InvocationClass}
 		rollup := byGroup[group]
 		if rollup == nil {
-			rollup = &AgentRunTelemetryRollup{Group: group}
+			rollup = &HarnessSessionTelemetryRollup{Group: group}
 			byGroup[group] = rollup
 			order = append(order, group)
 		}
@@ -813,7 +807,7 @@ func (s *Store) RollupAgentRunTelemetry(ctx context.Context, workspaceID string)
 			rollup.OrphanState = row.OrphanState
 		}
 	}
-	rollups := make([]AgentRunTelemetryRollup, 0, len(order))
+	rollups := make([]HarnessSessionTelemetryRollup, 0, len(order))
 	for _, group := range order {
 		if byGroup[group].Runs != 1 {
 			byGroup[group].PID = KnownInt64{}
@@ -822,14 +816,6 @@ func (s *Store) RollupAgentRunTelemetry(ctx context.Context, workspaceID string)
 		rollups = append(rollups, *byGroup[group])
 	}
 	return rollups, nil
-}
-
-func (s *Store) UpsertAgentSessionTelemetry(ctx context.Context, telemetry AgentSessionTelemetry) error {
-	return s.UpsertAgentRunTelemetry(ctx, telemetry)
-}
-
-func (s *Store) RollupAgentSessionTelemetry(ctx context.Context, workspaceID string) ([]AgentSessionTelemetryRollup, error) {
-	return s.RollupAgentRunTelemetry(ctx, workspaceID)
 }
 
 func boolInt64(value bool) int64 {
@@ -878,26 +864,26 @@ func optionalString(value string) *string {
 	return &value
 }
 
-func agentProfileFromWorkspaceNameRow(row dbsqlc.GetWorkspaceAgentProfileByNameRow) AgentProfile {
+func agentProfileFromWorkspaceNameRow(row dbsqlc.GetWorkspaceProfileByNameRow) Profile {
 	return agentProfileFromFields(row.ProfileID, row.WorkspaceID, row.Name, row.Harness, row.Model, row.Prompt, row.AuthSlotID, row.AuthPoolJson, row.InvocationClass, row.DefaultsJson, row.CreatedAt, row.UpdatedAt)
 }
 
-func agentProfileFromGlobalNameRow(row dbsqlc.GetGlobalAgentProfileByNameRow) AgentProfile {
+func agentProfileFromGlobalNameRow(row dbsqlc.GetGlobalProfileByNameRow) Profile {
 	return agentProfileFromFields(row.ProfileID, row.WorkspaceID, row.Name, row.Harness, row.Model, row.Prompt, row.AuthSlotID, row.AuthPoolJson, row.InvocationClass, row.DefaultsJson, row.CreatedAt, row.UpdatedAt)
 }
 
-func agentProfileFromWorkspaceListRow(row dbsqlc.ListWorkspaceAgentProfilesRow) AgentProfile {
+func agentProfileFromWorkspaceListRow(row dbsqlc.ListWorkspaceProfilesRow) Profile {
 	return agentProfileFromFields(row.ProfileID, row.WorkspaceID, row.Name, row.Harness, row.Model, row.Prompt, row.AuthSlotID, row.AuthPoolJson, row.InvocationClass, row.DefaultsJson, row.CreatedAt, row.UpdatedAt)
 }
 
-func agentProfileFromGlobalListRow(row dbsqlc.ListGlobalAgentProfilesRow) AgentProfile {
+func agentProfileFromGlobalListRow(row dbsqlc.ListGlobalProfilesRow) Profile {
 	return agentProfileFromFields(row.ProfileID, row.WorkspaceID, row.Name, row.Harness, row.Model, row.Prompt, row.AuthSlotID, row.AuthPoolJson, row.InvocationClass, row.DefaultsJson, row.CreatedAt, row.UpdatedAt)
 }
 
-func agentProfileFromFields(profileID string, workspaceID *string, name string, harness *string, model *string, prompt *string, authSlotID *string, authPoolJSON string, invocationClass *string, defaultsJSON string, createdAtValue string, updatedAtValue string) AgentProfile {
+func agentProfileFromFields(profileID string, workspaceID *string, name string, harness *string, model *string, prompt *string, authSlotID *string, authPoolJSON string, invocationClass *string, defaultsJSON string, createdAtValue string, updatedAtValue string) Profile {
 	createdAt, _ := time.Parse(time.RFC3339Nano, createdAtValue)
 	updatedAt, _ := time.Parse(time.RFC3339Nano, updatedAtValue)
-	return AgentProfile{ProfileID: profileID, WorkspaceID: stringValue(workspaceID), Name: name, Harness: stringValue(harness), Model: stringValue(model), Prompt: stringValue(prompt), AuthSlotID: stringValue(authSlotID), AuthPoolJSON: authPoolJSON, InvocationClass: stringValue(invocationClass), DefaultsJSON: defaultsJSON, CreatedAt: createdAt, UpdatedAt: updatedAt}
+	return Profile{ProfileID: profileID, WorkspaceID: stringValue(workspaceID), Name: name, Harness: stringValue(harness), Model: stringValue(model), Prompt: stringValue(prompt), AuthSlotID: stringValue(authSlotID), AuthPoolJSON: authPoolJSON, InvocationClass: stringValue(invocationClass), DefaultsJSON: defaultsJSON, CreatedAt: createdAt, UpdatedAt: updatedAt}
 }
 
 func authSlotFromSQLC(row dbsqlc.AuthSlot) AuthSlot {
@@ -966,12 +952,12 @@ func intPtrFromInt64(value *int64) *int {
 	return &out
 }
 
-func sessionFromSQLC(row dbsqlc.Workspace) Session {
-	return Session{ID: row.WorkspaceID, Name: row.Name, Status: row.Status, VCSPreference: row.VcsPreference, OriginRoot: row.OriginRoot, CleanupPolicy: row.CleanupPolicy, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+func workspaceFromSQLC(row dbsqlc.Workspace) Workspace {
+	return Workspace{ID: row.WorkspaceID, Name: row.Name, Status: row.Status, VCSPreference: row.VcsPreference, OriginRoot: row.OriginRoot, CleanupPolicy: row.CleanupPolicy, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
 }
 
-func sessionFolderFromSQLC(row dbsqlc.WorkspaceFolder) SessionFolder {
-	return SessionFolder{WorkspaceID: row.WorkspaceID, FolderPath: row.FolderPath, VCSType: row.VcsType, IsPrimary: row.IsPrimary != 0, AddedAt: row.AddedAt}
+func workspaceFolderFromSQLC(row dbsqlc.WorkspaceFolder) WorkspaceFolder {
+	return WorkspaceFolder{WorkspaceID: row.WorkspaceID, FolderPath: row.FolderPath, VCSType: row.VcsType, IsPrimary: row.IsPrimary != 0, AddedAt: row.AddedAt}
 }
 
 func commandFromSQLC(row dbsqlc.Command) Command {
@@ -986,12 +972,12 @@ func agentFromSQLC(row dbsqlc.Agent) Agent {
 	return Agent{AgentID: row.AgentID, WorkspaceID: row.WorkspaceID, Name: row.Name, Command: row.Command, Args: row.Args, Status: row.Status, ExitCode: intPtrFromInt64(row.ExitCode), StartedAt: row.StartedAt, StoppedAt: row.StoppedAt, Harness: row.Harness, HarnessResumableID: row.HarnessResumableID, HarnessMetadata: row.HarnessMetadata, InvocationClass: row.InvocationClass}
 }
 
-func (s *Store) CreateSession(ctx context.Context, id, name, originRoot, cleanupPolicy, vcsPreference string) error {
+func (s *Store) CreateWorkspace(ctx context.Context, id, name, originRoot, cleanupPolicy, vcsPreference string) error {
 	if id = strings.TrimSpace(id); id == "" {
-		return fmt.Errorf("%w: session id is required", ErrInvalidInput)
+		return fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
 	}
 	if name = strings.TrimSpace(name); name == "" {
-		return fmt.Errorf("%w: session name is required", ErrInvalidInput)
+		return fmt.Errorf("%w: workspace name is required", ErrInvalidInput)
 	}
 	originRoot = strings.TrimSpace(originRoot)
 	if err := validateCleanupPolicy(cleanupPolicy); err != nil {
@@ -1006,106 +992,106 @@ func (s *Store) CreateSession(ctx context.Context, id, name, originRoot, cleanup
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if err := s.sqlcQueries().CreateWorkspace(ctx, dbsqlc.CreateWorkspaceParams{WorkspaceID: id, Name: name, Status: statusActive, VcsPreference: vcsPreference, OriginRoot: originRoot, CleanupPolicy: cleanupPolicy, CreatedAt: now, UpdatedAt: now}); err != nil {
-		return fmt.Errorf("create session %q: %w", id, err)
+		return fmt.Errorf("create workspace %q: %w", id, err)
 	}
 
 	return nil
 }
 
-func (s *Store) GetSession(ctx context.Context, id string) (*Session, error) {
+func (s *Store) GetWorkspace(ctx context.Context, id string) (*Workspace, error) {
 	if id = strings.TrimSpace(id); id == "" {
-		return nil, fmt.Errorf("%w: session id is required", ErrInvalidInput)
+		return nil, fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
 	}
 
 	row, err := s.sqlcQueries().GetWorkspaceByID(ctx, dbsqlc.GetWorkspaceByIDParams{WorkspaceID: id})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("%w: session id %q", ErrNotFound, id)
+			return nil, fmt.Errorf("%w: workspace id %q", ErrNotFound, id)
 		}
 		return nil, err
 	}
-	session := sessionFromSQLC(row)
-	return &session, nil
+	workspace := workspaceFromSQLC(row)
+	return &workspace, nil
 }
 
-func (s *Store) GetSessionByName(ctx context.Context, name string) (*Session, error) {
+func (s *Store) GetWorkspaceByName(ctx context.Context, name string) (*Workspace, error) {
 	if name = strings.TrimSpace(name); name == "" {
-		return nil, fmt.Errorf("%w: session name is required", ErrInvalidInput)
+		return nil, fmt.Errorf("%w: workspace name is required", ErrInvalidInput)
 	}
 
 	row, err := s.sqlcQueries().GetWorkspaceByName(ctx, dbsqlc.GetWorkspaceByNameParams{Name: name})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("%w: session name %q", ErrNotFound, name)
+			return nil, fmt.Errorf("%w: workspace name %q", ErrNotFound, name)
 		}
 		return nil, err
 	}
-	session := sessionFromSQLC(row)
-	return &session, nil
+	workspace := workspaceFromSQLC(row)
+	return &workspace, nil
 }
 
-func (s *Store) ListSessions(ctx context.Context) ([]Session, error) {
+func (s *Store) ListWorkspaces(ctx context.Context) ([]Workspace, error) {
 	rows, err := s.sqlcQueries().ListWorkspaces(ctx)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Session, 0, len(rows))
+	out := make([]Workspace, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, sessionFromSQLC(row))
+		out = append(out, workspaceFromSQLC(row))
 	}
 	return out, nil
 }
 
-func (s *Store) UpdateSessionStatus(ctx context.Context, id, status string) error {
+func (s *Store) UpdateWorkspaceStatus(ctx context.Context, id, status string) error {
 	if id = strings.TrimSpace(id); id == "" {
-		return fmt.Errorf("%w: session id is required", ErrInvalidInput)
+		return fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
 	}
 	if status = strings.TrimSpace(status); status == "" {
-		return fmt.Errorf("%w: session status is required", ErrInvalidInput)
+		return fmt.Errorf("%w: workspace status is required", ErrInvalidInput)
 	}
 	if !isValidSessionStatus(status) {
 		return fmt.Errorf("%w: invalid status %q", ErrInvalidInput, status)
 	}
 
-	session, err := s.GetSession(ctx, id)
+	workspace, err := s.GetWorkspace(ctx, id)
 	if err != nil {
 		return err
 	}
-	if !canTransitionSessionStatus(session.Status, status) {
-		return fmt.Errorf("%w: invalid session transition %q -> %q", ErrInvalidInput, session.Status, status)
+	if !canTransitionSessionStatus(workspace.Status, status) {
+		return fmt.Errorf("%w: invalid workspace transition %q -> %q", ErrInvalidInput, workspace.Status, status)
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	rowsAffected, err := s.sqlcQueries().UpdateWorkspaceStatus(ctx, dbsqlc.UpdateWorkspaceStatusParams{Status: status, UpdatedAt: now, WorkspaceID: id})
 	if err != nil {
-		return fmt.Errorf("update session status %q: %w", id, err)
+		return fmt.Errorf("update workspace status %q: %w", id, err)
 	}
 	if rowsAffected == 0 {
-		return fmt.Errorf("%w: session id %q", ErrNotFound, id)
+		return fmt.Errorf("%w: workspace id %q", ErrNotFound, id)
 	}
 
 	return nil
 }
 
-func (s *Store) DeleteSession(ctx context.Context, id string) error {
+func (s *Store) DeleteWorkspace(ctx context.Context, id string) error {
 	if id = strings.TrimSpace(id); id == "" {
-		return fmt.Errorf("%w: session id is required", ErrInvalidInput)
+		return fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
 	}
 
 	rowsAffected, err := s.sqlcQueries().DeleteWorkspace(ctx, dbsqlc.DeleteWorkspaceParams{WorkspaceID: id})
 	if err != nil {
-		return fmt.Errorf("delete session %q: %w", id, err)
+		return fmt.Errorf("delete workspace %q: %w", id, err)
 	}
 	if rowsAffected == 0 {
-		return fmt.Errorf("%w: session id %q", ErrNotFound, id)
+		return fmt.Errorf("%w: workspace id %q", ErrNotFound, id)
 	}
 
 	return nil
 }
 
-func (s *Store) AddFolder(ctx context.Context, sessionID, folderPath, vcsType string, isPrimary bool) error {
-	if sessionID = strings.TrimSpace(sessionID); sessionID == "" {
-		return fmt.Errorf("%w: session id is required", ErrInvalidInput)
+func (s *Store) AddFolder(ctx context.Context, workspaceID, folderPath, vcsType string, isPrimary bool) error {
+	if workspaceID = strings.TrimSpace(workspaceID); workspaceID == "" {
+		return fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
 	}
 	if folderPath = strings.TrimSpace(folderPath); folderPath == "" {
 		return fmt.Errorf("%w: folder path is required", ErrInvalidInput)
@@ -1118,43 +1104,43 @@ func (s *Store) AddFolder(ctx context.Context, sessionID, folderPath, vcsType st
 	}
 
 	return s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
-		return addFolderInTransaction(ctx, queries, sessionID, folderPath, vcsType, isPrimary)
+		return addFolderInTransaction(ctx, queries, workspaceID, folderPath, vcsType, isPrimary)
 	})
 }
 
-func (s *Store) RemoveFolder(ctx context.Context, sessionID, folderPath string) error {
-	if sessionID = strings.TrimSpace(sessionID); sessionID == "" {
-		return fmt.Errorf("%w: session id is required", ErrInvalidInput)
+func (s *Store) RemoveFolder(ctx context.Context, workspaceID, folderPath string) error {
+	if workspaceID = strings.TrimSpace(workspaceID); workspaceID == "" {
+		return fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
 	}
 	if folderPath = strings.TrimSpace(folderPath); folderPath == "" {
 		return fmt.Errorf("%w: folder path is required", ErrInvalidInput)
 	}
 
-	rowsAffected, err := s.sqlcQueries().DeleteWorkspaceFolderIfNotLast(ctx, dbsqlc.DeleteWorkspaceFolderIfNotLastParams{WorkspaceID: sessionID, FolderPath: folderPath, WorkspaceID_2: sessionID})
+	rowsAffected, err := s.sqlcQueries().DeleteWorkspaceFolderIfNotLast(ctx, dbsqlc.DeleteWorkspaceFolderIfNotLastParams{WorkspaceID: workspaceID, FolderPath: folderPath, WorkspaceID_2: workspaceID})
 	if err != nil {
-		return fmt.Errorf("remove session folder %q: %w", folderPath, err)
+		return fmt.Errorf("remove workspace folder %q: %w", folderPath, err)
 	}
 	if rowsAffected == 0 {
-		folders, listErr := s.ListFolders(ctx, sessionID)
+		folders, listErr := s.ListFolders(ctx, workspaceID)
 		if listErr != nil {
 			return listErr
 		}
 
 		for _, folder := range folders {
 			if folder.FolderPath == folderPath {
-				return fmt.Errorf("%w: session id %q", ErrLastFolder, sessionID)
+				return fmt.Errorf("%w: workspace id %q", ErrLastFolder, workspaceID)
 			}
 		}
 
-		return fmt.Errorf("%w: folder %q for session %q", ErrNotFound, folderPath, sessionID)
+		return fmt.Errorf("%w: folder %q for workspace %q", ErrNotFound, folderPath, workspaceID)
 	}
 
-	folders, err := s.ListFolders(ctx, sessionID)
+	folders, err := s.ListFolders(ctx, workspaceID)
 	if err != nil {
 		return err
 	}
 	if len(folders) == 0 {
-		return fmt.Errorf("%w: session id %q", ErrLastFolder, sessionID)
+		return fmt.Errorf("%w: workspace id %q", ErrLastFolder, workspaceID)
 	}
 
 	hasPrimary := false
@@ -1165,40 +1151,40 @@ func (s *Store) RemoveFolder(ctx context.Context, sessionID, folderPath string) 
 		}
 	}
 	if !hasPrimary {
-		if err := s.sqlcQueries().PromotePrimaryWorkspaceFolder(ctx, dbsqlc.PromotePrimaryWorkspaceFolderParams{FolderPath: folders[0].FolderPath, WorkspaceID: sessionID}); err != nil {
-			return fmt.Errorf("promote session primary folder %q: %w", folders[0].FolderPath, err)
+		if err := s.sqlcQueries().PromotePrimaryWorkspaceFolder(ctx, dbsqlc.PromotePrimaryWorkspaceFolderParams{FolderPath: folders[0].FolderPath, WorkspaceID: workspaceID}); err != nil {
+			return fmt.Errorf("promote workspace primary folder %q: %w", folders[0].FolderPath, err)
 		}
 	}
 
 	return nil
 }
 
-func (s *Store) ListFolders(ctx context.Context, sessionID string) ([]SessionFolder, error) {
-	if sessionID = strings.TrimSpace(sessionID); sessionID == "" {
-		return nil, fmt.Errorf("%w: session id is required", ErrInvalidInput)
+func (s *Store) ListFolders(ctx context.Context, workspaceID string) ([]WorkspaceFolder, error) {
+	if workspaceID = strings.TrimSpace(workspaceID); workspaceID == "" {
+		return nil, fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
 	}
 
-	if _, err := s.GetSession(ctx, sessionID); err != nil {
+	if _, err := s.GetWorkspace(ctx, workspaceID); err != nil {
 		return nil, err
 	}
 
-	rows, err := s.sqlcQueries().ListWorkspaceFolders(ctx, dbsqlc.ListWorkspaceFoldersParams{WorkspaceID: sessionID})
+	rows, err := s.sqlcQueries().ListWorkspaceFolders(ctx, dbsqlc.ListWorkspaceFoldersParams{WorkspaceID: workspaceID})
 	if err != nil {
 		return nil, err
 	}
-	out := make([]SessionFolder, 0, len(rows))
+	out := make([]WorkspaceFolder, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, sessionFolderFromSQLC(row))
+		out = append(out, workspaceFolderFromSQLC(row))
 	}
 
 	return out, nil
 }
 
-func addFolderInTransaction(ctx context.Context, queries *dbsqlc.Queries, sessionID, folderPath, vcsType string, isPrimary bool) error {
-	_, err := queries.GetWorkspaceByID(ctx, dbsqlc.GetWorkspaceByIDParams{WorkspaceID: sessionID})
+func addFolderInTransaction(ctx context.Context, queries *dbsqlc.Queries, workspaceID, folderPath, vcsType string, isPrimary bool) error {
+	_, err := queries.GetWorkspaceByID(ctx, dbsqlc.GetWorkspaceByIDParams{WorkspaceID: workspaceID})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("%w: session id %q", ErrNotFound, sessionID)
+			return fmt.Errorf("%w: workspace id %q", ErrNotFound, workspaceID)
 		}
 		return err
 	}
@@ -1207,7 +1193,7 @@ func addFolderInTransaction(ctx context.Context, queries *dbsqlc.Queries, sessio
 		return err
 	}
 	for _, owner := range owners {
-		if owner.WorkspaceID != sessionID {
+		if owner.WorkspaceID != workspaceID {
 			return fmt.Errorf("%w: folder %q already belongs to workspace %q", ErrInvalidInput, folderPath, owner.WorkspaceID)
 		}
 	}
@@ -1218,13 +1204,13 @@ func addFolderInTransaction(ctx context.Context, queries *dbsqlc.Queries, sessio
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if err := queries.CreateWorkspaceFolder(ctx, dbsqlc.CreateWorkspaceFolderParams{WorkspaceID: sessionID, FolderPath: folderPath, VcsType: vcsType, IsPrimary: int64(primary), AddedAt: now}); err != nil {
-		return fmt.Errorf("add session folder %q: %w", folderPath, err)
+	if err := queries.CreateWorkspaceFolder(ctx, dbsqlc.CreateWorkspaceFolderParams{WorkspaceID: workspaceID, FolderPath: folderPath, VcsType: vcsType, IsPrimary: int64(primary), AddedAt: now}); err != nil {
+		return fmt.Errorf("add workspace folder %q: %w", folderPath, err)
 	}
 
 	if isPrimary {
-		if err := queries.PromotePrimaryWorkspaceFolder(ctx, dbsqlc.PromotePrimaryWorkspaceFolderParams{FolderPath: folderPath, WorkspaceID: sessionID}); err != nil {
-			return fmt.Errorf("promote session primary folder %q: %w", folderPath, err)
+		if err := queries.PromotePrimaryWorkspaceFolder(ctx, dbsqlc.PromotePrimaryWorkspaceFolderParams{FolderPath: folderPath, WorkspaceID: workspaceID}); err != nil {
+			return fmt.Errorf("promote workspace primary folder %q: %w", folderPath, err)
 		}
 	}
 
@@ -1269,9 +1255,9 @@ func (s *Store) CreateCommand(ctx context.Context, params CreateCommandParams) e
 		return fmt.Errorf("%w: command id is required", ErrInvalidInput)
 	}
 	if params.WorkspaceID = strings.TrimSpace(params.WorkspaceID); params.WorkspaceID == "" {
-		return fmt.Errorf("%w: session id is required", ErrInvalidInput)
+		return fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
 	}
-	if _, err := s.GetSession(ctx, params.WorkspaceID); err != nil {
+	if _, err := s.GetWorkspace(ctx, params.WorkspaceID); err != nil {
 		return err
 	}
 	if params.Command = strings.TrimSpace(params.Command); params.Command == "" {
@@ -1297,18 +1283,18 @@ func (s *Store) CreateCommand(ctx context.Context, params CreateCommandParams) e
 	return nil
 }
 
-func (s *Store) GetCommand(ctx context.Context, sessionID, commandID string) (*Command, error) {
-	if sessionID = strings.TrimSpace(sessionID); sessionID == "" {
-		return nil, fmt.Errorf("%w: session id is required", ErrInvalidInput)
+func (s *Store) GetCommand(ctx context.Context, workspaceID, commandID string) (*Command, error) {
+	if workspaceID = strings.TrimSpace(workspaceID); workspaceID == "" {
+		return nil, fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
 	}
 	if commandID = strings.TrimSpace(commandID); commandID == "" {
 		return nil, fmt.Errorf("%w: command id is required", ErrInvalidInput)
 	}
 
-	row, err := s.sqlcQueries().GetCommandByID(ctx, dbsqlc.GetCommandByIDParams{WorkspaceID: sessionID, CommandID: commandID})
+	row, err := s.sqlcQueries().GetCommandByID(ctx, dbsqlc.GetCommandByIDParams{WorkspaceID: workspaceID, CommandID: commandID})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("%w: command id %q for session %q", ErrNotFound, commandID, sessionID)
+			return nil, fmt.Errorf("%w: command id %q for workspace %q", ErrNotFound, commandID, workspaceID)
 		}
 		return nil, err
 	}
@@ -1316,12 +1302,12 @@ func (s *Store) GetCommand(ctx context.Context, sessionID, commandID string) (*C
 	return &command, nil
 }
 
-func (s *Store) ListCommands(ctx context.Context, sessionID string) ([]Command, error) {
-	if sessionID = strings.TrimSpace(sessionID); sessionID == "" {
-		return nil, fmt.Errorf("%w: session id is required", ErrInvalidInput)
+func (s *Store) ListCommands(ctx context.Context, workspaceID string) ([]Command, error) {
+	if workspaceID = strings.TrimSpace(workspaceID); workspaceID == "" {
+		return nil, fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
 	}
 
-	rows, err := s.sqlcQueries().ListCommandsByWorkspace(ctx, dbsqlc.ListCommandsByWorkspaceParams{WorkspaceID: sessionID})
+	rows, err := s.sqlcQueries().ListCommandsByWorkspace(ctx, dbsqlc.ListCommandsByWorkspaceParams{WorkspaceID: workspaceID})
 	if err != nil {
 		return nil, err
 	}
@@ -1334,7 +1320,7 @@ func (s *Store) ListCommands(ctx context.Context, sessionID string) ([]Command, 
 
 func (s *Store) UpdateCommandStatus(ctx context.Context, params UpdateCommandStatusParams) error {
 	if params.WorkspaceID = strings.TrimSpace(params.WorkspaceID); params.WorkspaceID == "" {
-		return fmt.Errorf("%w: session id is required", ErrInvalidInput)
+		return fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
 	}
 	if params.CommandID = strings.TrimSpace(params.CommandID); params.CommandID == "" {
 		return fmt.Errorf("%w: command id is required", ErrInvalidInput)
@@ -1351,7 +1337,7 @@ func (s *Store) UpdateCommandStatus(ctx context.Context, params UpdateCommandSta
 		return fmt.Errorf("update command status %q: %w", params.CommandID, err)
 	}
 	if rowsAffected == 0 {
-		return fmt.Errorf("%w: command id %q for session %q", ErrNotFound, params.CommandID, params.WorkspaceID)
+		return fmt.Errorf("%w: command id %q for workspace %q", ErrNotFound, params.CommandID, params.WorkspaceID)
 	}
 
 	return nil
@@ -1370,7 +1356,7 @@ func (s *Store) CreateWorkspaceCommandDefinition(ctx context.Context, params Cre
 		return fmt.Errorf("%w: command id is required", ErrInvalidInput)
 	}
 	if params.WorkspaceID = strings.TrimSpace(params.WorkspaceID); params.WorkspaceID == "" {
-		return fmt.Errorf("%w: session id is required", ErrInvalidInput)
+		return fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
 	}
 	if params.Name = strings.TrimSpace(params.Name); params.Name == "" {
 		return fmt.Errorf("%w: command name is required", ErrInvalidInput)
@@ -1402,7 +1388,7 @@ func createWorkspaceCommandDefinitionInTransaction(ctx context.Context, queries 
 	_, err := queries.GetWorkspaceByID(ctx, dbsqlc.GetWorkspaceByIDParams{WorkspaceID: params.WorkspaceID})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("%w: session id %q", ErrNotFound, params.WorkspaceID)
+			return fmt.Errorf("%w: workspace id %q", ErrNotFound, params.WorkspaceID)
 		}
 		return err
 	}
@@ -1436,22 +1422,22 @@ func isConstraintError(err error) bool {
 	return strings.Contains(message, "constraint failed") || strings.Contains(message, "unique constraint")
 }
 
-func (s *Store) GetWorkspaceCommandDefinition(ctx context.Context, sessionID, commandID string) (*WorkspaceCommandDefinition, error) {
-	if sessionID = strings.TrimSpace(sessionID); sessionID == "" {
-		return nil, fmt.Errorf("%w: session id is required", ErrInvalidInput)
+func (s *Store) GetWorkspaceCommandDefinition(ctx context.Context, workspaceID, commandID string) (*WorkspaceCommandDefinition, error) {
+	if workspaceID = strings.TrimSpace(workspaceID); workspaceID == "" {
+		return nil, fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
 	}
 	if commandID = strings.TrimSpace(commandID); commandID == "" {
 		return nil, fmt.Errorf("%w: command id is required", ErrInvalidInput)
 	}
 
-	return getWorkspaceCommandDefinition(ctx, s.sqlcQueries(), sessionID, commandID)
+	return getWorkspaceCommandDefinition(ctx, s.sqlcQueries(), workspaceID, commandID)
 }
 
-func getWorkspaceCommandDefinition(ctx context.Context, queries *dbsqlc.Queries, sessionID, commandID string) (*WorkspaceCommandDefinition, error) {
-	row, err := queries.GetWorkspaceCommandDefinitionByID(ctx, dbsqlc.GetWorkspaceCommandDefinitionByIDParams{WorkspaceID: sessionID, CommandID: commandID})
+func getWorkspaceCommandDefinition(ctx context.Context, queries *dbsqlc.Queries, workspaceID, commandID string) (*WorkspaceCommandDefinition, error) {
+	row, err := queries.GetWorkspaceCommandDefinitionByID(ctx, dbsqlc.GetWorkspaceCommandDefinitionByIDParams{WorkspaceID: workspaceID, CommandID: commandID})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("%w: command id %q for session %q", ErrNotFound, commandID, sessionID)
+			return nil, fmt.Errorf("%w: command id %q for workspace %q", ErrNotFound, commandID, workspaceID)
 		}
 		return nil, err
 	}
@@ -1459,22 +1445,22 @@ func getWorkspaceCommandDefinition(ctx context.Context, queries *dbsqlc.Queries,
 	return &def, nil
 }
 
-func (s *Store) GetWorkspaceCommandDefinitionByName(ctx context.Context, sessionID, name string) (*WorkspaceCommandDefinition, error) {
-	if sessionID = strings.TrimSpace(sessionID); sessionID == "" {
-		return nil, fmt.Errorf("%w: session id is required", ErrInvalidInput)
+func (s *Store) GetWorkspaceCommandDefinitionByName(ctx context.Context, workspaceID, name string) (*WorkspaceCommandDefinition, error) {
+	if workspaceID = strings.TrimSpace(workspaceID); workspaceID == "" {
+		return nil, fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
 	}
 	if name = strings.TrimSpace(name); name == "" {
 		return nil, fmt.Errorf("%w: command name is required", ErrInvalidInput)
 	}
 
-	return getWorkspaceCommandDefinitionByName(ctx, s.sqlcQueries(), sessionID, name)
+	return getWorkspaceCommandDefinitionByName(ctx, s.sqlcQueries(), workspaceID, name)
 }
 
-func getWorkspaceCommandDefinitionByName(ctx context.Context, queries *dbsqlc.Queries, sessionID, name string) (*WorkspaceCommandDefinition, error) {
-	row, err := queries.GetWorkspaceCommandDefinitionByName(ctx, dbsqlc.GetWorkspaceCommandDefinitionByNameParams{WorkspaceID: sessionID, Name: name})
+func getWorkspaceCommandDefinitionByName(ctx context.Context, queries *dbsqlc.Queries, workspaceID, name string) (*WorkspaceCommandDefinition, error) {
+	row, err := queries.GetWorkspaceCommandDefinitionByName(ctx, dbsqlc.GetWorkspaceCommandDefinitionByNameParams{WorkspaceID: workspaceID, Name: name})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("%w: command name %q for session %q", ErrNotFound, name, sessionID)
+			return nil, fmt.Errorf("%w: command name %q for workspace %q", ErrNotFound, name, workspaceID)
 		}
 		return nil, err
 	}
@@ -1482,12 +1468,12 @@ func getWorkspaceCommandDefinitionByName(ctx context.Context, queries *dbsqlc.Qu
 	return &def, nil
 }
 
-func (s *Store) ListWorkspaceCommandDefinitions(ctx context.Context, sessionID string) ([]WorkspaceCommandDefinition, error) {
-	if sessionID = strings.TrimSpace(sessionID); sessionID == "" {
-		return nil, fmt.Errorf("%w: session id is required", ErrInvalidInput)
+func (s *Store) ListWorkspaceCommandDefinitions(ctx context.Context, workspaceID string) ([]WorkspaceCommandDefinition, error) {
+	if workspaceID = strings.TrimSpace(workspaceID); workspaceID == "" {
+		return nil, fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
 	}
 
-	rows, err := s.sqlcQueries().ListWorkspaceCommandDefinitionsByWorkspace(ctx, dbsqlc.ListWorkspaceCommandDefinitionsByWorkspaceParams{WorkspaceID: sessionID})
+	rows, err := s.sqlcQueries().ListWorkspaceCommandDefinitionsByWorkspace(ctx, dbsqlc.ListWorkspaceCommandDefinitionsByWorkspaceParams{WorkspaceID: workspaceID})
 	if err != nil {
 		return nil, err
 	}
@@ -1498,20 +1484,20 @@ func (s *Store) ListWorkspaceCommandDefinitions(ctx context.Context, sessionID s
 	return out, nil
 }
 
-func (s *Store) DeleteWorkspaceCommandDefinition(ctx context.Context, sessionID, commandID string) error {
-	if sessionID = strings.TrimSpace(sessionID); sessionID == "" {
-		return fmt.Errorf("%w: session id is required", ErrInvalidInput)
+func (s *Store) DeleteWorkspaceCommandDefinition(ctx context.Context, workspaceID, commandID string) error {
+	if workspaceID = strings.TrimSpace(workspaceID); workspaceID == "" {
+		return fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
 	}
 	if commandID = strings.TrimSpace(commandID); commandID == "" {
 		return fmt.Errorf("%w: command id is required", ErrInvalidInput)
 	}
 
-	rowsAffected, err := s.sqlcQueries().DeleteWorkspaceCommandDefinitionByID(ctx, dbsqlc.DeleteWorkspaceCommandDefinitionByIDParams{WorkspaceID: sessionID, CommandID: commandID})
+	rowsAffected, err := s.sqlcQueries().DeleteWorkspaceCommandDefinitionByID(ctx, dbsqlc.DeleteWorkspaceCommandDefinitionByIDParams{WorkspaceID: workspaceID, CommandID: commandID})
 	if err != nil {
 		return fmt.Errorf("delete workspace command definition %q: %w", commandID, err)
 	}
 	if rowsAffected == 0 {
-		return fmt.Errorf("%w: command id %q for session %q", ErrNotFound, commandID, sessionID)
+		return fmt.Errorf("%w: command id %q for workspace %q", ErrNotFound, commandID, workspaceID)
 	}
 
 	return nil
@@ -1522,9 +1508,9 @@ func (s *Store) CreateAgent(ctx context.Context, params CreateAgentParams) error
 		return fmt.Errorf("%w: agent id is required", ErrInvalidInput)
 	}
 	if params.WorkspaceID = strings.TrimSpace(params.WorkspaceID); params.WorkspaceID == "" {
-		return fmt.Errorf("%w: session id is required", ErrInvalidInput)
+		return fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
 	}
-	if _, err := s.GetSession(ctx, params.WorkspaceID); err != nil {
+	if _, err := s.GetWorkspace(ctx, params.WorkspaceID); err != nil {
 		return err
 	}
 	if params.Name != nil {
@@ -1573,9 +1559,9 @@ func (s *Store) CreateAgent(ctx context.Context, params CreateAgentParams) error
 		return fmt.Errorf("%w: harness metadata must be valid json", ErrInvalidInput)
 	}
 	if params.InvocationClass = strings.TrimSpace(params.InvocationClass); params.InvocationClass == "" {
-		params.InvocationClass = "agent"
+		params.InvocationClass = HarnessSessionUsageSticky
 	}
-	if params.InvocationClass != "agent" && params.InvocationClass != "temporary" {
+	if params.InvocationClass != HarnessSessionUsageSticky && params.InvocationClass != HarnessSessionUsageEphemeral {
 		return fmt.Errorf("%w: invalid invocation class %q", ErrInvalidInput, params.InvocationClass)
 	}
 
@@ -1586,18 +1572,18 @@ func (s *Store) CreateAgent(ctx context.Context, params CreateAgentParams) error
 	return nil
 }
 
-func (s *Store) GetAgent(ctx context.Context, sessionID, agentID string) (*Agent, error) {
-	if sessionID = strings.TrimSpace(sessionID); sessionID == "" {
-		return nil, fmt.Errorf("%w: session id is required", ErrInvalidInput)
+func (s *Store) GetAgent(ctx context.Context, workspaceID, agentID string) (*Agent, error) {
+	if workspaceID = strings.TrimSpace(workspaceID); workspaceID == "" {
+		return nil, fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
 	}
 	if agentID = strings.TrimSpace(agentID); agentID == "" {
 		return nil, fmt.Errorf("%w: agent id is required", ErrInvalidInput)
 	}
 
-	row, err := s.sqlcQueries().GetAgentByID(ctx, dbsqlc.GetAgentByIDParams{WorkspaceID: sessionID, AgentID: agentID})
+	row, err := s.sqlcQueries().GetAgentByID(ctx, dbsqlc.GetAgentByIDParams{WorkspaceID: workspaceID, AgentID: agentID})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("%w: agent id %q for session %q", ErrNotFound, agentID, sessionID)
+			return nil, fmt.Errorf("%w: agent id %q for workspace %q", ErrNotFound, agentID, workspaceID)
 		}
 		return nil, err
 	}
@@ -1605,18 +1591,18 @@ func (s *Store) GetAgent(ctx context.Context, sessionID, agentID string) (*Agent
 	return &agent, nil
 }
 
-func (s *Store) GetAgentByName(ctx context.Context, sessionID, name string) (*Agent, error) {
-	if sessionID = strings.TrimSpace(sessionID); sessionID == "" {
-		return nil, fmt.Errorf("%w: session id is required", ErrInvalidInput)
+func (s *Store) GetAgentByName(ctx context.Context, workspaceID, name string) (*Agent, error) {
+	if workspaceID = strings.TrimSpace(workspaceID); workspaceID == "" {
+		return nil, fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
 	}
 	if name = strings.TrimSpace(name); name == "" {
 		return nil, fmt.Errorf("%w: agent name is required", ErrInvalidInput)
 	}
 
-	row, err := s.sqlcQueries().GetAgentByName(ctx, dbsqlc.GetAgentByNameParams{WorkspaceID: sessionID, Name: optionalString(name)})
+	row, err := s.sqlcQueries().GetAgentByName(ctx, dbsqlc.GetAgentByNameParams{WorkspaceID: workspaceID, Name: optionalString(name)})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("%w: agent name %q for session %q", ErrNotFound, name, sessionID)
+			return nil, fmt.Errorf("%w: agent name %q for workspace %q", ErrNotFound, name, workspaceID)
 		}
 		return nil, err
 	}
@@ -1624,12 +1610,12 @@ func (s *Store) GetAgentByName(ctx context.Context, sessionID, name string) (*Ag
 	return &agent, nil
 }
 
-func (s *Store) ListAgents(ctx context.Context, sessionID string) ([]Agent, error) {
-	if sessionID = strings.TrimSpace(sessionID); sessionID == "" {
-		return nil, fmt.Errorf("%w: session id is required", ErrInvalidInput)
+func (s *Store) ListAgents(ctx context.Context, workspaceID string) ([]Agent, error) {
+	if workspaceID = strings.TrimSpace(workspaceID); workspaceID == "" {
+		return nil, fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
 	}
 
-	rows, err := s.sqlcQueries().ListAgentsByWorkspace(ctx, dbsqlc.ListAgentsByWorkspaceParams{WorkspaceID: sessionID})
+	rows, err := s.sqlcQueries().ListAgentsByWorkspace(ctx, dbsqlc.ListAgentsByWorkspaceParams{WorkspaceID: workspaceID})
 	if err != nil {
 		return nil, err
 	}
@@ -1642,7 +1628,7 @@ func (s *Store) ListAgents(ctx context.Context, sessionID string) ([]Agent, erro
 
 func (s *Store) UpdateAgentStatus(ctx context.Context, params UpdateAgentStatusParams) error {
 	if params.WorkspaceID = strings.TrimSpace(params.WorkspaceID); params.WorkspaceID == "" {
-		return fmt.Errorf("%w: session id is required", ErrInvalidInput)
+		return fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
 	}
 	if params.AgentID = strings.TrimSpace(params.AgentID); params.AgentID == "" {
 		return fmt.Errorf("%w: agent id is required", ErrInvalidInput)
@@ -1659,7 +1645,15 @@ func (s *Store) UpdateAgentStatus(ctx context.Context, params UpdateAgentStatusP
 		return fmt.Errorf("update agent status %q: %w", params.AgentID, err)
 	}
 	if rowsAffected == 0 {
-		return fmt.Errorf("%w: agent id %q for session %q", ErrNotFound, params.AgentID, params.WorkspaceID)
+		return fmt.Errorf("%w: agent id %q for workspace %q", ErrNotFound, params.AgentID, params.WorkspaceID)
+	}
+
+	return nil
+}
+
+func (s *Store) MarkRunningHarnessSessionsLost(ctx context.Context) error {
+	if err := s.sqlcQueries().MarkRunningHarnessSessionsLost(ctx); err != nil {
+		return fmt.Errorf("mark running harness sessions lost: %w", err)
 	}
 
 	return nil

@@ -16,11 +16,11 @@ import (
 var (
 	sessionReadActiveWorkspace = config.ReadActiveWorkspace
 	sessionEnsureDaemonRunning = ensureDaemonRunning
-	sessionStartRPC            = func(ctx context.Context, socketPath string, req daemon.AgentSessionStartRequest) (daemon.AgentSessionStartResponse, error) {
+	sessionStartRPC            = func(ctx context.Context, socketPath string, req daemon.HarnessSessionStartRequest) (daemon.HarnessSessionStartResponse, error) {
 		rpcClient := client.New(socketPath)
-		var resp daemon.AgentSessionStartResponse
+		var resp daemon.HarnessSessionStartResponse
 		if err := rpcClient.Call(ctx, "session.start", req, &resp); err != nil {
-			return daemon.AgentSessionStartResponse{}, err
+			return daemon.HarnessSessionStartResponse{}, err
 		}
 		return resp, nil
 	}
@@ -48,11 +48,11 @@ var (
 		}
 		return resp, nil
 	}
-	sessionCallRPC = func(ctx context.Context, socketPath string, req daemon.EphemeralAgentCallRequest) (daemon.EphemeralAgentCallResponse, error) {
+	sessionCallRPC = func(ctx context.Context, socketPath string, req daemon.EphemeralCallRequest) (daemon.EphemeralCallResponse, error) {
 		rpcClient := client.New(socketPath)
-		var resp daemon.EphemeralAgentCallResponse
+		var resp daemon.EphemeralCallResponse
 		if err := rpcClient.Call(ctx, "session.call.ephemeral", req, &resp); err != nil {
-			return daemon.EphemeralAgentCallResponse{}, err
+			return daemon.EphemeralCallResponse{}, err
 		}
 		return resp, nil
 	}
@@ -132,13 +132,13 @@ func newSessionStartCmd() *cobra.Command {
 			}
 			prompt = string(data)
 		}
-		resp, err := sessionStartRPC(ctx, cfg.Daemon.SocketPath, daemon.AgentSessionStartRequest{WorkspaceID: workspaceID, Profile: strings.TrimSpace(args[0]), SessionID: strings.TrimSpace(sessionID), Message: strings.TrimSpace(message), Prompt: prompt})
+		resp, err := sessionStartRPC(ctx, cfg.Daemon.SocketPath, daemon.HarnessSessionStartRequest{WorkspaceID: workspaceID, Profile: strings.TrimSpace(args[0]), SessionID: strings.TrimSpace(sessionID), Message: strings.TrimSpace(message), Prompt: prompt})
 		if err != nil {
 			return mapSessionRPCError(err)
 		}
 		id := resp.Run.SessionID
 		if strings.TrimSpace(id) == "" {
-			id = resp.Run.AgentSessionID
+			id = resp.Run.HarnessSessionID
 		}
 		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Session started: %s\n", id)
 		return err
@@ -188,7 +188,7 @@ func newSessionListCmd() *cobra.Command {
 		for _, session := range resp.Sessions {
 			id := strings.TrimSpace(session.SessionID)
 			if id == "" {
-				id = strings.TrimSpace(session.AgentSessionID)
+				id = strings.TrimSpace(session.HarnessSessionID)
 			}
 			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", id, session.Status, session.Executor); err != nil {
 				return err
@@ -218,7 +218,7 @@ func newSessionShowCmd() *cobra.Command {
 		session := resp.Session
 		id := strings.TrimSpace(session.SessionID)
 		if id == "" {
-			id = strings.TrimSpace(session.AgentSessionID)
+			id = strings.TrimSpace(session.HarnessSessionID)
 		}
 		for _, line := range []string{
 			"Session: " + id,
@@ -342,7 +342,7 @@ func newSessionCallCmd() *cobra.Command {
 		ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 		defer cancel()
 		callID := fmt.Sprintf("call-%d", time.Now().UnixNano())
-		resp, err := sessionCallRPC(ctx, cfg.Daemon.SocketPath, daemon.EphemeralAgentCallRequest{CallID: callID, SourceSessionID: fromSessionID, TargetAgentID: targetProfile, Body: messageBody, ContextExcerptIDs: excerptIDs})
+		resp, err := sessionCallRPC(ctx, cfg.Daemon.SocketPath, daemon.EphemeralCallRequest{CallID: callID, SourceSessionID: fromSessionID, TargetAgentID: targetProfile, Body: messageBody, ContextExcerptIDs: excerptIDs})
 		if err != nil {
 			return mapSessionRPCError(err)
 		}

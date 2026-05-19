@@ -15,27 +15,27 @@ import (
 
 var (
 	profileEnsureDaemonRunning = ensureDaemonRunning
-	profileCreateRPC           = func(ctx context.Context, socketPath string, req daemon.AgentProfileCreateRequest) (daemon.AgentProfileResponse, error) {
+	profileCreateRPC           = func(ctx context.Context, socketPath string, req daemon.ProfileCreateRequest) (daemon.ProfileResponse, error) {
 		rpcClient := client.New(socketPath)
-		var response daemon.AgentProfileResponse
+		var response daemon.ProfileResponse
 		if err := rpcClient.Call(ctx, "profile.create", req, &response); err != nil {
-			return daemon.AgentProfileResponse{}, err
+			return daemon.ProfileResponse{}, err
 		}
 		return response, nil
 	}
-	profileGetRPC = func(ctx context.Context, socketPath string, req daemon.AgentProfileGetRequest) (daemon.AgentProfileResponse, error) {
+	profileGetRPC = func(ctx context.Context, socketPath string, req daemon.ProfileGetRequest) (daemon.ProfileResponse, error) {
 		rpcClient := client.New(socketPath)
-		var response daemon.AgentProfileResponse
+		var response daemon.ProfileResponse
 		if err := rpcClient.Call(ctx, "profile.get", req, &response); err != nil {
-			return daemon.AgentProfileResponse{}, err
+			return daemon.ProfileResponse{}, err
 		}
 		return response, nil
 	}
-	profileListRPC = func(ctx context.Context, socketPath string, req daemon.AgentProfileListRequest) (daemon.AgentProfileListResponse, error) {
+	profileListRPC = func(ctx context.Context, socketPath string, req daemon.ProfileListRequest) (daemon.ProfileListResponse, error) {
 		rpcClient := client.New(socketPath)
-		var response daemon.AgentProfileListResponse
+		var response daemon.ProfileListResponse
 		if err := rpcClient.Call(ctx, "profile.list", req, &response); err != nil {
-			return daemon.AgentProfileListResponse{}, err
+			return daemon.ProfileListResponse{}, err
 		}
 		return response, nil
 	}
@@ -85,7 +85,7 @@ func newProfileDefaultsCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&harness, "harness", "", "Preferred harness for profiles without an explicit harness")
 	cmd.Flags().StringVar(&model, "model", "", "Preferred model or variant for profiles without an explicit model")
-	cmd.Flags().StringVar(&invocationClass, "invocation-class", "", "Default invocation class: agent or temporary")
+	cmd.Flags().StringVar(&invocationClass, "invocation-class", "", "Default invocation class: sticky or ephemeral")
 	return cmd
 }
 
@@ -104,9 +104,9 @@ func validateProfileDefaultsInput(harness, invocationClass string) error {
 	}
 	if invocationClass = strings.TrimSpace(invocationClass); invocationClass != "" {
 		switch daemon.HarnessInvocationClass(invocationClass) {
-		case daemon.HarnessInvocationAgent, daemon.HarnessInvocationTemporary:
+		case daemon.HarnessInvocationSticky, daemon.HarnessInvocationEphemeral:
 		default:
-			return fmt.Errorf("validate config: default_invocation_class must be one of agent, temporary")
+			return fmt.Errorf("validate config: default_invocation_class must be one of sticky, ephemeral")
 		}
 	}
 	return nil
@@ -138,7 +138,7 @@ func newProfileCreateCmd() *cobra.Command {
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
-			profile, err := profileCreateRPC(ctx, cfg.Daemon.SocketPath, daemon.AgentProfileCreateRequest{WorkspaceID: workspaceID, Name: args[0], Harness: harness, Model: model, Prompt: prompt, InvocationClass: daemon.HarnessInvocationClass(invocationClass)})
+			profile, err := profileCreateRPC(ctx, cfg.Daemon.SocketPath, daemon.ProfileCreateRequest{WorkspaceID: workspaceID, Name: args[0], Harness: harness, Model: model, Prompt: prompt, InvocationClass: daemon.HarnessInvocationClass(invocationClass)})
 			if err != nil {
 				return err
 			}
@@ -150,7 +150,7 @@ func newProfileCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&model, "model", "", "Preferred model or variant for this profile")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "Prompt or system seed for this profile")
 	cmd.Flags().StringVar(&promptFile, "prompt-file", "", "File containing profile prompt or system seed")
-	cmd.Flags().StringVar(&invocationClass, "invocation-class", "", "Invocation class: agent or temporary")
+	cmd.Flags().StringVar(&invocationClass, "invocation-class", "", "Invocation class: sticky or ephemeral")
 	return cmd
 }
 
@@ -170,7 +170,7 @@ func newProfileShowCmd() *cobra.Command {
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
-			profile, err := profileGetRPC(ctx, cfg.Daemon.SocketPath, daemon.AgentProfileGetRequest{WorkspaceID: workspaceID, Name: args[0]})
+			profile, err := profileGetRPC(ctx, cfg.Daemon.SocketPath, daemon.ProfileGetRequest{WorkspaceID: workspaceID, Name: args[0]})
 			if err != nil {
 				return err
 			}
@@ -197,7 +197,7 @@ func newProfileListCmd() *cobra.Command {
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
-			resp, err := profileListRPC(ctx, cfg.Daemon.SocketPath, daemon.AgentProfileListRequest{WorkspaceID: workspaceID})
+			resp, err := profileListRPC(ctx, cfg.Daemon.SocketPath, daemon.ProfileListRequest{WorkspaceID: workspaceID})
 			if err != nil {
 				return err
 			}
@@ -213,7 +213,7 @@ func newProfileListCmd() *cobra.Command {
 	return cmd
 }
 
-func printProfile(cmd *cobra.Command, profile daemon.AgentProfileResponse) error {
+func printProfile(cmd *cobra.Command, profile daemon.ProfileResponse) error {
 	scope := "global"
 	if strings.TrimSpace(profile.WorkspaceID) != "" {
 		scope = "workspace:" + strings.TrimSpace(profile.WorkspaceID)

@@ -13,7 +13,7 @@ import (
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb/dbsqlc"
 )
 
-type AgentSessionConfig struct {
+type HarnessSessionConfig struct {
 	AgentID     string
 	WorkspaceID string
 	Name        string
@@ -23,11 +23,11 @@ type AgentSessionConfig struct {
 }
 
 const (
-	AgentSessionUsageSticky    = "sticky"
-	AgentSessionUsageEphemeral = "ephemeral"
+	HarnessSessionUsageSticky    = "sticky"
+	HarnessSessionUsageEphemeral = "ephemeral"
 )
 
-type AgentSession struct {
+type HarnessSession struct {
 	SessionID             string
 	RunID                 string
 	WorkspaceID           string
@@ -156,13 +156,13 @@ type AgentMessageSendParams struct {
 	StartSessionID    string
 }
 
-func (s *Store) CreateAgentSessionConfig(ctx context.Context, agent AgentSessionConfig) error {
+func (s *Store) CreateHarnessSessionConfig(ctx context.Context, agent HarnessSessionConfig) error {
 	if strings.TrimSpace(agent.AgentID) == "" || strings.TrimSpace(agent.Name) == "" {
 		return ErrInvalidInput
 	}
 	var workspaceID *string
 	if strings.TrimSpace(agent.WorkspaceID) != "" {
-		if _, err := s.GetSession(ctx, strings.TrimSpace(agent.WorkspaceID)); err != nil {
+		if _, err := s.GetWorkspace(ctx, strings.TrimSpace(agent.WorkspaceID)); err != nil {
 			if errors.Is(err, ErrNotFound) {
 				return ErrInvalidInput
 			}
@@ -170,16 +170,16 @@ func (s *Store) CreateAgentSessionConfig(ctx context.Context, agent AgentSession
 		}
 		workspaceID = &agent.WorkspaceID
 	}
-	return s.sqlc.CreateAgentSessionConfig(ctx, dbsqlc.CreateAgentSessionConfigParams{AgentID: agent.AgentID, WorkspaceID: workspaceID, Name: agent.Name, Harness: agent.Harness, Model: agent.Model, Prompt: agent.Prompt})
+	return s.sqlc.CreateHarnessSessionConfig(ctx, dbsqlc.CreateHarnessSessionConfigParams{AgentID: agent.AgentID, WorkspaceID: workspaceID, Name: agent.Name, Harness: agent.Harness, Model: agent.Model, Prompt: agent.Prompt})
 }
 
-func (s *Store) EnsureAgentSessionConfig(ctx context.Context, agent AgentSessionConfig) error {
+func (s *Store) EnsureHarnessSessionConfig(ctx context.Context, agent HarnessSessionConfig) error {
 	if strings.TrimSpace(agent.AgentID) == "" || strings.TrimSpace(agent.Name) == "" {
 		return ErrInvalidInput
 	}
 	var workspaceID *string
 	if strings.TrimSpace(agent.WorkspaceID) != "" {
-		if _, err := s.GetSession(ctx, strings.TrimSpace(agent.WorkspaceID)); err != nil {
+		if _, err := s.GetWorkspace(ctx, strings.TrimSpace(agent.WorkspaceID)); err != nil {
 			if errors.Is(err, ErrNotFound) {
 				return ErrInvalidInput
 			}
@@ -187,90 +187,90 @@ func (s *Store) EnsureAgentSessionConfig(ctx context.Context, agent AgentSession
 		}
 		workspaceID = &agent.WorkspaceID
 	}
-	return s.sqlc.EnsureAgentSessionConfig(ctx, dbsqlc.EnsureAgentSessionConfigParams{AgentID: agent.AgentID, WorkspaceID: workspaceID, Name: agent.Name, Harness: agent.Harness, Model: agent.Model, Prompt: agent.Prompt})
+	return s.sqlc.EnsureHarnessSessionConfig(ctx, dbsqlc.EnsureHarnessSessionConfigParams{AgentID: agent.AgentID, WorkspaceID: workspaceID, Name: agent.Name, Harness: agent.Harness, Model: agent.Model, Prompt: agent.Prompt})
 }
 
-func (s *Store) GetAgentSessionConfig(ctx context.Context, agentID string) (AgentSessionConfig, error) {
-	row, err := s.sqlc.GetAgentSessionConfig(ctx, dbsqlc.GetAgentSessionConfigParams{AgentID: strings.TrimSpace(agentID)})
+func (s *Store) GetHarnessSessionConfig(ctx context.Context, agentID string) (HarnessSessionConfig, error) {
+	row, err := s.sqlc.GetHarnessSessionConfig(ctx, dbsqlc.GetHarnessSessionConfigParams{AgentID: strings.TrimSpace(agentID)})
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return AgentSessionConfig{}, ErrNotFound
+			return HarnessSessionConfig{}, ErrNotFound
 		}
-		return AgentSessionConfig{}, err
+		return HarnessSessionConfig{}, err
 	}
 	return agentSessionConfigFromRow(row.AgentID, row.WorkspaceID, row.Name, row.Harness, row.Model, row.Prompt), nil
 }
 
-func (s *Store) ListAgentSessionConfigs(ctx context.Context, workspaceID string) ([]AgentSessionConfig, error) {
+func (s *Store) ListHarnessSessionConfigs(ctx context.Context, workspaceID string) ([]HarnessSessionConfig, error) {
 	if strings.TrimSpace(workspaceID) == "" {
 		return nil, ErrInvalidInput
 	}
-	rows, err := s.sqlc.ListAgentSessionConfigs(ctx, dbsqlc.ListAgentSessionConfigsParams{WorkspaceID: &workspaceID})
+	rows, err := s.sqlc.ListHarnessSessionConfigs(ctx, dbsqlc.ListHarnessSessionConfigsParams{WorkspaceID: &workspaceID})
 	if err != nil {
 		return nil, err
 	}
-	agents := make([]AgentSessionConfig, 0, len(rows))
+	agents := make([]HarnessSessionConfig, 0, len(rows))
 	for _, row := range rows {
 		agents = append(agents, agentSessionConfigFromRow(row.AgentID, row.WorkspaceID, row.Name, row.Harness, row.Model, row.Prompt))
 	}
 	return agents, nil
 }
 
-func (s *Store) UpdateAgentSessionConfig(ctx context.Context, agent AgentSessionConfig) (AgentSessionConfig, error) {
+func (s *Store) UpdateHarnessSessionConfig(ctx context.Context, agent HarnessSessionConfig) (HarnessSessionConfig, error) {
 	if strings.TrimSpace(agent.AgentID) == "" || strings.TrimSpace(agent.WorkspaceID) == "" || strings.TrimSpace(agent.Name) == "" {
-		return AgentSessionConfig{}, ErrInvalidInput
+		return HarnessSessionConfig{}, ErrInvalidInput
 	}
-	before, err := s.GetAgentSessionConfig(ctx, agent.AgentID)
+	before, err := s.GetHarnessSessionConfig(ctx, agent.AgentID)
 	if err != nil {
-		return AgentSessionConfig{}, err
+		return HarnessSessionConfig{}, err
 	}
 	if before.WorkspaceID != agent.WorkspaceID {
-		return AgentSessionConfig{}, ErrNotFound
+		return HarnessSessionConfig{}, ErrNotFound
 	}
-	if err := s.sqlc.UpdateAgentSessionConfig(ctx, dbsqlc.UpdateAgentSessionConfigParams{Name: agent.Name, Harness: agent.Harness, Model: agent.Model, Prompt: agent.Prompt, AgentID: agent.AgentID, WorkspaceID: &agent.WorkspaceID}); err != nil {
-		return AgentSessionConfig{}, err
+	if err := s.sqlc.UpdateHarnessSessionConfig(ctx, dbsqlc.UpdateHarnessSessionConfigParams{Name: agent.Name, Harness: agent.Harness, Model: agent.Model, Prompt: agent.Prompt, AgentID: agent.AgentID, WorkspaceID: &agent.WorkspaceID}); err != nil {
+		return HarnessSessionConfig{}, err
 	}
-	return s.GetAgentSessionConfig(ctx, agent.AgentID)
+	return s.GetHarnessSessionConfig(ctx, agent.AgentID)
 }
 
-func (s *Store) DeleteAgentSessionConfig(ctx context.Context, agentID string) error {
+func (s *Store) DeleteHarnessSessionConfig(ctx context.Context, agentID string) error {
 	if strings.TrimSpace(agentID) == "" {
 		return ErrInvalidInput
 	}
-	return s.sqlc.DeleteAgentSessionConfig(ctx, dbsqlc.DeleteAgentSessionConfigParams{AgentID: strings.TrimSpace(agentID)})
+	return s.sqlc.DeleteHarnessSessionConfig(ctx, dbsqlc.DeleteHarnessSessionConfigParams{AgentID: strings.TrimSpace(agentID)})
 }
 
-func (s *Store) CreateSessionFromAgentSessionConfig(ctx context.Context, sessionID, agentID, cwd string) (AgentSession, error) {
-	agent, err := s.GetAgentSessionConfig(ctx, agentID)
+func (s *Store) CreateHarnessSessionFromConfig(ctx context.Context, sessionID, agentID, cwd string) (HarnessSession, error) {
+	agent, err := s.GetHarnessSessionConfig(ctx, agentID)
 	if err != nil {
-		return AgentSession{}, err
+		return HarnessSession{}, err
 	}
-	if _, err := s.GetSession(ctx, agent.WorkspaceID); err != nil {
-		return AgentSession{}, err
+	if _, err := s.GetWorkspace(ctx, agent.WorkspaceID); err != nil {
+		return HarnessSession{}, err
 	}
-	run := AgentSession{SessionID: strings.TrimSpace(sessionID), RunID: strings.TrimSpace(sessionID), WorkspaceID: agent.WorkspaceID, AgentID: agent.AgentID, Harness: agent.Harness, Model: agent.Model, CWD: strings.TrimSpace(cwd), Status: "waiting", Usage: "durable"}
-	if err := s.CreateAgentSession(ctx, run); err != nil {
-		return AgentSession{}, err
+	run := HarnessSession{SessionID: strings.TrimSpace(sessionID), RunID: strings.TrimSpace(sessionID), WorkspaceID: agent.WorkspaceID, AgentID: agent.AgentID, Harness: agent.Harness, Model: agent.Model, CWD: strings.TrimSpace(cwd), Status: "waiting", Usage: HarnessSessionUsageSticky}
+	if err := s.CreateHarnessSession(ctx, run); err != nil {
+		return HarnessSession{}, err
 	}
 	return run, nil
 }
 
-func agentSessionConfigFromRow(agentID string, workspaceID *string, name, harness, model, prompt string) AgentSessionConfig {
+func agentSessionConfigFromRow(agentID string, workspaceID *string, name, harness, model, prompt string) HarnessSessionConfig {
 	workspace := ""
 	if workspaceID != nil {
 		workspace = *workspaceID
 	}
-	return AgentSessionConfig{AgentID: agentID, WorkspaceID: workspace, Name: name, Harness: harness, Model: model, Prompt: prompt}
+	return HarnessSessionConfig{AgentID: agentID, WorkspaceID: workspace, Name: name, Harness: harness, Model: model, Prompt: prompt}
 }
 
-func (s *Store) CreateAgentSession(ctx context.Context, run AgentSession) error {
+func (s *Store) CreateHarnessSession(ctx context.Context, run HarnessSession) error {
 	if strings.TrimSpace(run.SessionID) == "" {
 		run.SessionID = strings.TrimSpace(run.RunID)
 	}
 	if strings.TrimSpace(run.SessionID) == "" || strings.TrimSpace(run.WorkspaceID) == "" || strings.TrimSpace(run.AgentID) == "" || strings.TrimSpace(run.Status) == "" {
 		return ErrInvalidInput
 	}
-	agent, err := s.sqlc.GetAgentSessionConfig(ctx, dbsqlc.GetAgentSessionConfigParams{AgentID: strings.TrimSpace(run.AgentID)})
+	agent, err := s.sqlc.GetHarnessSessionConfig(ctx, dbsqlc.GetHarnessSessionConfigParams{AgentID: strings.TrimSpace(run.AgentID)})
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return ErrNotFound
@@ -282,13 +282,13 @@ func (s *Store) CreateAgentSession(ctx context.Context, run AgentSession) error 
 	}
 	usage := strings.TrimSpace(run.Usage)
 	if usage == "" {
-		usage = "durable"
+		usage = HarnessSessionUsageSticky
 	}
-	return s.sqlc.CreateAgentSession(ctx, createAgentSessionParams(run, usage))
+	return s.sqlc.CreateHarnessSession(ctx, createHarnessSessionParams(run, usage))
 }
 
-func createAgentSessionParams(run AgentSession, usage string) dbsqlc.CreateAgentSessionParams {
-	return dbsqlc.CreateAgentSessionParams{SessionID: run.SessionID, WorkspaceID: run.WorkspaceID, AgentID: run.AgentID, Harness: run.Harness, Model: run.Model, ProviderSessionID: run.ProviderSessionID, ProviderRunID: run.ProviderRunID, ProviderThreadID: run.ProviderThreadID, Cwd: run.CWD, FolderScopeJson: defaultJSON(run.FolderScopeJSON, "[]"), Status: run.Status, Usage: usage, SourceSessionID: run.SourceSessionID, SourceAgentID: run.SourceAgentID, PromptHash: run.PromptHash, ContextPayloadIdsJson: defaultJSON(run.ContextPayloadIDsJSON, "[]"), PermissionMode: run.PermissionMode, SandboxMode: run.SandboxMode, ToolScopeJson: defaultJSON(run.ToolScopeJSON, "{}"), ProviderMetadataJson: defaultJSON(run.ProviderMetadataJSON, "{}")}
+func createHarnessSessionParams(run HarnessSession, usage string) dbsqlc.CreateHarnessSessionParams {
+	return dbsqlc.CreateHarnessSessionParams{SessionID: run.SessionID, WorkspaceID: run.WorkspaceID, AgentID: run.AgentID, Harness: run.Harness, Model: run.Model, ProviderSessionID: run.ProviderSessionID, ProviderRunID: run.ProviderRunID, ProviderThreadID: run.ProviderThreadID, Cwd: run.CWD, FolderScopeJson: defaultJSON(run.FolderScopeJSON, "[]"), Status: run.Status, Usage: usage, SourceSessionID: run.SourceSessionID, SourceAgentID: run.SourceAgentID, PromptHash: run.PromptHash, ContextPayloadIdsJson: defaultJSON(run.ContextPayloadIDsJSON, "[]"), PermissionMode: run.PermissionMode, SandboxMode: run.SandboxMode, ToolScopeJson: defaultJSON(run.ToolScopeJSON, "{}"), ProviderMetadataJson: defaultJSON(run.ProviderMetadataJSON, "{}")}
 }
 
 func defaultJSON(value, fallback string) string {
@@ -298,11 +298,11 @@ func defaultJSON(value, fallback string) string {
 	return value
 }
 
-func agentSessionFromRow(sessionID, workspaceID, agentID, harness, model, providerSessionID, providerRunID, providerThreadID, cwd, folderScopeJSON, status, usage, sourceSessionID, sourceAgentID, promptHash, contextPayloadIDsJSON, permissionMode, sandboxMode, toolScopeJSON, providerMetadataJSON string) AgentSession {
-	return AgentSession{SessionID: sessionID, RunID: sessionID, WorkspaceID: workspaceID, AgentID: agentID, Harness: harness, Model: model, ProviderSessionID: providerSessionID, ProviderRunID: providerRunID, ProviderThreadID: providerThreadID, CWD: cwd, FolderScopeJSON: folderScopeJSON, Status: status, Usage: usage, SourceSessionID: sourceSessionID, SourceAgentID: sourceAgentID, PromptHash: promptHash, ContextPayloadIDsJSON: contextPayloadIDsJSON, PermissionMode: permissionMode, SandboxMode: sandboxMode, ToolScopeJSON: toolScopeJSON, ProviderMetadataJSON: providerMetadataJSON}
+func agentSessionFromRow(sessionID, workspaceID, agentID, harness, model, providerSessionID, providerRunID, providerThreadID, cwd, folderScopeJSON, status, usage, sourceSessionID, sourceAgentID, promptHash, contextPayloadIDsJSON, permissionMode, sandboxMode, toolScopeJSON, providerMetadataJSON string) HarnessSession {
+	return HarnessSession{SessionID: sessionID, RunID: sessionID, WorkspaceID: workspaceID, AgentID: agentID, Harness: harness, Model: model, ProviderSessionID: providerSessionID, ProviderRunID: providerRunID, ProviderThreadID: providerThreadID, CWD: cwd, FolderScopeJSON: folderScopeJSON, Status: status, Usage: usage, SourceSessionID: sourceSessionID, SourceAgentID: sourceAgentID, PromptHash: promptHash, ContextPayloadIDsJSON: contextPayloadIDsJSON, PermissionMode: permissionMode, SandboxMode: sandboxMode, ToolScopeJSON: toolScopeJSON, ProviderMetadataJSON: providerMetadataJSON}
 }
 
-func (s *Store) UpdateAgentSessionStatus(ctx context.Context, sessionID, status string) error {
+func (s *Store) UpdateHarnessSessionStatus(ctx context.Context, sessionID, status string) error {
 	if strings.TrimSpace(sessionID) == "" || strings.TrimSpace(status) == "" {
 		return ErrInvalidInput
 	}
@@ -320,7 +320,7 @@ func (s *Store) UpdateAgentSessionStatus(ctx context.Context, sessionID, status 
 	return nil
 }
 
-func (s *Store) UpdateAgentSessionProvider(ctx context.Context, sessionID, providerSessionID, providerRunID, providerMetadataJSON string) error {
+func (s *Store) UpdateHarnessSessionProvider(ctx context.Context, sessionID, providerSessionID, providerRunID, providerMetadataJSON string) error {
 	if strings.TrimSpace(sessionID) == "" {
 		return ErrInvalidInput
 	}
@@ -338,23 +338,23 @@ func (s *Store) UpdateAgentSessionProvider(ctx context.Context, sessionID, provi
 	return nil
 }
 
-func (s *Store) GetAgentSession(ctx context.Context, sessionID string) (AgentSession, error) {
-	row, err := s.sqlc.GetAgentSession(ctx, dbsqlc.GetAgentSessionParams{SessionID: strings.TrimSpace(sessionID)})
+func (s *Store) GetHarnessSession(ctx context.Context, sessionID string) (HarnessSession, error) {
+	row, err := s.sqlc.GetHarnessSession(ctx, dbsqlc.GetHarnessSessionParams{SessionID: strings.TrimSpace(sessionID)})
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return AgentSession{}, ErrNotFound
+			return HarnessSession{}, ErrNotFound
 		}
-		return AgentSession{}, err
+		return HarnessSession{}, err
 	}
 	return agentSessionFromRow(row.SessionID, row.WorkspaceID, row.AgentID, row.Harness, row.Model, row.ProviderSessionID, row.ProviderRunID, row.ProviderThreadID, row.Cwd, row.FolderScopeJson, row.Status, row.Usage, row.SourceSessionID, row.SourceAgentID, row.PromptHash, row.ContextPayloadIdsJson, row.PermissionMode, row.SandboxMode, row.ToolScopeJson, row.ProviderMetadataJson), nil
 }
 
-func (s *Store) ListAgentSessions(ctx context.Context, workspaceID string) ([]AgentSession, error) {
-	rows, err := s.sqlc.ListAgentSessions(ctx, dbsqlc.ListAgentSessionsParams{WorkspaceID: workspaceID})
+func (s *Store) ListHarnessSessions(ctx context.Context, workspaceID string) ([]HarnessSession, error) {
+	rows, err := s.sqlc.ListHarnessSessions(ctx, dbsqlc.ListHarnessSessionsParams{WorkspaceID: workspaceID})
 	if err != nil {
 		return nil, err
 	}
-	runs := make([]AgentSession, 0, len(rows))
+	runs := make([]HarnessSession, 0, len(rows))
 	for _, row := range rows {
 		runs = append(runs, agentSessionFromRow(row.SessionID, row.WorkspaceID, row.AgentID, row.Harness, row.Model, row.ProviderSessionID, row.ProviderRunID, row.ProviderThreadID, row.Cwd, row.FolderScopeJson, row.Status, row.Usage, row.SourceSessionID, row.SourceAgentID, row.PromptHash, row.ContextPayloadIdsJson, row.PermissionMode, row.SandboxMode, row.ToolScopeJson, row.ProviderMetadataJson))
 	}
@@ -365,7 +365,7 @@ func (s *Store) AppendRunLogMessage(ctx context.Context, msg RunLogMessage) erro
 	if strings.TrimSpace(msg.MessageID) == "" || strings.TrimSpace(msg.SessionID) == "" || msg.Sequence <= 0 || strings.TrimSpace(msg.Role) == "" {
 		return ErrInvalidInput
 	}
-	run, err := s.sqlc.GetAgentSession(ctx, dbsqlc.GetAgentSessionParams{SessionID: msg.SessionID})
+	run, err := s.sqlc.GetHarnessSession(ctx, dbsqlc.GetHarnessSessionParams{SessionID: msg.SessionID})
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return ErrNotFound
@@ -410,7 +410,7 @@ func (s *Store) TailRunLogMessages(ctx context.Context, sessionID string, count 
 	if strings.TrimSpace(sessionID) == "" || count <= 0 {
 		return nil, ErrInvalidInput
 	}
-	if _, err := s.sqlc.GetAgentSession(ctx, dbsqlc.GetAgentSessionParams{SessionID: sessionID}); err != nil {
+	if _, err := s.sqlc.GetHarnessSession(ctx, dbsqlc.GetHarnessSessionParams{SessionID: sessionID}); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, ErrNotFound
 		}
@@ -437,7 +437,7 @@ func (s *Store) ListRunLogMessages(ctx context.Context, sessionID string, afterS
 	if strings.TrimSpace(sessionID) == "" || afterSequence < 0 || limit <= 0 {
 		return nil, ErrInvalidInput
 	}
-	if _, err := s.sqlc.GetAgentSession(ctx, dbsqlc.GetAgentSessionParams{SessionID: sessionID}); err != nil {
+	if _, err := s.sqlc.GetHarnessSession(ctx, dbsqlc.GetHarnessSessionParams{SessionID: sessionID}); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, ErrNotFound
 		}
@@ -476,7 +476,7 @@ func (s *Store) CreateContextExcerptFromTail(ctx context.Context, params CreateC
 	if strings.TrimSpace(params.ContextExcerptID) == "" || params.Count <= 0 {
 		return ContextExcerpt{}, ErrInvalidInput
 	}
-	run, err := s.sqlc.GetAgentSession(ctx, dbsqlc.GetAgentSessionParams{SessionID: params.SourceSessionID})
+	run, err := s.sqlc.GetHarnessSession(ctx, dbsqlc.GetHarnessSessionParams{SessionID: params.SourceSessionID})
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return ContextExcerpt{}, ErrNotFound
@@ -548,19 +548,19 @@ type contextExcerptCreateSpec struct {
 	AppendedMessage  string
 }
 
-func (s *Store) messagesForExcerptSelector(ctx context.Context, sourceSessionID string) (dbsqlc.GetAgentSessionRow, []RunLogMessage, error) {
-	run, err := s.sqlc.GetAgentSession(ctx, dbsqlc.GetAgentSessionParams{SessionID: sourceSessionID})
+func (s *Store) messagesForExcerptSelector(ctx context.Context, sourceSessionID string) (dbsqlc.GetHarnessSessionRow, []RunLogMessage, error) {
+	run, err := s.sqlc.GetHarnessSession(ctx, dbsqlc.GetHarnessSessionParams{SessionID: sourceSessionID})
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return dbsqlc.GetAgentSessionRow{}, nil, ErrNotFound
+			return dbsqlc.GetHarnessSessionRow{}, nil, ErrNotFound
 		}
-		return dbsqlc.GetAgentSessionRow{}, nil, err
+		return dbsqlc.GetHarnessSessionRow{}, nil, err
 	}
 	messages, err := s.ListRunLogMessages(ctx, sourceSessionID, 0, 1000000)
 	return run, messages, err
 }
 
-func (s *Store) createContextExcerptFromMessages(ctx context.Context, spec contextExcerptCreateSpec, run dbsqlc.GetAgentSessionRow, messages []RunLogMessage) (ContextExcerpt, error) {
+func (s *Store) createContextExcerptFromMessages(ctx context.Context, spec contextExcerptCreateSpec, run dbsqlc.GetHarnessSessionRow, messages []RunLogMessage) (ContextExcerpt, error) {
 	items := make([]ContextExcerptItem, 0, len(messages))
 	h := sha256.New()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -615,7 +615,7 @@ func (s *Store) SendAgentMessage(ctx context.Context, params AgentMessageSendPar
 	defer func() { _ = tx.Rollback() }()
 	qtx := s.sqlc.WithTx(tx)
 
-	source, err := qtx.GetAgentSession(ctx, dbsqlc.GetAgentSessionParams{SessionID: params.SourceSessionID})
+	source, err := qtx.GetHarnessSession(ctx, dbsqlc.GetHarnessSessionParams{SessionID: params.SourceSessionID})
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return AgentMessage{}, ErrNotFound
@@ -623,7 +623,7 @@ func (s *Store) SendAgentMessage(ctx context.Context, params AgentMessageSendPar
 		return AgentMessage{}, err
 	}
 	if targetAgentID == "" {
-		targetRun, err := qtx.GetAgentSession(ctx, dbsqlc.GetAgentSessionParams{SessionID: targetSessionID})
+		targetRun, err := qtx.GetHarnessSession(ctx, dbsqlc.GetHarnessSessionParams{SessionID: targetSessionID})
 		if err != nil {
 			if err == sql.ErrNoRows {
 				return AgentMessage{}, ErrNotFound
@@ -635,7 +635,7 @@ func (s *Store) SendAgentMessage(ctx context.Context, params AgentMessageSendPar
 		}
 		targetAgentID = targetRun.AgentID
 	}
-	targetAgent, err := qtx.GetAgentSessionConfig(ctx, dbsqlc.GetAgentSessionConfigParams{AgentID: targetAgentID})
+	targetAgent, err := qtx.GetHarnessSessionConfig(ctx, dbsqlc.GetHarnessSessionConfigParams{AgentID: targetAgentID})
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return AgentMessage{}, ErrNotFound
@@ -663,7 +663,7 @@ func (s *Store) SendAgentMessage(ctx context.Context, params AgentMessageSendPar
 		excerpts = append(excerpts, excerpt)
 	}
 	if strings.TrimSpace(params.TargetSessionID) != "" {
-		targetRun, err := qtx.GetAgentSession(ctx, dbsqlc.GetAgentSessionParams{SessionID: targetSessionID})
+		targetRun, err := qtx.GetHarnessSession(ctx, dbsqlc.GetHarnessSessionParams{SessionID: targetSessionID})
 		if err != nil {
 			if err == sql.ErrNoRows {
 				return AgentMessage{}, ErrNotFound
@@ -675,7 +675,7 @@ func (s *Store) SendAgentMessage(ctx context.Context, params AgentMessageSendPar
 		}
 	}
 	if strings.TrimSpace(params.TargetSessionID) == "" {
-		if err := qtx.CreateAgentSession(ctx, createAgentSessionParams(AgentSession{SessionID: targetSessionID, WorkspaceID: source.WorkspaceID, AgentID: targetAgent.AgentID, Harness: targetAgent.Harness, Model: targetAgent.Model, Status: "waiting"}, "agent_message")); err != nil {
+		if err := qtx.CreateHarnessSession(ctx, createHarnessSessionParams(HarnessSession{SessionID: targetSessionID, WorkspaceID: source.WorkspaceID, AgentID: targetAgent.AgentID, Harness: targetAgent.Harness, Model: targetAgent.Model, Status: "waiting"}, HarnessSessionUsageSticky)); err != nil {
 			return AgentMessage{}, err
 		}
 	}

@@ -18,11 +18,11 @@ func TestOpenCodeExecutorMapsJSONEvents(t *testing.T) {
 	executor := NewOpenCodeExecutorForTest(opencodeExecutorOptions{Executable: "opencode", Cwd: "/repo", RunCommand: runner.Run})
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 
-	run, items, err := StartExecutorRun(context.Background(), executor, packet, AgentProfile{Name: "builder", Model: "sonnet", Prompt: "Build it", InvocationClass: HarnessInvocationAgent})
+	run, items, err := StartExecutorRun(context.Background(), executor, packet, Profile{Name: "builder", Model: "sonnet", Prompt: "Build it", InvocationClass: HarnessInvocationSticky})
 	if err != nil {
 		t.Fatalf("StartExecutorRun returned error: %v", err)
 	}
-	if run.Executor != HarnessNameOpenCode || run.ProviderRunID != "sess_123" || run.AgentSessionID == run.ProviderRunID || !isULID(run.AgentSessionID) {
+	if run.Executor != HarnessNameOpenCode || run.ProviderRunID != "sess_123" || run.HarnessSessionID == run.ProviderRunID || !isULID(run.HarnessSessionID) {
 		t.Fatalf("run = %#v, want Ari run id with OpenCode provider session", run)
 	}
 	if len(items) != 4 {
@@ -50,7 +50,7 @@ func TestOpenCodeExecutorDoesNotHideProfilePromptInVisibleRunInput(t *testing.T)
 	executor := NewOpenCodeExecutorForTest(opencodeExecutorOptions{Executable: "opencode", Cwd: "/repo", RunCommand: runner.Run})
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 
-	_, _, err := StartExecutorRun(context.Background(), executor, packet, AgentProfile{Name: "builder", Model: "sonnet", Prompt: "Use builder behavior", InvocationClass: HarnessInvocationAgent})
+	_, _, err := StartExecutorRun(context.Background(), executor, packet, Profile{Name: "builder", Model: "sonnet", Prompt: "Use builder behavior", InvocationClass: HarnessInvocationSticky})
 	if err != nil {
 		t.Fatalf("StartExecutorRun returned error: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestOpenCodeExecutorParsesLargeJSONLEvent(t *testing.T) {
 
 func TestOpenCodeExecutorReportsMissingExecutableBeforeStart(t *testing.T) {
 	executor := NewOpenCodeExecutorForTest(opencodeExecutorOptions{Executable: "missing-opencode", Cwd: "/repo", RunCommand: func(ctx context.Context, opts opencodeExecutorOptions, prompt string) (commandRunResult, error) {
-		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "missing_executable", Executable: opts.Executable, Probe: opts.Executable + " --version", RequiredCapability: HarnessCapabilityAgentSessionFromContext, StartInvoked: false}
+		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "missing_executable", Executable: opts.Executable, Probe: opts.Executable + " --version", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
 	}})
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 
@@ -97,7 +97,7 @@ func TestOpenCodeExecutorReportsMissingExecutableBeforeStart(t *testing.T) {
 	if !errors.As(err, &unavailable) {
 		t.Fatalf("error = %T %[1]v, want HarnessUnavailableError", err)
 	}
-	if unavailable.StartInvoked || unavailable.Executable != "missing-opencode" || unavailable.RequiredCapability != HarnessCapabilityAgentSessionFromContext {
+	if unavailable.StartInvoked || unavailable.Executable != "missing-opencode" || unavailable.RequiredCapability != HarnessCapabilityHarnessSessionFromContext {
 		t.Fatalf("unavailable = %#v, want pre-start missing executable", unavailable)
 	}
 }
@@ -253,7 +253,7 @@ func TestOpenCodeExecutorRejectsMissingSessionID(t *testing.T) {
 func TestOpenCodeExecutorAdvertisesCapabilityProofSurface(t *testing.T) {
 	executor := NewOpenCodeExecutorForTest(opencodeExecutorOptions{Executable: "opencode", Cwd: "/repo"})
 	capabilities := executor.Descriptor().Capabilities
-	for _, required := range []HarnessCapability{HarnessCapabilityAgentSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems, HarnessCapabilityFinalResponse, HarnessCapabilityMeasuredTokenTelemetry} {
+	for _, required := range []HarnessCapability{HarnessCapabilityHarnessSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems, HarnessCapabilityFinalResponse, HarnessCapabilityMeasuredTokenTelemetry} {
 		if !harnessCapabilitiesContain(capabilities, required) {
 			t.Fatalf("opencode capabilities = %#v, missing required %q", capabilities, required)
 		}

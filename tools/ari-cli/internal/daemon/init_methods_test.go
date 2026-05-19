@@ -21,7 +21,7 @@ func TestInitMethodsExposeOptionsStateAndApplyThroughRPC(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "ari.db")
 	pidPath := filepath.Join(t.TempDir(), "daemon.pid")
 	d := New(socketPath, dbPath, pidPath, configPath, "test", "test-version")
-	d.setHarnessFactoryForTest("codex", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("codex", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -78,7 +78,7 @@ func TestInitMethodsExposeOptionsStateAndApplyThroughRPC(t *testing.T) {
 	}
 
 	store := openInitMethodTestStore(t, dbPath)
-	workspaces, err := store.ListSessions(context.Background())
+	workspaces, err := store.ListWorkspaces(context.Background())
 	if err != nil {
 		t.Fatalf("ListSessions returned error: %v", err)
 	}
@@ -105,9 +105,9 @@ func TestInitMethodsExposeOptionsStateAndApplyThroughRPC(t *testing.T) {
 	if helper.Name != globaldb.DefaultHelperProfileName || helper.WorkspaceID != homeWorkspaceID || helper.Harness != "codex" {
 		t.Fatalf("helper profile = %#v, want codex helper tied to home workspace", helper)
 	}
-	helpers, err := store.ListAgentSessions(context.Background(), homeWorkspaceID)
+	helpers, err := store.ListHarnessSessions(context.Background(), homeWorkspaceID)
 	if err != nil {
-		t.Fatalf("ListAgentSessions returned error: %v", err)
+		t.Fatalf("ListHarnessSessions returned error: %v", err)
 	}
 	if !hasLiveHelperSession(helpers, helper.ProfileID) {
 		t.Fatalf("agent sessions = %#v, want live helper session for profile %q", helpers, helper.ProfileID)

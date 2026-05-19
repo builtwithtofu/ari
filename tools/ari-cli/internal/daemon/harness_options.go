@@ -16,7 +16,7 @@ const (
 	HarnessInvocationModeBackground HarnessInvocationMode = "background"
 )
 
-func harnessOptionsFromProfile(profile AgentProfile) ([]HarnessOption, error) {
+func harnessOptionsFromProfile(profile Profile) ([]HarnessOption, error) {
 	switch strings.TrimSpace(profile.Harness) {
 	case HarnessNameClaude:
 		return claudeOptionsFromSettings(profile.Defaults)

@@ -135,7 +135,7 @@ func (d *Daemon) callAriTool(ctx context.Context, store *globaldb.Store, req Ari
 	if err := validateAriToolScope(req.Scope); err != nil {
 		return AriToolCallResponse{}, err
 	}
-	if _, err := store.GetSession(ctx, req.Scope.WorkspaceID); err != nil {
+	if _, err := store.GetWorkspace(ctx, req.Scope.WorkspaceID); err != nil {
 		return AriToolCallResponse{}, err
 	}
 	if name == "ari.defaults.set" && !req.Scope.WithinDefaultScope {
@@ -350,7 +350,7 @@ func (d *Daemon) ariDefaultsSet(input any) (AriToolCallResponse, error) {
 	}
 	model, hasModel := optionalString(body, "preferred_model")
 	invocationClass, hasInvocationClass := optionalString(body, "default_invocation_class")
-	if hasInvocationClass && invocationClass != "" && invocationClass != string(HarnessInvocationAgent) && invocationClass != string(HarnessInvocationTemporary) {
+	if hasInvocationClass && invocationClass != "" && invocationClass != string(HarnessInvocationSticky) && invocationClass != string(HarnessInvocationEphemeral) {
 		return AriToolCallResponse{}, ariToolError("invalid_default_invocation_class", "default_invocation_class is unsupported")
 	}
 	updates := map[string]string{}
@@ -391,7 +391,7 @@ func ariProfileSave(ctx context.Context, store *globaldb.Store, scope AriToolSco
 	if err != nil {
 		return AriToolCallResponse{}, err
 	}
-	profile, err := createStoredAgentProfile(ctx, store, AgentProfileCreateRequest{WorkspaceID: scope.WorkspaceID, Name: stringValue(body, "name"), Harness: stringValue(body, "harness"), Model: stringValue(body, "model"), Prompt: stringValue(body, "prompt"), InvocationClass: HarnessInvocationClass(stringValue(body, "invocation_class")), Defaults: mapValue(body, "defaults")})
+	profile, err := createStoredProfile(ctx, store, ProfileCreateRequest{WorkspaceID: scope.WorkspaceID, Name: stringValue(body, "name"), Harness: stringValue(body, "harness"), Model: stringValue(body, "model"), Prompt: stringValue(body, "prompt"), InvocationClass: HarnessInvocationClass(stringValue(body, "invocation_class")), Defaults: mapValue(body, "defaults")})
 	if err != nil {
 		return AriToolCallResponse{}, err
 	}
@@ -400,7 +400,7 @@ func ariProfileSave(ctx context.Context, store *globaldb.Store, scope AriToolSco
 
 func (d *Daemon) ariSelfCheck(ctx context.Context, store *globaldb.Store, scope AriToolScope) (AriToolCallResponse, error) {
 	_, cfgErr := readJSONConfig(d.configPath)
-	_, wsErr := store.GetSession(ctx, scope.WorkspaceID)
+	_, wsErr := store.GetWorkspace(ctx, scope.WorkspaceID)
 	return AriToolCallResponse{Status: "ok", Output: map[string]any{"daemon_version": d.version, "config_readable": cfgErr == nil, "workspace_available": wsErr == nil}}, nil
 }
 

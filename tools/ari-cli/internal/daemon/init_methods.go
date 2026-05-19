@@ -215,7 +215,7 @@ func (d *Daemon) homeWorkspaceInitState(ctx context.Context, store *globaldb.Sto
 	if err != nil || strings.TrimSpace(root) == "" {
 		return false, false, nil
 	}
-	sessions, err := store.ListSessions(ctx)
+	sessions, err := store.ListWorkspaces(ctx)
 	if err != nil {
 		return false, false, err
 	}
@@ -225,7 +225,7 @@ func (d *Daemon) homeWorkspaceInitState(ctx context.Context, store *globaldb.Sto
 			if helperErr != nil {
 				return true, false, nil
 			}
-			helpers, err := store.ListAgentSessions(ctx, session.ID)
+			helpers, err := store.ListHarnessSessions(ctx, session.ID)
 			if err != nil {
 				return false, false, err
 			}
@@ -240,18 +240,18 @@ func (d *Daemon) ensureHomeHelperSession(ctx context.Context, store *globaldb.St
 	if err != nil {
 		return err
 	}
-	sessions, err := store.ListAgentSessions(ctx, workspaceID)
+	sessions, err := store.ListHarnessSessions(ctx, workspaceID)
 	if err != nil {
 		return err
 	}
 	if hasLiveHelperSession(sessions, profile.ProfileID) {
 		return nil
 	}
-	_, err = startProfileSession(d, ctx, store, AgentSessionStartRequest{WorkspaceID: workspaceID, Profile: globaldb.DefaultHelperProfileName})
+	_, err = startProfileSession(d, ctx, store, HarnessSessionStartRequest{WorkspaceID: workspaceID, Profile: globaldb.DefaultHelperProfileName})
 	return err
 }
 
-func hasLiveHelperSession(sessions []globaldb.AgentSession, profileID string) bool {
+func hasLiveHelperSession(sessions []globaldb.HarnessSession, profileID string) bool {
 	profileID = strings.TrimSpace(profileID)
 	if profileID == "" {
 		return false
@@ -264,12 +264,12 @@ func hasLiveHelperSession(sessions []globaldb.AgentSession, profileID string) bo
 	return false
 }
 
-func (d *Daemon) ensureHomeWorkspace(ctx context.Context, store *globaldb.Store, root string) (*globaldb.Session, bool, error) {
+func (d *Daemon) ensureHomeWorkspace(ctx context.Context, store *globaldb.Store, root string) (*globaldb.Workspace, bool, error) {
 	root, err := normalizeInitRoot(root)
 	if err != nil || strings.TrimSpace(root) == "" {
 		return nil, false, nil
 	}
-	sessions, err := store.ListSessions(ctx)
+	sessions, err := store.ListWorkspaces(ctx)
 	if err != nil {
 		return nil, false, err
 	}
@@ -283,18 +283,18 @@ func (d *Daemon) ensureHomeWorkspace(ctx context.Context, store *globaldb.Store,
 		return nil, false, fmt.Errorf("generate workspace id: %w", err)
 	}
 	name := availableHomeWorkspaceName(sessions)
-	if err := store.CreateSession(ctx, workspaceID, name, root, "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, workspaceID, name, root, "manual", "auto"); err != nil {
 		return nil, false, err
 	}
 	if err := store.AddFolder(ctx, workspaceID, root, "unknown", true); err != nil {
-		_ = store.DeleteSession(ctx, workspaceID)
+		_ = store.DeleteWorkspace(ctx, workspaceID)
 		return nil, false, err
 	}
-	session, err := store.GetSession(ctx, workspaceID)
+	session, err := store.GetWorkspace(ctx, workspaceID)
 	return session, true, err
 }
 
-func availableHomeWorkspaceName(sessions []globaldb.Session) string {
+func availableHomeWorkspaceName(sessions []globaldb.Workspace) string {
 	used := map[string]bool{}
 	for _, session := range sessions {
 		used[session.Name] = true

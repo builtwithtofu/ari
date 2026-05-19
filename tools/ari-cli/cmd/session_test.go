@@ -21,11 +21,11 @@ func TestSessionStartCallsPublicSessionStartRPC(t *testing.T) {
 	originalStart := sessionStartRPC
 	sessionReadActiveWorkspace = func() (string, error) { return "ws-1", nil }
 	sessionEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
-	sessionStartRPC = func(_ context.Context, _ string, req daemon.AgentSessionStartRequest) (daemon.AgentSessionStartResponse, error) {
+	sessionStartRPC = func(_ context.Context, _ string, req daemon.HarnessSessionStartRequest) (daemon.HarnessSessionStartResponse, error) {
 		if req.WorkspaceID != "ws-1" || req.Profile != "executor" || req.SessionID != "executor-main" || req.Message != "Start phase 1" || req.Prompt != "replacement behavior" {
 			t.Fatalf("session.start request = %#v", req)
 		}
-		return daemon.AgentSessionStartResponse{Run: daemon.AgentSession{AgentSessionID: req.SessionID, SessionID: req.SessionID, WorkspaceID: req.WorkspaceID, Status: "waiting"}}, nil
+		return daemon.HarnessSessionStartResponse{Run: daemon.HarnessSession{HarnessSessionID: req.SessionID, SessionID: req.SessionID, WorkspaceID: req.WorkspaceID, Status: "waiting"}}, nil
 	}
 	t.Cleanup(func() {
 		sessionReadActiveWorkspace = originalReadActive
@@ -55,11 +55,11 @@ func TestSessionStartResolvesWorkspaceNameBeforeRPC(t *testing.T) {
 	workspaceListRPC = func(context.Context, string) (daemon.WorkspaceListResponse, error) {
 		return daemon.WorkspaceListResponse{Workspaces: []daemon.WorkspaceSummary{{WorkspaceID: "ws-1", Name: "app"}}}, nil
 	}
-	sessionStartRPC = func(_ context.Context, _ string, req daemon.AgentSessionStartRequest) (daemon.AgentSessionStartResponse, error) {
+	sessionStartRPC = func(_ context.Context, _ string, req daemon.HarnessSessionStartRequest) (daemon.HarnessSessionStartResponse, error) {
 		if req.WorkspaceID != "ws-1" {
 			t.Fatalf("session.start workspace_id = %q, want resolved id ws-1", req.WorkspaceID)
 		}
-		return daemon.AgentSessionStartResponse{Run: daemon.AgentSession{AgentSessionID: "executor-main", SessionID: "executor-main", WorkspaceID: req.WorkspaceID, Status: "waiting"}}, nil
+		return daemon.HarnessSessionStartResponse{Run: daemon.HarnessSession{HarnessSessionID: "executor-main", SessionID: "executor-main", WorkspaceID: req.WorkspaceID, Status: "waiting"}}, nil
 	}
 	t.Cleanup(func() {
 		sessionEnsureDaemonRunning = originalEnsure
@@ -84,11 +84,11 @@ func TestSessionStartPromptFileSuppliesReplacementPrompt(t *testing.T) {
 	originalStart := sessionStartRPC
 	sessionReadActiveWorkspace = func() (string, error) { return "ws-1", nil }
 	sessionEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
-	sessionStartRPC = func(_ context.Context, _ string, req daemon.AgentSessionStartRequest) (daemon.AgentSessionStartResponse, error) {
+	sessionStartRPC = func(_ context.Context, _ string, req daemon.HarnessSessionStartRequest) (daemon.HarnessSessionStartResponse, error) {
 		if req.Prompt != "file behavior\n" {
 			t.Fatalf("session.start prompt = %q, want file contents", req.Prompt)
 		}
-		return daemon.AgentSessionStartResponse{Run: daemon.AgentSession{AgentSessionID: "executor-main", SessionID: "executor-main", WorkspaceID: req.WorkspaceID, Status: "waiting"}}, nil
+		return daemon.HarnessSessionStartResponse{Run: daemon.HarnessSession{HarnessSessionID: "executor-main", SessionID: "executor-main", WorkspaceID: req.WorkspaceID, Status: "waiting"}}, nil
 	}
 	t.Cleanup(func() {
 		sessionReadActiveWorkspace = originalReadActive
@@ -112,7 +112,7 @@ func TestSessionListCallsPublicSessionListRPC(t *testing.T) {
 		if req.WorkspaceID != "ws-1" {
 			t.Fatalf("session.list request = %#v", req)
 		}
-		return daemon.SessionListResponse{Sessions: []daemon.AgentSession{{SessionID: "executor-main", Status: "running", Executor: "codex"}}}, nil
+		return daemon.SessionListResponse{Sessions: []daemon.HarnessSession{{SessionID: "executor-main", Status: "running", Executor: "codex"}}}, nil
 	}
 	t.Cleanup(func() {
 		sessionReadActiveWorkspace = originalReadActive
@@ -146,7 +146,7 @@ func TestSessionListResolvesWorkspaceNameBeforeRPC(t *testing.T) {
 		if req.WorkspaceID != "ws-1" {
 			t.Fatalf("session.list workspace_id = %q, want resolved id ws-1", req.WorkspaceID)
 		}
-		return daemon.SessionListResponse{Sessions: []daemon.AgentSession{{SessionID: "executor-main", Status: "running", Executor: "codex"}}}, nil
+		return daemon.SessionListResponse{Sessions: []daemon.HarnessSession{{SessionID: "executor-main", Status: "running", Executor: "codex"}}}, nil
 	}
 	t.Cleanup(func() {
 		sessionEnsureDaemonRunning = originalEnsure
@@ -169,7 +169,7 @@ func TestSessionShowCallsPublicSessionGetRPC(t *testing.T) {
 		if req.SessionID != "executor-main" {
 			t.Fatalf("session.get request = %#v", req)
 		}
-		return daemon.SessionGetResponse{Session: daemon.AgentSession{SessionID: "executor-main", Status: "running", Executor: "claude", WorkspaceID: "ws-1", ProviderSessionID: "provider-1", InvocationMode: "background", UsageBucket: "subscription"}}, nil
+		return daemon.SessionGetResponse{Session: daemon.HarnessSession{SessionID: "executor-main", Status: "running", Executor: "claude", WorkspaceID: "ws-1", ProviderSessionID: "provider-1", InvocationMode: "background", UsageBucket: "subscription"}}, nil
 	}
 	t.Cleanup(func() {
 		sessionEnsureDaemonRunning = originalEnsure
@@ -269,11 +269,11 @@ func TestSessionCallCallsPublicEphemeralRPC(t *testing.T) {
 	originalEnsure := sessionEnsureDaemonRunning
 	originalCall := sessionCallRPC
 	sessionEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
-	sessionCallRPC = func(_ context.Context, _ string, req daemon.EphemeralAgentCallRequest) (daemon.EphemeralAgentCallResponse, error) {
+	sessionCallRPC = func(_ context.Context, _ string, req daemon.EphemeralCallRequest) (daemon.EphemeralCallResponse, error) {
 		if req.SourceSessionID != "planner-main" || req.TargetAgentID != "reviewer" || req.Body != "Please review" || len(req.ContextExcerptIDs) != 1 || req.ContextExcerptIDs[0] != "plan-tail" || strings.TrimSpace(req.CallID) == "" {
 			t.Fatalf("session.call.ephemeral request = %#v", req)
 		}
-		return daemon.EphemeralAgentCallResponse{Run: globaldb.AgentSession{SessionID: "call-1-run", Status: "completed"}}, nil
+		return daemon.EphemeralCallResponse{Run: globaldb.HarnessSession{SessionID: "call-1-run", Status: "completed"}}, nil
 	}
 	t.Cleanup(func() {
 		sessionEnsureDaemonRunning = originalEnsure
