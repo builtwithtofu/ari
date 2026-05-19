@@ -10,7 +10,7 @@ import (
 func TestOperationRecordAppendGetList(t *testing.T) {
 	store := newGlobalDBTestStore(t, "operation-records")
 	ctx := context.Background()
-	if err := store.CreateSession(ctx, "ws-1", "alpha", "/tmp/alpha", "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "ws-1", "alpha", "/tmp/alpha", "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
 	baseTime := time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC)

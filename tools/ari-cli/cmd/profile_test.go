@@ -67,11 +67,11 @@ func TestProfileCreatePromptFileSuppliesPromptAndConflictsWithPromptFlag(t *test
 	originalEnsure := profileEnsureDaemonRunning
 	originalCreate := profileCreateRPC
 	profileEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
-	profileCreateRPC = func(_ context.Context, _ string, req daemon.AgentProfileCreateRequest) (daemon.AgentProfileResponse, error) {
+	profileCreateRPC = func(_ context.Context, _ string, req daemon.ProfileCreateRequest) (daemon.ProfileResponse, error) {
 		if req.Prompt != "profile behavior from file\n" {
 			t.Fatalf("profile.create prompt = %q, want prompt-file contents", req.Prompt)
 		}
-		return daemon.AgentProfileResponse{Name: req.Name, Harness: req.Harness, Prompt: req.Prompt}, nil
+		return daemon.ProfileResponse{Name: req.Name, Harness: req.Harness, Prompt: req.Prompt}, nil
 	}
 	t.Cleanup(func() {
 		profileEnsureDaemonRunning = originalEnsure

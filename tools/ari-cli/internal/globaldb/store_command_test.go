@@ -10,7 +10,7 @@ func TestCommandStoreLifecycleAndReconciliation(t *testing.T) {
 	store := newCommandTestStore(t)
 	ctx := context.Background()
 
-	if err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
 
@@ -98,7 +98,7 @@ func TestGetCommandMissingReturnsNotFound(t *testing.T) {
 	store := newCommandTestStore(t)
 	ctx := context.Background()
 
-	if err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
 
@@ -154,7 +154,7 @@ func TestWorkspaceCommandDefinitionLifecycle(t *testing.T) {
 	store := newCommandTestStore(t)
 	ctx := context.Background()
 
-	if err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
 
@@ -213,7 +213,7 @@ func TestWorkspaceCommandDefinitionRejectsNameThatCollidesWithExistingID(t *test
 	store := newCommandTestStore(t)
 	ctx := context.Background()
 
-	if err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
 
@@ -246,7 +246,7 @@ func TestWorkspaceCommandDefinitionRejectsIDThatCollidesWithExistingName(t *test
 	store := newCommandTestStore(t)
 	ctx := context.Background()
 
-	if err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
 
@@ -279,7 +279,7 @@ func TestWorkspaceCommandDefinitionRejectsNullArgs(t *testing.T) {
 	store := newCommandTestStore(t)
 	ctx := context.Background()
 
-	if err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
 
@@ -302,7 +302,7 @@ func TestWorkspaceCommandDefinitionRejectsDuplicateNameInSameWorkspace(t *testin
 	store := newCommandTestStore(t)
 	ctx := context.Background()
 
-	if err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
 
@@ -335,7 +335,7 @@ func TestWorkspaceCommandDefinitionRejectsDuplicateCommandIDInSameWorkspace(t *t
 	store := newCommandTestStore(t)
 	ctx := context.Background()
 
-	if err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
 

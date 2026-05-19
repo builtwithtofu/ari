@@ -15,11 +15,11 @@ func TestClaudeExecutorMapsJSONResult(t *testing.T) {
 	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunCommand: runner.Run})
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 
-	run, items, err := StartExecutorRun(context.Background(), executor, packet, AgentProfile{Name: "reviewer", Harness: HarnessNameClaude, Model: "opus", Prompt: "Review it", InvocationClass: HarnessInvocationAgent, Defaults: map[string]any{"invocation_mode": "headless"}})
+	run, items, err := StartExecutorRun(context.Background(), executor, packet, Profile{Name: "reviewer", Harness: HarnessNameClaude, Model: "opus", Prompt: "Review it", InvocationClass: HarnessInvocationSticky, Defaults: map[string]any{"invocation_mode": "headless"}})
 	if err != nil {
 		t.Fatalf("StartExecutorRun returned error: %v", err)
 	}
-	if run.Executor != HarnessNameClaude || run.ProviderRunID != "550e8400-e29b-41d4-a716-446655440000" || run.AgentSessionID == run.ProviderRunID || !isULID(run.AgentSessionID) {
+	if run.Executor != HarnessNameClaude || run.ProviderRunID != "550e8400-e29b-41d4-a716-446655440000" || run.HarnessSessionID == run.ProviderRunID || !isULID(run.HarnessSessionID) {
 		t.Fatalf("run = %#v, want Ari run id with Claude provider session", run)
 	}
 	if len(items) != 4 {
@@ -44,7 +44,7 @@ func TestClaudeExecutorMapsProfilePromptToReplacementSystemPrompt(t *testing.T) 
 	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunCommand: runner.Run})
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 
-	_, _, err := StartExecutorRun(context.Background(), executor, packet, AgentProfile{Name: "reviewer", Harness: HarnessNameClaude, Model: "opus", Prompt: "Act as the reviewer", InvocationClass: HarnessInvocationAgent, Defaults: map[string]any{"invocation_mode": "headless"}})
+	_, _, err := StartExecutorRun(context.Background(), executor, packet, Profile{Name: "reviewer", Harness: HarnessNameClaude, Model: "opus", Prompt: "Act as the reviewer", InvocationClass: HarnessInvocationSticky, Defaults: map[string]any{"invocation_mode": "headless"}})
 	if err != nil {
 		t.Fatalf("StartExecutorRun returned error: %v", err)
 	}
@@ -98,13 +98,13 @@ func TestClaudeTemporaryInvocationDefaultsToBackground(t *testing.T) {
 	runner := &fakeClaudeRunner{output: []byte(`Started background session 550e8400-e29b-41d4-a716-446655440000`)}
 	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunCommand: runner.Run})
 
-	run, err := executor.Start(context.Background(), ExecutorStartRequest{WorkspaceID: "ws-1", InvocationClass: HarnessInvocationTemporary, ContextPacket: `{"context_packet_id":"ctx_123"}`})
+	run, err := executor.Start(context.Background(), ExecutorStartRequest{WorkspaceID: "ws-1", InvocationClass: HarnessInvocationEphemeral, ContextPacket: `{"context_packet_id":"ctx_123"}`})
 	if err != nil {
 		t.Fatalf("Start returned error: %v", err)
 	}
 	args := strings.Join(runner.args, " ")
 	if !stringSliceContains(runner.args, "--bg") || stringSliceContains(runner.args, "-p") || run.ProviderSessionID == "" {
-		t.Fatalf("run = %#v args = %q, want temporary background invocation", run, args)
+		t.Fatalf("run = %#v args = %q, want ephemeral background invocation", run, args)
 	}
 }
 
@@ -147,7 +147,7 @@ func TestClaudeExecutorUsesTypedBackgroundOption(t *testing.T) {
 	if got := executorRunStatusFromItems(items); got != "running" {
 		t.Fatalf("background status = %q from %#v, want running", got, items)
 	}
-	if response := harnessFinalResponseFromItems(AgentSession{}, executor.Descriptor(), items); response != nil {
+	if response := harnessFinalResponseFromItems(HarnessSession{}, executor.Descriptor(), items); response != nil {
 		t.Fatalf("background final response = %#v, want nil launch notice response", response)
 	}
 
@@ -262,7 +262,7 @@ func TestStartExecutorRunTranslatesProfileSettingsToTypedClaudeOptions(t *testin
 	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunCommand: runner.Run})
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 
-	_, _, err := StartExecutorRun(context.Background(), executor, packet, AgentProfile{Name: "reviewer", Harness: HarnessNameClaude, Prompt: "Review", Defaults: map[string]any{"invocation_mode": "background"}})
+	_, _, err := StartExecutorRun(context.Background(), executor, packet, Profile{Name: "reviewer", Harness: HarnessNameClaude, Prompt: "Review", Defaults: map[string]any{"invocation_mode": "background"}})
 	if err != nil {
 		t.Fatalf("StartExecutorRun returned error: %v", err)
 	}
@@ -278,7 +278,7 @@ func TestStartExecutorRunDefaultsClaudeProfileToBackgroundLifecycle(t *testing.T
 	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunCommand: runner.Run})
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 
-	run, items, err := StartExecutorRun(context.Background(), executor, packet, AgentProfile{Name: "reviewer", Harness: HarnessNameClaude, Prompt: "Review"})
+	run, items, err := StartExecutorRun(context.Background(), executor, packet, Profile{Name: "reviewer", Harness: HarnessNameClaude, Prompt: "Review"})
 	if err != nil {
 		t.Fatalf("StartExecutorRun returned error: %v", err)
 	}
@@ -299,7 +299,7 @@ func TestStartExecutorRunPreservesExplicitHeadlessSettings(t *testing.T) {
 	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunCommand: runner.Run})
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 
-	run, _, err := StartExecutorRun(context.Background(), executor, packet, AgentProfile{Name: "reviewer", Harness: HarnessNameClaude, Prompt: "Review", Defaults: map[string]any{"invocation_mode": "headless"}})
+	run, _, err := StartExecutorRun(context.Background(), executor, packet, Profile{Name: "reviewer", Harness: HarnessNameClaude, Prompt: "Review", Defaults: map[string]any{"invocation_mode": "headless"}})
 	if err != nil {
 		t.Fatalf("StartExecutorRun returned error: %v", err)
 	}
@@ -321,19 +321,19 @@ func TestStartExecutorRunTemporaryClaudeProfileDefaultsToBackground(t *testing.T
 	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunCommand: runner.Run})
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 
-	run, _, err := StartExecutorRun(context.Background(), executor, packet, AgentProfile{Name: "reviewer", Harness: HarnessNameClaude, Prompt: "Review", InvocationClass: HarnessInvocationTemporary})
+	run, _, err := StartExecutorRun(context.Background(), executor, packet, Profile{Name: "reviewer", Harness: HarnessNameClaude, Prompt: "Review", InvocationClass: HarnessInvocationEphemeral})
 	if err != nil {
 		t.Fatalf("StartExecutorRun returned error: %v", err)
 	}
 	args := strings.Join(runner.args, " ")
 	if run.InvocationMode != string(HarnessInvocationModeBackground) || !stringSliceContains(runner.args, "--bg") || stringSliceContains(runner.args, "-p") {
-		t.Fatalf("run = %#v args = %q, want temporary profile background mode", run, args)
+		t.Fatalf("run = %#v args = %q, want ephemeral profile background mode", run, args)
 	}
 }
 
-func TestAgentSessionDefaultsCanOverrideInvocationModeWithoutDuplicatingProfile(t *testing.T) {
-	profile := AgentProfile{Name: "reviewer", Harness: HarnessNameClaude, Prompt: "Review", Defaults: map[string]any{"invocation_mode": "headless"}}
-	profile = applyAgentSessionDefaults(profile, AgentSessionDefaults{Settings: map[string]any{"invocation_mode": "background"}})
+func TestHarnessSessionDefaultsCanOverrideInvocationModeWithoutDuplicatingProfile(t *testing.T) {
+	profile := Profile{Name: "reviewer", Harness: HarnessNameClaude, Prompt: "Review", Defaults: map[string]any{"invocation_mode": "headless"}}
+	profile = applyHarnessSessionDefaults(profile, HarnessSessionDefaults{Settings: map[string]any{"invocation_mode": "background"}})
 
 	options, err := harnessOptionsFromProfile(profile)
 	if err != nil {
@@ -348,8 +348,8 @@ func TestAgentSessionDefaultsCanOverrideInvocationModeWithoutDuplicatingProfile(
 	}
 }
 
-func TestAgentSessionResponseFromStoreExposesProviderModeMetadata(t *testing.T) {
-	session := agentSessionResponseFromStore(globaldb.AgentSession{
+func TestHarnessSessionResponseFromStoreExposesProviderModeMetadata(t *testing.T) {
+	session := agentSessionResponseFromStore(globaldb.HarnessSession{
 		SessionID:            "ari-session",
 		WorkspaceID:          "ws-1",
 		Harness:              HarnessNameClaude,
@@ -373,11 +373,11 @@ func TestClaudeSessionLogsAndAttachUsePersistedProviderID(t *testing.T) {
 	}
 	ctx := context.Background()
 	seedSessionWithPrimaryFolder(t, store, "ws-1", "/repo")
-	if err := store.EnsureAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-1", Name: "claude", Harness: HarnessNameClaude}); err != nil {
-		t.Fatalf("EnsureAgentSessionConfig returned error: %v", err)
+	if err := store.EnsureHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-1", Name: "claude", Harness: HarnessNameClaude}); err != nil {
+		t.Fatalf("EnsureHarnessSessionConfig returned error: %v", err)
 	}
-	if err := store.CreateAgentSession(ctx, globaldb.AgentSession{SessionID: "ari-session", WorkspaceID: "ws-1", AgentID: "agent-1", Harness: HarnessNameClaude, Status: "running", Usage: globaldb.AgentSessionUsageSticky, ProviderSessionID: "550e8400-e29b-41d4-a716-446655440000", CWD: "/repo", ProviderMetadataJSON: `{"invocation_mode":"background","usage_bucket":"subscription"}`}); err != nil {
-		t.Fatalf("CreateAgentSession returned error: %v", err)
+	if err := store.CreateHarnessSession(ctx, globaldb.HarnessSession{SessionID: "ari-session", WorkspaceID: "ws-1", AgentID: "agent-1", Harness: HarnessNameClaude, Status: "running", Usage: globaldb.HarnessSessionUsageSticky, ProviderSessionID: "550e8400-e29b-41d4-a716-446655440000", CWD: "/repo", ProviderMetadataJSON: `{"invocation_mode":"background","usage_bucket":"subscription"}`}); err != nil {
+		t.Fatalf("CreateHarnessSession returned error: %v", err)
 	}
 	originalRunner := runClaudeSessionCommand
 	t.Cleanup(func() { runClaudeSessionCommand = originalRunner })
@@ -408,11 +408,11 @@ func TestClaudeSessionLogsAllowPreMetadataBackgroundSession(t *testing.T) {
 	}
 	ctx := context.Background()
 	seedSessionWithPrimaryFolder(t, store, "ws-1", "/repo")
-	if err := store.EnsureAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-1", Name: "claude", Harness: HarnessNameClaude}); err != nil {
-		t.Fatalf("EnsureAgentSessionConfig returned error: %v", err)
+	if err := store.EnsureHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-1", Name: "claude", Harness: HarnessNameClaude}); err != nil {
+		t.Fatalf("EnsureHarnessSessionConfig returned error: %v", err)
 	}
-	if err := store.CreateAgentSession(ctx, globaldb.AgentSession{SessionID: "ari-session", WorkspaceID: "ws-1", AgentID: "agent-1", Harness: HarnessNameClaude, Status: "running", Usage: globaldb.AgentSessionUsageSticky, ProviderSessionID: "7c5dcf5d", CWD: "/repo", ProviderMetadataJSON: `{}`}); err != nil {
-		t.Fatalf("CreateAgentSession returned error: %v", err)
+	if err := store.CreateHarnessSession(ctx, globaldb.HarnessSession{SessionID: "ari-session", WorkspaceID: "ws-1", AgentID: "agent-1", Harness: HarnessNameClaude, Status: "running", Usage: globaldb.HarnessSessionUsageSticky, ProviderSessionID: "7c5dcf5d", CWD: "/repo", ProviderMetadataJSON: `{}`}); err != nil {
+		t.Fatalf("CreateHarnessSession returned error: %v", err)
 	}
 	originalRunner := runClaudeSessionCommand
 	t.Cleanup(func() { runClaudeSessionCommand = originalRunner })
@@ -432,16 +432,16 @@ func TestClaudeSessionLogsAllowPreMetadataBackgroundSession(t *testing.T) {
 
 func TestClaudeExecutorReportsMissingExecutableBeforeStart(t *testing.T) {
 	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "missing-claude", Cwd: "/repo", RunCommand: func(ctx context.Context, opts claudeExecutorOptions, prompt string) (commandRunResult, error) {
-		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "missing_executable", Executable: opts.Executable, Probe: opts.Executable + " --version", RequiredCapability: HarnessCapabilityAgentSessionFromContext, StartInvoked: false}
+		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "missing_executable", Executable: opts.Executable, Probe: opts.Executable + " --version", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
 	}})
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 
-	_, _, err := StartExecutorRun(context.Background(), executor, packet, AgentProfile{Harness: HarnessNameClaude, Defaults: map[string]any{"invocation_mode": "headless"}})
+	_, _, err := StartExecutorRun(context.Background(), executor, packet, Profile{Harness: HarnessNameClaude, Defaults: map[string]any{"invocation_mode": "headless"}})
 	unavailable := &HarnessUnavailableError{}
 	if !errors.As(err, &unavailable) {
 		t.Fatalf("error = %T %[1]v, want HarnessUnavailableError", err)
 	}
-	if unavailable.StartInvoked || unavailable.Executable != "missing-claude" || unavailable.RequiredCapability != HarnessCapabilityAgentSessionFromContext {
+	if unavailable.StartInvoked || unavailable.Executable != "missing-claude" || unavailable.RequiredCapability != HarnessCapabilityHarnessSessionFromContext {
 		t.Fatalf("unavailable = %#v, want pre-start missing executable", unavailable)
 	}
 }
@@ -528,7 +528,7 @@ func TestClaudeExecutorRejectsMissingSessionID(t *testing.T) {
 	}})
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 
-	_, _, err := StartExecutorRun(context.Background(), executor, packet, AgentProfile{Harness: HarnessNameClaude, Defaults: map[string]any{"invocation_mode": "headless"}})
+	_, _, err := StartExecutorRun(context.Background(), executor, packet, Profile{Harness: HarnessNameClaude, Defaults: map[string]any{"invocation_mode": "headless"}})
 	if err == nil || !strings.Contains(err.Error(), "claude session id is required") {
 		t.Fatalf("StartExecutorRun error = %v, want missing session id error", err)
 	}

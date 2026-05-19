@@ -77,7 +77,7 @@ func (d *Daemon) applyRollback(ctx context.Context, store *globaldb.Store, req R
 func (d *Daemon) rollbackProjectWorkspaceSetup(ctx context.Context, store *globaldb.Store, payload map[string]string) error {
 	workspaceID := strings.TrimSpace(payload["workspace_id"])
 	previousWorkspaceID := strings.TrimSpace(payload["previous_workspace_id"])
-	sessions, err := store.ListSessions(ctx)
+	sessions, err := store.ListWorkspaces(ctx)
 	if err != nil {
 		return err
 	}
@@ -106,7 +106,7 @@ func (d *Daemon) rollbackProjectWorkspaceSetup(ctx context.Context, store *globa
 				}
 			}
 		}
-		return store.DeleteSession(ctx, session.ID)
+		return store.DeleteWorkspace(ctx, session.ID)
 	}
 	return nil
 }
@@ -142,7 +142,7 @@ func (d *Daemon) rollbackInitState(ctx context.Context, store *globaldb.Store, p
 	if root == "" || !homeCreated || homeWorkspaceID == "" {
 		return nil
 	}
-	sessions, err := store.ListSessions(ctx)
+	sessions, err := store.ListWorkspaces(ctx)
 	if err != nil {
 		return err
 	}
@@ -150,13 +150,13 @@ func (d *Daemon) rollbackInitState(ctx context.Context, store *globaldb.Store, p
 		if session.ID != homeWorkspaceID || session.OriginRoot != root {
 			continue
 		}
-		helperSessions, err := store.ListAgentSessions(ctx, session.ID)
+		helperSessions, err := store.ListHarnessSessions(ctx, session.ID)
 		if err != nil {
 			return err
 		}
 		for _, helperSession := range helperSessions {
 			if helperSession.Status == "running" {
-				if err := store.UpdateAgentSessionStatus(ctx, helperSession.SessionID, "stopped"); err != nil {
+				if err := store.UpdateHarnessSessionStatus(ctx, helperSession.SessionID, "stopped"); err != nil {
 					return err
 				}
 			}
@@ -179,7 +179,7 @@ func (d *Daemon) rollbackInitState(ctx context.Context, store *globaldb.Store, p
 				return err
 			}
 		}
-		if err := store.DeleteSession(ctx, session.ID); err != nil {
+		if err := store.DeleteWorkspace(ctx, session.ID); err != nil {
 			return err
 		}
 	}

@@ -204,7 +204,7 @@ func (d *Daemon) workspaceTimeline(ctx context.Context, store *globaldb.Store, w
 	}
 
 	for _, item := range d.executorTimelineItems(workspaceID) {
-		item = normalizeAgentSessionTimelineItem(item)
+		item = normalizeHarnessSessionTimelineItem(item)
 		item.Sequence = sequence
 		items = append(items, item)
 		sequence++
@@ -224,10 +224,10 @@ func workspaceOperationTimelineItems(ctx context.Context, store *globaldb.Store,
 	return items, nil
 }
 
-func normalizeAgentSessionTimelineItem(item TimelineItem) TimelineItem {
+func normalizeHarnessSessionTimelineItem(item TimelineItem) TimelineItem {
 	switch item.SourceKind {
-	case "executor", "agent_session":
-		item.SourceKind = "agent_session"
+	case "executor", "agent_session", "harness_session":
+		item.SourceKind = "harness_session"
 	}
 	switch item.Kind {
 	case "agent_text", "terminal_output":
@@ -304,7 +304,7 @@ type PTYExecutor struct {
 }
 
 func (e *PTYExecutor) Descriptor() HarnessAdapterDescriptor {
-	return HarnessAdapterDescriptor{Name: "pty", Capabilities: []HarnessCapability{HarnessCapabilityAgentSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems}}
+	return HarnessAdapterDescriptor{Name: "pty", Capabilities: []HarnessCapability{HarnessCapabilityHarnessSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems}}
 }
 
 func NewPTYExecutor(command string, args []string, dir string) *PTYExecutor {

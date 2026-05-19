@@ -9,41 +9,41 @@ import (
 )
 
 func (d *Daemon) registerProfileSessionMethods(registry *rpc.MethodRegistry, store *globaldb.Store) error {
-	if err := rpc.RegisterMethod(registry, rpc.Method[AgentSessionStartRequest, AgentSessionStartResponse]{
+	if err := rpc.RegisterMethod(registry, rpc.Method[HarnessSessionStartRequest, HarnessSessionStartResponse]{
 		Name:        "session.start",
 		Description: "Start a sticky session from a named Ari profile",
-		Handler: func(ctx context.Context, req AgentSessionStartRequest) (AgentSessionStartResponse, error) {
+		Handler: func(ctx context.Context, req HarnessSessionStartRequest) (HarnessSessionStartResponse, error) {
 			if agentSessionStartUsesProfile(req) {
 				return startProfileSession(d, ctx, store, req)
 			}
-			return d.startAgentSession(ctx, store, req)
+			return d.startHarnessSession(ctx, store, req)
 		},
 	}); err != nil {
 		return fmt.Errorf("register session.start: %w", err)
 	}
-	if err := rpc.RegisterMethod(registry, rpc.Method[AgentProfileCreateRequest, AgentProfileResponse]{
+	if err := rpc.RegisterMethod(registry, rpc.Method[ProfileCreateRequest, ProfileResponse]{
 		Name:        "profile.create",
 		Description: "Create or update a durable Ari profile",
-		Handler: func(ctx context.Context, req AgentProfileCreateRequest) (AgentProfileResponse, error) {
-			return createStoredAgentProfile(ctx, store, req)
+		Handler: func(ctx context.Context, req ProfileCreateRequest) (ProfileResponse, error) {
+			return createStoredProfile(ctx, store, req)
 		},
 	}); err != nil {
 		return fmt.Errorf("register profile.create: %w", err)
 	}
-	if err := rpc.RegisterMethod(registry, rpc.Method[AgentProfileGetRequest, AgentProfileResponse]{
+	if err := rpc.RegisterMethod(registry, rpc.Method[ProfileGetRequest, ProfileResponse]{
 		Name:        "profile.get",
 		Description: "Get a durable Ari profile by name",
-		Handler: func(ctx context.Context, req AgentProfileGetRequest) (AgentProfileResponse, error) {
-			return getStoredAgentProfile(ctx, store, req)
+		Handler: func(ctx context.Context, req ProfileGetRequest) (ProfileResponse, error) {
+			return getStoredProfile(ctx, store, req)
 		},
 	}); err != nil {
 		return fmt.Errorf("register profile.get: %w", err)
 	}
-	if err := rpc.RegisterMethod(registry, rpc.Method[AgentProfileListRequest, AgentProfileListResponse]{
+	if err := rpc.RegisterMethod(registry, rpc.Method[ProfileListRequest, ProfileListResponse]{
 		Name:        "profile.list",
 		Description: "List durable Ari profiles",
-		Handler: func(ctx context.Context, req AgentProfileListRequest) (AgentProfileListResponse, error) {
-			return listStoredAgentProfiles(ctx, store, req)
+		Handler: func(ctx context.Context, req ProfileListRequest) (ProfileListResponse, error) {
+			return listStoredProfiles(ctx, store, req)
 		},
 	}); err != nil {
 		return fmt.Errorf("register profile.list: %w", err)

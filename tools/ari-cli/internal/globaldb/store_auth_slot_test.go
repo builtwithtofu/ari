@@ -90,18 +90,18 @@ func TestAuthSlotDefaultsIncludeProviderOwnedSlots(t *testing.T) {
 	}
 }
 
-func TestAgentProfilePersistsAuthBindings(t *testing.T) {
+func TestProfilePersistsAuthBindings(t *testing.T) {
 	store := newGlobalDBTestStore(t, "profile-auth-bindings")
 	ctx := context.Background()
 
-	profile := AgentProfile{ProfileID: "ap_auth", Name: "codex-work", Harness: "codex", AuthSlotID: "codex-work", AuthPoolJSON: `{"slot_ids":["codex-work","codex-personal"],"strategy":"failover"}`, DefaultsJSON: `{}`}
-	if err := store.UpsertAgentProfile(ctx, profile); err != nil {
-		t.Fatalf("UpsertAgentProfile returned error: %v", err)
+	profile := Profile{ProfileID: "ap_auth", Name: "codex-work", Harness: "codex", AuthSlotID: "codex-work", AuthPoolJSON: `{"slot_ids":["codex-work","codex-personal"],"strategy":"failover"}`, DefaultsJSON: `{}`}
+	if err := store.UpsertProfile(ctx, profile); err != nil {
+		t.Fatalf("UpsertProfile returned error: %v", err)
 	}
 
-	stored, err := store.GetAgentProfile(ctx, "", "codex-work")
+	stored, err := store.GetProfile(ctx, "", "codex-work")
 	if err != nil {
-		t.Fatalf("GetAgentProfile returned error: %v", err)
+		t.Fatalf("GetProfile returned error: %v", err)
 	}
 	if stored.AuthSlotID != "codex-work" || stored.AuthPoolJSON != profile.AuthPoolJSON {
 		t.Fatalf("stored profile = %#v, want auth slot and ordered auth pool", stored)

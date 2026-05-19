@@ -138,8 +138,8 @@ func TestAgentMessageSendMethodDeliversVisibleMessage(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
 	}
 	if err := store.AppendRunLogMessage(ctx, globaldb.RunLogMessage{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "assistant", Parts: []globaldb.RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "text", Text: "plan"}}}); err != nil {
 		t.Fatalf("AppendRunLogMessage returned error: %v", err)
@@ -178,8 +178,8 @@ func TestAgentMessageSendMethodDeliversExcerptAppendedMessage(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
 	}
 	if err := store.AppendRunLogMessage(ctx, globaldb.RunLogMessage{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "assistant", Parts: []globaldb.RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "text", Text: "plan"}}}); err != nil {
 		t.Fatalf("AppendRunLogMessage returned error: %v", err)
@@ -237,8 +237,8 @@ func TestContextExcerptCreateFromRangeAndExplicitMethods(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
 	}
 	for _, msg := range []globaldb.RunLogMessage{
 		{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "user", Parts: []globaldb.RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "text", Text: "one"}}},
@@ -269,8 +269,8 @@ func TestAgentMessageSendMethodLeavesExcerptImmutable(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
 	}
 	if err := store.AppendRunLogMessage(ctx, globaldb.RunLogMessage{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "assistant", Parts: []globaldb.RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "text", Text: "plan"}}}); err != nil {
 		t.Fatalf("AppendRunLogMessage returned error: %v", err)
@@ -296,17 +296,17 @@ func TestPlannerAgentMessageToExecutorDeliversSelectedPlan(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "planner", WorkspaceID: "ws-1", Name: "planner", Harness: "planner-harness"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig planner returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "planner", WorkspaceID: "ws-1", Name: "planner", Harness: "planner-harness"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig planner returned error: %v", err)
 	}
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "executor-target", WorkspaceID: "ws-1", Name: "executor-target", Harness: "executor-harness"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig executor returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "executor-target", WorkspaceID: "ws-1", Name: "executor-target", Harness: "executor-harness"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig executor returned error: %v", err)
 	}
-	if err := store.CreateAgentSession(ctx, globaldb.AgentSession{SessionID: "planner-run", WorkspaceID: "ws-1", AgentID: "planner", Harness: "planner-harness", Status: "running", Usage: "durable", CWD: t.TempDir()}); err != nil {
-		t.Fatalf("CreateAgentSession planner returned error: %v", err)
+	if err := store.CreateHarnessSession(ctx, globaldb.HarnessSession{SessionID: "planner-run", WorkspaceID: "ws-1", AgentID: "planner", Harness: "planner-harness", Status: "running", Usage: globaldb.HarnessSessionUsageSticky, CWD: t.TempDir()}); err != nil {
+		t.Fatalf("CreateHarnessSession planner returned error: %v", err)
 	}
-	if err := store.CreateAgentSession(ctx, globaldb.AgentSession{SessionID: "executor-run", WorkspaceID: "ws-1", AgentID: "executor-target", Harness: "executor-harness", Status: "waiting", Usage: "durable", CWD: t.TempDir()}); err != nil {
-		t.Fatalf("CreateAgentSession executor returned error: %v", err)
+	if err := store.CreateHarnessSession(ctx, globaldb.HarnessSession{SessionID: "executor-run", WorkspaceID: "ws-1", AgentID: "executor-target", Harness: "executor-harness", Status: "waiting", Usage: globaldb.HarnessSessionUsageSticky, CWD: t.TempDir()}); err != nil {
+		t.Fatalf("CreateHarnessSession executor returned error: %v", err)
 	}
 	if err := store.AppendRunLogMessage(ctx, globaldb.RunLogMessage{MessageID: "planner-msg-1", SessionID: "planner-run", Sequence: 1, Role: "assistant", Parts: []globaldb.RunLogMessagePart{{PartID: "planner-part-1", Sequence: 1, Kind: "text", Text: "Build the endpoint"}}}); err != nil {
 		t.Fatalf("AppendRunLogMessage planner returned error: %v", err)
@@ -338,8 +338,8 @@ func TestSessionMessageSendTrimsContextExcerptIDsInResponse(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
 	}
 	if err := store.AppendRunLogMessage(ctx, globaldb.RunLogMessage{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "assistant", Parts: []globaldb.RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "text", Text: "Build the endpoint"}}}); err != nil {
 		t.Fatalf("AppendRunLogMessage returned error: %v", err)
@@ -360,12 +360,12 @@ func TestSessionMessageSendTrimsContextExcerptIDsInResponse(t *testing.T) {
 	}
 }
 
-func TestEphemeralAgentCallRunsTargetAndRoutesReplyToCaller(t *testing.T) {
+func TestEphemeralCallRunsTargetAndRoutesReplyToCaller(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "librarian", Harness: "test-harness", Model: "model-1", Prompt: "research"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "librarian", Harness: "test-harness", Model: "model-1", Prompt: "research"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
 	}
 	if err := store.AppendRunLogMessage(ctx, globaldb.RunLogMessage{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "assistant", Parts: []globaldb.RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "text", Text: "Spring question"}}}); err != nil {
 		t.Fatalf("AppendRunLogMessage returned error: %v", err)
@@ -377,7 +377,7 @@ func TestEphemeralAgentCallRunsTargetAndRoutesReplyToCaller(t *testing.T) {
 
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -387,7 +387,7 @@ func TestEphemeralAgentCallRunsTargetAndRoutesReplyToCaller(t *testing.T) {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
-	got := callMethod[EphemeralAgentCallResponse](t, registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-1", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research this", ContextExcerptIDs: []string{excerpt.ContextExcerptID}, ReplyAgentMessageID: "dm-reply-1"})
+	got := callMethod[EphemeralCallResponse](t, registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-1", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research this", ContextExcerptIDs: []string{excerpt.ContextExcerptID}, ReplyAgentMessageID: "dm-reply-1"})
 	if got.Run.Usage != "ephemeral" || got.Run.Status != "completed" || got.Run.AgentID != "agent-2" || got.Reply.AgentMessageID != "dm-reply-1" || got.Reply.TargetSessionID != "run-1" {
 		t.Fatalf("ephemeral call = %#v, want ephemeral target run and reply routed to caller", got)
 	}
@@ -415,13 +415,13 @@ func TestEphemeralClaudeCallStartsBackgroundSessionWithoutSyntheticReply(t *test
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "librarian", Harness: HarnessNameClaude, Model: "sonnet", Prompt: "research"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "librarian", Harness: HarnessNameClaude, Model: "sonnet", Prompt: "research"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
 	}
 
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest(HarnessNameClaude, func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest(HarnessNameClaude, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -431,13 +431,13 @@ func TestEphemeralClaudeCallStartsBackgroundSessionWithoutSyntheticReply(t *test
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
-	got := callMethod[EphemeralAgentCallResponse](t, registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-bg", SessionID: "call-bg-run", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Explore this"})
+	got := callMethod[EphemeralCallResponse](t, registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-bg", SessionID: "call-bg-run", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Explore this"})
 	if got.Run.Status != "running" || got.Run.ProviderSessionID == "" || got.Reply.AgentMessageID != "" {
 		t.Fatalf("ephemeral Claude call = %#v, want running background session without synthetic reply", got)
 	}
-	stored, err := store.GetAgentSession(ctx, got.Run.SessionID)
+	stored, err := store.GetHarnessSession(ctx, got.Run.SessionID)
 	if err != nil {
-		t.Fatalf("GetAgentSession returned error: %v", err)
+		t.Fatalf("GetHarnessSession returned error: %v", err)
 	}
 	if stored.ProviderSessionID == "" || !strings.Contains(stored.ProviderMetadataJSON, `"invocation_mode":"background"`) || !strings.Contains(stored.ProviderMetadataJSON, `"usage_bucket":"subscription"`) {
 		t.Fatalf("stored run = %#v, want provider background metadata", stored)
@@ -451,17 +451,17 @@ func TestEphemeralClaudeCallHonorsExplicitHeadlessProfileDefault(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
-	if err := store.UpsertAgentProfile(ctx, globaldb.AgentProfile{ProfileID: "ap_librarian", WorkspaceID: "ws-1", Name: "librarian", Harness: HarnessNameClaude, Model: "sonnet", Prompt: "research", DefaultsJSON: `{"invocation_mode":"headless"}`}); err != nil {
-		t.Fatalf("UpsertAgentProfile returned error: %v", err)
+	if err := store.UpsertProfile(ctx, globaldb.Profile{ProfileID: "ap_librarian", WorkspaceID: "ws-1", Name: "librarian", Harness: HarnessNameClaude, Model: "sonnet", Prompt: "research", DefaultsJSON: `{"invocation_mode":"headless"}`}); err != nil {
+		t.Fatalf("UpsertProfile returned error: %v", err)
 	}
-	if err := store.EnsureAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "ap_librarian", WorkspaceID: "ws-1", Name: "librarian", Harness: HarnessNameClaude, Model: "sonnet", Prompt: "research"}); err != nil {
-		t.Fatalf("EnsureAgentSessionConfig returned error: %v", err)
+	if err := store.EnsureHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "ap_librarian", WorkspaceID: "ws-1", Name: "librarian", Harness: HarnessNameClaude, Model: "sonnet", Prompt: "research"}); err != nil {
+		t.Fatalf("EnsureHarnessSessionConfig returned error: %v", err)
 	}
 	runner := &fakeClaudeRunner{output: []byte(`{"result":"Done","session_id":"550e8400-e29b-41d4-a716-446655440000"}`)}
 
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest(HarnessNameClaude, func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest(HarnessNameClaude, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -471,14 +471,14 @@ func TestEphemeralClaudeCallHonorsExplicitHeadlessProfileDefault(t *testing.T) {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
-	got := callMethod[EphemeralAgentCallResponse](t, registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-headless", SourceSessionID: "run-1", TargetAgentID: "ap_librarian", Body: "Explore this", ReplyAgentMessageID: "reply-headless"})
+	got := callMethod[EphemeralCallResponse](t, registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-headless", SourceSessionID: "run-1", TargetAgentID: "ap_librarian", Body: "Explore this", ReplyAgentMessageID: "reply-headless"})
 	args := strings.Join(runner.args, " ")
 	if got.Run.Status != "completed" || !strings.Contains(args, "--bare") || !strings.Contains(args, "-p") || strings.Contains(args, "--bg") || got.Reply.AgentMessageID != "reply-headless" {
 		t.Fatalf("call = %#v args = %q, want explicit headless profile to remain opt-in", got, args)
 	}
 }
 
-func TestEphemeralAgentCallResolvesTargetByProfileName(t *testing.T) {
+func TestEphemeralCallResolvesTargetByProfileName(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
@@ -488,7 +488,7 @@ func TestEphemeralAgentCallResolvesTargetByProfileName(t *testing.T) {
 
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -497,18 +497,18 @@ func TestEphemeralAgentCallResolvesTargetByProfileName(t *testing.T) {
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
-	created := callMethod[AgentProfileResponse](t, registry, "profile.create", AgentProfileCreateRequest{WorkspaceID: "ws-1", Name: "reviewer", Harness: "test-harness", Model: "model-1", Prompt: "review", InvocationClass: HarnessInvocationTemporary})
+	created := callMethod[ProfileResponse](t, registry, "profile.create", ProfileCreateRequest{WorkspaceID: "ws-1", Name: "reviewer", Harness: "test-harness", Model: "model-1", Prompt: "review", InvocationClass: HarnessInvocationEphemeral})
 	excerpt, err := store.CreateContextExcerptFromTail(ctx, globaldb.CreateContextExcerptFromTailParams{ContextExcerptID: "excerpt-1", SourceSessionID: "run-1", TargetAgentID: created.ProfileID, Count: 1})
 	if err != nil {
 		t.Fatalf("CreateContextExcerptFromTail returned error: %v", err)
 	}
-	got := callMethod[EphemeralAgentCallResponse](t, registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-1", SourceSessionID: "run-1", TargetAgentID: "reviewer", Body: "Research this", ContextExcerptIDs: []string{excerpt.ContextExcerptID}, ReplyAgentMessageID: "dm-reply-1"})
+	got := callMethod[EphemeralCallResponse](t, registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-1", SourceSessionID: "run-1", TargetAgentID: "reviewer", Body: "Research this", ContextExcerptIDs: []string{excerpt.ContextExcerptID}, ReplyAgentMessageID: "dm-reply-1"})
 	if got.Run.AgentID != created.ProfileID || got.Run.SourceSessionID != "run-1" || got.Reply.Body != "Reviewed" {
 		t.Fatalf("call response = %#v, want profile-name resolution to stored target profile id", got)
 	}
 }
 
-func TestEphemeralAgentCallRejectsUnknownTargetProfile(t *testing.T) {
+func TestEphemeralCallRejectsUnknownTargetProfile(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
@@ -518,7 +518,7 @@ func TestEphemeralAgentCallRejectsUnknownTargetProfile(t *testing.T) {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
-	err := callMethodError(registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-missing", SourceSessionID: "run-1", TargetAgentID: "missing-profile", Body: "Research this"})
+	err := callMethodError(registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-missing", SourceSessionID: "run-1", TargetAgentID: "missing-profile", Body: "Research this"})
 	handlerErr, ok := err.(*rpc.HandlerError)
 	if !ok || handlerErr.Code != rpc.InvalidParams {
 		t.Fatalf("error = %T %[1]v, want InvalidParams handler error", err)
@@ -529,12 +529,12 @@ func TestEphemeralAgentCallRejectsUnknownTargetProfile(t *testing.T) {
 	}
 }
 
-func TestEphemeralAgentCallRejectsUnknownSourceSessionWithStructuredError(t *testing.T) {
+func TestEphemeralCallRejectsUnknownSourceSessionWithStructuredError(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
 	}
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
@@ -542,7 +542,7 @@ func TestEphemeralAgentCallRejectsUnknownSourceSessionWithStructuredError(t *tes
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
-	err := callMethodError(registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-missing-source", SourceSessionID: "missing-source", TargetAgentID: "agent-2", Body: "Research this"})
+	err := callMethodError(registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-missing-source", SourceSessionID: "missing-source", TargetAgentID: "agent-2", Body: "Research this"})
 	handlerErr, ok := err.(*rpc.HandlerError)
 	if !ok || handlerErr.Code != rpc.InvalidParams {
 		t.Fatalf("error = %T %[1]v, want InvalidParams handler error", err)
@@ -553,15 +553,15 @@ func TestEphemeralAgentCallRejectsUnknownSourceSessionWithStructuredError(t *tes
 	}
 }
 
-func TestEphemeralAgentCallRejectsCrossWorkspaceTargetWithStructuredError(t *testing.T) {
+func TestEphemeralCallRejectsCrossWorkspaceTargetWithStructuredError(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
-	if err := store.CreateSession(ctx, "ws-2", "workspace-2", t.TempDir(), "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "ws-2", "workspace-2", t.TempDir(), "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession ws-2 returned error: %v", err)
 	}
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-other", WorkspaceID: "ws-2", Name: "reviewer", Harness: "opencode"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-other", WorkspaceID: "ws-2", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
 	}
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
@@ -569,7 +569,7 @@ func TestEphemeralAgentCallRejectsCrossWorkspaceTargetWithStructuredError(t *tes
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
-	err := callMethodError(registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-cross-ws", SourceSessionID: "run-1", TargetAgentID: "agent-other", Body: "Research this"})
+	err := callMethodError(registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-cross-ws", SourceSessionID: "run-1", TargetAgentID: "agent-other", Body: "Research this"})
 	handlerErr, ok := err.(*rpc.HandlerError)
 	if !ok || handlerErr.Code != rpc.InvalidParams {
 		t.Fatalf("error = %T %[1]v, want InvalidParams handler error", err)
@@ -580,12 +580,12 @@ func TestEphemeralAgentCallRejectsCrossWorkspaceTargetWithStructuredError(t *tes
 	}
 }
 
-func TestEphemeralAgentCallRejectsMissingRequiredFieldsWithStructuredError(t *testing.T) {
+func TestEphemeralCallRejectsMissingRequiredFieldsWithStructuredError(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
 	}
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
@@ -593,7 +593,7 @@ func TestEphemeralAgentCallRejectsMissingRequiredFieldsWithStructuredError(t *te
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
-	err := callMethodError(registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-missing-body", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: ""})
+	err := callMethodError(registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-missing-body", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: ""})
 	handlerErr, ok := err.(*rpc.HandlerError)
 	if !ok || handlerErr.Code != rpc.InvalidParams {
 		t.Fatalf("error = %T %[1]v, want InvalidParams handler error", err)
@@ -608,11 +608,11 @@ func TestSessionFanoutSendsVisibleMessageToTargetSession(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "reviewer", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "reviewer", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
 	}
-	if err := store.CreateAgentSession(ctx, globaldb.AgentSession{SessionID: "reviewer-run", WorkspaceID: "ws-1", AgentID: "reviewer", Harness: "opencode", Status: "waiting", Usage: "durable"}); err != nil {
-		t.Fatalf("CreateAgentSession target returned error: %v", err)
+	if err := store.CreateHarnessSession(ctx, globaldb.HarnessSession{SessionID: "reviewer-run", WorkspaceID: "ws-1", AgentID: "reviewer", Harness: "opencode", Status: "waiting", Usage: globaldb.HarnessSessionUsageSticky}); err != nil {
+		t.Fatalf("CreateHarnessSession target returned error: %v", err)
 	}
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
@@ -651,8 +651,8 @@ func TestSessionMessageSendRejectsUnknownSourceSessionWithStructuredError(t *tes
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
 	}
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
@@ -675,8 +675,8 @@ func TestSessionMessageSendRejectsMissingRequiredFieldsWithStructuredError(t *te
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
 	}
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
@@ -699,11 +699,11 @@ func TestSessionMessageSendRejectsMismatchedContextExcerptWithStructuredError(t 
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
 	}
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-3", WorkspaceID: "ws-1", Name: "other", Harness: "opencode"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig other returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-3", WorkspaceID: "ws-1", Name: "other", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig other returned error: %v", err)
 	}
 	if err := store.AppendRunLogMessage(ctx, globaldb.RunLogMessage{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "assistant", Parts: []globaldb.RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "text", Text: "plan"}}}); err != nil {
 		t.Fatalf("AppendRunLogMessage returned error: %v", err)
@@ -733,14 +733,14 @@ func TestSessionMessageSendRejectsTargetSessionOnlyContextExcerptMismatchWithStr
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
 	}
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-3", WorkspaceID: "ws-1", Name: "other", Harness: "opencode"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig other returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-3", WorkspaceID: "ws-1", Name: "other", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig other returned error: %v", err)
 	}
-	if err := store.CreateAgentSession(ctx, globaldb.AgentSession{SessionID: "run-2", WorkspaceID: "ws-1", AgentID: "agent-2", Harness: "opencode", Status: "waiting", Usage: "durable"}); err != nil {
-		t.Fatalf("CreateAgentSession target returned error: %v", err)
+	if err := store.CreateHarnessSession(ctx, globaldb.HarnessSession{SessionID: "run-2", WorkspaceID: "ws-1", AgentID: "agent-2", Harness: "opencode", Status: "waiting", Usage: globaldb.HarnessSessionUsageSticky}); err != nil {
+		t.Fatalf("CreateHarnessSession target returned error: %v", err)
 	}
 	if err := store.AppendRunLogMessage(ctx, globaldb.RunLogMessage{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "assistant", Parts: []globaldb.RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "text", Text: "plan"}}}); err != nil {
 		t.Fatalf("AppendRunLogMessage returned error: %v", err)
@@ -770,14 +770,14 @@ func TestSessionMessageSendRejectsTargetSessionAgentMismatchWithStructuredError(
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
 	}
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-3", WorkspaceID: "ws-1", Name: "other", Harness: "opencode"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig other returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-3", WorkspaceID: "ws-1", Name: "other", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig other returned error: %v", err)
 	}
-	if err := store.CreateAgentSession(ctx, globaldb.AgentSession{SessionID: "run-2", WorkspaceID: "ws-1", AgentID: "agent-3", Harness: "opencode", Status: "waiting", Usage: "durable"}); err != nil {
-		t.Fatalf("CreateAgentSession target returned error: %v", err)
+	if err := store.CreateHarnessSession(ctx, globaldb.HarnessSession{SessionID: "run-2", WorkspaceID: "ws-1", AgentID: "agent-3", Harness: "opencode", Status: "waiting", Usage: globaldb.HarnessSessionUsageSticky}); err != nil {
+		t.Fatalf("CreateHarnessSession target returned error: %v", err)
 	}
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
@@ -842,14 +842,14 @@ func TestSessionMessageSendRejectsCrossWorkspaceTargetSessionWithStructuredError
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
-	if err := store.CreateSession(ctx, "ws-2", "workspace-2", t.TempDir(), "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "ws-2", "workspace-2", t.TempDir(), "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession ws-2 returned error: %v", err)
 	}
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-3", WorkspaceID: "ws-2", Name: "reviewer-2", Harness: "opencode"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig ws-2 returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-3", WorkspaceID: "ws-2", Name: "reviewer-2", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig ws-2 returned error: %v", err)
 	}
-	if err := store.CreateAgentSession(ctx, globaldb.AgentSession{SessionID: "run-2", WorkspaceID: "ws-2", AgentID: "agent-3", Harness: "opencode", Status: "waiting", Usage: "durable"}); err != nil {
-		t.Fatalf("CreateAgentSession ws-2 target returned error: %v", err)
+	if err := store.CreateHarnessSession(ctx, globaldb.HarnessSession{SessionID: "run-2", WorkspaceID: "ws-2", AgentID: "agent-3", Harness: "opencode", Status: "waiting", Usage: globaldb.HarnessSessionUsageSticky}); err != nil {
+		t.Fatalf("CreateHarnessSession ws-2 target returned error: %v", err)
 	}
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
@@ -872,11 +872,11 @@ func TestSessionMessageSendRejectsCrossWorkspaceTargetAgentWithStructuredError(t
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
-	if err := store.CreateSession(ctx, "ws-2", "workspace-2", t.TempDir(), "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "ws-2", "workspace-2", t.TempDir(), "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession ws-2 returned error: %v", err)
 	}
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-cross", WorkspaceID: "ws-2", Name: "reviewer-2", Harness: "opencode"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig ws-2 returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-cross", WorkspaceID: "ws-2", Name: "reviewer-2", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig ws-2 returned error: %v", err)
 	}
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
@@ -899,8 +899,8 @@ func TestSessionMessageSendRejectsDuplicateAgentMessageIDWithStructuredError(t *
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
 	}
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
@@ -923,15 +923,15 @@ func TestSessionMessageSendRejectsDuplicateAgentMessageIDWithStructuredError(t *
 	}
 }
 
-func TestEphemeralAgentCallRejectsConflictingSessionIDWithStructuredError(t *testing.T) {
+func TestEphemeralCallRejectsConflictingSessionIDWithStructuredError(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
 	}
-	if err := store.CreateAgentSession(ctx, globaldb.AgentSession{SessionID: "existing-run", WorkspaceID: "ws-1", AgentID: "agent-2", Harness: "opencode", Status: "waiting", Usage: "durable"}); err != nil {
-		t.Fatalf("CreateAgentSession existing returned error: %v", err)
+	if err := store.CreateHarnessSession(ctx, globaldb.HarnessSession{SessionID: "existing-run", WorkspaceID: "ws-1", AgentID: "agent-2", Harness: "opencode", Status: "waiting", Usage: globaldb.HarnessSessionUsageSticky}); err != nil {
+		t.Fatalf("CreateHarnessSession existing returned error: %v", err)
 	}
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
@@ -939,7 +939,7 @@ func TestEphemeralAgentCallRejectsConflictingSessionIDWithStructuredError(t *tes
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
-	err := callMethodError(registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-conflict", SessionID: "existing-run", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research this"})
+	err := callMethodError(registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-conflict", SessionID: "existing-run", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research this"})
 	handlerErr, ok := err.(*rpc.HandlerError)
 	if !ok || handlerErr.Code != rpc.InvalidParams {
 		t.Fatalf("error = %T %[1]v, want InvalidParams handler error", err)
@@ -950,15 +950,15 @@ func TestEphemeralAgentCallRejectsConflictingSessionIDWithStructuredError(t *tes
 	}
 }
 
-func TestEphemeralAgentCallRejectsMismatchedContextExcerptWithStructuredError(t *testing.T) {
+func TestEphemeralCallRejectsMismatchedContextExcerptWithStructuredError(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
 	}
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-3", WorkspaceID: "ws-1", Name: "other", Harness: "opencode"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig other returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-3", WorkspaceID: "ws-1", Name: "other", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig other returned error: %v", err)
 	}
 	if err := store.AppendRunLogMessage(ctx, globaldb.RunLogMessage{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "assistant", Parts: []globaldb.RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "text", Text: "plan"}}}); err != nil {
 		t.Fatalf("AppendRunLogMessage returned error: %v", err)
@@ -973,7 +973,7 @@ func TestEphemeralAgentCallRejectsMismatchedContextExcerptWithStructuredError(t 
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
-	err = callMethodError(registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-bad-excerpt", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research this", ContextExcerptIDs: []string{excerpt.ContextExcerptID}})
+	err = callMethodError(registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-bad-excerpt", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research this", ContextExcerptIDs: []string{excerpt.ContextExcerptID}})
 	handlerErr, ok := err.(*rpc.HandlerError)
 	if !ok || handlerErr.Code != rpc.InvalidParams {
 		t.Fatalf("error = %T %[1]v, want InvalidParams handler error", err)
@@ -982,9 +982,9 @@ func TestEphemeralAgentCallRejectsMismatchedContextExcerptWithStructuredError(t 
 	if data["reason"] != "context_excerpt_mismatch" || data["context_excerpt_id"] != "excerpt-1" || data["start_invoked"] != false {
 		t.Fatalf("error data = %#v, want context excerpt mismatch details", data)
 	}
-	runs, listErr := store.ListAgentSessions(ctx, "ws-1")
+	runs, listErr := store.ListHarnessSessions(ctx, "ws-1")
 	if listErr != nil {
-		t.Fatalf("ListAgentSessions returned error: %v", listErr)
+		t.Fatalf("ListHarnessSessions returned error: %v", listErr)
 	}
 	for _, run := range runs {
 		if run.SessionID == "call-bad-excerpt-run" {
@@ -993,12 +993,12 @@ func TestEphemeralAgentCallRejectsMismatchedContextExcerptWithStructuredError(t 
 	}
 }
 
-func TestEphemeralAgentCallRejectsUnknownContextExcerptWithStructuredError(t *testing.T) {
+func TestEphemeralCallRejectsUnknownContextExcerptWithStructuredError(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
 	}
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
@@ -1006,7 +1006,7 @@ func TestEphemeralAgentCallRejectsUnknownContextExcerptWithStructuredError(t *te
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
-	err := callMethodError(registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-missing-excerpt", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research this", ContextExcerptIDs: []string{"excerpt-missing"}})
+	err := callMethodError(registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-missing-excerpt", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research this", ContextExcerptIDs: []string{"excerpt-missing"}})
 	handlerErr, ok := err.(*rpc.HandlerError)
 	if !ok || handlerErr.Code != rpc.InvalidParams {
 		t.Fatalf("error = %T %[1]v, want InvalidParams handler error", err)
@@ -1017,28 +1017,28 @@ func TestEphemeralAgentCallRejectsUnknownContextExcerptWithStructuredError(t *te
 	}
 }
 
-func TestEphemeralAgentCallRejectsReplyTargetAgentMissingConfigWithStructuredError(t *testing.T) {
+func TestEphemeralCallRejectsReplyTargetAgentMissingConfigWithStructuredError(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
-	if err := store.CreateSession(ctx, "ws-1", "workspace", t.TempDir(), "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "ws-1", "workspace", t.TempDir(), "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-missing", WorkspaceID: "ws-1", Name: "source", Harness: "codex"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig source returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-missing", WorkspaceID: "ws-1", Name: "source", Harness: "codex"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig source returned error: %v", err)
 	}
-	if err := store.CreateAgentSession(ctx, globaldb.AgentSession{SessionID: "run-missing-agent", WorkspaceID: "ws-1", AgentID: "agent-missing", Harness: "codex", Status: "running", Usage: "durable", CWD: t.TempDir()}); err != nil {
-		t.Fatalf("CreateAgentSession source returned error: %v", err)
+	if err := store.CreateHarnessSession(ctx, globaldb.HarnessSession{SessionID: "run-missing-agent", WorkspaceID: "ws-1", AgentID: "agent-missing", Harness: "codex", Status: "running", Usage: globaldb.HarnessSessionUsageSticky, CWD: t.TempDir()}); err != nil {
+		t.Fatalf("CreateHarnessSession source returned error: %v", err)
 	}
-	if err := store.DeleteAgentSessionConfig(ctx, "agent-missing"); err != nil {
-		t.Fatalf("DeleteAgentSessionConfig source returned error: %v", err)
+	if err := store.DeleteHarnessSessionConfig(ctx, "agent-missing"); err != nil {
+		t.Fatalf("DeleteHarnessSessionConfig source returned error: %v", err)
 	}
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "test-harness", Model: "model-1", Prompt: "research"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "test-harness", Model: "model-1", Prompt: "research"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
 	}
 
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -1048,7 +1048,7 @@ func TestEphemeralAgentCallRejectsReplyTargetAgentMissingConfigWithStructuredErr
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
-	err := callMethodError(registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-missing-reply-target", SourceSessionID: "run-missing-agent", TargetAgentID: "agent-2", Body: "Research this"})
+	err := callMethodError(registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-missing-reply-target", SourceSessionID: "run-missing-agent", TargetAgentID: "agent-2", Body: "Research this"})
 	handlerErr, ok := err.(*rpc.HandlerError)
 	if !ok || handlerErr.Code != rpc.InvalidParams {
 		t.Fatalf("error = %T %[1]v, want InvalidParams handler error", err)
@@ -1059,16 +1059,16 @@ func TestEphemeralAgentCallRejectsReplyTargetAgentMissingConfigWithStructuredErr
 	}
 }
 
-func TestEphemeralAgentCallRejectsDuplicateCallIDRequestMessageConflictWithStructuredError(t *testing.T) {
+func TestEphemeralCallRejectsDuplicateCallIDRequestMessageConflictWithStructuredError(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "test-harness", Model: "model-1", Prompt: "research"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig target returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "test-harness", Model: "model-1", Prompt: "research"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
 	}
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -1078,8 +1078,8 @@ func TestEphemeralAgentCallRejectsDuplicateCallIDRequestMessageConflictWithStruc
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
-	_ = callMethod[EphemeralAgentCallResponse](t, registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-dup", SessionID: "call-dup-run-1", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research this"})
-	err := callMethodError(registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-dup", SessionID: "call-dup-run-2", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research this again"})
+	_ = callMethod[EphemeralCallResponse](t, registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-dup", SessionID: "call-dup-run-1", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research this"})
+	err := callMethodError(registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-dup", SessionID: "call-dup-run-2", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research this again"})
 	handlerErr, ok := err.(*rpc.HandlerError)
 	if !ok || handlerErr.Code != rpc.InvalidParams {
 		t.Fatalf("error = %T %[1]v, want InvalidParams handler error", err)
@@ -1088,9 +1088,9 @@ func TestEphemeralAgentCallRejectsDuplicateCallIDRequestMessageConflictWithStruc
 	if data["reason"] != "request_agent_message_id_conflict" || data["agent_message_id"] != "call-dup-request" || data["start_invoked"] != false {
 		t.Fatalf("error data = %#v, want duplicate request message details", data)
 	}
-	runs, listErr := store.ListAgentSessions(ctx, "ws-1")
+	runs, listErr := store.ListHarnessSessions(ctx, "ws-1")
 	if listErr != nil {
-		t.Fatalf("ListAgentSessions returned error: %v", listErr)
+		t.Fatalf("ListHarnessSessions returned error: %v", listErr)
 	}
 	for _, run := range runs {
 		if run.SessionID == "call-dup-run-2" {
@@ -1099,17 +1099,17 @@ func TestEphemeralAgentCallRejectsDuplicateCallIDRequestMessageConflictWithStruc
 	}
 }
 
-func TestEphemeralAgentCallCoversPlannerExecutorReviewerAndParallelOrchestratorWorkflows(t *testing.T) {
+func TestEphemeralCallCoversPlannerExecutorReviewerAndParallelOrchestratorWorkflows(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
-	for _, agent := range []globaldb.AgentSessionConfig{
+	for _, agent := range []globaldb.HarnessSessionConfig{
 		{AgentID: "planner", WorkspaceID: "ws-1", Name: "planner", Harness: "planner-harness"},
 		{AgentID: "executor", WorkspaceID: "ws-1", Name: "implementation-executor", Harness: "executor-harness"},
 		{AgentID: "reviewer", WorkspaceID: "ws-1", Name: "reviewer", Harness: "reviewer-harness"},
 	} {
-		if err := store.CreateAgentSessionConfig(ctx, agent); err != nil {
-			t.Fatalf("CreateAgentSessionConfig(%s) returned error: %v", agent.AgentID, err)
+		if err := store.CreateHarnessSessionConfig(ctx, agent); err != nil {
+			t.Fatalf("CreateHarnessSessionConfig(%s) returned error: %v", agent.AgentID, err)
 		}
 	}
 	for _, msg := range []globaldb.RunLogMessage{
@@ -1135,7 +1135,7 @@ func TestEphemeralAgentCallCoversPlannerExecutorReviewerAndParallelOrchestratorW
 	for harness, text := range map[string]string{"executor-harness": "executor finished", "reviewer-harness": "reviewer approved", "planner-harness": "planner split work"} {
 		harness := harness
 		text := text
-		d.setHarnessFactoryForTest(harness, func(req AgentSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		d.setHarnessFactoryForTest(harness, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 			_ = req
 			_ = primaryFolder
 			_ = sink
@@ -1146,9 +1146,9 @@ func TestEphemeralAgentCallCoversPlannerExecutorReviewerAndParallelOrchestratorW
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
-	executorCall := callMethod[EphemeralAgentCallResponse](t, registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-executor", SourceSessionID: "run-1", TargetAgentID: "executor", Body: "execute plan", ContextExcerptIDs: []string{firstPlan.ContextExcerptID}})
-	reviewerCall := callMethod[EphemeralAgentCallResponse](t, registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-reviewer", SourceSessionID: "run-1", TargetAgentID: "reviewer", Body: "review last updates", ContextExcerptIDs: []string{lastTwo.ContextExcerptID}})
-	plannerCall := callMethod[EphemeralAgentCallResponse](t, registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-planner", SourceSessionID: executorCall.Run.SessionID, TargetAgentID: "planner", Body: "plan follow-up"})
+	executorCall := callMethod[EphemeralCallResponse](t, registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-executor", SourceSessionID: "run-1", TargetAgentID: "executor", Body: "execute plan", ContextExcerptIDs: []string{firstPlan.ContextExcerptID}})
+	reviewerCall := callMethod[EphemeralCallResponse](t, registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-reviewer", SourceSessionID: "run-1", TargetAgentID: "reviewer", Body: "review last updates", ContextExcerptIDs: []string{lastTwo.ContextExcerptID}})
+	plannerCall := callMethod[EphemeralCallResponse](t, registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-planner", SourceSessionID: executorCall.Run.SessionID, TargetAgentID: "planner", Body: "plan follow-up"})
 	if executorCall.Run.AgentID != "executor" || reviewerCall.Run.AgentID != "reviewer" || plannerCall.Run.AgentID != "planner" {
 		t.Fatalf("calls = %#v %#v %#v, want target-specific ephemeral runs", executorCall.Run, reviewerCall.Run, plannerCall.Run)
 	}
@@ -1182,13 +1182,13 @@ func TestProfileCreateMethodDoesNotCreateRun(t *testing.T) {
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
-	got := callMethod[AgentProfileResponse](t, registry, "profile.create", AgentProfileCreateRequest{WorkspaceID: "ws-1", Name: "planner", Harness: "codex"})
+	got := callMethod[ProfileResponse](t, registry, "profile.create", ProfileCreateRequest{WorkspaceID: "ws-1", Name: "planner", Harness: "codex"})
 	if got.Name != "planner" {
 		t.Fatalf("profile = %#v, want planner", got)
 	}
-	runs, err := store.ListAgentSessions(context.Background(), "ws-1")
+	runs, err := store.ListHarnessSessions(context.Background(), "ws-1")
 	if err != nil {
-		t.Fatalf("ListAgentSessions returned error: %v", err)
+		t.Fatalf("ListHarnessSessions returned error: %v", err)
 	}
 	if len(runs) != 0 {
 		t.Fatalf("runs = %#v, want no run from agent create", runs)
@@ -1203,30 +1203,30 @@ func TestProfileRosterMethodsAndSessionStart(t *testing.T) {
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
-	created := callMethod[AgentProfileResponse](t, registry, "profile.create", AgentProfileCreateRequest{WorkspaceID: "ws-1", Name: "planner", Harness: "pty", Model: "gpt-5", Prompt: "plan"})
-	listed := callMethod[AgentProfileListResponse](t, registry, "profile.list", AgentProfileListRequest{WorkspaceID: "ws-1"})
+	created := callMethod[ProfileResponse](t, registry, "profile.create", ProfileCreateRequest{WorkspaceID: "ws-1", Name: "planner", Harness: "pty", Model: "gpt-5", Prompt: "plan"})
+	listed := callMethod[ProfileListResponse](t, registry, "profile.list", ProfileListRequest{WorkspaceID: "ws-1"})
 	if len(listed.Profiles) != 1 || listed.Profiles[0].Name != "planner" {
 		t.Fatalf("listed = %#v, want planner", listed)
 	}
-	got := callMethod[AgentProfileResponse](t, registry, "profile.get", AgentProfileGetRequest{WorkspaceID: "ws-1", Name: "planner"})
+	got := callMethod[ProfileResponse](t, registry, "profile.get", ProfileGetRequest{WorkspaceID: "ws-1", Name: "planner"})
 	if got.ProfileID != created.ProfileID || got.Harness != "pty" || got.Prompt != "plan" {
 		t.Fatalf("got profile = %#v, want created planner", got)
 	}
-	run := callMethod[AgentSessionStartResponse](t, registry, "session.start", AgentSessionStartRequest{WorkspaceID: "ws-1", Profile: "planner", SessionID: "run-1", Command: "/bin/sh", Args: []string{"-c", "printf done"}})
-	if run.Run.AgentSessionID != "run-1" || run.Run.Executor != "pty" || (run.Run.Status != "running" && run.Run.Status != "completed") {
+	run := callMethod[HarnessSessionStartResponse](t, registry, "session.start", HarnessSessionStartRequest{WorkspaceID: "ws-1", Profile: "planner", SessionID: "run-1", Command: "/bin/sh", Args: []string{"-c", "printf done"}})
+	if run.Run.HarnessSessionID != "run-1" || run.Run.Executor != "pty" || (run.Run.Status != "running" && run.Run.Status != "completed") {
 		t.Fatalf("run = %#v, want pty session from profile", run.Run)
 	}
 }
 
 func seedRunLogMessageMethodData(t *testing.T, store *globaldb.Store, ctx context.Context) {
 	t.Helper()
-	if err := store.CreateSession(ctx, "ws-1", "workspace", t.TempDir(), "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "ws-1", "workspace", t.TempDir(), "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
-	if err := store.CreateAgentSessionConfig(ctx, globaldb.AgentSessionConfig{AgentID: "agent-1", WorkspaceID: "ws-1", Name: "executor", Harness: "codex"}); err != nil {
-		t.Fatalf("CreateAgentSessionConfig returned error: %v", err)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-1", WorkspaceID: "ws-1", Name: "executor", Harness: "codex"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig returned error: %v", err)
 	}
-	if err := store.CreateAgentSession(ctx, globaldb.AgentSession{SessionID: "run-1", WorkspaceID: "ws-1", AgentID: "agent-1", Harness: "codex", Status: "running", Usage: "durable", CWD: t.TempDir()}); err != nil {
-		t.Fatalf("CreateAgentSession returned error: %v", err)
+	if err := store.CreateHarnessSession(ctx, globaldb.HarnessSession{SessionID: "run-1", WorkspaceID: "ws-1", AgentID: "agent-1", Harness: "codex", Status: "running", Usage: globaldb.HarnessSessionUsageSticky, CWD: t.TempDir()}); err != nil {
+		t.Fatalf("CreateHarnessSession returned error: %v", err)
 	}
 }

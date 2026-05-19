@@ -364,7 +364,7 @@ func newWorkspaceCreateCmd() *cobra.Command {
 				return err
 			}
 			if strings.TrimSpace(folder) == "" {
-				folder = defaultSessionFolder(cwd)
+				folder = defaultWorkspaceFolder(cwd)
 			}
 			folderPath, err := absolutizeInputPath(cwd, folder)
 			if err != nil {
@@ -839,7 +839,7 @@ func absolutizeInputPath(cwd, input string) (string, error) {
 	return absPath, nil
 }
 
-func defaultSessionFolder(cwd string) string {
+func defaultWorkspaceFolder(cwd string) string {
 	backend, err := vcs.Detect(cwd)
 	if err != nil {
 		return cwd

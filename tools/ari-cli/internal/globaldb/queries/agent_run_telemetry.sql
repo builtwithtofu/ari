@@ -1,4 +1,4 @@
--- name: UpsertAgentRunTelemetry :exec
+-- name: UpsertHarnessSessionTelemetry :exec
 INSERT INTO agent_run_telemetry (
   run_id, workspace_id, task_id, profile_id, profile_name, harness, model, invocation_class, status,
   input_tokens_known, input_tokens, output_tokens_known, output_tokens,
@@ -32,7 +32,7 @@ ON CONFLICT(run_id) DO UPDATE SET
   orphan_state = excluded.orphan_state,
   updated_at = excluded.updated_at;
 
--- name: ListAgentRunTelemetryByWorkspace :many
+-- name: ListHarnessSessionTelemetryByWorkspace :many
 SELECT * FROM agent_run_telemetry
 WHERE workspace_id = ?
 ORDER BY created_at DESC, run_id ASC;

@@ -271,14 +271,14 @@ func TestWriteRuntimeDefaults(t *testing.T) {
 	if err := WritePreferredModel("gpt-5.1-codex"); err != nil {
 		t.Fatalf("WritePreferredModel returned error: %v", err)
 	}
-	if err := WriteDefaultInvocationClass("temporary"); err != nil {
+	if err := WriteDefaultInvocationClass("ephemeral"); err != nil {
 		t.Fatalf("WriteDefaultInvocationClass returned error: %v", err)
 	}
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load returned error: %v", err)
 	}
-	if cfg.PreferredModel != "gpt-5.1-codex" || cfg.DefaultInvocationClass != "temporary" {
+	if cfg.PreferredModel != "gpt-5.1-codex" || cfg.DefaultInvocationClass != "ephemeral" {
 		t.Fatalf("runtime defaults = model %q invocation %q, want configured values", cfg.PreferredModel, cfg.DefaultInvocationClass)
 	}
 }

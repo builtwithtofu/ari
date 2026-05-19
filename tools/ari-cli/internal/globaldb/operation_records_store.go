@@ -134,7 +134,7 @@ func validateOperationRecord(record OperationRecord) error {
 
 func (s *Store) validateOperationRecordReferences(ctx context.Context, record OperationRecord) error {
 	if record.Scope == OperationScopeWorkspace {
-		if _, err := s.GetSession(ctx, record.WorkspaceID); err != nil {
+		if _, err := s.GetWorkspace(ctx, record.WorkspaceID); err != nil {
 			return err
 		}
 	}

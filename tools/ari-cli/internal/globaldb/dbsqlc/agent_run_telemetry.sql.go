@@ -9,18 +9,18 @@ import (
 	"context"
 )
 
-const listAgentRunTelemetryByWorkspace = `-- name: ListAgentRunTelemetryByWorkspace :many
+const listHarnessSessionTelemetryByWorkspace = `-- name: ListHarnessSessionTelemetryByWorkspace :many
 SELECT run_id, workspace_id, task_id, profile_id, profile_name, harness, model, invocation_class, status, input_tokens_known, input_tokens, output_tokens_known, output_tokens, estimated_cost_known, estimated_cost_micros, duration_ms_known, duration_ms, exit_code_known, exit_code, owned_by_ari, pid_known, pid, cpu_time_ms_known, cpu_time_ms, memory_rss_bytes_peak_known, memory_rss_bytes_peak, child_processes_peak_known, child_processes_peak, ports_json, orphan_state, created_at, updated_at FROM agent_run_telemetry
 WHERE workspace_id = ?
 ORDER BY created_at DESC, run_id ASC
 `
 
-type ListAgentRunTelemetryByWorkspaceParams struct {
+type ListHarnessSessionTelemetryByWorkspaceParams struct {
 	WorkspaceID string `json:"workspace_id"`
 }
 
-func (q *Queries) ListAgentRunTelemetryByWorkspace(ctx context.Context, arg ListAgentRunTelemetryByWorkspaceParams) ([]AgentRunTelemetry, error) {
-	rows, err := q.db.QueryContext(ctx, listAgentRunTelemetryByWorkspace, arg.WorkspaceID)
+func (q *Queries) ListHarnessSessionTelemetryByWorkspace(ctx context.Context, arg ListHarnessSessionTelemetryByWorkspaceParams) ([]AgentRunTelemetry, error) {
+	rows, err := q.db.QueryContext(ctx, listHarnessSessionTelemetryByWorkspace, arg.WorkspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +75,7 @@ func (q *Queries) ListAgentRunTelemetryByWorkspace(ctx context.Context, arg List
 	return items, nil
 }
 
-const upsertAgentRunTelemetry = `-- name: UpsertAgentRunTelemetry :exec
+const upsertHarnessSessionTelemetry = `-- name: UpsertHarnessSessionTelemetry :exec
 INSERT INTO agent_run_telemetry (
   run_id, workspace_id, task_id, profile_id, profile_name, harness, model, invocation_class, status,
   input_tokens_known, input_tokens, output_tokens_known, output_tokens,
@@ -110,7 +110,7 @@ ON CONFLICT(run_id) DO UPDATE SET
   updated_at = excluded.updated_at
 `
 
-type UpsertAgentRunTelemetryParams struct {
+type UpsertHarnessSessionTelemetryParams struct {
 	RunID                   string  `json:"run_id"`
 	WorkspaceID             string  `json:"workspace_id"`
 	TaskID                  string  `json:"task_id"`
@@ -145,8 +145,8 @@ type UpsertAgentRunTelemetryParams struct {
 	UpdatedAt               string  `json:"updated_at"`
 }
 
-func (q *Queries) UpsertAgentRunTelemetry(ctx context.Context, arg UpsertAgentRunTelemetryParams) error {
-	_, err := q.db.ExecContext(ctx, upsertAgentRunTelemetry,
+func (q *Queries) UpsertHarnessSessionTelemetry(ctx context.Context, arg UpsertHarnessSessionTelemetryParams) error {
+	_, err := q.db.ExecContext(ctx, upsertHarnessSessionTelemetry,
 		arg.RunID,
 		arg.WorkspaceID,
 		arg.TaskID,

@@ -291,7 +291,7 @@ func TestAriDefaultsSetRejectsMissingWorkspace(t *testing.T) {
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
-	if err := store.CreateSession(context.Background(), "project-1", "alpha", t.TempDir(), "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(context.Background(), "project-1", "alpha", t.TempDir(), "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
 	req := AriToolCallRequest{Name: "ari.defaults.set", Scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: "missing", ProfileID: "ap-helper", ProfileName: "helper", ToolName: "ari.defaults.set", WithinDefaultScope: true}, Input: map[string]any{"default_harness": "codex"}}
@@ -377,7 +377,7 @@ func TestAriProfileDraftAndSaveSeparateDraftFromPersistedWrite(t *testing.T) {
 	if draft.Status != "draft" || draft.Output["profile_id"] != nil {
 		t.Fatalf("draft response = %#v", draft)
 	}
-	_, err := store.GetAgentProfile(context.Background(), home.ID, "frontend-reviewer")
+	_, err := store.GetProfile(context.Background(), home.ID, "frontend-reviewer")
 	if !errors.Is(err, globaldb.ErrNotFound) {
 		t.Fatalf("draft persisted profile lookup error = %v, want ErrNotFound", err)
 	}
@@ -413,7 +413,7 @@ func TestAriDefaultsSetRequiresDefaultScope(t *testing.T) {
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
-	if err := store.CreateSession(context.Background(), "project-1", "alpha", t.TempDir(), "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(context.Background(), "project-1", "alpha", t.TempDir(), "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
 	req := AriToolCallRequest{Name: "ari.defaults.set", Scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: "project-1", ProfileID: "ap-helper", ProfileName: "helper", ToolName: "ari.defaults.set", WithinDefaultScope: false}, Input: map[string]any{"default_harness": "codex"}}
@@ -450,16 +450,16 @@ func TestAriReadOnlyToolsDoNotRequireApprovalOrMutateState(t *testing.T) {
 	}
 }
 
-func ensureHomeWorkspaceForToolTest(t *testing.T, store *globaldb.Store) *globaldb.Session {
+func ensureHomeWorkspaceForToolTest(t *testing.T, store *globaldb.Store) *globaldb.Workspace {
 	t.Helper()
 	home := t.TempDir()
-	if err := store.CreateSession(context.Background(), "home-tools", "home", home, "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(context.Background(), "home-tools", "home", home, "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
 	if err := store.AddFolder(context.Background(), "home-tools", home, "unknown", true); err != nil {
 		t.Fatalf("AddFolder returned error: %v", err)
 	}
-	session, err := store.GetSession(context.Background(), "home-tools")
+	session, err := store.GetWorkspace(context.Background(), "home-tools")
 	if err != nil {
 		t.Fatalf("GetSession returned error: %v", err)
 	}

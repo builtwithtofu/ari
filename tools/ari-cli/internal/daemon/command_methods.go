@@ -159,7 +159,7 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 			if sessionID == "" {
 				return CommandRunResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
 			}
-			if _, err := store.GetSession(ctx, sessionID); err != nil {
+			if _, err := store.GetWorkspace(ctx, sessionID); err != nil {
 				return CommandRunResponse{}, mapWorkspaceStoreError(err, sessionID)
 			}
 			command := strings.TrimSpace(req.Command)
@@ -236,7 +236,7 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 			if sessionID == "" {
 				return CommandListResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
 			}
-			if _, err := store.GetSession(ctx, sessionID); err != nil {
+			if _, err := store.GetWorkspace(ctx, sessionID); err != nil {
 				return CommandListResponse{}, mapWorkspaceStoreError(err, sessionID)
 			}
 
@@ -277,7 +277,7 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 			if commandID == "" {
 				return CommandGetResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "command_id is required", sessionID)
 			}
-			if _, err := store.GetSession(ctx, sessionID); err != nil {
+			if _, err := store.GetWorkspace(ctx, sessionID); err != nil {
 				return CommandGetResponse{}, mapWorkspaceStoreError(err, sessionID)
 			}
 
@@ -326,7 +326,7 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 			if commandID == "" {
 				return CommandOutputResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "command_id is required", sessionID)
 			}
-			if _, err := store.GetSession(ctx, sessionID); err != nil {
+			if _, err := store.GetWorkspace(ctx, sessionID); err != nil {
 				return CommandOutputResponse{}, mapWorkspaceStoreError(err, sessionID)
 			}
 
@@ -366,7 +366,7 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 			if commandID == "" {
 				return CommandStopResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "command_id is required", sessionID)
 			}
-			if _, err := store.GetSession(ctx, sessionID); err != nil {
+			if _, err := store.GetWorkspace(ctx, sessionID); err != nil {
 				return CommandStopResponse{}, mapWorkspaceStoreError(err, sessionID)
 			}
 
@@ -401,7 +401,7 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 			if workspaceID == "" {
 				return WorkspaceCommandCreateResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
 			}
-			if _, err := store.GetSession(ctx, workspaceID); err != nil {
+			if _, err := store.GetWorkspace(ctx, workspaceID); err != nil {
 				return WorkspaceCommandCreateResponse{}, mapWorkspaceStoreError(err, workspaceID)
 			}
 
@@ -455,7 +455,7 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 			if workspaceID == "" {
 				return WorkspaceCommandListResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
 			}
-			if _, err := store.GetSession(ctx, workspaceID); err != nil {
+			if _, err := store.GetWorkspace(ctx, workspaceID); err != nil {
 				return WorkspaceCommandListResponse{}, mapWorkspaceStoreError(err, workspaceID)
 			}
 
@@ -494,7 +494,7 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 			if workspaceID == "" {
 				return WorkspaceCommandGetResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
 			}
-			if _, err := store.GetSession(ctx, workspaceID); err != nil {
+			if _, err := store.GetWorkspace(ctx, workspaceID); err != nil {
 				return WorkspaceCommandGetResponse{}, mapWorkspaceStoreError(err, workspaceID)
 			}
 
@@ -528,7 +528,7 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 			if workspaceID == "" {
 				return WorkspaceCommandRemoveResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
 			}
-			if _, err := store.GetSession(ctx, workspaceID); err != nil {
+			if _, err := store.GetWorkspace(ctx, workspaceID); err != nil {
 				return WorkspaceCommandRemoveResponse{}, mapWorkspaceStoreError(err, workspaceID)
 			}
 

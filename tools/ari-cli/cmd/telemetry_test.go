@@ -21,7 +21,7 @@ func TestTelemetryRollupPrintsKnownAndUnknownValues(t *testing.T) {
 		if req.WorkspaceID != "ws-1" {
 			t.Fatalf("workspace id = %q, want ws-1", req.WorkspaceID)
 		}
-		return daemon.TelemetryRollupResponse{Rollups: []daemon.TelemetryRollup{{Group: daemon.TelemetryRollupGroup{Profile: "executor", Harness: "codex", Model: "gpt-5.1-codex", InvocationClass: "agent"}, Runs: 2, Completed: 1, Failed: 1, InputTokens: daemon.TelemetryKnownInt64{Known: true, Value: &input}, OutputTokens: daemon.TelemetryKnownInt64{Known: false}, EstimatedCost: daemon.TelemetryKnownInt64{Known: false}, DurationMS: daemon.TelemetryKnownInt64{Known: false}, Process: daemon.TelemetryProcessRollup{OwnedByAri: true, PID: daemon.TelemetryKnownInt64{Known: true, Value: &pid}, ExitCode: daemon.TelemetryKnownInt64{Known: false}, OrphanState: "not_orphaned", Ports: []daemon.ProcessPortObservation{{Port: 5173, Protocol: "tcp", Confidence: "detected"}}}}}}, nil
+		return daemon.TelemetryRollupResponse{Rollups: []daemon.TelemetryRollup{{Group: daemon.TelemetryRollupGroup{Profile: "executor", Harness: "codex", Model: "gpt-5.1-codex", InvocationClass: "sticky"}, Runs: 2, Completed: 1, Failed: 1, InputTokens: daemon.TelemetryKnownInt64{Known: true, Value: &input}, OutputTokens: daemon.TelemetryKnownInt64{Known: false}, EstimatedCost: daemon.TelemetryKnownInt64{Known: false}, DurationMS: daemon.TelemetryKnownInt64{Known: false}, Process: daemon.TelemetryProcessRollup{OwnedByAri: true, PID: daemon.TelemetryKnownInt64{Known: true, Value: &pid}, ExitCode: daemon.TelemetryKnownInt64{Known: false}, OrphanState: "not_orphaned", Ports: []daemon.ProcessPortObservation{{Port: 5173, Protocol: "tcp", Confidence: "detected"}}}}}}, nil
 	}
 	t.Cleanup(func() {
 		telemetryEnsureDaemonRunning = originalEnsure
@@ -32,7 +32,7 @@ func TestTelemetryRollupPrintsKnownAndUnknownValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("telemetry rollup returned error: %v", err)
 	}
-	expected := "telemetry\tprofile=executor\tharness=codex\tmodel=gpt-5.1-codex\tinvocation_class=agent\truns=2\tcompleted=1\tfailed=1\ninput_tokens=12\toutput_tokens=unknown\testimated_cost=unknown\tduration_ms=unknown\texit_code=unknown\nprocess_owned=true\tpid=123\tcpu_time_ms=unknown\tmemory_rss_bytes_peak=unknown\tchild_processes_peak=unknown\norphan_state=not_orphaned\tports=tcp/5173/detected\n"
+	expected := "telemetry\tprofile=executor\tharness=codex\tmodel=gpt-5.1-codex\tinvocation_class=sticky\truns=2\tcompleted=1\tfailed=1\ninput_tokens=12\toutput_tokens=unknown\testimated_cost=unknown\tduration_ms=unknown\texit_code=unknown\nprocess_owned=true\tpid=123\tcpu_time_ms=unknown\tmemory_rss_bytes_peak=unknown\tchild_processes_peak=unknown\norphan_state=not_orphaned\tports=tcp/5173/detected\n"
 	if out != expected {
 		t.Fatalf("output = %q, want %q", out, expected)
 	}

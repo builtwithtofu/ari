@@ -428,7 +428,7 @@ func TestSessionCreateRollsBackWhenFolderInsertFails(t *testing.T) {
 		t.Fatal("workspace.create returned nil error when folder insert fails")
 	}
 
-	_, lookupErr := store.GetSessionByName(context.Background(), "alpha")
+	_, lookupErr := store.GetWorkspaceByName(context.Background(), "alpha")
 	if !errors.Is(lookupErr, globaldb.ErrNotFound) {
 		t.Fatalf("GetSessionByName after failed create error = %v, want ErrNotFound", lookupErr)
 	}
@@ -458,7 +458,7 @@ func TestSessionCreateRollsBackWhenHelperHarnessConfigIsInvalid(t *testing.T) {
 		t.Fatal("workspace.create returned nil error for invalid helper harness config")
 	}
 
-	_, lookupErr := store.GetSessionByName(context.Background(), "alpha")
+	_, lookupErr := store.GetWorkspaceByName(context.Background(), "alpha")
 	if !errors.Is(lookupErr, globaldb.ErrNotFound) {
 		t.Fatalf("GetSessionByName after failed create error = %v, want ErrNotFound", lookupErr)
 	}

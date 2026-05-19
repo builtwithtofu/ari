@@ -74,13 +74,13 @@ func TestJourneyWorkspaceConnectResumeAndStickyReattach(t *testing.T) {
 	j.seedWorkspace("ws-1", primaryFolder, t.TempDir())
 	profile := j.createProfile("ws-1", "executor", "test-harness")
 
-	started := callMethod[AgentSessionStartResponse](t, j.registry, "session.start", AgentSessionStartRequest{WorkspaceID: "ws-1", Profile: profile.Name, SessionID: "executor-main", Message: "implement feature"})
+	started := callMethod[HarnessSessionStartResponse](t, j.registry, "session.start", HarnessSessionStartRequest{WorkspaceID: "ws-1", Profile: profile.Name, SessionID: "executor-main", Message: "implement feature"})
 	if started.Run.SessionID != "executor-main" || started.Run.WorkspaceID != "ws-1" {
 		t.Fatalf("started run = %#v, want sticky executor-main in ws-1", started.Run)
 	}
 	harness.requireStarts(1)
 
-	reattached := callMethod[AgentSessionStartResponse](t, j.registry, "session.start", AgentSessionStartRequest{WorkspaceID: "ws-1", Profile: profile.Name, SessionID: "executor-main", Message: "reattach"})
+	reattached := callMethod[HarnessSessionStartResponse](t, j.registry, "session.start", HarnessSessionStartRequest{WorkspaceID: "ws-1", Profile: profile.Name, SessionID: "executor-main", Message: "reattach"})
 	if reattached.Run.SessionID != started.Run.SessionID || reattached.Run.ProviderSessionID != started.Run.ProviderSessionID {
 		t.Fatalf("reattached run = %#v, want existing run %#v", reattached.Run, started.Run)
 	}
@@ -101,10 +101,10 @@ func TestJourneyConcurrentPlannerExecutorRemainVisible(t *testing.T) {
 	j.seedWorkspace("ws-1", t.TempDir())
 	j.createSessionConfig("planner", "ws-1", "planner", "test-harness")
 	j.createSessionConfig("executor", "ws-1", "executor", "test-harness")
-	j.createAgentSession("planner-run", "ws-1", "planner", "test-harness", "waiting", globaldb.AgentSessionUsageSticky)
-	j.createAgentSession("executor-run", "ws-1", "executor", "test-harness", "running", globaldb.AgentSessionUsageSticky)
-	j.daemon.recordExecutorRun(AgentSession{AgentSessionID: "planner-run", SessionID: "planner-run", WorkspaceID: "ws-1", Executor: "test-harness", Status: "waiting", Usage: globaldb.AgentSessionUsageSticky, StartedAt: "2026-05-13T00:00:00Z"}, []TimelineItem{{ID: "planner-run:item-1", WorkspaceID: "ws-1", RunID: "planner-run", SourceKind: "agent_session", SourceID: "planner-run", Kind: "run_log_message", Status: "completed", Text: "planner message"}})
-	j.daemon.recordExecutorRun(AgentSession{AgentSessionID: "executor-run", SessionID: "executor-run", WorkspaceID: "ws-1", Executor: "test-harness", Status: "running", Usage: globaldb.AgentSessionUsageSticky, StartedAt: "2026-05-13T00:00:01Z"}, []TimelineItem{{ID: "executor-run:item-1", WorkspaceID: "ws-1", RunID: "executor-run", SourceKind: "agent_session", SourceID: "executor-run", Kind: "run_log_message", Status: "running", Text: "executor work"}})
+	j.createHarnessSession("planner-run", "ws-1", "planner", "test-harness", "waiting", globaldb.HarnessSessionUsageSticky)
+	j.createHarnessSession("executor-run", "ws-1", "executor", "test-harness", "running", globaldb.HarnessSessionUsageSticky)
+	j.daemon.recordExecutorRun(HarnessSession{HarnessSessionID: "planner-run", SessionID: "planner-run", WorkspaceID: "ws-1", Executor: "test-harness", Status: "waiting", Usage: globaldb.HarnessSessionUsageSticky, StartedAt: "2026-05-13T00:00:00Z"}, []TimelineItem{{ID: "planner-run:item-1", WorkspaceID: "ws-1", RunID: "planner-run", SourceKind: "harness_session", SourceID: "planner-run", Kind: "run_log_message", Status: "completed", Text: "planner message"}})
+	j.daemon.recordExecutorRun(HarnessSession{HarnessSessionID: "executor-run", SessionID: "executor-run", WorkspaceID: "ws-1", Executor: "test-harness", Status: "running", Usage: globaldb.HarnessSessionUsageSticky, StartedAt: "2026-05-13T00:00:01Z"}, []TimelineItem{{ID: "executor-run:item-1", WorkspaceID: "ws-1", RunID: "executor-run", SourceKind: "harness_session", SourceID: "executor-run", Kind: "run_log_message", Status: "running", Text: "executor work"}})
 	j.appendTextMessage("executor-run", "executor-msg-1", 1, "assistant", "implementation in progress")
 	j.appendTextMessage("planner-run", "planner-msg-1", 1, "user", "add a user story for audit logging")
 
@@ -122,8 +122,8 @@ func TestJourneyContextMovementUsesImmutableVisibleMessages(t *testing.T) {
 	j.seedWorkspace("ws-1", t.TempDir())
 	j.createSessionConfig("planner", "ws-1", "planner", "test-harness")
 	j.createSessionConfig("executor", "ws-1", "executor", "test-harness")
-	j.createAgentSession("planner-run", "ws-1", "planner", "test-harness", "waiting", globaldb.AgentSessionUsageSticky)
-	j.createAgentSession("executor-run", "ws-1", "executor", "test-harness", "waiting", globaldb.AgentSessionUsageSticky)
+	j.createHarnessSession("planner-run", "ws-1", "planner", "test-harness", "waiting", globaldb.HarnessSessionUsageSticky)
+	j.createHarnessSession("executor-run", "ws-1", "executor", "test-harness", "waiting", globaldb.HarnessSessionUsageSticky)
 	j.appendTextMessage("planner-run", "planner-msg-1", 1, "assistant", "first plan")
 	j.appendTextMessage("planner-run", "planner-msg-2", 2, "assistant", "second plan")
 
@@ -158,7 +158,7 @@ func TestJourneyBackgroundHelperWorkIsProjectedWithoutProviderHierarchy(t *testi
 	j := newJourneyRuntime(t)
 	j.seedWorkspace("ws-1", t.TempDir())
 	j.createSessionConfig("planner", "ws-1", "planner", "test-harness")
-	j.createAgentSession("planner-run", "ws-1", "planner", "test-harness", "waiting", globaldb.AgentSessionUsageSticky)
+	j.createHarnessSession("planner-run", "ws-1", "planner", "test-harness", "waiting", globaldb.HarnessSessionUsageSticky)
 	j.appendTextMessage("planner-run", "planner-msg-1", 1, "assistant", "research auth options")
 	j.createSessionConfig("reviewer", "ws-1", "reviewer", "test-harness")
 
@@ -168,15 +168,15 @@ func TestJourneyBackgroundHelperWorkIsProjectedWithoutProviderHierarchy(t *testi
 	if err != nil {
 		t.Fatalf("CreateContextExcerptFromTail returned error: %v", err)
 	}
-	call := callMethod[EphemeralAgentCallResponse](t, j.registry, "session.call.ephemeral", EphemeralAgentCallRequest{CallID: "call-1", SourceSessionID: "planner-run", TargetAgentID: "reviewer", Body: "research this", ContextExcerptIDs: []string{excerpt.ContextExcerptID}, ReplyAgentMessageID: "reply-1"})
-	if call.Run.Usage != globaldb.AgentSessionUsageEphemeral || call.Run.SourceSessionID != "planner-run" {
+	call := callMethod[EphemeralCallResponse](t, j.registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-1", SourceSessionID: "planner-run", TargetAgentID: "reviewer", Body: "research this", ContextExcerptIDs: []string{excerpt.ContextExcerptID}, ReplyAgentMessageID: "reply-1"})
+	if call.Run.Usage != globaldb.HarnessSessionUsageEphemeral || call.Run.SourceSessionID != "planner-run" {
 		t.Fatalf("ephemeral run = %#v, want helper linked to planner-run", call.Run)
 	}
 	harness.requireStarts(1)
 
 	status := callMethod[WorkspaceStatusResponse](t, j.registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-1"})
-	requireStatusSession(t, status, "planner-run", "waiting", globaldb.AgentSessionUsageSticky)
-	requireStatusSession(t, status, call.Run.SessionID, "completed", globaldb.AgentSessionUsageEphemeral)
+	requireStatusSession(t, status, "planner-run", "waiting", globaldb.HarnessSessionUsageSticky)
+	requireStatusSession(t, status, call.Run.SessionID, "completed", globaldb.HarnessSessionUsageEphemeral)
 
 	timeline := callMethod[WorkspaceTimelineResponse](t, j.registry, "workspace.timeline", WorkspaceTimelineRequest{WorkspaceID: "ws-1"})
 	requireTimelineSession(t, timeline, call.Run.SessionID)
@@ -192,11 +192,11 @@ func TestJourneyWorkspaceStatusAndTimelineAgreeOnSessionFacts(t *testing.T) {
 	j.seedWorkspace("ws-1", t.TempDir())
 	j.createSessionConfig("planner", "ws-1", "planner", "test-harness")
 	j.createSessionConfig("reviewer", "ws-1", "reviewer", "test-harness")
-	j.createAgentSession("planner-run", "ws-1", "planner", "test-harness", "waiting", globaldb.AgentSessionUsageSticky)
-	j.createAgentSession("reviewer-call-run", "ws-1", "reviewer", "test-harness", "running", globaldb.AgentSessionUsageEphemeral)
+	j.createHarnessSession("planner-run", "ws-1", "planner", "test-harness", "waiting", globaldb.HarnessSessionUsageSticky)
+	j.createHarnessSession("reviewer-call-run", "ws-1", "reviewer", "test-harness", "running", globaldb.HarnessSessionUsageEphemeral)
 	j.appendTextMessage("planner-run", "planner-msg-1", 1, "assistant", "please review")
-	j.daemon.recordExecutorRun(AgentSession{AgentSessionID: "planner-run", SessionID: "planner-run", WorkspaceID: "ws-1", Executor: "test-harness", Status: "waiting", Usage: globaldb.AgentSessionUsageSticky, StartedAt: "2026-05-13T00:00:00Z"}, []TimelineItem{{ID: "planner-run:item-1", WorkspaceID: "ws-1", RunID: "planner-run", SourceKind: "agent_session", SourceID: "planner-run", Kind: "run_log_message", Status: "completed", Text: "planner visible"}})
-	j.daemon.recordExecutorRun(AgentSession{AgentSessionID: "reviewer-call-run", SessionID: "reviewer-call-run", WorkspaceID: "ws-1", Executor: "test-harness", Status: "running", Usage: globaldb.AgentSessionUsageEphemeral, StartedAt: "2026-05-13T00:00:01Z"}, []TimelineItem{{ID: "reviewer-call-run:item-1", WorkspaceID: "ws-1", RunID: "reviewer-call-run", SourceKind: "agent_session", SourceID: "reviewer-call-run", Kind: "run_log_message", Status: "running", Text: "reviewer visible"}})
+	j.daemon.recordExecutorRun(HarnessSession{HarnessSessionID: "planner-run", SessionID: "planner-run", WorkspaceID: "ws-1", Executor: "test-harness", Status: "waiting", Usage: globaldb.HarnessSessionUsageSticky, StartedAt: "2026-05-13T00:00:00Z"}, []TimelineItem{{ID: "planner-run:item-1", WorkspaceID: "ws-1", RunID: "planner-run", SourceKind: "harness_session", SourceID: "planner-run", Kind: "run_log_message", Status: "completed", Text: "planner visible"}})
+	j.daemon.recordExecutorRun(HarnessSession{HarnessSessionID: "reviewer-call-run", SessionID: "reviewer-call-run", WorkspaceID: "ws-1", Executor: "test-harness", Status: "running", Usage: globaldb.HarnessSessionUsageEphemeral, StartedAt: "2026-05-13T00:00:01Z"}, []TimelineItem{{ID: "reviewer-call-run:item-1", WorkspaceID: "ws-1", RunID: "reviewer-call-run", SourceKind: "harness_session", SourceID: "reviewer-call-run", Kind: "run_log_message", Status: "running", Text: "reviewer visible"}})
 
 	status := callMethod[WorkspaceStatusResponse](t, j.registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-1"})
 	timeline := callMethod[WorkspaceTimelineResponse](t, j.registry, "workspace.timeline", WorkspaceTimelineRequest{WorkspaceID: "ws-1"})

@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS agents (
   harness TEXT,
   harness_resumable_id TEXT,
   harness_metadata TEXT NOT NULL DEFAULT '{}',
-  invocation_class TEXT NOT NULL DEFAULT 'agent',
+  invocation_class TEXT NOT NULL DEFAULT 'sticky',
   FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
 );
 
@@ -156,7 +156,7 @@ CREATE TABLE IF NOT EXISTS agent_run_telemetry (
   profile_name TEXT,
   harness TEXT NOT NULL,
   model TEXT NOT NULL DEFAULT 'unknown',
-  invocation_class TEXT NOT NULL DEFAULT 'agent',
+  invocation_class TEXT NOT NULL DEFAULT 'sticky',
   status TEXT NOT NULL,
   input_tokens_known INTEGER NOT NULL DEFAULT 0,
   input_tokens INTEGER,
@@ -259,7 +259,7 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   cwd TEXT NOT NULL DEFAULT '',
   folder_scope_json TEXT NOT NULL DEFAULT '[]',
   status TEXT NOT NULL,
-  usage TEXT NOT NULL DEFAULT 'durable',
+  usage TEXT NOT NULL DEFAULT 'sticky',
   source_session_id TEXT NOT NULL DEFAULT '',
   source_agent_id TEXT NOT NULL DEFAULT '',
   prompt_hash TEXT NOT NULL DEFAULT '',

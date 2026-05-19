@@ -154,7 +154,7 @@ func (d *Daemon) registerWorkspaceMethods(registry *rpc.MethodRegistry, store *g
 		Description: "List workspaces",
 		Handler: func(ctx context.Context, req WorkspaceListRequest) (WorkspaceListResponse, error) {
 			_ = req
-			sessions, err := store.ListSessions(ctx)
+			sessions, err := store.ListWorkspaces(ctx)
 			if err != nil {
 				return WorkspaceListResponse{}, err
 			}
@@ -199,10 +199,10 @@ func (d *Daemon) registerWorkspaceMethods(registry *rpc.MethodRegistry, store *g
 				return WorkspaceGetResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
 			}
 
-			session, err := store.GetSession(ctx, sessionID)
+			session, err := store.GetWorkspace(ctx, sessionID)
 			if err != nil {
 				if errors.Is(err, globaldb.ErrNotFound) {
-					sessionByName, lookupErr := store.GetSessionByName(ctx, sessionID)
+					sessionByName, lookupErr := store.GetWorkspaceByName(ctx, sessionID)
 					if lookupErr != nil {
 						return WorkspaceGetResponse{}, mapWorkspaceStoreError(lookupErr, sessionID)
 					}
@@ -252,7 +252,7 @@ func (d *Daemon) registerWorkspaceMethods(registry *rpc.MethodRegistry, store *g
 			if sessionID == "" {
 				return WorkspaceSuspendResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
 			}
-			if err := store.UpdateSessionStatus(ctx, sessionID, "suspended"); err != nil {
+			if err := store.UpdateWorkspaceStatus(ctx, sessionID, "suspended"); err != nil {
 				return WorkspaceSuspendResponse{}, mapWorkspaceStoreError(err, sessionID)
 			}
 			return WorkspaceSuspendResponse{Status: "suspended"}, nil
@@ -269,7 +269,7 @@ func (d *Daemon) registerWorkspaceMethods(registry *rpc.MethodRegistry, store *g
 			if sessionID == "" {
 				return WorkspaceResumeResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
 			}
-			if err := store.UpdateSessionStatus(ctx, sessionID, "active"); err != nil {
+			if err := store.UpdateWorkspaceStatus(ctx, sessionID, "active"); err != nil {
 				return WorkspaceResumeResponse{}, mapWorkspaceStoreError(err, sessionID)
 			}
 			return WorkspaceResumeResponse{Status: "active"}, nil
@@ -287,7 +287,7 @@ func (d *Daemon) registerWorkspaceMethods(registry *rpc.MethodRegistry, store *g
 				return WorkspaceAddFolderResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
 			}
 
-			session, err := store.GetSession(ctx, sessionID)
+			session, err := store.GetWorkspace(ctx, sessionID)
 			if err != nil {
 				return WorkspaceAddFolderResponse{}, mapWorkspaceStoreError(err, sessionID)
 			}
@@ -316,7 +316,7 @@ func (d *Daemon) registerWorkspaceMethods(registry *rpc.MethodRegistry, store *g
 				return WorkspaceRemoveFolderResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
 			}
 
-			if _, err := store.GetSession(ctx, sessionID); err != nil {
+			if _, err := store.GetWorkspace(ctx, sessionID); err != nil {
 				return WorkspaceRemoveFolderResponse{}, mapWorkspaceStoreError(err, sessionID)
 			}
 
@@ -372,7 +372,7 @@ func (d *Daemon) workspaceSetupExisting(ctx context.Context, store *globaldb.Sto
 	payload["workspace_id"] = created.WorkspaceID
 	contextResp, err := setActiveWorkspaceContext(ctx, store, ContextSetRequest{WorkspaceID: created.WorkspaceID})
 	if err != nil {
-		if rollbackErr := store.DeleteSession(ctx, created.WorkspaceID); rollbackErr != nil && !errors.Is(rollbackErr, globaldb.ErrNotFound) {
+		if rollbackErr := store.DeleteWorkspace(ctx, created.WorkspaceID); rollbackErr != nil && !errors.Is(rollbackErr, globaldb.ErrNotFound) {
 			return WorkspaceSetupExistingResponse{}, fmt.Errorf("rollback workspace setup after active context failure: %w", rollbackErr)
 		}
 		return WorkspaceSetupExistingResponse{}, err
@@ -385,7 +385,7 @@ func (d *Daemon) workspaceSetupExisting(ctx context.Context, store *globaldb.Sto
 		} else if rollbackErr := store.SetMeta(ctx, activeContextMetaKey, `{}`); rollbackErr != nil {
 			return WorkspaceSetupExistingResponse{}, fmt.Errorf("clear active workspace after config failure: %w", rollbackErr)
 		}
-		if rollbackErr := store.DeleteSession(ctx, created.WorkspaceID); rollbackErr != nil && !errors.Is(rollbackErr, globaldb.ErrNotFound) {
+		if rollbackErr := store.DeleteWorkspace(ctx, created.WorkspaceID); rollbackErr != nil && !errors.Is(rollbackErr, globaldb.ErrNotFound) {
 			return WorkspaceSetupExistingResponse{}, fmt.Errorf("rollback workspace setup after config failure: %w", rollbackErr)
 		}
 		return WorkspaceSetupExistingResponse{}, err
@@ -406,7 +406,7 @@ func (d *Daemon) workspaceSetupExisting(ctx context.Context, store *globaldb.Sto
 				return WorkspaceSetupExistingResponse{}, fmt.Errorf("clear persisted active workspace after operation record failure: %w", rollbackErr)
 			}
 		}
-		if rollbackErr := store.DeleteSession(ctx, created.WorkspaceID); rollbackErr != nil && !errors.Is(rollbackErr, globaldb.ErrNotFound) {
+		if rollbackErr := store.DeleteWorkspace(ctx, created.WorkspaceID); rollbackErr != nil && !errors.Is(rollbackErr, globaldb.ErrNotFound) {
 			return WorkspaceSetupExistingResponse{}, fmt.Errorf("rollback workspace setup after operation record failure: %w", rollbackErr)
 		}
 		return WorkspaceSetupExistingResponse{}, err
@@ -440,31 +440,31 @@ func (d *Daemon) createWorkspace(ctx context.Context, store *globaldb.Store, req
 	if err != nil {
 		return WorkspaceCreateResponse{}, fmt.Errorf("generate workspace id: %w", err)
 	}
-	if err := store.CreateSession(ctx, sessionID, name, originRoot, cleanupPolicy, vcsPreference); err != nil {
+	if err := store.CreateWorkspace(ctx, sessionID, name, originRoot, cleanupPolicy, vcsPreference); err != nil {
 		return WorkspaceCreateResponse{}, mapWorkspaceStoreError(err, sessionID)
 	}
 	if err := store.AddFolder(ctx, sessionID, folderPath, vcsType, true); err != nil {
-		if rollbackErr := store.DeleteSession(ctx, sessionID); rollbackErr != nil && !errors.Is(rollbackErr, globaldb.ErrNotFound) {
+		if rollbackErr := store.DeleteWorkspace(ctx, sessionID); rollbackErr != nil && !errors.Is(rollbackErr, globaldb.ErrNotFound) {
 			return WorkspaceCreateResponse{}, fmt.Errorf("rollback workspace create after folder add failure: %w", rollbackErr)
 		}
 		return WorkspaceCreateResponse{}, mapWorkspaceStoreError(err, sessionID)
 	}
 	helperHarness, err := d.readConfiguredDefaultHarness()
 	if err != nil {
-		if rollbackErr := store.DeleteSession(ctx, sessionID); rollbackErr != nil && !errors.Is(rollbackErr, globaldb.ErrNotFound) {
+		if rollbackErr := store.DeleteWorkspace(ctx, sessionID); rollbackErr != nil && !errors.Is(rollbackErr, globaldb.ErrNotFound) {
 			return WorkspaceCreateResponse{}, fmt.Errorf("rollback workspace create after helper harness read failure: %w", rollbackErr)
 		}
 		return WorkspaceCreateResponse{}, err
 	}
 	if helperHarness != "" {
 		if _, err := store.EnsureDefaultHelperProfile(ctx, sessionID, helperHarness, helperPrompt()); err != nil {
-			if rollbackErr := store.DeleteSession(ctx, sessionID); rollbackErr != nil && !errors.Is(rollbackErr, globaldb.ErrNotFound) {
+			if rollbackErr := store.DeleteWorkspace(ctx, sessionID); rollbackErr != nil && !errors.Is(rollbackErr, globaldb.ErrNotFound) {
 				return WorkspaceCreateResponse{}, fmt.Errorf("rollback workspace create after helper ensure failure: %w", rollbackErr)
 			}
 			return WorkspaceCreateResponse{}, err
 		}
 	}
-	session, err := store.GetSession(ctx, sessionID)
+	session, err := store.GetWorkspace(ctx, sessionID)
 	if err != nil {
 		return WorkspaceCreateResponse{}, mapWorkspaceStoreError(err, sessionID)
 	}

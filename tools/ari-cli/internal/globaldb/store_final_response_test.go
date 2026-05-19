@@ -9,11 +9,11 @@ import (
 func TestFinalResponsePersistsAndListsByWorkspace(t *testing.T) {
 	store := newGlobalDBTestStore(t, "final-response")
 	ctx := context.Background()
-	if err := store.CreateSession(ctx, "ws-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "ws-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
-	if err := store.UpsertAgentProfile(ctx, AgentProfile{ProfileID: "ap_executor", Name: "executor"}); err != nil {
-		t.Fatalf("UpsertAgentProfile returned error: %v", err)
+	if err := store.UpsertProfile(ctx, Profile{ProfileID: "ap_executor", Name: "executor"}); err != nil {
+		t.Fatalf("UpsertProfile returned error: %v", err)
 	}
 
 	created := FinalResponse{FinalResponseID: "fr_1", RunID: "run_1", WorkspaceID: "ws-1", TaskID: "task-1", ContextPacketID: "ctx_1", ProfileID: "ap_executor", Status: "completed", Text: "Done", EvidenceLinksJSON: `[{"kind":"context_packet","id":"ctx_1"}]`}

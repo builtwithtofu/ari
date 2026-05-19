@@ -23,20 +23,20 @@ func TestCodexExecutorMapsAppServerNotifications(t *testing.T) {
 	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo", StartTransport: fakeCodexStarter(transport)})
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 
-	run, items, err := StartExecutorRun(context.Background(), executor, packet, AgentProfile{Name: "executor", Model: "gpt-5.1-codex", Prompt: "Do it", InvocationClass: HarnessInvocationAgent})
+	run, items, err := StartExecutorRun(context.Background(), executor, packet, Profile{Name: "executor", Model: "gpt-5.1-codex", Prompt: "Do it", InvocationClass: HarnessInvocationSticky})
 	if err != nil {
 		t.Fatalf("StartExecutorRun returned error: %v", err)
 	}
-	if run.Executor != HarnessNameCodex || run.ProviderSessionID != "thr_123" || run.ProviderRunID != "turn_456" || run.AgentSessionID == run.ProviderSessionID || !isULID(run.AgentSessionID) {
+	if run.Executor != HarnessNameCodex || run.ProviderSessionID != "thr_123" || run.ProviderRunID != "turn_456" || run.HarnessSessionID == run.ProviderSessionID || !isULID(run.HarnessSessionID) {
 		t.Fatalf("run = %#v, want Ari run id with Codex provider thread/session and turn/run", run)
 	}
 	if len(items) != 4 {
 		t.Fatalf("items len = %d, want lifecycle/message/token/completed items: %#v", len(items), items)
 	}
-	if items[0].RunID != run.AgentSessionID || items[0].SourceID != run.AgentSessionID || items[0].Kind != "lifecycle" || items[0].Status != "running" {
+	if items[0].RunID != run.HarnessSessionID || items[0].SourceID != run.HarnessSessionID || items[0].Kind != "lifecycle" || items[0].Status != "running" {
 		t.Fatalf("first item = %#v, want Ari-linked running lifecycle", items[0])
 	}
-	if items[1].Kind != "agent_text" || items[1].Text != "hello world" || items[1].ID != run.AgentSessionID+":item_1" || items[1].Metadata["provider_item_id"] != "item_1" || items[1].Metadata["provider_kind"] != "agent_message" {
+	if items[1].Kind != "agent_text" || items[1].Text != "hello world" || items[1].ID != run.HarnessSessionID+":item_1" || items[1].Metadata["provider_item_id"] != "item_1" || items[1].Metadata["provider_kind"] != "agent_message" {
 		t.Fatalf("message item = %#v, want completed agent text", items[1])
 	}
 	if !transport.closed {
@@ -60,7 +60,7 @@ func TestCodexExecutorMapsProfilePromptToThreadInstructions(t *testing.T) {
 	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo", StartTransport: fakeCodexStarter(transport)})
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 
-	_, _, err := StartExecutorRun(context.Background(), executor, packet, AgentProfile{Name: "executor", Model: "gpt-5.1-codex", Prompt: "Use executor behavior", InvocationClass: HarnessInvocationAgent})
+	_, _, err := StartExecutorRun(context.Background(), executor, packet, Profile{Name: "executor", Model: "gpt-5.1-codex", Prompt: "Use executor behavior", InvocationClass: HarnessInvocationSticky})
 	if err != nil {
 		t.Fatalf("StartExecutorRun returned error: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestCodexStdioTransportReadsLargeNotificationLines(t *testing.T) {
 
 func TestCodexExecutorReportsMissingExecutableBeforeStart(t *testing.T) {
 	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: "missing-codex", Cwd: "/repo", StartTransport: func(ctx context.Context, opts codexExecutorOptions) (codexTransport, error) {
-		return nil, &HarnessUnavailableError{Harness: HarnessNameCodex, Reason: "missing_executable", Executable: opts.Executable, Probe: opts.Executable + " --version", RequiredCapability: HarnessCapabilityAgentSessionFromContext, StartInvoked: false}
+		return nil, &HarnessUnavailableError{Harness: HarnessNameCodex, Reason: "missing_executable", Executable: opts.Executable, Probe: opts.Executable + " --version", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
 	}})
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
 
@@ -125,7 +125,7 @@ func TestCodexExecutorReportsMissingExecutableBeforeStart(t *testing.T) {
 	if !errors.As(err, &unavailable) {
 		t.Fatalf("error = %T %[1]v, want HarnessUnavailableError", err)
 	}
-	if unavailable.StartInvoked || unavailable.Executable != "missing-codex" || unavailable.RequiredCapability != HarnessCapabilityAgentSessionFromContext {
+	if unavailable.StartInvoked || unavailable.Executable != "missing-codex" || unavailable.RequiredCapability != HarnessCapabilityHarnessSessionFromContext {
 		t.Fatalf("unavailable = %#v, want pre-start missing executable", unavailable)
 	}
 }

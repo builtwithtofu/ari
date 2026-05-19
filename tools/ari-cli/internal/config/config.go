@@ -143,9 +143,9 @@ func Validate(cfg *Config) error {
 	}
 	if invocationClass := strings.TrimSpace(cfg.DefaultInvocationClass); invocationClass != "" {
 		switch daemon.HarnessInvocationClass(invocationClass) {
-		case daemon.HarnessInvocationAgent, daemon.HarnessInvocationTemporary:
+		case daemon.HarnessInvocationSticky, daemon.HarnessInvocationEphemeral:
 		default:
-			return fmt.Errorf("validate config: default_invocation_class must be one of agent, temporary")
+			return fmt.Errorf("validate config: default_invocation_class must be one of sticky, ephemeral")
 		}
 	}
 

@@ -14,12 +14,12 @@ func TestSessionCreateAndLookup(t *testing.T) {
 	store := newSessionTestStore(t)
 	ctx := context.Background()
 
-	err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto")
+	err := store.CreateWorkspace(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto")
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
 
-	gotByID, err := store.GetSession(ctx, "sess-1")
+	gotByID, err := store.GetWorkspace(ctx, "sess-1")
 	if err != nil {
 		t.Fatalf("GetSession returned error: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestSessionCreateAndLookup(t *testing.T) {
 		t.Fatalf("GetSession VCSPreference = %q, want %q", gotByID.VCSPreference, "auto")
 	}
 
-	gotByName, err := store.GetSessionByName(ctx, "alpha")
+	gotByName, err := store.GetWorkspaceByName(ctx, "alpha")
 	if err != nil {
 		t.Fatalf("GetSessionByName returned error: %v", err)
 	}
@@ -44,7 +44,7 @@ func TestSessionCreateAndLookup(t *testing.T) {
 		t.Fatalf("GetSessionByName ID = %q, want %q", gotByName.ID, "sess-1")
 	}
 
-	err = store.CreateSession(ctx, "sess-2", "alpha", "/tmp/origin2", "manual", "auto")
+	err = store.CreateWorkspace(ctx, "sess-2", "alpha", "/tmp/origin2", "manual", "auto")
 	if err == nil {
 		t.Fatal("CreateSession returned nil error for duplicate name")
 	}
@@ -54,12 +54,12 @@ func TestSessionCreateStoresExplicitVCSPreference(t *testing.T) {
 	store := newSessionTestStore(t)
 	ctx := context.Background()
 
-	err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "git")
+	err := store.CreateWorkspace(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "git")
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
 
-	got, err := store.GetSession(ctx, "sess-1")
+	got, err := store.GetWorkspace(ctx, "sess-1")
 	if err != nil {
 		t.Fatalf("GetSession returned error: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestSessionCreateRejectsInvalidVCSPreference(t *testing.T) {
 	store := newSessionTestStore(t)
 	ctx := context.Background()
 
-	err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "gti")
+	err := store.CreateWorkspace(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "gti")
 	if err == nil {
 		t.Fatal("CreateSession returned nil error for invalid vcs preference")
 	}
@@ -85,7 +85,7 @@ func TestSessionCreateRejectsRemovedCleanupPolicy(t *testing.T) {
 	store := newSessionTestStore(t)
 	ctx := context.Background()
 
-	err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "on_close", "auto")
+	err := store.CreateWorkspace(ctx, "sess-1", "alpha", "/tmp/origin", "on_close", "auto")
 	if err == nil {
 		t.Fatal("CreateSession returned nil error for removed cleanup policy")
 	}
@@ -98,7 +98,7 @@ func TestSessionStatusTransitions(t *testing.T) {
 	store := newSessionTestStore(t)
 	ctx := context.Background()
 
-	err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto")
+	err := store.CreateWorkspace(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto")
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestSessionStatusTransitions(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := store.UpdateSessionStatus(ctx, "sess-1", tc.toStatus)
+			err := store.UpdateWorkspaceStatus(ctx, "sess-1", tc.toStatus)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("UpdateSessionStatus returned nil error, want error")
@@ -129,7 +129,7 @@ func TestSessionStatusTransitions(t *testing.T) {
 				t.Fatalf("UpdateSessionStatus returned error: %v", err)
 			}
 
-			got, err := store.GetSession(ctx, "sess-1")
+			got, err := store.GetWorkspace(ctx, "sess-1")
 			if err != nil {
 				t.Fatalf("GetSession returned error: %v", err)
 			}
@@ -140,11 +140,11 @@ func TestSessionStatusTransitions(t *testing.T) {
 	}
 }
 
-func TestSessionFolderOperationsAndGuards(t *testing.T) {
+func TestWorkspaceFolderOperationsAndGuards(t *testing.T) {
 	store := newSessionTestStore(t)
 	ctx := context.Background()
 
-	err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto")
+	err := store.CreateWorkspace(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto")
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
@@ -203,10 +203,10 @@ func TestAddFolderRejectsFolderAlreadyOwnedByAnotherWorkspace(t *testing.T) {
 	store := newSessionTestStore(t)
 	ctx := context.Background()
 
-	if err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin-a", "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "sess-1", "alpha", "/tmp/origin-a", "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession sess-1 returned error: %v", err)
 	}
-	if err := store.CreateSession(ctx, "sess-2", "beta", "/tmp/origin-b", "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "sess-2", "beta", "/tmp/origin-b", "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession sess-2 returned error: %v", err)
 	}
 	if err := store.AddFolder(ctx, "sess-1", "/tmp/repo-a", "git", true); err != nil {
@@ -226,10 +226,10 @@ func TestWorkspaceFolderPathAllowsHistoricalDuplicates(t *testing.T) {
 	store := newSessionTestStore(t)
 	ctx := context.Background()
 
-	if err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin-a", "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "sess-1", "alpha", "/tmp/origin-a", "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession sess-1 returned error: %v", err)
 	}
-	if err := store.CreateSession(ctx, "sess-2", "beta", "/tmp/origin-b", "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "sess-2", "beta", "/tmp/origin-b", "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession sess-2 returned error: %v", err)
 	}
 	if err := store.AddFolder(ctx, "sess-1", "/tmp/repo-a", "git", true); err != nil {
@@ -242,23 +242,23 @@ func TestWorkspaceFolderPathAllowsHistoricalDuplicates(t *testing.T) {
 	}
 }
 
-func TestListSessionsNewestFirst(t *testing.T) {
+func TestListWorkspacesNewestFirst(t *testing.T) {
 	store := newSessionTestStore(t)
 	ctx := context.Background()
 
-	err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin-a", "manual", "auto")
+	err := store.CreateWorkspace(ctx, "sess-1", "alpha", "/tmp/origin-a", "manual", "auto")
 	if err != nil {
 		t.Fatalf("CreateSession alpha returned error: %v", err)
 	}
 
 	time.Sleep(10 * time.Millisecond)
 
-	err = store.CreateSession(ctx, "sess-2", "beta", "/tmp/origin-b", "manual", "auto")
+	err = store.CreateWorkspace(ctx, "sess-2", "beta", "/tmp/origin-b", "manual", "auto")
 	if err != nil {
 		t.Fatalf("CreateSession beta returned error: %v", err)
 	}
 
-	sessions, err := store.ListSessions(ctx)
+	sessions, err := store.ListWorkspaces(ctx)
 	if err != nil {
 		t.Fatalf("ListSessions returned error: %v", err)
 	}
@@ -277,7 +277,7 @@ func TestRemovePrimaryFolderPromotesAnotherFolder(t *testing.T) {
 	store := newSessionTestStore(t)
 	ctx := context.Background()
 
-	err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto")
+	err := store.CreateWorkspace(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto")
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
@@ -315,7 +315,7 @@ func TestAddFolderPrimaryDemotesExistingPrimary(t *testing.T) {
 	store := newSessionTestStore(t)
 	ctx := context.Background()
 
-	err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto")
+	err := store.CreateWorkspace(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto")
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
@@ -349,7 +349,7 @@ func TestConcurrentRemoveFolderKeepsOneFolder(t *testing.T) {
 	store := newSessionTestStore(t)
 	ctx := context.Background()
 
-	err := store.CreateSession(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto")
+	err := store.CreateWorkspace(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto")
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}

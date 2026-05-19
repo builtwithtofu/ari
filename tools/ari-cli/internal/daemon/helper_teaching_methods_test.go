@@ -24,17 +24,17 @@ func TestHelperContextHomeUsesConfiguredState(t *testing.T) {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 	home := t.TempDir()
-	if err := store.CreateSession(context.Background(), "home-id", "home", home, "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(context.Background(), "home-id", "home", home, "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
 	if err := store.AddFolder(context.Background(), "home-id", home, "unknown", true); err != nil {
 		t.Fatalf("AddFolder returned error: %v", err)
 	}
-	if err := store.UpsertAgentProfile(context.Background(), globaldb.AgentProfile{ProfileID: "ap-helper", WorkspaceID: "home-id", Name: "helper", Harness: "codex", Prompt: helperPrompt()}); err != nil {
-		t.Fatalf("UpsertAgentProfile helper returned error: %v", err)
+	if err := store.UpsertProfile(context.Background(), globaldb.Profile{ProfileID: "ap-helper", WorkspaceID: "home-id", Name: "helper", Harness: "codex", Prompt: helperPrompt()}); err != nil {
+		t.Fatalf("UpsertProfile helper returned error: %v", err)
 	}
-	if err := store.UpsertAgentProfile(context.Background(), globaldb.AgentProfile{ProfileID: "ap-reviewer", WorkspaceID: "home-id", Name: "frontend-reviewer", Harness: "opencode", Prompt: "Review UI regressions"}); err != nil {
-		t.Fatalf("UpsertAgentProfile reviewer returned error: %v", err)
+	if err := store.UpsertProfile(context.Background(), globaldb.Profile{ProfileID: "ap-reviewer", WorkspaceID: "home-id", Name: "frontend-reviewer", Harness: "opencode", Prompt: "Review UI regressions"}); err != nil {
+		t.Fatalf("UpsertProfile reviewer returned error: %v", err)
 	}
 	seedSessionWithPrimaryFolder(t, store, "project-1", t.TempDir())
 
@@ -73,21 +73,21 @@ func TestHelperContextProjectIncludesWorkflowLearningsFromAriStateAndArtifacts(t
 	if err := os.WriteFile(filepath.Join(projectRoot, ".ari", "active", "alpha", "STATE.json"), []byte(`{"current_phase":"Phase A","next":"run verify"}`), 0o644); err != nil {
 		t.Fatalf("write state: %v", err)
 	}
-	if err := store.CreateSession(context.Background(), "project-1", "project-1", projectRoot, "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(context.Background(), "project-1", "project-1", projectRoot, "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
 	if err := store.AddFolder(context.Background(), "project-1", projectRoot, "git", true); err != nil {
 		t.Fatalf("AddFolder returned error: %v", err)
 	}
-	if err := store.UpsertAgentProfile(context.Background(), globaldb.AgentProfile{ProfileID: "ap-helper", WorkspaceID: "project-1", Name: "helper", Harness: "codex", Prompt: helperPrompt()}); err != nil {
-		t.Fatalf("UpsertAgentProfile returned error: %v", err)
+	if err := store.UpsertProfile(context.Background(), globaldb.Profile{ProfileID: "ap-helper", WorkspaceID: "project-1", Name: "helper", Harness: "codex", Prompt: helperPrompt()}); err != nil {
+		t.Fatalf("UpsertProfile returned error: %v", err)
 	}
 	finishedAt := time.Now().UTC()
 	if err := store.UpsertFinalResponse(context.Background(), globaldb.FinalResponse{FinalResponseID: "fr-1", RunID: "run-1", WorkspaceID: "project-1", TaskID: "task-1", ContextPacketID: "cp-1", Status: "failed", Text: "Build failed because gofmt found files", CreatedAt: finishedAt}); err != nil {
 		t.Fatalf("UpsertFinalResponse returned error: %v", err)
 	}
-	if err := store.UpsertAgentSessionTelemetry(context.Background(), globaldb.AgentSessionTelemetry{RunID: "run-1", WorkspaceID: "project-1", TaskID: "task-1", ProfileID: "ap-helper", ProfileName: "helper", Harness: "codex", Model: "gpt", InvocationClass: "agent", Status: "failed", ExitCodeKnown: true, ExitCode: int64Ptr(1), CreatedAt: finishedAt, UpdatedAt: finishedAt}); err != nil {
-		t.Fatalf("UpsertAgentSessionTelemetry returned error: %v", err)
+	if err := store.UpsertHarnessSessionTelemetry(context.Background(), globaldb.HarnessSessionTelemetry{RunID: "run-1", WorkspaceID: "project-1", TaskID: "task-1", ProfileID: "ap-helper", ProfileName: "helper", Harness: "codex", Model: "gpt", InvocationClass: "sticky", Status: "failed", ExitCodeKnown: true, ExitCode: int64Ptr(1), CreatedAt: finishedAt, UpdatedAt: finishedAt}); err != nil {
+		t.Fatalf("UpsertHarnessSessionTelemetry returned error: %v", err)
 	}
 	if err := store.CreateCommand(context.Background(), globaldb.CreateCommandParams{CommandID: "cmd-verify", WorkspaceID: "project-1", Command: "just", Args: `["verify"]`, Status: "exited", ExitCode: intPtr(1), StartedAt: "2026-04-28T00:00:00Z"}); err != nil {
 		t.Fatalf("CreateCommand returned error: %v", err)

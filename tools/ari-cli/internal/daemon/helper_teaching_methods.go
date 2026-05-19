@@ -117,7 +117,7 @@ func (d *Daemon) helperContext(ctx context.Context, store *globaldb.Store, req H
 	if workspaceID == "" {
 		return HelperContextResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", map[string]any{"reason": "missing_workspace_id"})
 	}
-	session, err := store.GetSession(ctx, workspaceID)
+	session, err := store.GetWorkspace(ctx, workspaceID)
 	if err != nil {
 		return HelperContextResponse{}, mapWorkspaceStoreError(err, workspaceID)
 	}
@@ -153,9 +153,9 @@ func (d *Daemon) helperContext(ctx context.Context, store *globaldb.Store, req H
 	return resp, nil
 }
 
-func (d *Daemon) helperHealth(ctx context.Context, store *globaldb.Store, session *globaldb.Session) HelperHealthSummary {
+func (d *Daemon) helperHealth(ctx context.Context, store *globaldb.Store, session *globaldb.Workspace) HelperHealthSummary {
 	_, cfgErr := readJSONConfig(d.configPath)
-	_, wsErr := store.GetSession(ctx, session.ID)
+	_, wsErr := store.GetWorkspace(ctx, session.ID)
 	return HelperHealthSummary{DaemonVersion: d.version, ConfigReadable: cfgErr == nil, WorkspaceAvailable: wsErr == nil}
 }
 
@@ -167,7 +167,7 @@ func (d *Daemon) helperExplain(ctx context.Context, store *globaldb.Store, req H
 	if strings.TrimSpace(req.WorkspaceID) == "" {
 		return HelperExplainResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", map[string]any{"reason": "missing_workspace_id"})
 	}
-	if _, err := store.GetSession(ctx, req.WorkspaceID); err != nil {
+	if _, err := store.GetWorkspace(ctx, req.WorkspaceID); err != nil {
 		return HelperExplainResponse{}, mapWorkspaceStoreError(err, req.WorkspaceID)
 	}
 	switch topic {
@@ -182,7 +182,7 @@ func (d *Daemon) helperExplain(ctx context.Context, store *globaldb.Store, req H
 	case "workspace":
 		return HelperExplainResponse{Topic: "workspace", Explanation: "A workspace is a folder-backed place Ari can use for context. Init creates a normal home workspace as a starter landing place when possible; users can delete it without changing Ari defaults.", Anchors: []string{"workspace.create", "workspace.get", "ari init"}}, nil
 	case "telemetry":
-		return HelperExplainResponse{Topic: "telemetry", Explanation: "Telemetry summarizes Ari-owned run evidence such as status, token/cost knowledge, exit code, process metrics, and orphan state when available.", Anchors: []string{"telemetry.rollup", "agent_session_telemetry"}}, nil
+		return HelperExplainResponse{Topic: "telemetry", Explanation: "Telemetry summarizes Ari-owned run evidence such as status, token/cost knowledge, exit code, process metrics, and orphan state when available.", Anchors: []string{"telemetry.rollup", "harness_session_telemetry"}}, nil
 	case "final response":
 		return HelperExplainResponse{Topic: "final response", Explanation: "A final response is the durable answer or outcome Ari records for a run, including status, text, and evidence links where available.", Anchors: []string{"final_response.get", "final_response.list"}}, nil
 	case "tool grant", "tool grants":
@@ -205,7 +205,7 @@ func (d *Daemon) helperDefaults() (map[string]string, error) {
 }
 
 func helperProfiles(ctx context.Context, store *globaldb.Store, workspaceID string) ([]HelperProfileSummary, error) {
-	profiles, err := store.ListAgentProfiles(ctx, workspaceID)
+	profiles, err := store.ListProfiles(ctx, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -217,7 +217,7 @@ func helperProfiles(ctx context.Context, store *globaldb.Store, workspaceID stri
 }
 
 func helperWorkspaceSummaries(ctx context.Context, store *globaldb.Store) ([]HelperWorkspaceSummary, error) {
-	sessions, err := store.ListSessions(ctx)
+	sessions, err := store.ListWorkspaces(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -228,7 +228,7 @@ func helperWorkspaceSummaries(ctx context.Context, store *globaldb.Store) ([]Hel
 	return out, nil
 }
 
-func helperWorkspaceSummary(ctx context.Context, store *globaldb.Store, session *globaldb.Session) HelperWorkspaceSummary {
+func helperWorkspaceSummary(ctx context.Context, store *globaldb.Store, session *globaldb.Workspace) HelperWorkspaceSummary {
 	count := 0
 	if folders, err := store.ListFolders(ctx, session.ID); err == nil {
 		count = len(folders)
@@ -249,7 +249,7 @@ func helperFinalResponses(ctx context.Context, store *globaldb.Store, workspaceI
 }
 
 func helperTelemetry(ctx context.Context, store *globaldb.Store, workspaceID string) ([]HelperTelemetrySummary, error) {
-	rollups, err := store.RollupAgentSessionTelemetry(ctx, workspaceID)
+	rollups, err := store.RollupHarnessSessionTelemetry(ctx, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -260,7 +260,7 @@ func helperTelemetry(ctx context.Context, store *globaldb.Store, workspaceID str
 	return out, nil
 }
 
-func helperWorkflowLearnings(ctx context.Context, store *globaldb.Store, session *globaldb.Session, proofs []ProofResultSummary) ([]WorkflowLearning, error) {
+func helperWorkflowLearnings(ctx context.Context, store *globaldb.Store, session *globaldb.Workspace, proofs []ProofResultSummary) ([]WorkflowLearning, error) {
 	learnings := make([]WorkflowLearning, 0)
 	responses, err := store.ListFinalResponses(ctx, session.ID)
 	if err != nil {

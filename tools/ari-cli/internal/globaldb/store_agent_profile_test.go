@@ -6,86 +6,86 @@ import (
 	"testing"
 )
 
-func TestAgentProfilePersistsAndFallsBackToGlobalScope(t *testing.T) {
+func TestProfilePersistsAndFallsBackToGlobalScope(t *testing.T) {
 	store := newGlobalDBTestStore(t, "agent-profile")
 	ctx := context.Background()
-	if err := store.UpsertAgentProfile(ctx, AgentProfile{ProfileID: "ap_global", Name: "executor", Harness: "codex", Model: "gpt-5.1-codex", Prompt: "Do work", InvocationClass: "agent"}); err != nil {
-		t.Fatalf("UpsertAgentProfile global returned error: %v", err)
+	if err := store.UpsertProfile(ctx, Profile{ProfileID: "ap_global", Name: "executor", Harness: "codex", Model: "gpt-5.1-codex", Prompt: "Do work", InvocationClass: "sticky"}); err != nil {
+		t.Fatalf("UpsertProfile global returned error: %v", err)
 	}
-	if err := store.UpsertAgentProfile(ctx, AgentProfile{ProfileID: "ap_workspace", WorkspaceID: "ws-1", Name: "executor", Harness: "claude", Model: "opus"}); err != nil {
-		t.Fatalf("UpsertAgentProfile workspace returned error: %v", err)
+	if err := store.UpsertProfile(ctx, Profile{ProfileID: "ap_workspace", WorkspaceID: "ws-1", Name: "executor", Harness: "claude", Model: "opus"}); err != nil {
+		t.Fatalf("UpsertProfile workspace returned error: %v", err)
 	}
 
-	workspaceProfile, err := store.GetAgentProfile(ctx, "ws-1", "executor")
+	workspaceProfile, err := store.GetProfile(ctx, "ws-1", "executor")
 	if err != nil {
-		t.Fatalf("GetAgentProfile workspace returned error: %v", err)
+		t.Fatalf("GetProfile workspace returned error: %v", err)
 	}
 	if workspaceProfile.ProfileID != "ap_workspace" || workspaceProfile.Harness != "claude" || workspaceProfile.Model != "opus" {
 		t.Fatalf("workspace profile = %#v, want workspace override", workspaceProfile)
 	}
-	fallbackProfile, err := store.GetAgentProfile(ctx, "ws-2", "executor")
+	fallbackProfile, err := store.GetProfile(ctx, "ws-2", "executor")
 	if err != nil {
-		t.Fatalf("GetAgentProfile fallback returned error: %v", err)
+		t.Fatalf("GetProfile fallback returned error: %v", err)
 	}
 	if fallbackProfile.ProfileID != "ap_global" || fallbackProfile.Harness != "codex" || fallbackProfile.Prompt != "Do work" {
 		t.Fatalf("fallback profile = %#v, want global profile", fallbackProfile)
 	}
 }
 
-func TestAgentProfileAllowsNullableOverrides(t *testing.T) {
+func TestProfileAllowsNullableOverrides(t *testing.T) {
 	store := newGlobalDBTestStore(t, "agent-profile-nullable")
 	ctx := context.Background()
-	if err := store.UpsertAgentProfile(ctx, AgentProfile{ProfileID: "ap_partial", Name: "partial"}); err != nil {
-		t.Fatalf("UpsertAgentProfile partial returned error: %v", err)
+	if err := store.UpsertProfile(ctx, Profile{ProfileID: "ap_partial", Name: "partial"}); err != nil {
+		t.Fatalf("UpsertProfile partial returned error: %v", err)
 	}
-	profile, err := store.GetAgentProfile(ctx, "", "partial")
+	profile, err := store.GetProfile(ctx, "", "partial")
 	if err != nil {
-		t.Fatalf("GetAgentProfile partial returned error: %v", err)
+		t.Fatalf("GetProfile partial returned error: %v", err)
 	}
 	if profile.Harness != "" || profile.Model != "" || profile.InvocationClass != "" {
 		t.Fatalf("partial profile = %#v, want empty explicit overrides", profile)
 	}
 }
 
-func TestAgentProfileUpsertUpdatesExistingScopeAndName(t *testing.T) {
+func TestProfileUpsertUpdatesExistingScopeAndName(t *testing.T) {
 	store := newGlobalDBTestStore(t, "agent-profile-upsert")
 	ctx := context.Background()
-	if err := store.UpsertAgentProfile(ctx, AgentProfile{ProfileID: "ap_first", WorkspaceID: "ws-1", Name: "executor", Harness: "codex", Model: "gpt-5.1-codex"}); err != nil {
-		t.Fatalf("UpsertAgentProfile first returned error: %v", err)
+	if err := store.UpsertProfile(ctx, Profile{ProfileID: "ap_first", WorkspaceID: "ws-1", Name: "executor", Harness: "codex", Model: "gpt-5.1-codex"}); err != nil {
+		t.Fatalf("UpsertProfile first returned error: %v", err)
 	}
-	if err := store.UpsertAgentProfile(ctx, AgentProfile{ProfileID: "ap_second", WorkspaceID: "ws-1", Name: "executor", Harness: "claude", Model: "opus"}); err != nil {
-		t.Fatalf("UpsertAgentProfile update returned error: %v", err)
+	if err := store.UpsertProfile(ctx, Profile{ProfileID: "ap_second", WorkspaceID: "ws-1", Name: "executor", Harness: "claude", Model: "opus"}); err != nil {
+		t.Fatalf("UpsertProfile update returned error: %v", err)
 	}
 
-	profile, err := store.GetAgentProfile(ctx, "ws-1", "executor")
+	profile, err := store.GetProfile(ctx, "ws-1", "executor")
 	if err != nil {
-		t.Fatalf("GetAgentProfile returned error: %v", err)
+		t.Fatalf("GetProfile returned error: %v", err)
 	}
 	if profile.ProfileID != "ap_first" || profile.Harness != "claude" || profile.Model != "opus" {
 		t.Fatalf("profile = %#v, want existing scoped name updated in place", profile)
 	}
 }
 
-func TestAgentProfileListUsesRequestedScope(t *testing.T) {
+func TestProfileListUsesRequestedScope(t *testing.T) {
 	store := newGlobalDBTestStore(t, "agent-profile-list")
 	ctx := context.Background()
-	if err := store.UpsertAgentProfile(ctx, AgentProfile{ProfileID: "ap_global", Name: "global", Harness: "codex"}); err != nil {
-		t.Fatalf("UpsertAgentProfile global returned error: %v", err)
+	if err := store.UpsertProfile(ctx, Profile{ProfileID: "ap_global", Name: "global", Harness: "codex"}); err != nil {
+		t.Fatalf("UpsertProfile global returned error: %v", err)
 	}
-	if err := store.UpsertAgentProfile(ctx, AgentProfile{ProfileID: "ap_workspace", WorkspaceID: "ws-1", Name: "workspace", Harness: "claude"}); err != nil {
-		t.Fatalf("UpsertAgentProfile workspace returned error: %v", err)
+	if err := store.UpsertProfile(ctx, Profile{ProfileID: "ap_workspace", WorkspaceID: "ws-1", Name: "workspace", Harness: "claude"}); err != nil {
+		t.Fatalf("UpsertProfile workspace returned error: %v", err)
 	}
 
-	globalProfiles, err := store.ListAgentProfiles(ctx, "")
+	globalProfiles, err := store.ListProfiles(ctx, "")
 	if err != nil {
-		t.Fatalf("ListAgentProfiles global returned error: %v", err)
+		t.Fatalf("ListProfiles global returned error: %v", err)
 	}
 	if len(globalProfiles) != 1 || globalProfiles[0].ProfileID != "ap_global" {
 		t.Fatalf("global profiles = %#v, want only global", globalProfiles)
 	}
-	workspaceProfiles, err := store.ListAgentProfiles(ctx, "ws-1")
+	workspaceProfiles, err := store.ListProfiles(ctx, "ws-1")
 	if err != nil {
-		t.Fatalf("ListAgentProfiles workspace returned error: %v", err)
+		t.Fatalf("ListProfiles workspace returned error: %v", err)
 	}
 	if len(workspaceProfiles) != 1 || workspaceProfiles[0].ProfileID != "ap_workspace" {
 		t.Fatalf("workspace profiles = %#v, want only workspace", workspaceProfiles)
@@ -95,7 +95,7 @@ func TestAgentProfileListUsesRequestedScope(t *testing.T) {
 func TestEnsureDefaultHelperProfileCreatesWorkspaceScopedHelper(t *testing.T) {
 	store := newGlobalDBTestStore(t, "helper-profile")
 	ctx := context.Background()
-	if err := store.CreateSession(ctx, "ws-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "ws-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
 
@@ -107,9 +107,9 @@ func TestEnsureDefaultHelperProfileCreatesWorkspaceScopedHelper(t *testing.T) {
 		t.Fatalf("helper profile = %#v", help)
 	}
 
-	got, err := store.GetAgentProfile(ctx, "ws-1", "helper")
+	got, err := store.GetProfile(ctx, "ws-1", "helper")
 	if err != nil {
-		t.Fatalf("GetAgentProfile returned error: %v", err)
+		t.Fatalf("GetProfile returned error: %v", err)
 	}
 	if got.ProfileID != help.ProfileID {
 		t.Fatalf("persisted helper id = %q, want %q", got.ProfileID, help.ProfileID)
@@ -119,11 +119,11 @@ func TestEnsureDefaultHelperProfileCreatesWorkspaceScopedHelper(t *testing.T) {
 func TestEnsureDefaultHelperProfileDoesNotOverwriteExistingHelper(t *testing.T) {
 	store := newGlobalDBTestStore(t, "helper-profile-existing")
 	ctx := context.Background()
-	if err := store.CreateSession(ctx, "ws-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "ws-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
-	if err := store.UpsertAgentProfile(ctx, AgentProfile{ProfileID: "ap_existing", WorkspaceID: "ws-1", Name: "helper", Harness: "opencode", Prompt: "Keep me"}); err != nil {
-		t.Fatalf("UpsertAgentProfile returned error: %v", err)
+	if err := store.UpsertProfile(ctx, Profile{ProfileID: "ap_existing", WorkspaceID: "ws-1", Name: "helper", Harness: "opencode", Prompt: "Keep me"}); err != nil {
+		t.Fatalf("UpsertProfile returned error: %v", err)
 	}
 
 	help, err := store.EnsureDefaultHelperProfile(ctx, "ws-1", "codex", "Replace me")
@@ -138,10 +138,10 @@ func TestEnsureDefaultHelperProfileDoesNotOverwriteExistingHelper(t *testing.T) 
 func TestEnsureDefaultHelperProfileUsesUniqueProfileIDs(t *testing.T) {
 	store := newGlobalDBTestStore(t, "helper-profile-unique-ids")
 	ctx := context.Background()
-	if err := store.CreateSession(ctx, "a-b_c", "one", "/tmp/one", "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "a-b_c", "one", "/tmp/one", "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession one returned error: %v", err)
 	}
-	if err := store.CreateSession(ctx, "a_b-c", "two", "/tmp/two", "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "a_b-c", "two", "/tmp/two", "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession two returned error: %v", err)
 	}
 
@@ -164,10 +164,10 @@ func TestEnsureDefaultHelperProfileUsesUniqueProfileIDs(t *testing.T) {
 func TestGetDefaultHelperProfileDoesNotFallbackAcrossScopes(t *testing.T) {
 	store := newGlobalDBTestStore(t, "helper-profile-scope")
 	ctx := context.Background()
-	if err := store.CreateSession(ctx, "system-id", "system", "/tmp/system-origin", "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "system-id", "system", "/tmp/system-origin", "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession system returned error: %v", err)
 	}
-	if err := store.CreateSession(ctx, "project-id", "project", "/tmp/project-origin", "manual", "auto"); err != nil {
+	if err := store.CreateWorkspace(ctx, "project-id", "project", "/tmp/project-origin", "manual", "auto"); err != nil {
 		t.Fatalf("CreateSession project returned error: %v", err)
 	}
 	if _, err := store.EnsureDefaultHelperProfile(ctx, "system-id", "codex", "Home helper"); err != nil {
@@ -188,10 +188,10 @@ func TestEnsureDefaultHelperProfileRejectsUnknownWorkspace(t *testing.T) {
 	}
 }
 
-func TestAgentProfileRejectsInvalidInput(t *testing.T) {
+func TestProfileRejectsInvalidInput(t *testing.T) {
 	store := newGlobalDBTestStore(t, "agent-profile-invalid")
-	err := store.UpsertAgentProfile(context.Background(), AgentProfile{Name: "missing-id"})
+	err := store.UpsertProfile(context.Background(), Profile{Name: "missing-id"})
 	if !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("UpsertAgentProfile error = %v, want ErrInvalidInput", err)
+		t.Fatalf("UpsertProfile error = %v, want ErrInvalidInput", err)
 	}
 }
