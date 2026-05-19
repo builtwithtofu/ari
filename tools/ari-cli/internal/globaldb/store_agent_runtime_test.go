@@ -113,6 +113,44 @@ func TestHarnessSessionMetadataRoundTrips(t *testing.T) {
 	}
 }
 
+func TestMarkRunningHarnessSessionsLost(t *testing.T) {
+	store := newGlobalDBTestStore(t, "mark-running-harness-sessions-lost")
+	ctx := context.Background()
+	if err := store.CreateWorkspace(ctx, "ws-1", "workspace", t.TempDir(), "manual", "auto"); err != nil {
+		t.Fatalf("CreateWorkspace returned error: %v", err)
+	}
+	if err := store.CreateHarnessSessionConfig(ctx, HarnessSessionConfig{AgentID: "agent-1", WorkspaceID: "ws-1", Name: "executor", Harness: "codex"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig returned error: %v", err)
+	}
+	for _, session := range []HarnessSession{
+		{SessionID: "run-running", WorkspaceID: "ws-1", AgentID: "agent-1", Harness: "codex", Status: "running", Usage: HarnessSessionUsageSticky, CWD: t.TempDir()},
+		{SessionID: "run-waiting", WorkspaceID: "ws-1", AgentID: "agent-1", Harness: "codex", Status: "waiting", Usage: HarnessSessionUsageSticky, CWD: t.TempDir()},
+	} {
+		if err := store.CreateHarnessSession(ctx, session); err != nil {
+			t.Fatalf("CreateHarnessSession(%s) returned error: %v", session.SessionID, err)
+		}
+	}
+
+	if err := store.MarkRunningHarnessSessionsLost(ctx); err != nil {
+		t.Fatalf("MarkRunningHarnessSessionsLost returned error: %v", err)
+	}
+
+	running, err := store.GetHarnessSession(ctx, "run-running")
+	if err != nil {
+		t.Fatalf("GetHarnessSession run-running returned error: %v", err)
+	}
+	if running.Status != "lost" {
+		t.Fatalf("running session status = %q, want lost", running.Status)
+	}
+	waiting, err := store.GetHarnessSession(ctx, "run-waiting")
+	if err != nil {
+		t.Fatalf("GetHarnessSession run-waiting returned error: %v", err)
+	}
+	if waiting.Status != "waiting" {
+		t.Fatalf("waiting session status = %q, want waiting", waiting.Status)
+	}
+}
+
 func TestRunLogMessagesListRejectsUnknownRun(t *testing.T) {
 	store := newGlobalDBTestStore(t, "run-message-list-unknown-run")
 	ctx := context.Background()
