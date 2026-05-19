@@ -11,11 +11,26 @@
 ## Product constraints
 
 - Ari is the project and interface name.
+- Read `CONTEXT.md` before product planning or implementation; it is the glossary.
+- Read `docs/ep/ari-workspace-runtime.md` before product-shaping work.
 - Read `docs/adr/*` before implementation work. Accepted ADRs are hard constraints unless the user asks to change them.
-- Read `docs/ep/*` before implementation work. EPs guide product intent; they may drift as evidence changes.
+- Read other `docs/ep/*` only for the touched topic. EPs guide product intent; they may drift as evidence changes.
+- Ari is a durable, headless workspace runtime for LLM harnesses.
+- Workspaces are durable switchable units of work. A workspace may contain one or more folders and multiple peer harness sessions.
+- Ari enhances existing harnesses; it does not replace Claude Code, Codex, OpenCode, or future harnesses.
+- Sticky sessions are persistent human-facing harness sessions.
+- Ephemeral calls are inspectable bounded worker harness invocations, not provider-specific subagents.
+- Daemon operations are the product authority. CLI is the current control/story surface. `ari api` is the fine-grained escape hatch.
 - Breaking changes are allowed when they improve the core design.
 - No compatibility shims or legacy aliases unless requested.
 - For OpenCode harness auth research/integration, use `github.com/anomalyco/opencode`; do not use `opencode-ai/opencode` as evidence.
+
+## Documentation discipline
+
+- Keep `CONTEXT.md` as glossary only.
+- Use ADRs for accepted durable decisions.
+- Use EPs for product direction and intended outcomes.
+- Surface doc/code contradictions before changing governed code.
 
 ## Default validation
 

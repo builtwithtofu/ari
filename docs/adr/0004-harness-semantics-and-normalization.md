@@ -8,19 +8,19 @@ Date: 2026-05-04
 
 Ari supports multiple harnesses such as Claude Code, Codex, and OpenCode. Each harness has different concepts for sessions, prompts, system/developer instructions, messages, runs, events, usage, and provider IDs. If Ari exposes those differences directly, the CLI, daemon API, and future frontend will become provider-shaped instead of Ari-shaped.
 
-ADR 0001 makes the daemon API the product authority. ADR 0002 makes workspace the runtime unit. ADR 0003 defines profiles, agent sessions, messages, context excerpts, sticky sessions, and ephemeral calls as Ari product concepts. This ADR refines those decisions at the harness boundary.
+ADR 0001 makes the daemon API the product authority. ADR 0002 makes workspace the runtime unit. ADR 0003 defines profiles, harness sessions, messages, context excerpts, sticky sessions, and ephemeral calls as Ari product concepts. ADR 0006 says Ari enhances existing harnesses rather than replacing them. This ADR refines those decisions at the harness boundary.
 
 The immediate workspace orchestration plan needs provider-specific prompt/session behavior, especially for profile prompts. Research found:
 
 - Claude Code supports native replacement and append system prompt flags in headless mode.
-- Claude Code background agents (`claude --bg`) are interactive/sessioned Claude Code sessions that consume normal Claude Code subscription usage, while `claude -p` and Agent SDK usage consume Agent SDK credits from June 15, 2026.
-- Claude Code background agents load normal Claude Code project/user behavior unless Ari explicitly overrides it; this makes preserving native Claude Code behavior more important for subscription-backed workspace sessions than for deterministic headless calls.
+- Claude Code background sessions (`claude --bg`) are interactive/sessioned Claude Code sessions that consume normal Claude Code subscription usage, while `claude -p` and Agent SDK usage consume Agent SDK credits from June 15, 2026.
+- Claude Code background sessions load normal Claude Code project/user behavior unless Ari explicitly overrides it; this makes preserving native Claude Code behavior more important for subscription-backed workspace sessions than for deterministic headless calls.
 - Codex app-server supports thread-level instruction fields; `codex exec` does not provide a clean separate session system-prompt channel.
 - OpenCode CLI lacks a per-run system prompt flag, while OpenCode server/message APIs and agent configuration provide stronger behavior-prompt paths.
 
 ## Decision
 
-Ari normalizes harness behavior into Ari-owned structures and semantics. Harness adapters translate provider details into stable Ari concepts; callers and frontends interact with Ari workspaces, profiles, sessions, messages, calls, context excerpts, run-log items, status, and timeline projections rather than provider-native objects.
+Ari normalizes harness behavior into Ari-owned structures and semantics. Harness adapters translate provider details into stable Ari concepts; callers and frontends interact with Ari workspaces, profiles, harness sessions, messages, calls, context excerpts, run-log items, status, and timeline projections rather than provider-native objects.
 
 ### Stable Ari surface
 
@@ -28,7 +28,7 @@ Ari owns these concepts at the daemon/API boundary:
 
 - workspace
 - profile
-- agent session
+- harness session
 - sticky session
 - ephemeral call
 - agent message
@@ -61,7 +61,7 @@ Claude Code:
 - For background/sessioned `claude --bg` invocations, append Ari profile guidance with `--append-system-prompt` or `--append-system-prompt-file` so Claude Code keeps its native interactive behavior, project memory, and tool guidance unless Ari explicitly chooses a replacement mode.
 - Treat background initial task/context as the positional prompt to `claude --bg`; treat headless task/context as the visible stdin/user payload to `claude -p`.
 - Avoid making Claude subagents Ari's product ontology; `--agent` is a provider-specific adapter option only.
-- Store native Claude background session IDs and related metadata for traceability, logs, attach, and resume support, but keep Ari's public model centered on workspace sessions and normalized lifecycle/status concepts.
+- Store native Claude background session IDs and related metadata for traceability, logs, attach, and resume support, but keep Ari's public model centered on harness sessions and normalized lifecycle/status concepts.
 
 Codex:
 

@@ -2,53 +2,60 @@
 
 Status: proposed
 
-Source: extracted from `.ari/roadmaps/ari-direction-reset/ROADMAP.md` and current documentation cleanup.
-
 ## Intent
 
-Ari is an attachable, headless workspace runtime for LLM-assisted development. The daemon keeps work alive in the background, lets clients detach and reattach, and preserves enough state for users to understand what agents did, what is still running, and what needs attention.
+Ari is a durable, headless workspace runtime for LLM harnesses. It gives existing harnesses a persistent workspace home: users can switch between workspaces, keep harness work running, inspect what happened, continue human-facing sessions, and receive attention signals when work elsewhere needs them.
 
-The product analogy is closer to Docker daemon plus tmux for LLM work than to a single chat UI. Ari owns the runtime around agents: workspaces, processes, agent runs, command output, projections, context, approvals, and attention state. CLI, GUI, TUI, MCP, remote, and other clients render or compose that runtime for humans and automation.
+Ari is closer to a headless-first Solo-like runtime than to an AI IDE, agent framework, or single chat UI. The tmux/cmux analogy applies to durable workspaces: Ari keeps multiple workspaces available and switchable, while each workspace preserves its own folders, harness sessions, output, context, messages, and attention state.
 
 ## Product thesis
 
-LLM coding work becomes hard to manage when it lives only in terminals, provider chats, or one-off process output. Users need a local control plane that can:
+LLM harness work becomes hard to manage when it only lives in terminal tabs, provider transcripts, one-off process output, or a single chat thread. Users need a runtime that can:
 
-- keep agents, commands, and workspace activity alive after a client exits;
-- show which workspaces and agents are active, idle, blocked, completed, or waiting for input;
-- preserve outputs, final responses, proofs, and process state for later inspection;
-- let users switch between workspaces without rebuilding context by hand;
-- allow future clients to attach locally or remotely without changing where product behavior lives.
+- keep workspaces and harness sessions durable after a client exits;
+- run multiple peer harness sessions in the same workspace;
+- let humans interact with sticky sessions while ephemeral workers run;
+- show idle, blocked, waiting, completed, failed, auth-required, and review-ready work across workspaces;
+- preserve logs, messages, final responses, context excerpts, and coordination history for later inspection;
+- support future remote clients without moving product behavior into a UI.
 
-Ari should make serious agent-assisted work feel persistent, inspectable, and resumable.
+Ari should make serious LLM-assisted work persistent, inspectable, resumable, and coordinatable without replacing the harnesses that do the LLM interaction.
 
 ## Durable direction
 
 - Ari is headless first. Product operations live behind daemon APIs before they appear in any UI.
-- The daemon owns durable runtime state. Clients render, prompt, format, and compose workflows.
-- Workspaces are the primary unit users return to and reason about. A workspace contains one or more folders, supports multi-folder work such as microsessions, and does not claim exclusive ownership of a folder; the same folder may appear in multiple workspaces.
-- Agents, commands, process output, context packets, approvals, notifications, and final responses are workspace-scoped runtime facts where possible.
-- Attention should bubble up from runtime facts such as idle agents, blocked runs, approval requests, failed commands, completed work, and waiting input.
-- External harnesses such as Codex, Claude Code, OpenCode, or local PTY processes are pragmatic execution backends today. Ari may add different or more native execution later; this EP does not decide that permanently.
-- UIs should be user-oriented. They do not need to expose every daemon method, and they may compose multiple API calls into one better workflow.
+- The daemon owns durable runtime state. Clients render, prompt, format, compose, and notify.
+- CLI is the current control/story surface. `ari api` is the fine-grained daemon escape hatch.
+- Workspaces are durable switchable units of work. A workspace contains one or more folders and may represent multi-folder systems such as microservice projects.
+- A workspace can host multiple peer harness sessions, including Claude Code, Codex, OpenCode, and future harnesses.
+- Sticky sessions are persistent human-facing harness sessions attached to a workspace.
+- Ephemeral calls are inspectable bounded worker invocations. They are Ari's alternative to provider-specific subagents and support fan-out, review, research, implementation slices, comparison, and follow-on worker work.
+- Profiles are reusable behavior contracts passed into harnesses. Ari does not hardcode planner, orchestrator, reviewer, worker, helper, or researcher as product roles.
+- Ari enhances harnesses by adding persistence, observation, context movement, coordination, attention, and optional tooling around them. Ari does not replace harness interaction models.
+- Attention should bubble up from runtime facts, including work in other workspaces while the user is focused elsewhere.
+- Remote clients are part of the long-term product shape, but remote transport, authentication, authorization, and audit require later decisions.
 
 ## Non-goals for this EP
 
-- Do not make a specific GUI, TUI, or remote client the product source of truth.
-- Do not decide that Ari will always delegate LLM execution to external harnesses.
-- Do not freeze a normalized harness-call schema as a durable architecture decision yet.
-- Do not decide remote transport, authentication, or authorization details here.
-- Do not decide telemetry or analytics architecture here.
+- Do not make a specific CLI, GUI, TUI, MCP, or remote client the product source of truth.
+- Do not define Ari as an AI IDE, model runtime, or replacement harness.
+- Do not freeze a normalized harness-call envelope or final database schema here.
+- Do not decide remote transport, authentication, authorization, notification delivery, telemetry, or analytics architecture here.
 - Do not preserve legacy Ariadne planning-engine, plan-DAG, or session-first language as current product direction.
 
 ## Revisit triggers
 
-- Remote access moves from aspiration to implementation; write a dedicated decision for transport, authentication, authorization, and audit boundaries.
-- Agent execution moves beyond adapter-backed harnesses; decide what Ari owns in the execution loop.
-- Notifications require platform-specific behavior or cross-device delivery; decide attention and notification architecture.
-- Telemetry becomes more than local status/diagnostics; decide privacy, retention, export, and observability boundaries.
-- Workspace-level concurrency creates unsafe or confusing mutations; decide locking, isolation, and conflict rules.
+- Remote access moves from aspiration to implementation.
+- Cross-workspace notifications need platform-specific or cross-device delivery.
+- The first full sticky-orchestrator plus ephemeral-worker flow is implemented.
+- Harness integration needs a durable mode-selection rule that affects billing, subscription use, attach behavior, or native harness semantics.
+- Workspace-level concurrency creates unsafe or confusing mutations.
 
-## Superseded framing
+## Related decisions
 
-Older roadmap material described Ariadne/session/plan-DAG flows and UI-specific roadmaps. Those documents are historical context only. Current guidance is Ari/workspace/runtime/API first.
+- ADR 0001: daemon API authority.
+- ADR 0002: workspace as runtime unit.
+- ADR 0003: harness session and profile terminology.
+- ADR 0004: harness semantics and normalization.
+- ADR 0005: helper tool control surface.
+- ADR 0006: enhance existing harnesses.

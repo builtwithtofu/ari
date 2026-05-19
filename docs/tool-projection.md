@@ -1,10 +1,10 @@
 # Ari Projection Contract
 
-This document defines source-of-truth and sync behavior for Ari-owned control-plane, tool, proof, timeline, context, and executor projections.
+This document defines source-of-truth and sync behavior for Ari-owned runtime, tool, proof, timeline, context, and harness projections.
 
 ## Scope
 
-- Ari owns daemon-side projection contracts for workspace activity, diff summaries, proof summaries, structured timelines, context packets, executor runs, and workspace command tools.
+- Ari owns daemon-side projection contracts for workspace activity, diff summaries, proof summaries, structured timelines, context packets, harness runs, and workspace command tools.
 - Workspace command definitions are one canonical input to the projection spine, not a separate source of truth.
 - Projection targets are daemon JSON-RPC responses consumed by CLI and future clients.
 
@@ -32,7 +32,7 @@ Projection is read-time adaptation, not duplicated persistence.
 - Store layer persists canonical definition data only.
 - Daemon layer projects canonical data into API response shapes.
 - CLI renders daemon responses; it does not maintain a separate command-definition source.
-- Terminal attachment remains a framed IO transport only; agent timelines, context packets, proofs, and activity summaries are JSON-RPC projections.
+- Terminal attachment remains a framed IO transport only; harness timelines, context packets, proofs, and activity summaries are JSON-RPC projections.
 
 Current command-definition projection path:
 
@@ -42,13 +42,13 @@ Current command-definition projection path:
 
 Current workspace-control projection path:
 
-- `workspace.activity` -> aggregate workspace, command, agent, process-output, proof, and VCS facts for dashboards/control planes
+- `workspace.activity` -> aggregate workspace, command, harness-session, process-output, proof, and VCS facts for dashboards
 - `workspace.diff` -> detect JJ first, then Git, and project changed-file summary
 - `workspace.proofs` -> derive harness-agnostic proof summaries from command records and retained output
-- `workspace.timeline` -> map command/agent/proof output into stable timeline items with explicit `source_kind` and `kind`
+- `workspace.timeline` -> map command/harness/proof output into stable timeline items with explicit `source_kind` and `kind`
 - `context.project` -> build an inspectable context packet from task-like request fields, command definitions, diff summary, proof summaries, and omissions
-- `agent.run` -> start an executor-backed run from a context packet through Ari's normalized harness-call seam; Ari assigns the run identity used by timelines/activity, while provider-specific IDs remain metadata for adapter resume/debug paths
-- `agent.profile.run` -> start a run through a named Ari agent profile, resolving profile metadata to a harness behind the same normalized harness-call seam
+- `agent.run` -> legacy/current method that starts a harness-backed run from a context packet through Ari's normalized harness-call seam; Ari assigns the run identity used by timelines/activity, while provider-specific IDs remain metadata for adapter resume/debug paths
+- `agent.profile.run` -> legacy/current method that starts a run through a named Ari profile, resolving profile metadata to a harness behind the same normalized harness-call seam
 
 ## Harness Call Boundary
 
@@ -62,7 +62,7 @@ Executor-backed runs cross an Ari-owned harness-call contract before reaching a 
 - Timeline and activity projections use Ari run IDs. Provider IDs such as PTY process/run identifiers are retained as metadata and must not become client routing keys.
 - Runtime output is normalized into Ari timeline/runtime-event structures before clients render it; provider-specific event names stay adapter metadata.
 
-## Agent CLI Smoke Checks
+## Harness CLI Smoke Checks
 
 Ari adapter tests have three layers:
 

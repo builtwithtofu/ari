@@ -12,11 +12,11 @@ See also:
 A workspace is a named runtime context over one or more folders.
 
 - A workspace may contain a single project folder.
-- A workspace may contain multiple folders for microsessions or related work.
+- A workspace may contain multiple folders for microservice systems or related work.
 - A folder may belong to multiple workspaces.
 - Workspace identity is not the same thing as repository identity.
 
-The workspace is where Ari gathers the facts a user returns to: agents, commands, processes, context, proofs, final responses, and attention state.
+The workspace is where Ari gathers the facts a user returns to: harness sessions, commands, processes, context, proofs, final responses, and attention state.
 
 ## Lifecycle
 
@@ -28,7 +28,7 @@ Core lifecycle concepts:
 - list workspaces;
 - show workspace details;
 - add or remove folders;
-- close, suspend, or resume runtime activity where supported;
+- idle, suspend, or resume runtime activity where supported;
 - resolve a workspace from explicit IDs, names, or current folder context according to daemon rules.
 
 ## Folder membership
@@ -38,13 +38,13 @@ Folder membership is many-to-many:
 - one workspace can reference many folders;
 - one folder can be referenced by many workspaces.
 
-This supports different LLM work contexts over overlapping files. For example, a user may keep a broad project workspace and create a narrower microsession workspace that includes only folders relevant to a focused investigation.
+This supports different LLM work contexts over overlapping files. For example, a user may keep a broad project workspace and create a narrower workspace that includes only folders relevant to a focused investigation.
 
 ## Runtime state
 
 Workspace-scoped runtime state may include:
 
-- active and historical agent runs;
+- active and historical harness sessions and calls;
 - command and process records;
 - retained process output;
 - context packets and projection results;
