@@ -191,11 +191,15 @@ func TestWorkspaceFolderOperationsAndGuards(t *testing.T) {
 	}
 
 	err = store.RemoveFolder(ctx, "sess-1", "/tmp/repo-a")
-	if err == nil {
-		t.Fatal("RemoveFolder returned nil error for last folder")
+	if err != nil {
+		t.Fatalf("RemoveFolder last folder returned error: %v", err)
 	}
-	if !errors.Is(err, ErrLastFolder) {
-		t.Fatalf("RemoveFolder error = %v, want ErrLastFolder", err)
+	folders, err = store.ListFolders(ctx, "sess-1")
+	if err != nil {
+		t.Fatalf("ListFolders after last remove returned error: %v", err)
+	}
+	if len(folders) != 0 {
+		t.Fatalf("ListFolders after last remove len = %d, want 0", len(folders))
 	}
 }
 
@@ -345,7 +349,7 @@ func TestAddFolderPrimaryDemotesExistingPrimary(t *testing.T) {
 	}
 }
 
-func TestConcurrentRemoveFolderKeepsOneFolder(t *testing.T) {
+func TestConcurrentRemoveFolderAllowsEmptyWorkspace(t *testing.T) {
 	store := newSessionTestStore(t)
 	ctx := context.Background()
 
@@ -379,8 +383,8 @@ func TestConcurrentRemoveFolderKeepsOneFolder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListFolders returned error: %v", err)
 	}
-	if len(folders) != 1 {
-		t.Fatalf("folder count = %d, want 1 after concurrent remove attempts", len(folders))
+	if len(folders) != 0 {
+		t.Fatalf("folder count = %d, want empty workspace after concurrent remove attempts", len(folders))
 	}
 }
 

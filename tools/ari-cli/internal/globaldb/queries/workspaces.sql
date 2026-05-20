@@ -31,11 +31,10 @@ INSERT INTO workspace_folders (
   workspace_id, folder_path, vcs_type, is_primary, added_at
 ) VALUES (?, ?, ?, ?, ?);
 
--- name: DeleteWorkspaceFolderIfNotLast :execrows
+-- name: DeleteWorkspaceFolder :execrows
 DELETE FROM workspace_folders
 WHERE workspace_folders.workspace_id = ?
-  AND workspace_folders.folder_path = ?
-  AND (SELECT COUNT(*) FROM workspace_folders AS counted WHERE counted.workspace_id = ?) > 1;
+  AND workspace_folders.folder_path = ?;
 
 -- name: PromotePrimaryWorkspaceFolder :exec
 UPDATE workspace_folders

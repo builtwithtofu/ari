@@ -6,7 +6,7 @@ Date: 2026-05-03
 
 ## Context
 
-Users think about software work through projects and workspaces: one or more folders, the commands running inside them, the harness sessions working on them, and the outputs or decisions tied to that place. LLM-assisted development amplifies that need because multiple harness sessions, commands, prompts, proofs, and diffs can accumulate around the same body of work.
+Users think about software work through projects and workspaces: folders, the commands running inside them, the harness sessions working on them, and the outputs or decisions tied to that place. LLM-assisted development amplifies that need because multiple harness sessions, commands, prompts, proofs, and diffs can accumulate around the same body of work.
 
 A workspace is not the same thing as exactly one repository or exactly one folder. Ari supports workspaces made from multiple folders for microservice systems and related work. A folder may also appear in multiple workspaces when users need different runtime contexts over overlapping files.
 
@@ -18,7 +18,7 @@ Workspace is Ari's primary durable runtime unit.
 
 A workspace anchors:
 
-- one or more folders, with folders allowed to belong to more than one workspace;
+- zero or more folders, with folders allowed to belong to more than one workspace;
 - folder and project identity;
 - active and historical harness sessions and calls;
 - commands and process output;

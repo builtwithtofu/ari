@@ -14,7 +14,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func TestWorkspaceMethodsCreateAndGet(t *testing.T) {
+func TestWorkspaceCreateCanStartEmptyWithoutProfilesOrHarnessSessions(t *testing.T) {
 	store := newSessionMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	configPath := filepath.Join(t.TempDir(), "config.json")
@@ -28,38 +28,34 @@ func TestWorkspaceMethodsCreateAndGet(t *testing.T) {
 		t.Fatalf("registerWorkspaceMethods returned error: %v", err)
 	}
 
-	repoRoot := t.TempDir()
-	if err := makeGitRoot(repoRoot); err != nil {
-		t.Fatalf("makeGitRoot returned error: %v", err)
-	}
-
 	createResp := callMethod[WorkspaceCreateResponse](t, registry, "workspace.create", WorkspaceCreateRequest{
 		Name:          "alpha",
-		Folder:        repoRoot,
-		OriginRoot:    t.TempDir(),
 		CleanupPolicy: "manual",
 	})
 
 	if createResp.WorkspaceID == "" {
 		t.Fatal("WorkspaceCreateResponse.WorkspaceID is empty")
 	}
-	if createResp.VCSType != "git" {
-		t.Fatalf("WorkspaceCreateResponse.VCSType = %q, want %q", createResp.VCSType, "git")
-	}
-
 	getResp := callMethod[WorkspaceGetResponse](t, registry, "workspace.get", WorkspaceGetRequest{WorkspaceID: createResp.WorkspaceID})
 	if getResp.Name != "alpha" {
 		t.Fatalf("WorkspaceGetResponse.Name = %q, want %q", getResp.Name, "alpha")
 	}
-	if len(getResp.Folders) != 1 {
-		t.Fatalf("WorkspaceGetResponse folders len = %d, want 1", len(getResp.Folders))
+	if len(getResp.Folders) != 0 {
+		t.Fatalf("WorkspaceGetResponse folders len = %d, want 0", len(getResp.Folders))
 	}
-	help, err := store.GetDefaultHelperProfile(context.Background(), createResp.WorkspaceID)
+	profiles, err := store.ListProfiles(context.Background(), createResp.WorkspaceID)
 	if err != nil {
-		t.Fatalf("GetDefaultHelperProfile returned error: %v", err)
+		t.Fatalf("ListProfiles returned error: %v", err)
 	}
-	if help.Name != "helper" || help.WorkspaceID != createResp.WorkspaceID || help.Prompt != helperPrompt() {
-		t.Fatalf("project helper = %#v", help)
+	if len(profiles) != 0 {
+		t.Fatalf("workspace profiles = %#v, want none", profiles)
+	}
+	sessions, err := store.ListHarnessSessions(context.Background(), createResp.WorkspaceID)
+	if err != nil {
+		t.Fatalf("ListHarnessSessions returned error: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Fatalf("harness sessions = %#v, want none", sessions)
 	}
 }
 
@@ -87,6 +83,13 @@ func TestWorkspaceSetupExistingCreatesSelectsAndRecordsRollbackPoint(t *testing.
 	if get.Name != "project" || len(get.Folders) != 1 || get.Folders[0].Path != repoRoot {
 		t.Fatalf("workspace after setup = %#v, want project with existing folder", get)
 	}
+	profiles, err := store.ListProfiles(context.Background(), setup.WorkspaceID)
+	if err != nil {
+		t.Fatalf("ListProfiles returned error: %v", err)
+	}
+	if len(profiles) != 0 {
+		t.Fatalf("workspace profiles = %#v, want setup to leave profile creation explicit", profiles)
+	}
 	active := callMethod[ContextGetResponse](t, registry, "context.get", ContextGetRequest{})
 	if active.Current.WorkspaceID != setup.WorkspaceID {
 		t.Fatalf("active context = %#v, want %q", active.Current, setup.WorkspaceID)
@@ -105,7 +108,104 @@ func TestWorkspaceSetupExistingCreatesSelectsAndRecordsRollbackPoint(t *testing.
 	}
 }
 
-func TestWorkspaceCreateWithoutDefaultHarnessDoesNotCreateUnusableHelper(t *testing.T) {
+func TestWorkspaceSetupExistingRejectsInvalidFolderBeforeDurableWrites(t *testing.T) {
+	store := newSessionMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	nonRepo := t.TempDir()
+
+	err := callMethodError(registry, "workspace.setup_existing", WorkspaceSetupExistingRequest{Name: "project", Folder: nonRepo})
+	if err == nil {
+		t.Fatal("workspace.setup_existing returned nil error for non-VCS folder")
+	}
+	if _, lookupErr := store.GetWorkspaceByName(context.Background(), "project"); !errors.Is(lookupErr, globaldb.ErrNotFound) {
+		t.Fatalf("GetWorkspaceByName after failed setup error = %v, want ErrNotFound", lookupErr)
+	}
+	records, err := store.ListOperationRecords(context.Background(), "")
+	if err != nil {
+		t.Fatalf("ListOperationRecords returned error: %v", err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("operation records after failed setup = %#v, want none", records)
+	}
+	active := callMethod[ContextGetResponse](t, registry, "context.get", ContextGetRequest{})
+	if active.Current.WorkspaceID != "" {
+		t.Fatalf("active context after failed setup = %#v, want empty", active.Current)
+	}
+}
+
+func TestWorkspaceSetupExistingRejectsDuplicateNameBeforeCheckpoint(t *testing.T) {
+	store := newSessionMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	ctx := context.Background()
+	if err := store.CreateWorkspace(ctx, "ws-existing", "project", "", "manual", "auto"); err != nil {
+		t.Fatalf("CreateWorkspace returned error: %v", err)
+	}
+	repoRoot := t.TempDir()
+	if err := makeGitRoot(repoRoot); err != nil {
+		t.Fatalf("makeGitRoot returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "workspace.setup_existing", WorkspaceSetupExistingRequest{Name: "project", Folder: repoRoot})
+	if err == nil {
+		t.Fatal("workspace.setup_existing returned nil error for duplicate name")
+	}
+	records, err := store.ListOperationRecords(ctx, "")
+	if err != nil {
+		t.Fatalf("ListOperationRecords returned error: %v", err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("operation records after duplicate setup = %#v, want none", records)
+	}
+	active := callMethod[ContextGetResponse](t, registry, "context.get", ContextGetRequest{})
+	if active.Current.WorkspaceID != "" {
+		t.Fatalf("active context after duplicate setup = %#v, want empty", active.Current)
+	}
+}
+
+func TestWorkspaceSetupExistingRejectsOwnedFolderBeforeCheckpoint(t *testing.T) {
+	store := newSessionMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	ctx := context.Background()
+	repoRoot := t.TempDir()
+	if err := makeGitRoot(repoRoot); err != nil {
+		t.Fatalf("makeGitRoot returned error: %v", err)
+	}
+	if err := store.CreateWorkspace(ctx, "ws-existing", "existing", repoRoot, "manual", "auto"); err != nil {
+		t.Fatalf("CreateWorkspace returned error: %v", err)
+	}
+	if err := store.AddFolder(ctx, "ws-existing", repoRoot, "git", true); err != nil {
+		t.Fatalf("AddFolder returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "workspace.setup_existing", WorkspaceSetupExistingRequest{Name: "project", Folder: repoRoot})
+	if err == nil {
+		t.Fatal("workspace.setup_existing returned nil error for owned folder")
+	}
+	if _, lookupErr := store.GetWorkspaceByName(ctx, "project"); !errors.Is(lookupErr, globaldb.ErrNotFound) {
+		t.Fatalf("GetWorkspaceByName after owned folder setup error = %v, want ErrNotFound", lookupErr)
+	}
+	records, err := store.ListOperationRecords(ctx, "")
+	if err != nil {
+		t.Fatalf("ListOperationRecords returned error: %v", err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("operation records after owned folder setup = %#v, want none", records)
+	}
+}
+
+func TestWorkspaceAddFolderMaintainsOnePrimaryAcrossMultipleFolders(t *testing.T) {
 	store := newSessionMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	configPath := filepath.Join(t.TempDir(), "config.json")
@@ -116,15 +216,46 @@ func TestWorkspaceCreateWithoutDefaultHarnessDoesNotCreateUnusableHelper(t *test
 	if err := d.registerWorkspaceMethods(registry, store); err != nil {
 		t.Fatalf("registerWorkspaceMethods returned error: %v", err)
 	}
+	createResp := callMethod[WorkspaceCreateResponse](t, registry, "workspace.create", WorkspaceCreateRequest{Name: "alpha", CleanupPolicy: "manual"})
 	repoRoot := t.TempDir()
 	if err := makeGitRoot(repoRoot); err != nil {
 		t.Fatalf("makeGitRoot returned error: %v", err)
 	}
-
-	createResp := callMethod[WorkspaceCreateResponse](t, registry, "workspace.create", WorkspaceCreateRequest{Name: "alpha", Folder: repoRoot, OriginRoot: t.TempDir(), CleanupPolicy: "manual"})
-	_, err := store.GetDefaultHelperProfile(context.Background(), createResp.WorkspaceID)
-	if !errors.Is(err, globaldb.ErrNotFound) {
-		t.Fatalf("GetDefaultHelperProfile error = %v, want ErrNotFound", err)
+	secondRoot := t.TempDir()
+	if err := makeGitRoot(secondRoot); err != nil {
+		t.Fatalf("makeGitRoot second returned error: %v", err)
+	}
+	addResp := callMethod[WorkspaceAddFolderResponse](t, registry, "workspace.add_folder", WorkspaceAddFolderRequest{WorkspaceID: createResp.WorkspaceID, FolderPath: repoRoot})
+	if addResp.FolderPath != repoRoot || addResp.VCSType != "git" {
+		t.Fatalf("WorkspaceAddFolderResponse = %#v, want git folder", addResp)
+	}
+	secondResp := callMethod[WorkspaceAddFolderResponse](t, registry, "workspace.add_folder", WorkspaceAddFolderRequest{WorkspaceID: createResp.WorkspaceID, FolderPath: secondRoot})
+	if secondResp.FolderPath != secondRoot || secondResp.VCSType != "git" {
+		t.Fatalf("second WorkspaceAddFolderResponse = %#v, want git folder", secondResp)
+	}
+	getResp := callMethod[WorkspaceGetResponse](t, registry, "workspace.get", WorkspaceGetRequest{WorkspaceID: createResp.WorkspaceID})
+	if len(getResp.Folders) != 2 || !getResp.Folders[0].IsPrimary || getResp.Folders[0].Path != repoRoot || getResp.Folders[1].IsPrimary || getResp.Folders[1].Path != secondRoot {
+		t.Fatalf("folders = %#v, want first added folder primary and second non-primary", getResp.Folders)
+	}
+	profiles, err := store.ListProfiles(context.Background(), createResp.WorkspaceID)
+	if err != nil {
+		t.Fatalf("ListProfiles returned error: %v", err)
+	}
+	if len(profiles) != 0 {
+		t.Fatalf("profiles after add folder = %#v, want none", profiles)
+	}
+	sessions, err := store.ListHarnessSessions(context.Background(), createResp.WorkspaceID)
+	if err != nil {
+		t.Fatalf("ListHarnessSessions returned error: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Fatalf("harness sessions after add folder = %#v, want none", sessions)
+	}
+	callMethod[WorkspaceRemoveFolderResponse](t, registry, "workspace.remove_folder", WorkspaceRemoveFolderRequest{WorkspaceID: createResp.WorkspaceID, FolderPath: repoRoot})
+	callMethod[WorkspaceRemoveFolderResponse](t, registry, "workspace.remove_folder", WorkspaceRemoveFolderRequest{WorkspaceID: createResp.WorkspaceID, FolderPath: secondRoot})
+	getResp = callMethod[WorkspaceGetResponse](t, registry, "workspace.get", WorkspaceGetRequest{WorkspaceID: createResp.WorkspaceID})
+	if len(getResp.Folders) != 0 {
+		t.Fatalf("folders after removing all = %#v, want empty workspace", getResp.Folders)
 	}
 }
 
@@ -179,7 +310,6 @@ func TestWorkspaceAddFolderRejectsSubdirectoryOfVCSRoot(t *testing.T) {
 
 	createResp := callMethod[WorkspaceCreateResponse](t, registry, "workspace.create", WorkspaceCreateRequest{
 		Name:          "alpha",
-		Folder:        repoRoot,
 		OriginRoot:    t.TempDir(),
 		CleanupPolicy: "manual",
 	})
@@ -222,7 +352,6 @@ func TestSessionGetResolvesByName(t *testing.T) {
 
 	createResp := callMethod[WorkspaceCreateResponse](t, registry, "workspace.create", WorkspaceCreateRequest{
 		Name:          "alpha",
-		Folder:        repoRoot,
 		OriginRoot:    t.TempDir(),
 		CleanupPolicy: "manual",
 	})
@@ -250,7 +379,6 @@ func TestSessionRemoveFolderMissingReturnsInvalidParams(t *testing.T) {
 
 	createResp := callMethod[WorkspaceCreateResponse](t, registry, "workspace.create", WorkspaceCreateRequest{
 		Name:          "alpha",
-		Folder:        repoRoot,
 		OriginRoot:    t.TempDir(),
 		CleanupPolicy: "manual",
 	})
@@ -357,11 +485,6 @@ func TestSessionCreateRejectsInvalidVCSPreference(t *testing.T) {
 		t.Fatalf("registerWorkspaceMethods returned error: %v", err)
 	}
 
-	repoRoot := t.TempDir()
-	if err := makeGitRoot(repoRoot); err != nil {
-		t.Fatalf("makeGitRoot returned error: %v", err)
-	}
-
 	spec, ok := registry.Get("workspace.create")
 	if !ok {
 		t.Fatal("workspace.create method not registered")
@@ -369,7 +492,6 @@ func TestSessionCreateRejectsInvalidVCSPreference(t *testing.T) {
 
 	raw, err := json.Marshal(WorkspaceCreateRequest{
 		Name:          "alpha",
-		Folder:        repoRoot,
 		OriginRoot:    t.TempDir(),
 		CleanupPolicy: "manual",
 		VCSPreference: "gti",
@@ -392,49 +514,7 @@ func TestSessionCreateRejectsInvalidVCSPreference(t *testing.T) {
 	}
 }
 
-func TestSessionCreateRollsBackWhenFolderInsertFails(t *testing.T) {
-	store := newSessionMethodStoreWithoutFolders(t)
-	registry := rpc.NewMethodRegistry()
-	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-
-	err := d.registerWorkspaceMethods(registry, store)
-	if err != nil {
-		t.Fatalf("registerWorkspaceMethods returned error: %v", err)
-	}
-
-	repoRoot := t.TempDir()
-	if err := makeGitRoot(repoRoot); err != nil {
-		t.Fatalf("makeGitRoot returned error: %v", err)
-	}
-
-	spec, ok := registry.Get("workspace.create")
-	if !ok {
-		t.Fatal("workspace.create method not registered")
-	}
-
-	raw, err := json.Marshal(WorkspaceCreateRequest{
-		Name:          "alpha",
-		Folder:        repoRoot,
-		OriginRoot:    t.TempDir(),
-		CleanupPolicy: "manual",
-		VCSPreference: "auto",
-	})
-	if err != nil {
-		t.Fatalf("marshal params: %v", err)
-	}
-
-	_, err = spec.Call(context.Background(), raw)
-	if err == nil {
-		t.Fatal("workspace.create returned nil error when folder insert fails")
-	}
-
-	_, lookupErr := store.GetWorkspaceByName(context.Background(), "alpha")
-	if !errors.Is(lookupErr, globaldb.ErrNotFound) {
-		t.Fatalf("GetSessionByName after failed create error = %v, want ErrNotFound", lookupErr)
-	}
-}
-
-func TestSessionCreateRollsBackWhenHelperHarnessConfigIsInvalid(t *testing.T) {
+func TestWorkspaceCreateDoesNotReadDefaultHarnessConfig(t *testing.T) {
 	store := newSessionMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	configPath := filepath.Join(t.TempDir(), "config.json")
@@ -448,19 +528,13 @@ func TestSessionCreateRollsBackWhenHelperHarnessConfigIsInvalid(t *testing.T) {
 		t.Fatalf("registerWorkspaceMethods returned error: %v", err)
 	}
 
-	repoRoot := t.TempDir()
-	if err := makeGitRoot(repoRoot); err != nil {
-		t.Fatalf("makeGitRoot returned error: %v", err)
+	resp := callMethod[WorkspaceCreateResponse](t, registry, "workspace.create", WorkspaceCreateRequest{Name: "alpha", OriginRoot: t.TempDir(), CleanupPolicy: "manual", VCSPreference: "auto"})
+	profiles, err := store.ListProfiles(context.Background(), resp.WorkspaceID)
+	if err != nil {
+		t.Fatalf("ListProfiles returned error: %v", err)
 	}
-
-	err = callMethodError(registry, "workspace.create", WorkspaceCreateRequest{Name: "alpha", Folder: repoRoot, OriginRoot: t.TempDir(), CleanupPolicy: "manual", VCSPreference: "auto"})
-	if err == nil {
-		t.Fatal("workspace.create returned nil error for invalid helper harness config")
-	}
-
-	_, lookupErr := store.GetWorkspaceByName(context.Background(), "alpha")
-	if !errors.Is(lookupErr, globaldb.ErrNotFound) {
-		t.Fatalf("GetSessionByName after failed create error = %v, want ErrNotFound", lookupErr)
+	if len(profiles) != 0 {
+		t.Fatalf("profiles = %#v, want no implicit helper profile", profiles)
 	}
 }
 
@@ -509,40 +583,6 @@ func newSessionMethodTestStore(t *testing.T) *globaldb.Store {
 	t.Cleanup(func() {
 		_ = db.Close()
 	})
-
-	store, err := globaldb.NewSQLStore(db)
-	if err != nil {
-		t.Fatalf("NewSQLStore returned error: %v", err)
-	}
-
-	return store
-}
-
-func newSessionMethodStoreWithoutFolders(t *testing.T) *globaldb.Store {
-	t.Helper()
-
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "ari.db"))
-	if err != nil {
-		t.Fatalf("open sqlite db: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = db.Close()
-	})
-
-	if _, err := db.Exec(`
-CREATE TABLE workspaces (
-	workspace_id TEXT PRIMARY KEY,
-	name TEXT NOT NULL UNIQUE,
-	status TEXT NOT NULL DEFAULT 'active',
-	vcs_preference TEXT NOT NULL DEFAULT 'auto',
-	origin_root TEXT NOT NULL,
-	cleanup_policy TEXT NOT NULL DEFAULT 'manual',
-	created_at TEXT NOT NULL,
-	updated_at TEXT NOT NULL
-);
-`); err != nil {
-		t.Fatalf("create schema: %v", err)
-	}
 
 	store, err := globaldb.NewSQLStore(db)
 	if err != nil {

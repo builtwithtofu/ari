@@ -81,21 +81,19 @@ func (q *Queries) DeleteWorkspace(ctx context.Context, arg DeleteWorkspaceParams
 	return result.RowsAffected()
 }
 
-const deleteWorkspaceFolderIfNotLast = `-- name: DeleteWorkspaceFolderIfNotLast :execrows
+const deleteWorkspaceFolder = `-- name: DeleteWorkspaceFolder :execrows
 DELETE FROM workspace_folders
 WHERE workspace_folders.workspace_id = ?
   AND workspace_folders.folder_path = ?
-  AND (SELECT COUNT(*) FROM workspace_folders AS counted WHERE counted.workspace_id = ?) > 1
 `
 
-type DeleteWorkspaceFolderIfNotLastParams struct {
-	WorkspaceID   string `json:"workspace_id"`
-	FolderPath    string `json:"folder_path"`
-	WorkspaceID_2 string `json:"workspace_id_2"`
+type DeleteWorkspaceFolderParams struct {
+	WorkspaceID string `json:"workspace_id"`
+	FolderPath  string `json:"folder_path"`
 }
 
-func (q *Queries) DeleteWorkspaceFolderIfNotLast(ctx context.Context, arg DeleteWorkspaceFolderIfNotLastParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, deleteWorkspaceFolderIfNotLast, arg.WorkspaceID, arg.FolderPath, arg.WorkspaceID_2)
+func (q *Queries) DeleteWorkspaceFolder(ctx context.Context, arg DeleteWorkspaceFolderParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteWorkspaceFolder, arg.WorkspaceID, arg.FolderPath)
 	if err != nil {
 		return 0, err
 	}

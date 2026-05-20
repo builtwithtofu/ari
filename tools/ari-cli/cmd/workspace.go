@@ -15,7 +15,6 @@ import (
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/config"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
-	"github.com/builtwithtofu/ari/tools/ari-cli/internal/vcs"
 	"github.com/sourcegraph/jsonrpc2"
 	"github.com/spf13/cobra"
 )
@@ -363,12 +362,12 @@ func newWorkspaceCreateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if strings.TrimSpace(folder) == "" {
-				folder = defaultWorkspaceFolder(cwd)
-			}
-			folderPath, err := absolutizeInputPath(cwd, folder)
-			if err != nil {
-				return err
+			folderPath := ""
+			if strings.TrimSpace(folder) != "" {
+				folderPath, err = absolutizeInputPath(cwd, folder)
+				if err != nil {
+					return err
+				}
 			}
 			if strings.TrimSpace(cleanup) == "" {
 				cleanup = "manual"
@@ -382,8 +381,7 @@ func newWorkspaceCreateCmd() *cobra.Command {
 
 			response, err := workspaceCreateRPC(createCtx, cfg.Daemon.SocketPath, daemon.WorkspaceCreateRequest{
 				Name:          args[0],
-				Folder:        folderPath,
-				OriginRoot:    cwd,
+				OriginRoot:    folderPath,
 				CleanupPolicy: cleanup,
 				VCSPreference: vcsPreference,
 			})
@@ -394,18 +392,26 @@ func newWorkspaceCreateCmd() *cobra.Command {
 			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Workspace created: %s (%s)\n", response.Name, response.WorkspaceID); err != nil {
 				return err
 			}
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  Folder: %s (%s)\n", response.Folder, response.VCSType); err != nil {
-				return err
+			if folderPath != "" {
+				addResp, err := workspaceAddFolderRPC(createCtx, cfg.Daemon.SocketPath, daemon.WorkspaceAddFolderRequest{WorkspaceID: response.WorkspaceID, FolderPath: folderPath})
+				if err != nil {
+					return userFacingError{message: fmt.Sprintf("Workspace created: %s (%s), but adding folder failed: %v", response.Name, response.WorkspaceID, mapSessionRPCError(err))}
+				}
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  Folder: %s (%s)\n", addResp.FolderPath, addResp.VCSType); err != nil {
+					return err
+				}
 			}
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  Origin: %s\n", response.OriginRoot); err != nil {
-				return err
+			if response.OriginRoot != "" {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  Origin: %s\n", response.OriginRoot); err != nil {
+					return err
+				}
 			}
 
 			return nil
 		},
 	}
 
-	cmd.Flags().StringVar(&folder, "folder", "", "Initial workspace folder (defaults to CWD)")
+	cmd.Flags().StringVar(&folder, "folder", "", "Initial workspace folder")
 	cmd.Flags().StringVar(&cleanup, "cleanup", "manual", "Cleanup policy: manual")
 	cmd.Flags().StringVar(&vcsPreference, "vcs-preference", "", "VCS preference: auto|jj|git (defaults to global config)")
 
@@ -837,19 +843,4 @@ func absolutizeInputPath(cwd, input string) (string, error) {
 		return "", err
 	}
 	return absPath, nil
-}
-
-func defaultWorkspaceFolder(cwd string) string {
-	backend, err := vcs.Detect(cwd)
-	if err != nil {
-		return cwd
-	}
-	if backend == nil || backend.Name() == "none" {
-		return cwd
-	}
-	root := strings.TrimSpace(backend.Root())
-	if root == "" {
-		return cwd
-	}
-	return root
 }

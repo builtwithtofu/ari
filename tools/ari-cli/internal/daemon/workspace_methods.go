@@ -17,7 +17,6 @@ import (
 
 type WorkspaceCreateRequest struct {
 	Name          string `json:"name"`
-	Folder        string `json:"folder"`
 	OriginRoot    string `json:"origin_root"`
 	CleanupPolicy string `json:"cleanup_policy"`
 	VCSPreference string `json:"vcs_preference"`
@@ -27,9 +26,6 @@ type WorkspaceCreateResponse struct {
 	WorkspaceID   string `json:"workspace_id"`
 	Name          string `json:"name"`
 	Status        string `json:"status"`
-	Folder        string `json:"folder"`
-	VCSType       string `json:"vcs_type"`
-	IsPrimary     bool   `json:"is_primary"`
 	OriginRoot    string `json:"origin_root"`
 	VCSPreference string `json:"vcs_preference"`
 }
@@ -282,26 +278,7 @@ func (d *Daemon) registerWorkspaceMethods(registry *rpc.MethodRegistry, store *g
 		Name:        "workspace.add_folder",
 		Description: "Add folder to a workspace",
 		Handler: func(ctx context.Context, req WorkspaceAddFolderRequest) (WorkspaceAddFolderResponse, error) {
-			sessionID := strings.TrimSpace(req.WorkspaceID)
-			if sessionID == "" {
-				return WorkspaceAddFolderResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
-			}
-
-			session, err := store.GetWorkspace(ctx, sessionID)
-			if err != nil {
-				return WorkspaceAddFolderResponse{}, mapWorkspaceStoreError(err, sessionID)
-			}
-
-			folderPath, vcsType, err := normalizeAndValidateVCSRoot(req.FolderPath, normalizeVCSPreference(session.VCSPreference))
-			if err != nil {
-				return WorkspaceAddFolderResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), nil)
-			}
-
-			if err := store.AddFolder(ctx, sessionID, folderPath, vcsType, false); err != nil {
-				return WorkspaceAddFolderResponse{}, mapWorkspaceStoreError(err, sessionID)
-			}
-
-			return WorkspaceAddFolderResponse{FolderPath: folderPath, VCSType: vcsType}, nil
+			return d.addWorkspaceFolder(ctx, store, req.WorkspaceID, req.FolderPath)
 		},
 	}); err != nil {
 		return fmt.Errorf("register workspace.add_folder: %w", err)
@@ -354,6 +331,16 @@ func (d *Daemon) workspaceSetupExisting(ctx context.Context, store *globaldb.Sto
 	if err != nil {
 		return WorkspaceSetupExistingResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), nil)
 	}
+	if _, err := store.GetWorkspaceByName(ctx, name); err == nil {
+		return WorkspaceSetupExistingResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace name already exists", name)
+	} else if !errors.Is(err, globaldb.ErrNotFound) {
+		return WorkspaceSetupExistingResponse{}, err
+	}
+	if ownerID, err := workspaceFolderOwnerID(ctx, store, folderPath, ""); err != nil {
+		return WorkspaceSetupExistingResponse{}, err
+	} else if ownerID != "" {
+		return WorkspaceSetupExistingResponse{}, rpc.NewHandlerError(rpc.InvalidParams, fmt.Sprintf("folder %q already belongs to workspace %q", folderPath, ownerID), folderPath)
+	}
 	previousContext, err := readActiveWorkspaceContext(ctx, store)
 	if err != nil {
 		return WorkspaceSetupExistingResponse{}, err
@@ -365,11 +352,18 @@ func (d *Daemon) workspaceSetupExisting(ctx context.Context, store *globaldb.Sto
 	}
 
 	var response WorkspaceSetupExistingResponse
-	created, err := d.createWorkspace(ctx, store, WorkspaceCreateRequest{Name: name, Folder: folderPath, OriginRoot: folderPath, CleanupPolicy: "manual", VCSPreference: vcsPreference})
+	created, err := d.createWorkspace(ctx, store, WorkspaceCreateRequest{Name: name, OriginRoot: folderPath, CleanupPolicy: "manual", VCSPreference: vcsPreference})
 	if err != nil {
 		return WorkspaceSetupExistingResponse{}, err
 	}
 	payload["workspace_id"] = created.WorkspaceID
+	addResp, addErr := addValidatedWorkspaceFolder(ctx, store, created.WorkspaceID, folderPath, vcsType)
+	if addErr != nil {
+		if rollbackErr := store.DeleteWorkspace(ctx, created.WorkspaceID); rollbackErr != nil && !errors.Is(rollbackErr, globaldb.ErrNotFound) {
+			return WorkspaceSetupExistingResponse{}, fmt.Errorf("rollback workspace setup after folder add failure: %w", rollbackErr)
+		}
+		return WorkspaceSetupExistingResponse{}, addErr
+	}
 	contextResp, err := setActiveWorkspaceContext(ctx, store, ContextSetRequest{WorkspaceID: created.WorkspaceID})
 	if err != nil {
 		if rollbackErr := store.DeleteWorkspace(ctx, created.WorkspaceID); rollbackErr != nil && !errors.Is(rollbackErr, globaldb.ErrNotFound) {
@@ -411,7 +405,7 @@ func (d *Daemon) workspaceSetupExisting(ctx context.Context, store *globaldb.Sto
 		}
 		return WorkspaceSetupExistingResponse{}, err
 	}
-	response = WorkspaceSetupExistingResponse{WorkspaceID: created.WorkspaceID, Name: created.Name, Folder: created.Folder, VCSType: created.VCSType, ActiveWorkspace: contextResp.Current.WorkspaceID, RollbackPointID: checkpoint.OperationID}
+	response = WorkspaceSetupExistingResponse{WorkspaceID: created.WorkspaceID, Name: created.Name, Folder: addResp.FolderPath, VCSType: addResp.VCSType, ActiveWorkspace: contextResp.Current.WorkspaceID, RollbackPointID: checkpoint.OperationID}
 	return response, nil
 }
 
@@ -424,13 +418,13 @@ func (d *Daemon) createWorkspace(ctx context.Context, store *globaldb.Store, req
 	if err != nil {
 		return WorkspaceCreateResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), nil)
 	}
-	folderPath, vcsType, err := normalizeAndValidateVCSRoot(req.Folder, vcsPreference)
-	if err != nil {
-		return WorkspaceCreateResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), nil)
-	}
-	originRoot, err := normalizePath(req.OriginRoot)
-	if err != nil {
-		return WorkspaceCreateResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), nil)
+	originRoot := strings.TrimSpace(req.OriginRoot)
+	if originRoot != "" {
+		var err error
+		originRoot, err = normalizePath(originRoot)
+		if err != nil {
+			return WorkspaceCreateResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), nil)
+		}
 	}
 	cleanupPolicy := strings.TrimSpace(req.CleanupPolicy)
 	if cleanupPolicy == "" {
@@ -443,40 +437,65 @@ func (d *Daemon) createWorkspace(ctx context.Context, store *globaldb.Store, req
 	if err := store.CreateWorkspace(ctx, sessionID, name, originRoot, cleanupPolicy, vcsPreference); err != nil {
 		return WorkspaceCreateResponse{}, mapWorkspaceStoreError(err, sessionID)
 	}
-	if err := store.AddFolder(ctx, sessionID, folderPath, vcsType, true); err != nil {
-		if rollbackErr := store.DeleteWorkspace(ctx, sessionID); rollbackErr != nil && !errors.Is(rollbackErr, globaldb.ErrNotFound) {
-			return WorkspaceCreateResponse{}, fmt.Errorf("rollback workspace create after folder add failure: %w", rollbackErr)
-		}
-		return WorkspaceCreateResponse{}, mapWorkspaceStoreError(err, sessionID)
-	}
-	helperHarness, err := d.readConfiguredDefaultHarness()
-	if err != nil {
-		if rollbackErr := store.DeleteWorkspace(ctx, sessionID); rollbackErr != nil && !errors.Is(rollbackErr, globaldb.ErrNotFound) {
-			return WorkspaceCreateResponse{}, fmt.Errorf("rollback workspace create after helper harness read failure: %w", rollbackErr)
-		}
-		return WorkspaceCreateResponse{}, err
-	}
-	if helperHarness != "" {
-		if _, err := store.EnsureDefaultHelperProfile(ctx, sessionID, helperHarness, helperPrompt()); err != nil {
-			if rollbackErr := store.DeleteWorkspace(ctx, sessionID); rollbackErr != nil && !errors.Is(rollbackErr, globaldb.ErrNotFound) {
-				return WorkspaceCreateResponse{}, fmt.Errorf("rollback workspace create after helper ensure failure: %w", rollbackErr)
-			}
-			return WorkspaceCreateResponse{}, err
-		}
-	}
 	session, err := store.GetWorkspace(ctx, sessionID)
 	if err != nil {
 		return WorkspaceCreateResponse{}, mapWorkspaceStoreError(err, sessionID)
 	}
-	return WorkspaceCreateResponse{WorkspaceID: session.ID, Name: session.Name, Status: session.Status, Folder: folderPath, VCSType: vcsType, IsPrimary: true, OriginRoot: session.OriginRoot, VCSPreference: session.VCSPreference}, nil
+	return WorkspaceCreateResponse{WorkspaceID: session.ID, Name: session.Name, Status: session.Status, OriginRoot: session.OriginRoot, VCSPreference: session.VCSPreference}, nil
+}
+
+func (d *Daemon) addWorkspaceFolder(ctx context.Context, store *globaldb.Store, workspaceID, requestedFolder string) (WorkspaceAddFolderResponse, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		return WorkspaceAddFolderResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
+	}
+	workspace, err := store.GetWorkspace(ctx, workspaceID)
+	if err != nil {
+		return WorkspaceAddFolderResponse{}, mapWorkspaceStoreError(err, workspaceID)
+	}
+	folderPath, vcsType, err := normalizeAndValidateVCSRoot(requestedFolder, normalizeVCSPreference(workspace.VCSPreference))
+	if err != nil {
+		return WorkspaceAddFolderResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), nil)
+	}
+	return addValidatedWorkspaceFolder(ctx, store, workspaceID, folderPath, vcsType)
+}
+
+func addValidatedWorkspaceFolder(ctx context.Context, store *globaldb.Store, workspaceID, folderPath, vcsType string) (WorkspaceAddFolderResponse, error) {
+	if err := store.AddFolder(ctx, workspaceID, folderPath, vcsType, false); err != nil {
+		return WorkspaceAddFolderResponse{}, mapWorkspaceStoreError(err, workspaceID)
+	}
+	return WorkspaceAddFolderResponse{FolderPath: folderPath, VCSType: vcsType}, nil
+}
+
+func workspaceFolderOwnerID(ctx context.Context, store *globaldb.Store, folderPath, exceptWorkspaceID string) (string, error) {
+	workspaces, err := store.ListWorkspaces(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, workspace := range workspaces {
+		if workspace.ID == exceptWorkspaceID {
+			continue
+		}
+		folders, err := store.ListFolders(ctx, workspace.ID)
+		if err != nil {
+			return "", err
+		}
+		for _, folder := range folders {
+			if folder.FolderPath == folderPath {
+				return workspace.ID, nil
+			}
+		}
+	}
+
+	return "", nil
 }
 
 func mapWorkspaceStoreError(err error, sessionID string) error {
 	if errors.Is(err, globaldb.ErrNotFound) {
 		return rpc.NewHandlerError(rpc.SessionNotFound, "workspace not found", sessionID)
 	}
-	if errors.Is(err, globaldb.ErrLastFolder) {
-		return rpc.NewHandlerError(rpc.InvalidParams, "cannot remove last folder", sessionID)
+	if errors.Is(err, errNoPrimaryFolder) {
+		return rpc.NewHandlerError(rpc.InvalidParams, "workspace has no primary folder; attach a folder before starting folder-scoped work", sessionID)
 	}
 	if errors.Is(err, globaldb.ErrInvalidInput) {
 		return rpc.NewHandlerError(rpc.InvalidParams, err.Error(), sessionID)

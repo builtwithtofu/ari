@@ -978,6 +978,34 @@ func TestHarnessSessionMethodRejectsFakeExecutor(t *testing.T) {
 	}
 }
 
+func TestHarnessSessionStartOnEmptyWorkspaceReturnsInvalidParams(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	if err := store.CreateWorkspace(context.Background(), "ws-empty", "empty", "", "manual", "auto"); err != nil {
+		t.Fatalf("CreateWorkspace returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "session.start", HarnessSessionStartRequest{Executor: "test-harness", Packet: ContextPacket{ID: "ctx", WorkspaceID: "ws-empty", TaskID: "task"}})
+	var handlerErr *rpc.HandlerError
+	if !errors.As(err, &handlerErr) {
+		t.Fatalf("session.start error = %T %[1]v, want HandlerError", err)
+	}
+	if handlerErr.Code != rpc.InvalidParams || !strings.Contains(handlerErr.Message, "workspace has no primary folder") {
+		t.Fatalf("session.start error = %#v, want invalid params no primary folder", handlerErr)
+	}
+	runs, err := store.ListHarnessSessions(context.Background(), "ws-empty")
+	if err != nil {
+		t.Fatalf("ListHarnessSessions returned error: %v", err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("harness sessions = %#v, want none", runs)
+	}
+}
+
 func TestHarnessSessionMethodUsesInjectedHarnessFactory(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()

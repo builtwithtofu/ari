@@ -46,16 +46,14 @@ func TestWorkspaceSmokeLifecycleOverRPC(t *testing.T) {
 	create := WorkspaceCreateResponse{}
 	callDaemonMethod(t, socketPath, "workspace.create", WorkspaceCreateRequest{
 		Name:          "alpha",
-		Folder:        repoRoot,
 		OriginRoot:    originRoot,
 		CleanupPolicy: "manual",
 	}, &create)
 	if create.WorkspaceID == "" {
 		t.Fatal("workspace.create returned empty workspace_id")
 	}
-	if create.VCSType != "git" {
-		t.Fatalf("session.create vcs_type = %q, want %q", create.VCSType, "git")
-	}
+	addFolder := WorkspaceAddFolderResponse{}
+	callDaemonMethod(t, socketPath, "workspace.add_folder", WorkspaceAddFolderRequest{WorkspaceID: create.WorkspaceID, FolderPath: repoRoot}, &addFolder)
 
 	list := WorkspaceListResponse{}
 	callDaemonMethod(t, socketPath, "workspace.list", WorkspaceListRequest{}, &list)
