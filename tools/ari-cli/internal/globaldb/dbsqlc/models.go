@@ -54,83 +54,6 @@ type AgentProfile struct {
 	AuthPoolJson    string  `json:"auth_pool_json"`
 }
 
-type AgentRunTelemetry struct {
-	RunID                   string  `json:"run_id"`
-	WorkspaceID             string  `json:"workspace_id"`
-	TaskID                  string  `json:"task_id"`
-	ProfileID               *string `json:"profile_id"`
-	ProfileName             *string `json:"profile_name"`
-	Harness                 string  `json:"harness"`
-	Model                   string  `json:"model"`
-	InvocationClass         string  `json:"invocation_class"`
-	Status                  string  `json:"status"`
-	InputTokensKnown        int64   `json:"input_tokens_known"`
-	InputTokens             *int64  `json:"input_tokens"`
-	OutputTokensKnown       int64   `json:"output_tokens_known"`
-	OutputTokens            *int64  `json:"output_tokens"`
-	EstimatedCostKnown      int64   `json:"estimated_cost_known"`
-	EstimatedCostMicros     *int64  `json:"estimated_cost_micros"`
-	DurationMsKnown         int64   `json:"duration_ms_known"`
-	DurationMs              *int64  `json:"duration_ms"`
-	ExitCodeKnown           int64   `json:"exit_code_known"`
-	ExitCode                *int64  `json:"exit_code"`
-	OwnedByAri              int64   `json:"owned_by_ari"`
-	PidKnown                int64   `json:"pid_known"`
-	Pid                     *int64  `json:"pid"`
-	CpuTimeMsKnown          int64   `json:"cpu_time_ms_known"`
-	CpuTimeMs               *int64  `json:"cpu_time_ms"`
-	MemoryRssBytesPeakKnown int64   `json:"memory_rss_bytes_peak_known"`
-	MemoryRssBytesPeak      *int64  `json:"memory_rss_bytes_peak"`
-	ChildProcessesPeakKnown int64   `json:"child_processes_peak_known"`
-	ChildProcessesPeak      *int64  `json:"child_processes_peak"`
-	PortsJson               string  `json:"ports_json"`
-	OrphanState             string  `json:"orphan_state"`
-	CreatedAt               string  `json:"created_at"`
-	UpdatedAt               string  `json:"updated_at"`
-}
-
-type AgentSession struct {
-	SessionID             string `json:"session_id"`
-	WorkspaceID           string `json:"workspace_id"`
-	AgentID               string `json:"agent_id"`
-	Harness               string `json:"harness"`
-	Model                 string `json:"model"`
-	ProviderSessionID     string `json:"provider_session_id"`
-	ProviderRunID         string `json:"provider_run_id"`
-	ProviderThreadID      string `json:"provider_thread_id"`
-	Cwd                   string `json:"cwd"`
-	FolderScopeJson       string `json:"folder_scope_json"`
-	Status                string `json:"status"`
-	Usage                 string `json:"usage"`
-	SourceSessionID       string `json:"source_session_id"`
-	SourceAgentID         string `json:"source_agent_id"`
-	PromptHash            string `json:"prompt_hash"`
-	ContextPayloadIdsJson string `json:"context_payload_ids_json"`
-	PermissionMode        string `json:"permission_mode"`
-	SandboxMode           string `json:"sandbox_mode"`
-	ToolScopeJson         string `json:"tool_scope_json"`
-	ProviderMetadataJson  string `json:"provider_metadata_json"`
-	CreatedAt             string `json:"created_at"`
-	UpdatedAt             string `json:"updated_at"`
-}
-
-type AgentSessionConfig struct {
-	AgentID              string  `json:"agent_id"`
-	WorkspaceID          *string `json:"workspace_id"`
-	Name                 string  `json:"name"`
-	Harness              string  `json:"harness"`
-	Model                string  `json:"model"`
-	Prompt               string  `json:"prompt"`
-	AuthSlotID           string  `json:"auth_slot_id"`
-	AuthPoolJson         string  `json:"auth_pool_json"`
-	ToolScopeJson        string  `json:"tool_scope_json"`
-	PermissionPolicyJson string  `json:"permission_policy_json"`
-	ContextPolicyJson    string  `json:"context_policy_json"`
-	DefaultsJson         string  `json:"defaults_json"`
-	CreatedAt            string  `json:"created_at"`
-	UpdatedAt            string  `json:"updated_at"`
-}
-
 type AuthSlot struct {
 	AuthSlotID      string  `json:"auth_slot_id"`
 	Harness         string  `json:"harness"`
@@ -187,7 +110,7 @@ type DaemonMetum struct {
 
 type FinalResponse struct {
 	FinalResponseID string  `json:"final_response_id"`
-	RunID           string  `json:"run_id"`
+	SessionID       string  `json:"session_id"`
 	WorkspaceID     string  `json:"workspace_id"`
 	TaskID          string  `json:"task_id"`
 	ContextPacketID string  `json:"context_packet_id"`
@@ -197,6 +120,83 @@ type FinalResponse struct {
 	EvidenceLinks   string  `json:"evidence_links"`
 	CreatedAt       string  `json:"created_at"`
 	UpdatedAt       *string `json:"updated_at"`
+}
+
+type HarnessSession struct {
+	SessionID             string `json:"session_id"`
+	WorkspaceID           string `json:"workspace_id"`
+	AgentID               string `json:"agent_id"`
+	Harness               string `json:"harness"`
+	Model                 string `json:"model"`
+	ProviderSessionID     string `json:"provider_session_id"`
+	ProviderRunID         string `json:"provider_run_id"`
+	ProviderThreadID      string `json:"provider_thread_id"`
+	Cwd                   string `json:"cwd"`
+	FolderScopeJson       string `json:"folder_scope_json"`
+	Status                string `json:"status"`
+	Usage                 string `json:"usage"`
+	SourceSessionID       string `json:"source_session_id"`
+	SourceAgentID         string `json:"source_agent_id"`
+	PromptHash            string `json:"prompt_hash"`
+	ContextPayloadIdsJson string `json:"context_payload_ids_json"`
+	PermissionMode        string `json:"permission_mode"`
+	SandboxMode           string `json:"sandbox_mode"`
+	ToolScopeJson         string `json:"tool_scope_json"`
+	ProviderMetadataJson  string `json:"provider_metadata_json"`
+	CreatedAt             string `json:"created_at"`
+	UpdatedAt             string `json:"updated_at"`
+}
+
+type HarnessSessionConfig struct {
+	AgentID              string  `json:"agent_id"`
+	WorkspaceID          *string `json:"workspace_id"`
+	Name                 string  `json:"name"`
+	Harness              string  `json:"harness"`
+	Model                string  `json:"model"`
+	Prompt               string  `json:"prompt"`
+	AuthSlotID           string  `json:"auth_slot_id"`
+	AuthPoolJson         string  `json:"auth_pool_json"`
+	ToolScopeJson        string  `json:"tool_scope_json"`
+	PermissionPolicyJson string  `json:"permission_policy_json"`
+	ContextPolicyJson    string  `json:"context_policy_json"`
+	DefaultsJson         string  `json:"defaults_json"`
+	CreatedAt            string  `json:"created_at"`
+	UpdatedAt            string  `json:"updated_at"`
+}
+
+type HarnessSessionTelemetry struct {
+	SessionID               string  `json:"session_id"`
+	WorkspaceID             string  `json:"workspace_id"`
+	TaskID                  string  `json:"task_id"`
+	ProfileID               *string `json:"profile_id"`
+	ProfileName             *string `json:"profile_name"`
+	Harness                 string  `json:"harness"`
+	Model                   string  `json:"model"`
+	InvocationClass         string  `json:"invocation_class"`
+	Status                  string  `json:"status"`
+	InputTokensKnown        int64   `json:"input_tokens_known"`
+	InputTokens             *int64  `json:"input_tokens"`
+	OutputTokensKnown       int64   `json:"output_tokens_known"`
+	OutputTokens            *int64  `json:"output_tokens"`
+	EstimatedCostKnown      int64   `json:"estimated_cost_known"`
+	EstimatedCostMicros     *int64  `json:"estimated_cost_micros"`
+	DurationMsKnown         int64   `json:"duration_ms_known"`
+	DurationMs              *int64  `json:"duration_ms"`
+	ExitCodeKnown           int64   `json:"exit_code_known"`
+	ExitCode                *int64  `json:"exit_code"`
+	OwnedByAri              int64   `json:"owned_by_ari"`
+	PidKnown                int64   `json:"pid_known"`
+	Pid                     *int64  `json:"pid"`
+	CpuTimeMsKnown          int64   `json:"cpu_time_ms_known"`
+	CpuTimeMs               *int64  `json:"cpu_time_ms"`
+	MemoryRssBytesPeakKnown int64   `json:"memory_rss_bytes_peak_known"`
+	MemoryRssBytesPeak      *int64  `json:"memory_rss_bytes_peak"`
+	ChildProcessesPeakKnown int64   `json:"child_processes_peak_known"`
+	ChildProcessesPeak      *int64  `json:"child_processes_peak"`
+	PortsJson               string  `json:"ports_json"`
+	OrphanState             string  `json:"orphan_state"`
+	CreatedAt               string  `json:"created_at"`
+	UpdatedAt               string  `json:"updated_at"`
 }
 
 type OperationRecord struct {

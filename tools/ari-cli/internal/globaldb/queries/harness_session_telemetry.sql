@@ -1,13 +1,13 @@
 -- name: UpsertHarnessSessionTelemetry :exec
-INSERT INTO agent_run_telemetry (
-  run_id, workspace_id, task_id, profile_id, profile_name, harness, model, invocation_class, status,
+INSERT INTO harness_session_telemetry (
+  session_id, workspace_id, task_id, profile_id, profile_name, harness, model, invocation_class, status,
   input_tokens_known, input_tokens, output_tokens_known, output_tokens,
   estimated_cost_known, estimated_cost_micros, duration_ms_known, duration_ms,
   exit_code_known, exit_code, owned_by_ari, pid_known, pid,
   cpu_time_ms_known, cpu_time_ms, memory_rss_bytes_peak_known, memory_rss_bytes_peak,
   child_processes_peak_known, child_processes_peak, ports_json, orphan_state, created_at, updated_at
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(run_id) DO UPDATE SET
+ON CONFLICT(session_id) DO UPDATE SET
   status = excluded.status,
   input_tokens_known = excluded.input_tokens_known,
   input_tokens = excluded.input_tokens,
@@ -33,6 +33,6 @@ ON CONFLICT(run_id) DO UPDATE SET
   updated_at = excluded.updated_at;
 
 -- name: ListHarnessSessionTelemetryByWorkspace :many
-SELECT * FROM agent_run_telemetry
+SELECT * FROM harness_session_telemetry
 WHERE workspace_id = ?
-ORDER BY created_at DESC, run_id ASC;
+ORDER BY created_at DESC, session_id ASC;

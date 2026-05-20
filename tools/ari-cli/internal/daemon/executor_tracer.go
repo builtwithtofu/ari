@@ -1166,7 +1166,7 @@ func finalResponseResponseFromStore(stored globaldb.FinalResponse) FinalResponse
 	if stored.UpdatedAt != nil {
 		updatedAt = stored.UpdatedAt.Format(time.RFC3339Nano)
 	}
-	return FinalResponseResponse{FinalResponseID: stored.FinalResponseID, SessionID: stored.SessionID, WorkspaceID: stored.WorkspaceID, TaskID: stored.TaskID, ContextPacketID: stored.ContextPacketID, ProfileID: stored.ProfileID, Status: stored.Status, Text: stored.Text, EvidenceLinks: links, CreatedAt: stored.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: updatedAt}
+	return FinalResponseResponse{FinalResponseID: stored.FinalResponseID, SessionID: stored.HarnessSessionID, WorkspaceID: stored.WorkspaceID, TaskID: stored.TaskID, ContextPacketID: stored.ContextPacketID, ProfileID: stored.ProfileID, Status: stored.Status, Text: stored.Text, EvidenceLinks: links, CreatedAt: stored.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: updatedAt}
 }
 
 func telemetryRollup(ctx context.Context, store *globaldb.Store, req TelemetryRollupRequest) (TelemetryRollupResponse, error) {
@@ -1798,7 +1798,7 @@ func (d *Daemon) callEphemeral(ctx context.Context, store *globaldb.Store, req E
 		return EphemeralCallResponse{}, err
 	}
 	links, _ := json.Marshal([]FinalResponseEvidenceLink{{Kind: "harness_session", ID: storedRun.SessionID}, {Kind: "agent_message", ID: requestDM.AgentMessageID}, {Kind: "agent_message", ID: replyDM.AgentMessageID}})
-	if err := store.UpsertFinalResponse(ctx, globaldb.FinalResponse{FinalResponseID: "fr_" + replyID, SessionID: storedRun.SessionID, RunID: storedRun.SessionID, WorkspaceID: storedRun.WorkspaceID, TaskID: taskID, ContextPacketID: contextPacketID, ProfileID: storedRun.AgentID, Status: "completed", Text: replyBody, EvidenceLinksJSON: string(links)}); err != nil {
+	if err := store.UpsertFinalResponse(ctx, globaldb.FinalResponse{FinalResponseID: "fr_" + replyID, HarnessSessionID: storedRun.SessionID, WorkspaceID: storedRun.WorkspaceID, TaskID: taskID, ContextPacketID: contextPacketID, ProfileID: storedRun.AgentID, Status: "completed", Text: replyBody, EvidenceLinksJSON: string(links)}); err != nil {
 		return EphemeralCallResponse{}, err
 	}
 	return EphemeralCallResponse{Run: storedRun, Request: agentMessageResponse(requestDM), Reply: agentMessageResponse(replyDM)}, nil
@@ -2258,7 +2258,7 @@ func storeFinalResponse(ctx context.Context, store *globaldb.Store, result Harne
 	if err != nil {
 		return err
 	}
-	return store.UpsertFinalResponse(ctx, globaldb.FinalResponse{FinalResponseID: "fr_" + responseID, SessionID: result.HarnessSession.HarnessSessionID, WorkspaceID: result.HarnessSession.WorkspaceID, TaskID: result.HarnessSession.TaskID, ContextPacketID: result.HarnessSession.ContextPacketID, ProfileID: profileID, Status: result.FinalResponse.Status, Text: result.FinalResponse.Text, EvidenceLinksJSON: string(encodedLinks)})
+	return store.UpsertFinalResponse(ctx, globaldb.FinalResponse{FinalResponseID: "fr_" + responseID, HarnessSessionID: result.HarnessSession.HarnessSessionID, WorkspaceID: result.HarnessSession.WorkspaceID, TaskID: result.HarnessSession.TaskID, ContextPacketID: result.HarnessSession.ContextPacketID, ProfileID: profileID, Status: result.FinalResponse.Status, Text: result.FinalResponse.Text, EvidenceLinksJSON: string(encodedLinks)})
 }
 
 func storeHarnessSessionTelemetry(ctx context.Context, store *globaldb.Store, result HarnessCallResult, sample ProcessMetricsSample, profile ...Profile) error {
@@ -2285,7 +2285,7 @@ func storeHarnessSessionTelemetry(ctx context.Context, store *globaldb.Store, re
 		model = "unknown"
 	}
 	durationMS, durationKnown := agentSessionDurationMS(result.HarnessSession)
-	return store.UpsertHarnessSessionTelemetry(ctx, globaldb.HarnessSessionTelemetry{RunID: result.HarnessSession.HarnessSessionID, WorkspaceID: result.HarnessSession.WorkspaceID, TaskID: result.HarnessSession.TaskID, ProfileID: profileID, ProfileName: profileName, Harness: result.HarnessSession.Executor, Model: model, InvocationClass: invocationClass, Status: result.HarnessSession.Status, InputTokensKnown: result.Telemetry.InputTokens != nil, InputTokens: result.Telemetry.InputTokens, OutputTokensKnown: result.Telemetry.OutputTokens != nil, OutputTokens: result.Telemetry.OutputTokens, DurationMSKnown: durationKnown, DurationMS: durationMS, OwnedByAri: sample.OwnedByAri, PIDKnown: sample.PID.Known, PID: sample.PID.Value, CPUTimeMSKnown: sample.CPUTimeMS.Known, CPUTimeMS: sample.CPUTimeMS.Value, MemoryRSSBytesPeakKnown: sample.MemoryRSSBytesPeak.Known, MemoryRSSBytesPeak: sample.MemoryRSSBytesPeak.Value, ChildProcessesPeakKnown: sample.ChildProcessesPeak.Known, ChildProcessesPeak: sample.ChildProcessesPeak.Value, PortsJSON: portsJSON, OrphanState: sample.OrphanState, ExitCodeKnown: sample.ExitCode.Known, ExitCode: sample.ExitCode.Value})
+	return store.UpsertHarnessSessionTelemetry(ctx, globaldb.HarnessSessionTelemetry{HarnessSessionID: result.HarnessSession.HarnessSessionID, WorkspaceID: result.HarnessSession.WorkspaceID, TaskID: result.HarnessSession.TaskID, ProfileID: profileID, ProfileName: profileName, Harness: result.HarnessSession.Executor, Model: model, InvocationClass: invocationClass, Status: result.HarnessSession.Status, InputTokensKnown: result.Telemetry.InputTokens != nil, InputTokens: result.Telemetry.InputTokens, OutputTokensKnown: result.Telemetry.OutputTokens != nil, OutputTokens: result.Telemetry.OutputTokens, DurationMSKnown: durationKnown, DurationMS: durationMS, OwnedByAri: sample.OwnedByAri, PIDKnown: sample.PID.Known, PID: sample.PID.Value, CPUTimeMSKnown: sample.CPUTimeMS.Known, CPUTimeMS: sample.CPUTimeMS.Value, MemoryRSSBytesPeakKnown: sample.MemoryRSSBytesPeak.Known, MemoryRSSBytesPeak: sample.MemoryRSSBytesPeak.Value, ChildProcessesPeakKnown: sample.ChildProcessesPeak.Known, ChildProcessesPeak: sample.ChildProcessesPeak.Value, PortsJSON: portsJSON, OrphanState: sample.OrphanState, ExitCodeKnown: sample.ExitCode.Known, ExitCode: sample.ExitCode.Value})
 }
 
 func agentSessionDurationMS(run HarnessSession) (*int64, bool) {

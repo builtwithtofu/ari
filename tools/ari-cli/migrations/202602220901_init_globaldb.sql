@@ -131,7 +131,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS agent_profiles_workspace_name_idx
 
 CREATE TABLE IF NOT EXISTS final_responses (
   final_response_id TEXT PRIMARY KEY,
-  run_id TEXT NOT NULL UNIQUE,
+  session_id TEXT NOT NULL UNIQUE,
   workspace_id TEXT NOT NULL,
   task_id TEXT NOT NULL,
   context_packet_id TEXT NOT NULL,
@@ -148,8 +148,8 @@ CREATE TABLE IF NOT EXISTS final_responses (
 CREATE INDEX IF NOT EXISTS final_responses_workspace_created_idx
   ON final_responses(workspace_id, created_at DESC, final_response_id ASC);
 
-CREATE TABLE IF NOT EXISTS agent_run_telemetry (
-  run_id TEXT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS harness_session_telemetry (
+  session_id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,
   task_id TEXT NOT NULL,
   profile_id TEXT,
@@ -185,8 +185,8 @@ CREATE TABLE IF NOT EXISTS agent_run_telemetry (
   FOREIGN KEY(profile_id) REFERENCES agent_profiles(profile_id) ON DELETE SET NULL
 );
 
-CREATE INDEX IF NOT EXISTS agent_run_telemetry_workspace_created_idx
-  ON agent_run_telemetry(workspace_id, created_at DESC, run_id ASC);
+CREATE INDEX IF NOT EXISTS harness_session_telemetry_workspace_created_idx
+  ON harness_session_telemetry(workspace_id, created_at DESC, session_id ASC);
 
 CREATE TABLE IF NOT EXISTS operation_records (
   operation_id TEXT PRIMARY KEY,
@@ -221,7 +221,7 @@ CREATE INDEX IF NOT EXISTS operation_records_parent_idx
   ON operation_records(parent_operation_id, created_at ASC, operation_id ASC)
   WHERE parent_operation_id IS NOT NULL;
 
-CREATE TABLE IF NOT EXISTS agent_session_configs (
+CREATE TABLE IF NOT EXISTS harness_session_configs (
   agent_id TEXT PRIMARY KEY,
   workspace_id TEXT,
   name TEXT NOT NULL,
@@ -239,15 +239,15 @@ CREATE TABLE IF NOT EXISTS agent_session_configs (
   FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS agent_session_configs_global_name_idx
-  ON agent_session_configs(name)
+CREATE UNIQUE INDEX IF NOT EXISTS harness_session_configs_global_name_idx
+  ON harness_session_configs(name)
   WHERE workspace_id IS NULL;
 
-CREATE UNIQUE INDEX IF NOT EXISTS agent_session_configs_workspace_name_idx
-  ON agent_session_configs(workspace_id, name)
+CREATE UNIQUE INDEX IF NOT EXISTS harness_session_configs_workspace_name_idx
+  ON harness_session_configs(workspace_id, name)
   WHERE workspace_id IS NOT NULL;
 
-CREATE TABLE IF NOT EXISTS agent_sessions (
+CREATE TABLE IF NOT EXISTS harness_sessions (
   session_id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,
   agent_id TEXT NOT NULL,
@@ -271,12 +271,12 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
-  FOREIGN KEY(agent_id) REFERENCES agent_session_configs(agent_id) ON DELETE CASCADE,
+  FOREIGN KEY(agent_id) REFERENCES harness_session_configs(agent_id) ON DELETE CASCADE,
   UNIQUE(session_id, workspace_id, agent_id)
 );
 
-CREATE INDEX IF NOT EXISTS agent_sessions_workspace_status_idx
-  ON agent_sessions(workspace_id, status, created_at DESC, session_id ASC);
+CREATE INDEX IF NOT EXISTS harness_sessions_workspace_status_idx
+  ON harness_sessions(workspace_id, status, created_at DESC, session_id ASC);
 
 CREATE TABLE IF NOT EXISTS run_log_messages (
   message_id TEXT PRIMARY KEY,
@@ -297,9 +297,9 @@ CREATE TABLE IF NOT EXISTS run_log_messages (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
-  FOREIGN KEY(session_id) REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
-  FOREIGN KEY(agent_id) REFERENCES agent_session_configs(agent_id) ON DELETE CASCADE,
-  FOREIGN KEY(session_id, workspace_id, agent_id) REFERENCES agent_sessions(session_id, workspace_id, agent_id) ON DELETE CASCADE,
+  FOREIGN KEY(session_id) REFERENCES harness_sessions(session_id) ON DELETE CASCADE,
+  FOREIGN KEY(agent_id) REFERENCES harness_session_configs(agent_id) ON DELETE CASCADE,
+  FOREIGN KEY(session_id, workspace_id, agent_id) REFERENCES harness_sessions(session_id, workspace_id, agent_id) ON DELETE CASCADE,
   UNIQUE(session_id, sequence)
 );
 
@@ -336,9 +336,9 @@ CREATE TABLE IF NOT EXISTS context_excerpts (
   content_hash TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
-  FOREIGN KEY(source_session_id) REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
-  FOREIGN KEY(source_agent_id) REFERENCES agent_session_configs(agent_id) ON DELETE CASCADE,
-  FOREIGN KEY(source_session_id, workspace_id, source_agent_id) REFERENCES agent_sessions(session_id, workspace_id, agent_id) ON DELETE CASCADE
+  FOREIGN KEY(source_session_id) REFERENCES harness_sessions(session_id) ON DELETE CASCADE,
+  FOREIGN KEY(source_agent_id) REFERENCES harness_session_configs(agent_id) ON DELETE CASCADE,
+  FOREIGN KEY(source_session_id, workspace_id, source_agent_id) REFERENCES harness_sessions(session_id, workspace_id, agent_id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS context_excerpt_items (

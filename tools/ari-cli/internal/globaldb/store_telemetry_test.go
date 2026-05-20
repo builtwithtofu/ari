@@ -3,6 +3,8 @@ package globaldb
 import (
 	"context"
 	"testing"
+
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb/dbsqlc"
 )
 
 func TestHarnessSessionTelemetryRollupPreservesUnknownTokens(t *testing.T) {
@@ -12,11 +14,22 @@ func TestHarnessSessionTelemetryRollupPreservesUnknownTokens(t *testing.T) {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
 
-	if err := store.UpsertHarnessSessionTelemetry(ctx, HarnessSessionTelemetry{RunID: "run_known", WorkspaceID: "ws-1", TaskID: "task-1", ProfileName: "executor", Harness: "codex", Model: "gpt-5.1-codex", InvocationClass: "sticky", Status: "completed", InputTokensKnown: true, InputTokens: int64Ptr(12), OutputTokensKnown: true, OutputTokens: int64Ptr(3), OwnedByAri: true, PortsJSON: `[{"port":5173,"protocol":"tcp","confidence":"detected"}]`, OrphanState: "not_orphaned"}); err != nil {
+	if err := store.UpsertHarnessSessionTelemetry(ctx, HarnessSessionTelemetry{HarnessSessionID: "run_known", WorkspaceID: "ws-1", TaskID: "task-1", ProfileName: "executor", Harness: "codex", Model: "gpt-5.1-codex", InvocationClass: "sticky", Status: "completed", InputTokensKnown: true, InputTokens: int64Ptr(12), OutputTokensKnown: true, OutputTokens: int64Ptr(3), OwnedByAri: true, PortsJSON: `[{"port":5173,"protocol":"tcp","confidence":"detected"}]`, OrphanState: "not_orphaned"}); err != nil {
 		t.Fatalf("UpsertHarnessSessionTelemetry known returned error: %v", err)
 	}
-	if err := store.UpsertHarnessSessionTelemetry(ctx, HarnessSessionTelemetry{RunID: "run_unknown", WorkspaceID: "ws-1", TaskID: "task-2", ProfileName: "executor", Harness: "codex", Model: "gpt-5.1-codex", InvocationClass: "sticky", Status: "failed", OwnedByAri: true}); err != nil {
+	if err := store.UpsertHarnessSessionTelemetry(ctx, HarnessSessionTelemetry{HarnessSessionID: "run_unknown", WorkspaceID: "ws-1", TaskID: "task-2", ProfileName: "executor", Harness: "codex", Model: "gpt-5.1-codex", InvocationClass: "sticky", Status: "failed", OwnedByAri: true}); err != nil {
 		t.Fatalf("UpsertHarnessSessionTelemetry unknown returned error: %v", err)
+	}
+	rows, err := store.sqlcQueries().ListHarnessSessionTelemetryByWorkspace(ctx, dbsqlc.ListHarnessSessionTelemetryByWorkspaceParams{WorkspaceID: "ws-1"})
+	if err != nil {
+		t.Fatalf("ListHarnessSessionTelemetryByWorkspace returned error: %v", err)
+	}
+	gotSessionIDs := map[string]bool{}
+	for _, row := range rows {
+		gotSessionIDs[row.SessionID] = true
+	}
+	if len(rows) != 2 || !gotSessionIDs["run_known"] || !gotSessionIDs["run_unknown"] {
+		t.Fatalf("telemetry rows = %#v, want session_id round-trip", rows)
 	}
 
 	rollups, err := store.RollupHarnessSessionTelemetry(ctx, "ws-1")

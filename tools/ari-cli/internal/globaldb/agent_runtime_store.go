@@ -29,7 +29,6 @@ const (
 
 type HarnessSession struct {
 	SessionID             string
-	RunID                 string
 	WorkspaceID           string
 	AgentID               string
 	Harness               string
@@ -248,7 +247,7 @@ func (s *Store) CreateHarnessSessionFromConfig(ctx context.Context, sessionID, a
 	if _, err := s.GetWorkspace(ctx, agent.WorkspaceID); err != nil {
 		return HarnessSession{}, err
 	}
-	run := HarnessSession{SessionID: strings.TrimSpace(sessionID), RunID: strings.TrimSpace(sessionID), WorkspaceID: agent.WorkspaceID, AgentID: agent.AgentID, Harness: agent.Harness, Model: agent.Model, CWD: strings.TrimSpace(cwd), Status: "waiting", Usage: HarnessSessionUsageSticky}
+	run := HarnessSession{SessionID: strings.TrimSpace(sessionID), WorkspaceID: agent.WorkspaceID, AgentID: agent.AgentID, Harness: agent.Harness, Model: agent.Model, CWD: strings.TrimSpace(cwd), Status: "waiting", Usage: HarnessSessionUsageSticky}
 	if err := s.CreateHarnessSession(ctx, run); err != nil {
 		return HarnessSession{}, err
 	}
@@ -264,9 +263,6 @@ func agentSessionConfigFromRow(agentID string, workspaceID *string, name, harnes
 }
 
 func (s *Store) CreateHarnessSession(ctx context.Context, run HarnessSession) error {
-	if strings.TrimSpace(run.SessionID) == "" {
-		run.SessionID = strings.TrimSpace(run.RunID)
-	}
 	if strings.TrimSpace(run.SessionID) == "" || strings.TrimSpace(run.WorkspaceID) == "" || strings.TrimSpace(run.AgentID) == "" || strings.TrimSpace(run.Status) == "" {
 		return ErrInvalidInput
 	}
@@ -299,18 +295,14 @@ func defaultJSON(value, fallback string) string {
 }
 
 func agentSessionFromRow(sessionID, workspaceID, agentID, harness, model, providerSessionID, providerRunID, providerThreadID, cwd, folderScopeJSON, status, usage, sourceSessionID, sourceAgentID, promptHash, contextPayloadIDsJSON, permissionMode, sandboxMode, toolScopeJSON, providerMetadataJSON string) HarnessSession {
-	return HarnessSession{SessionID: sessionID, RunID: sessionID, WorkspaceID: workspaceID, AgentID: agentID, Harness: harness, Model: model, ProviderSessionID: providerSessionID, ProviderRunID: providerRunID, ProviderThreadID: providerThreadID, CWD: cwd, FolderScopeJSON: folderScopeJSON, Status: status, Usage: usage, SourceSessionID: sourceSessionID, SourceAgentID: sourceAgentID, PromptHash: promptHash, ContextPayloadIDsJSON: contextPayloadIDsJSON, PermissionMode: permissionMode, SandboxMode: sandboxMode, ToolScopeJSON: toolScopeJSON, ProviderMetadataJSON: providerMetadataJSON}
+	return HarnessSession{SessionID: sessionID, WorkspaceID: workspaceID, AgentID: agentID, Harness: harness, Model: model, ProviderSessionID: providerSessionID, ProviderRunID: providerRunID, ProviderThreadID: providerThreadID, CWD: cwd, FolderScopeJSON: folderScopeJSON, Status: status, Usage: usage, SourceSessionID: sourceSessionID, SourceAgentID: sourceAgentID, PromptHash: promptHash, ContextPayloadIDsJSON: contextPayloadIDsJSON, PermissionMode: permissionMode, SandboxMode: sandboxMode, ToolScopeJSON: toolScopeJSON, ProviderMetadataJSON: providerMetadataJSON}
 }
 
 func (s *Store) UpdateHarnessSessionStatus(ctx context.Context, sessionID, status string) error {
 	if strings.TrimSpace(sessionID) == "" || strings.TrimSpace(status) == "" {
 		return ErrInvalidInput
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE agent_sessions SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE session_id = ?`, strings.TrimSpace(status), strings.TrimSpace(sessionID))
-	if err != nil {
-		return err
-	}
-	count, err := result.RowsAffected()
+	count, err := s.sqlc.UpdateHarnessSessionStatus(ctx, dbsqlc.UpdateHarnessSessionStatusParams{Status: strings.TrimSpace(status), SessionID: strings.TrimSpace(sessionID)})
 	if err != nil {
 		return err
 	}
@@ -324,11 +316,7 @@ func (s *Store) UpdateHarnessSessionProvider(ctx context.Context, sessionID, pro
 	if strings.TrimSpace(sessionID) == "" {
 		return ErrInvalidInput
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE agent_sessions SET provider_session_id = ?, provider_run_id = ?, provider_metadata_json = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE session_id = ?`, strings.TrimSpace(providerSessionID), strings.TrimSpace(providerRunID), defaultJSON(providerMetadataJSON, "{}"), strings.TrimSpace(sessionID))
-	if err != nil {
-		return err
-	}
-	count, err := result.RowsAffected()
+	count, err := s.sqlc.UpdateHarnessSessionProvider(ctx, dbsqlc.UpdateHarnessSessionProviderParams{ProviderSessionID: strings.TrimSpace(providerSessionID), ProviderRunID: strings.TrimSpace(providerRunID), ProviderMetadataJson: defaultJSON(providerMetadataJSON, "{}"), SessionID: strings.TrimSpace(sessionID)})
 	if err != nil {
 		return err
 	}
@@ -722,24 +710,13 @@ func (s *Store) ListContextExcerpts(ctx context.Context, workspaceID string) ([]
 	if workspaceID == "" {
 		return nil, ErrInvalidInput
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT context_excerpt_id, workspace_id, source_session_id, source_agent_id, target_agent_id, target_session_id, selector_type, selector_json, visibility, appended_message, content_hash FROM context_excerpts WHERE workspace_id = ? ORDER BY created_at ASC, context_excerpt_id ASC`, workspaceID)
+	rows, err := s.sqlc.ListContextExcerptsByWorkspace(ctx, dbsqlc.ListContextExcerptsByWorkspaceParams{WorkspaceID: workspaceID})
 	if err != nil {
 		return nil, err
 	}
-	excerpts := make([]ContextExcerpt, 0)
-	for rows.Next() {
-		var excerpt ContextExcerpt
-		if err := rows.Scan(&excerpt.ContextExcerptID, &excerpt.WorkspaceID, &excerpt.SourceSessionID, &excerpt.SourceAgentID, &excerpt.TargetAgentID, &excerpt.TargetSessionID, &excerpt.SelectorType, &excerpt.SelectorJSON, &excerpt.Visibility, &excerpt.AppendedMessage, &excerpt.ContentHash); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		excerpts = append(excerpts, excerpt)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+	excerpts := make([]ContextExcerpt, 0, len(rows))
+	for _, row := range rows {
+		excerpts = append(excerpts, ContextExcerpt{ContextExcerptID: row.ContextExcerptID, WorkspaceID: row.WorkspaceID, SourceSessionID: row.SourceSessionID, SourceAgentID: row.SourceAgentID, TargetAgentID: row.TargetAgentID, TargetSessionID: row.TargetSessionID, SelectorType: row.SelectorType, SelectorJSON: row.SelectorJson, Visibility: row.Visibility, AppendedMessage: row.AppendedMessage, ContentHash: row.ContentHash})
 	}
 	for i := range excerpts {
 		items, err := s.sqlc.ListContextExcerptItems(ctx, dbsqlc.ListContextExcerptItemsParams{ContextExcerptID: excerpts[i].ContextExcerptID})
@@ -762,44 +739,20 @@ func (s *Store) ListAgentMessages(ctx context.Context, workspaceID string) ([]Ag
 	if workspaceID == "" {
 		return nil, ErrInvalidInput
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT agent_message_id, workspace_id, source_agent_id, source_session_id, target_agent_id, target_session_id, body, status, delivered_session_id FROM agent_messages WHERE workspace_id = ? ORDER BY created_at ASC, agent_message_id ASC`, workspaceID)
+	rows, err := s.sqlc.ListAgentMessagesByWorkspace(ctx, dbsqlc.ListAgentMessagesByWorkspaceParams{WorkspaceID: workspaceID})
 	if err != nil {
 		return nil, err
 	}
-	messages := make([]AgentMessage, 0)
-	for rows.Next() {
-		var dm AgentMessage
-		if err := rows.Scan(&dm.AgentMessageID, &dm.WorkspaceID, &dm.SourceAgentID, &dm.SourceSessionID, &dm.TargetAgentID, &dm.TargetSessionID, &dm.Body, &dm.Status, &dm.DeliveredSessionID); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		messages = append(messages, dm)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+	messages := make([]AgentMessage, 0, len(rows))
+	for _, row := range rows {
+		messages = append(messages, AgentMessage{AgentMessageID: row.AgentMessageID, WorkspaceID: row.WorkspaceID, SourceAgentID: row.SourceAgentID, SourceSessionID: row.SourceSessionID, TargetAgentID: row.TargetAgentID, TargetSessionID: row.TargetSessionID, Body: row.Body, Status: row.Status, DeliveredSessionID: row.DeliveredSessionID})
 	}
 	for i := range messages {
-		excerptRows, err := s.db.QueryContext(ctx, `SELECT context_excerpt_id FROM agent_message_context_excerpts WHERE agent_message_id = ? ORDER BY sequence ASC`, messages[i].AgentMessageID)
+		excerptIDs, err := s.sqlc.ListAgentMessageContextExcerptIDs(ctx, dbsqlc.ListAgentMessageContextExcerptIDsParams{AgentMessageID: messages[i].AgentMessageID})
 		if err != nil {
 			return nil, err
 		}
-		for excerptRows.Next() {
-			var contextExcerptID string
-			if err := excerptRows.Scan(&contextExcerptID); err != nil {
-				_ = excerptRows.Close()
-				return nil, err
-			}
-			messages[i].ContextExcerptIDs = append(messages[i].ContextExcerptIDs, contextExcerptID)
-		}
-		if err := excerptRows.Close(); err != nil {
-			return nil, err
-		}
-		if err := excerptRows.Err(); err != nil {
-			return nil, err
-		}
+		messages[i].ContextExcerptIDs = append(messages[i].ContextExcerptIDs, excerptIDs...)
 	}
 	return messages, nil
 }

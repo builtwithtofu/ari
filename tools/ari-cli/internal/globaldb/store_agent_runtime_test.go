@@ -7,21 +7,21 @@ import (
 	"testing"
 )
 
-func TestAgentRuntimeSchemaUsesADRTerminology(t *testing.T) {
-	store := newGlobalDBTestStore(t, "agent-sessiontime-terminology")
+func TestAgentRuntimeSchemaUsesRuntimeTerminology(t *testing.T) {
+	store := newGlobalDBTestStore(t, "harness-session-terminology")
 	ctx := context.Background()
 
-	for _, table := range []string{"workspace_agents", "agent_runs", "run_messages", "run_message_parts", "message_shares", "message_share_items", "direct_messages", "direct_message_shares"} {
+	for _, table := range []string{"workspace_agents", "agent_runs", "agent_sessions", "agent_session_configs", "agent_run_telemetry", "run_messages", "run_message_parts", "message_shares", "message_share_items", "direct_messages", "direct_message_shares"} {
 		var count int
 		if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&count); err != nil {
 			t.Fatalf("query old table %s returned error: %v", table, err)
 		}
 		if count != 0 {
-			t.Fatalf("old table %s exists; want ADR-aligned agent_session/run_log/context_excerpt/agent_message storage names", table)
+			t.Fatalf("old table %s exists; want harness_session/run_log/context_excerpt/agent_message storage names", table)
 		}
 	}
 
-	for _, table := range []string{"agent_session_configs", "agent_sessions", "run_log_messages", "run_log_message_parts", "context_excerpts", "context_excerpt_items", "agent_messages", "agent_message_context_excerpts"} {
+	for _, table := range []string{"harness_session_configs", "harness_sessions", "harness_session_telemetry", "run_log_messages", "run_log_message_parts", "context_excerpts", "context_excerpt_items", "agent_messages", "agent_message_context_excerpts"} {
 		var count int
 		if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&count); err != nil {
 			t.Fatalf("query table %s returned error: %v", table, err)
@@ -29,6 +29,21 @@ func TestAgentRuntimeSchemaUsesADRTerminology(t *testing.T) {
 		if count != 1 {
 			t.Fatalf("table %s exists = %d, want 1", table, count)
 		}
+	}
+
+	var finalResponseRunIDColumns int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('final_responses') WHERE name = 'run_id'`).Scan(&finalResponseRunIDColumns); err != nil {
+		t.Fatalf("query final_responses run_id column returned error: %v", err)
+	}
+	if finalResponseRunIDColumns != 0 {
+		t.Fatalf("final_responses.run_id exists; want session_id storage")
+	}
+	var finalResponseSessionIDColumns int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('final_responses') WHERE name = 'session_id'`).Scan(&finalResponseSessionIDColumns); err != nil {
+		t.Fatalf("query final_responses session_id column returned error: %v", err)
+	}
+	if finalResponseSessionIDColumns != 1 {
+		t.Fatalf("final_responses.session_id exists = %d, want 1", finalResponseSessionIDColumns)
 	}
 }
 
