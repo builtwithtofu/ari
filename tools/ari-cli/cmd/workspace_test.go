@@ -651,8 +651,8 @@ func TestWorkspaceCreateUsesExplicitFolder(t *testing.T) {
 		t.Fatalf("execute workspace create: %v", err)
 	}
 
-	if gotReq.OriginRoot != "" {
-		t.Fatalf("create origin root = %q, want empty until folder attaches", gotReq.OriginRoot)
+	if gotReq.OriginRoot != repoRoot {
+		t.Fatalf("create origin root = %q, want repo root %q", gotReq.OriginRoot, repoRoot)
 	}
 	if gotAdd.WorkspaceID != "sess-1" || gotAdd.FolderPath != repoRoot {
 		t.Fatalf("add folder request = %#v, want workspace sess-1 repo root %q", gotAdd, repoRoot)

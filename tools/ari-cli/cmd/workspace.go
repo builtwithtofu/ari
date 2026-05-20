@@ -381,6 +381,7 @@ func newWorkspaceCreateCmd() *cobra.Command {
 
 			response, err := workspaceCreateRPC(createCtx, cfg.Daemon.SocketPath, daemon.WorkspaceCreateRequest{
 				Name:          args[0],
+				OriginRoot:    folderPath,
 				CleanupPolicy: cleanup,
 				VCSPreference: vcsPreference,
 			})

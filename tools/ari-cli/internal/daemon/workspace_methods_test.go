@@ -170,6 +170,41 @@ func TestWorkspaceSetupExistingRejectsDuplicateNameBeforeCheckpoint(t *testing.T
 	}
 }
 
+func TestWorkspaceSetupExistingRejectsOwnedFolderBeforeCheckpoint(t *testing.T) {
+	store := newSessionMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	ctx := context.Background()
+	repoRoot := t.TempDir()
+	if err := makeGitRoot(repoRoot); err != nil {
+		t.Fatalf("makeGitRoot returned error: %v", err)
+	}
+	if err := store.CreateWorkspace(ctx, "ws-existing", "existing", repoRoot, "manual", "auto"); err != nil {
+		t.Fatalf("CreateWorkspace returned error: %v", err)
+	}
+	if err := store.AddFolder(ctx, "ws-existing", repoRoot, "git", true); err != nil {
+		t.Fatalf("AddFolder returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "workspace.setup_existing", WorkspaceSetupExistingRequest{Name: "project", Folder: repoRoot})
+	if err == nil {
+		t.Fatal("workspace.setup_existing returned nil error for owned folder")
+	}
+	if _, lookupErr := store.GetWorkspaceByName(ctx, "project"); !errors.Is(lookupErr, globaldb.ErrNotFound) {
+		t.Fatalf("GetWorkspaceByName after owned folder setup error = %v, want ErrNotFound", lookupErr)
+	}
+	records, err := store.ListOperationRecords(ctx, "")
+	if err != nil {
+		t.Fatalf("ListOperationRecords returned error: %v", err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("operation records after owned folder setup = %#v, want none", records)
+	}
+}
+
 func TestWorkspaceAddFolderMaintainsOnePrimaryAcrossMultipleFolders(t *testing.T) {
 	store := newSessionMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()

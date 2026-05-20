@@ -336,6 +336,11 @@ func (d *Daemon) workspaceSetupExisting(ctx context.Context, store *globaldb.Sto
 	} else if !errors.Is(err, globaldb.ErrNotFound) {
 		return WorkspaceSetupExistingResponse{}, err
 	}
+	if ownerID, err := workspaceFolderOwnerID(ctx, store, folderPath, ""); err != nil {
+		return WorkspaceSetupExistingResponse{}, err
+	} else if ownerID != "" {
+		return WorkspaceSetupExistingResponse{}, rpc.NewHandlerError(rpc.InvalidParams, fmt.Sprintf("folder %q already belongs to workspace %q", folderPath, ownerID), folderPath)
+	}
 	previousContext, err := readActiveWorkspaceContext(ctx, store)
 	if err != nil {
 		return WorkspaceSetupExistingResponse{}, err
@@ -460,6 +465,29 @@ func addValidatedWorkspaceFolder(ctx context.Context, store *globaldb.Store, wor
 		return WorkspaceAddFolderResponse{}, mapWorkspaceStoreError(err, workspaceID)
 	}
 	return WorkspaceAddFolderResponse{FolderPath: folderPath, VCSType: vcsType}, nil
+}
+
+func workspaceFolderOwnerID(ctx context.Context, store *globaldb.Store, folderPath, exceptWorkspaceID string) (string, error) {
+	workspaces, err := store.ListWorkspaces(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, workspace := range workspaces {
+		if workspace.ID == exceptWorkspaceID {
+			continue
+		}
+		folders, err := store.ListFolders(ctx, workspace.ID)
+		if err != nil {
+			return "", err
+		}
+		for _, folder := range folders {
+			if folder.FolderPath == folderPath {
+				return workspace.ID, nil
+			}
+		}
+	}
+
+	return "", nil
 }
 
 func mapWorkspaceStoreError(err error, sessionID string) error {
