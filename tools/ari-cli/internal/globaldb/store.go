@@ -183,8 +183,7 @@ type AuthSlot struct {
 
 type FinalResponse struct {
 	FinalResponseID   string
-	RunID             string
-	SessionID         string
+	HarnessSessionID  string
 	WorkspaceID       string
 	TaskID            string
 	ContextPacketID   string
@@ -202,8 +201,7 @@ type KnownInt64 struct {
 }
 
 type HarnessSessionTelemetry struct {
-	RunID                   string
-	SessionID               string
+	HarnessSessionID        string
 	WorkspaceID             string
 	TaskID                  string
 	ProfileID               string
@@ -595,14 +593,7 @@ func authSlotMetadataValueContainsSourceFields(value any) bool {
 
 func (s *Store) UpsertFinalResponse(ctx context.Context, response FinalResponse) error {
 	response.FinalResponseID = strings.TrimSpace(response.FinalResponseID)
-	response.RunID = strings.TrimSpace(response.RunID)
-	if response.RunID == "" {
-		response.RunID = strings.TrimSpace(response.SessionID)
-	}
-	response.SessionID = strings.TrimSpace(response.SessionID)
-	if response.RunID == "" {
-		response.RunID = response.SessionID
-	}
+	response.HarnessSessionID = strings.TrimSpace(response.HarnessSessionID)
 	response.WorkspaceID = strings.TrimSpace(response.WorkspaceID)
 	response.TaskID = strings.TrimSpace(response.TaskID)
 	response.ContextPacketID = strings.TrimSpace(response.ContextPacketID)
@@ -612,8 +603,8 @@ func (s *Store) UpsertFinalResponse(ctx context.Context, response FinalResponse)
 	if response.FinalResponseID == "" {
 		return fmt.Errorf("%w: final response id is required", ErrInvalidInput)
 	}
-	if response.RunID == "" {
-		return fmt.Errorf("%w: run id is required", ErrInvalidInput)
+	if response.HarnessSessionID == "" {
+		return fmt.Errorf("%w: harness session id is required", ErrInvalidInput)
 	}
 	if response.WorkspaceID == "" {
 		return fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
@@ -641,29 +632,25 @@ func (s *Store) UpsertFinalResponse(ctx context.Context, response FinalResponse)
 	if response.UpdatedAt != nil {
 		updatedAt = ptrString(response.UpdatedAt.UTC().Format(time.RFC3339Nano))
 	}
-	if err := s.sqlcQueries().UpsertFinalResponse(ctx, dbsqlc.UpsertFinalResponseParams{FinalResponseID: response.FinalResponseID, RunID: response.RunID, WorkspaceID: response.WorkspaceID, TaskID: response.TaskID, ContextPacketID: response.ContextPacketID, ProfileID: optionalString(response.ProfileID), Status: response.Status, Text: response.Text, EvidenceLinks: response.EvidenceLinksJSON, CreatedAt: response.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: updatedAt}); err != nil {
+	if err := s.sqlcQueries().UpsertFinalResponse(ctx, dbsqlc.UpsertFinalResponseParams{FinalResponseID: response.FinalResponseID, SessionID: response.HarnessSessionID, WorkspaceID: response.WorkspaceID, TaskID: response.TaskID, ContextPacketID: response.ContextPacketID, ProfileID: optionalString(response.ProfileID), Status: response.Status, Text: response.Text, EvidenceLinks: response.EvidenceLinksJSON, CreatedAt: response.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: updatedAt}); err != nil {
 		return fmt.Errorf("upsert final response %q: %w", response.FinalResponseID, err)
 	}
 	return nil
 }
 
-func (s *Store) GetFinalResponseByRunID(ctx context.Context, runID string) (FinalResponse, error) {
-	runID = strings.TrimSpace(runID)
-	if runID == "" {
-		return FinalResponse{}, fmt.Errorf("%w: run id is required", ErrInvalidInput)
+func (s *Store) GetFinalResponseBySessionID(ctx context.Context, sessionID string) (FinalResponse, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return FinalResponse{}, fmt.Errorf("%w: harness session id is required", ErrInvalidInput)
 	}
-	row, err := s.sqlcQueries().GetFinalResponseByRunID(ctx, dbsqlc.GetFinalResponseByRunIDParams{RunID: runID})
+	row, err := s.sqlcQueries().GetFinalResponseBySessionID(ctx, dbsqlc.GetFinalResponseBySessionIDParams{SessionID: sessionID})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return FinalResponse{}, ErrNotFound
 		}
-		return FinalResponse{}, fmt.Errorf("query final response by run id: %w", err)
+		return FinalResponse{}, fmt.Errorf("query final response by harness session id: %w", err)
 	}
 	return finalResponseFromSQLC(row), nil
-}
-
-func (s *Store) GetFinalResponseBySessionID(ctx context.Context, sessionID string) (FinalResponse, error) {
-	return s.GetFinalResponseByRunID(ctx, sessionID)
 }
 
 func (s *Store) GetFinalResponseByID(ctx context.Context, finalResponseID string) (FinalResponse, error) {
@@ -707,10 +694,7 @@ func validFinalResponseStatus(status string) bool {
 }
 
 func (s *Store) UpsertHarnessSessionTelemetry(ctx context.Context, telemetry HarnessSessionTelemetry) error {
-	telemetry.RunID = strings.TrimSpace(telemetry.RunID)
-	if telemetry.RunID == "" {
-		telemetry.RunID = strings.TrimSpace(telemetry.SessionID)
-	}
+	telemetry.HarnessSessionID = strings.TrimSpace(telemetry.HarnessSessionID)
 	telemetry.WorkspaceID = strings.TrimSpace(telemetry.WorkspaceID)
 	telemetry.TaskID = strings.TrimSpace(telemetry.TaskID)
 	telemetry.ProfileID = strings.TrimSpace(telemetry.ProfileID)
@@ -719,8 +703,8 @@ func (s *Store) UpsertHarnessSessionTelemetry(ctx context.Context, telemetry Har
 	telemetry.Model = strings.TrimSpace(telemetry.Model)
 	telemetry.InvocationClass = strings.TrimSpace(telemetry.InvocationClass)
 	telemetry.Status = strings.TrimSpace(telemetry.Status)
-	if telemetry.RunID == "" {
-		return fmt.Errorf("%w: run id is required", ErrInvalidInput)
+	if telemetry.HarnessSessionID == "" {
+		return fmt.Errorf("%w: harness session id is required", ErrInvalidInput)
 	}
 	if telemetry.WorkspaceID == "" {
 		return fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
@@ -756,9 +740,9 @@ func (s *Store) UpsertHarnessSessionTelemetry(ctx context.Context, telemetry Har
 	if telemetry.UpdatedAt.IsZero() {
 		telemetry.UpdatedAt = now
 	}
-	params := dbsqlc.UpsertHarnessSessionTelemetryParams{RunID: telemetry.RunID, WorkspaceID: telemetry.WorkspaceID, TaskID: telemetry.TaskID, ProfileID: optionalString(telemetry.ProfileID), ProfileName: optionalString(telemetry.ProfileName), Harness: telemetry.Harness, Model: telemetry.Model, InvocationClass: telemetry.InvocationClass, Status: telemetry.Status, InputTokensKnown: boolInt64(telemetry.InputTokensKnown), InputTokens: telemetry.InputTokens, OutputTokensKnown: boolInt64(telemetry.OutputTokensKnown), OutputTokens: telemetry.OutputTokens, EstimatedCostKnown: boolInt64(telemetry.EstimatedCostKnown), EstimatedCostMicros: telemetry.EstimatedCostMicros, DurationMsKnown: boolInt64(telemetry.DurationMSKnown), DurationMs: telemetry.DurationMS, ExitCodeKnown: boolInt64(telemetry.ExitCodeKnown), ExitCode: telemetry.ExitCode, OwnedByAri: boolInt64(telemetry.OwnedByAri), PidKnown: boolInt64(telemetry.PIDKnown), Pid: telemetry.PID, CpuTimeMsKnown: boolInt64(telemetry.CPUTimeMSKnown), CpuTimeMs: telemetry.CPUTimeMS, MemoryRssBytesPeakKnown: boolInt64(telemetry.MemoryRSSBytesPeakKnown), MemoryRssBytesPeak: telemetry.MemoryRSSBytesPeak, ChildProcessesPeakKnown: boolInt64(telemetry.ChildProcessesPeakKnown), ChildProcessesPeak: telemetry.ChildProcessesPeak, PortsJson: telemetry.PortsJSON, OrphanState: telemetry.OrphanState, CreatedAt: telemetry.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: telemetry.UpdatedAt.Format(time.RFC3339Nano)}
+	params := dbsqlc.UpsertHarnessSessionTelemetryParams{SessionID: telemetry.HarnessSessionID, WorkspaceID: telemetry.WorkspaceID, TaskID: telemetry.TaskID, ProfileID: optionalString(telemetry.ProfileID), ProfileName: optionalString(telemetry.ProfileName), Harness: telemetry.Harness, Model: telemetry.Model, InvocationClass: telemetry.InvocationClass, Status: telemetry.Status, InputTokensKnown: boolInt64(telemetry.InputTokensKnown), InputTokens: telemetry.InputTokens, OutputTokensKnown: boolInt64(telemetry.OutputTokensKnown), OutputTokens: telemetry.OutputTokens, EstimatedCostKnown: boolInt64(telemetry.EstimatedCostKnown), EstimatedCostMicros: telemetry.EstimatedCostMicros, DurationMsKnown: boolInt64(telemetry.DurationMSKnown), DurationMs: telemetry.DurationMS, ExitCodeKnown: boolInt64(telemetry.ExitCodeKnown), ExitCode: telemetry.ExitCode, OwnedByAri: boolInt64(telemetry.OwnedByAri), PidKnown: boolInt64(telemetry.PIDKnown), Pid: telemetry.PID, CpuTimeMsKnown: boolInt64(telemetry.CPUTimeMSKnown), CpuTimeMs: telemetry.CPUTimeMS, MemoryRssBytesPeakKnown: boolInt64(telemetry.MemoryRSSBytesPeakKnown), MemoryRssBytesPeak: telemetry.MemoryRSSBytesPeak, ChildProcessesPeakKnown: boolInt64(telemetry.ChildProcessesPeakKnown), ChildProcessesPeak: telemetry.ChildProcessesPeak, PortsJson: telemetry.PortsJSON, OrphanState: telemetry.OrphanState, CreatedAt: telemetry.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: telemetry.UpdatedAt.Format(time.RFC3339Nano)}
 	if err := s.sqlcQueries().UpsertHarnessSessionTelemetry(ctx, params); err != nil {
-		return fmt.Errorf("upsert agent run telemetry %q: %w", telemetry.RunID, err)
+		return fmt.Errorf("upsert harness session telemetry %q: %w", telemetry.HarnessSessionID, err)
 	}
 	return nil
 }
@@ -770,7 +754,7 @@ func (s *Store) RollupHarnessSessionTelemetry(ctx context.Context, workspaceID s
 	}
 	rows, err := s.sqlcQueries().ListHarnessSessionTelemetryByWorkspace(ctx, dbsqlc.ListHarnessSessionTelemetryByWorkspaceParams{WorkspaceID: workspaceID})
 	if err != nil {
-		return nil, fmt.Errorf("list agent run telemetry: %w", err)
+		return nil, fmt.Errorf("list harness session telemetry: %w", err)
 	}
 	byGroup := map[HarnessSessionTelemetryGroup]*HarnessSessionTelemetryRollup{}
 	order := []HarnessSessionTelemetryGroup{}
@@ -898,7 +882,7 @@ func finalResponseFromSQLC(row dbsqlc.FinalResponse) FinalResponse {
 		parsed, _ := time.Parse(time.RFC3339Nano, *row.UpdatedAt)
 		updatedAt = &parsed
 	}
-	return FinalResponse{FinalResponseID: row.FinalResponseID, RunID: row.RunID, SessionID: row.RunID, WorkspaceID: row.WorkspaceID, TaskID: row.TaskID, ContextPacketID: row.ContextPacketID, ProfileID: stringValue(row.ProfileID), Status: row.Status, Text: row.Text, EvidenceLinksJSON: row.EvidenceLinks, CreatedAt: createdAt, UpdatedAt: updatedAt}
+	return FinalResponse{FinalResponseID: row.FinalResponseID, HarnessSessionID: row.SessionID, WorkspaceID: row.WorkspaceID, TaskID: row.TaskID, ContextPacketID: row.ContextPacketID, ProfileID: stringValue(row.ProfileID), Status: row.Status, Text: row.Text, EvidenceLinksJSON: row.EvidenceLinks, CreatedAt: createdAt, UpdatedAt: updatedAt}
 }
 
 func ptrString(value string) *string { return &value }
@@ -1044,7 +1028,7 @@ func (s *Store) UpdateWorkspaceStatus(ctx context.Context, id, status string) er
 	if status = strings.TrimSpace(status); status == "" {
 		return fmt.Errorf("%w: workspace status is required", ErrInvalidInput)
 	}
-	if !isValidSessionStatus(status) {
+	if !isValidWorkspaceStatus(status) {
 		return fmt.Errorf("%w: invalid status %q", ErrInvalidInput, status)
 	}
 
@@ -1052,7 +1036,7 @@ func (s *Store) UpdateWorkspaceStatus(ctx context.Context, id, status string) er
 	if err != nil {
 		return err
 	}
-	if !canTransitionSessionStatus(workspace.Status, status) {
+	if !canTransitionWorkspaceStatus(workspace.Status, status) {
 		return fmt.Errorf("%w: invalid workspace transition %q -> %q", ErrInvalidInput, workspace.Status, status)
 	}
 
@@ -1664,7 +1648,7 @@ func (s *Store) MarkRunningAgentsLost(ctx context.Context) error {
 	return nil
 }
 
-func isValidSessionStatus(status string) bool {
+func isValidWorkspaceStatus(status string) bool {
 	switch status {
 	case statusActive, statusSuspended:
 		return true
@@ -1673,7 +1657,7 @@ func isValidSessionStatus(status string) bool {
 	}
 }
 
-func canTransitionSessionStatus(from, to string) bool {
+func canTransitionWorkspaceStatus(from, to string) bool {
 	if from == to {
 		return true
 	}

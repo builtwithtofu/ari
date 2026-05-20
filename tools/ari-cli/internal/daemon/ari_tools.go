@@ -413,7 +413,7 @@ func ariRunExplainLatest(ctx context.Context, store *globaldb.Store, scope AriTo
 		return AriToolCallResponse{Status: "ok", Output: map[string]any{"summary": "No final response records are available for this workspace yet.", "run_available": false}}, nil
 	}
 	latest := responses[0]
-	return AriToolCallResponse{Status: "ok", Output: map[string]any{"summary": latest.Text, "run_available": true, "run_id": latest.RunID, "final_response_id": latest.FinalResponseID}}, nil
+	return AriToolCallResponse{Status: "ok", Output: map[string]any{"summary": latest.Text, "run_available": true, "run_id": latest.HarnessSessionID, "final_response_id": latest.FinalResponseID}}, nil
 }
 
 func readConfigString(values map[string]json.RawMessage, key string) string {

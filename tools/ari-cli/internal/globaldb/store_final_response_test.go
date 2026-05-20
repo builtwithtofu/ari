@@ -16,14 +16,14 @@ func TestFinalResponsePersistsAndListsByWorkspace(t *testing.T) {
 		t.Fatalf("UpsertProfile returned error: %v", err)
 	}
 
-	created := FinalResponse{FinalResponseID: "fr_1", RunID: "run_1", WorkspaceID: "ws-1", TaskID: "task-1", ContextPacketID: "ctx_1", ProfileID: "ap_executor", Status: "completed", Text: "Done", EvidenceLinksJSON: `[{"kind":"context_packet","id":"ctx_1"}]`}
+	created := FinalResponse{FinalResponseID: "fr_1", HarnessSessionID: "run_1", WorkspaceID: "ws-1", TaskID: "task-1", ContextPacketID: "ctx_1", ProfileID: "ap_executor", Status: "completed", Text: "Done", EvidenceLinksJSON: `[{"kind":"context_packet","id":"ctx_1"}]`}
 	if err := store.UpsertFinalResponse(ctx, created); err != nil {
 		t.Fatalf("UpsertFinalResponse returned error: %v", err)
 	}
 
-	got, err := store.GetFinalResponseByRunID(ctx, "run_1")
+	got, err := store.GetFinalResponseBySessionID(ctx, "run_1")
 	if err != nil {
-		t.Fatalf("GetFinalResponseByRunID returned error: %v", err)
+		t.Fatalf("GetFinalResponseBySessionID returned error: %v", err)
 	}
 	if got.FinalResponseID != "fr_1" || got.ProfileID != "ap_executor" || got.Text != "Done" || got.EvidenceLinksJSON != `[{"kind":"context_packet","id":"ctx_1"}]` {
 		t.Fatalf("final response = %#v, want stored artifact with evidence", got)
@@ -40,7 +40,7 @@ func TestFinalResponsePersistsAndListsByWorkspace(t *testing.T) {
 
 func TestFinalResponseRejectsInvalidInput(t *testing.T) {
 	store := newGlobalDBTestStore(t, "final-response-invalid")
-	err := store.UpsertFinalResponse(context.Background(), FinalResponse{FinalResponseID: "fr_1", RunID: "run_1", WorkspaceID: "ws-1", TaskID: "task-1", ContextPacketID: "ctx_1", Status: "complete", Text: "Done", EvidenceLinksJSON: `[]`})
+	err := store.UpsertFinalResponse(context.Background(), FinalResponse{FinalResponseID: "fr_1", HarnessSessionID: "run_1", WorkspaceID: "ws-1", TaskID: "task-1", ContextPacketID: "ctx_1", Status: "complete", Text: "Done", EvidenceLinksJSON: `[]`})
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("UpsertFinalResponse error = %v, want ErrInvalidInput", err)
 	}

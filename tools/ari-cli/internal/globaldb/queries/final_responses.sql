@@ -1,7 +1,7 @@
 -- name: UpsertFinalResponse :exec
 INSERT INTO final_responses (
   final_response_id,
-  run_id,
+  session_id,
   workspace_id,
   task_id,
   context_packet_id,
@@ -12,7 +12,7 @@ INSERT INTO final_responses (
   created_at,
   updated_at
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(run_id) DO UPDATE SET
+ON CONFLICT(session_id) DO UPDATE SET
   status = excluded.status,
   text = excluded.text,
   evidence_links = excluded.evidence_links,
@@ -21,7 +21,7 @@ ON CONFLICT(run_id) DO UPDATE SET
 -- name: GetFinalResponseByID :one
 SELECT
   final_response_id,
-  run_id,
+  session_id,
   workspace_id,
   task_id,
   context_packet_id,
@@ -35,10 +35,10 @@ FROM final_responses
 WHERE final_response_id = ?
 LIMIT 1;
 
--- name: GetFinalResponseByRunID :one
+-- name: GetFinalResponseBySessionID :one
 SELECT
   final_response_id,
-  run_id,
+  session_id,
   workspace_id,
   task_id,
   context_packet_id,
@@ -49,13 +49,13 @@ SELECT
   created_at,
   updated_at
 FROM final_responses
-WHERE run_id = ?
+WHERE session_id = ?
 LIMIT 1;
 
 -- name: ListFinalResponsesByWorkspace :many
 SELECT
   final_response_id,
-  run_id,
+  session_id,
   workspace_id,
   task_id,
   context_packet_id,

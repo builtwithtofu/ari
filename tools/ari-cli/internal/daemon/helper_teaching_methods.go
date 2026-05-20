@@ -243,7 +243,7 @@ func helperFinalResponses(ctx context.Context, store *globaldb.Store, workspaceI
 	}
 	out := make([]HelperFinalResponse, 0, len(responses))
 	for _, response := range responses {
-		out = append(out, HelperFinalResponse{FinalResponseID: response.FinalResponseID, RunID: response.RunID, Status: response.Status, Summary: firstOutputLine(response.Text)})
+		out = append(out, HelperFinalResponse{FinalResponseID: response.FinalResponseID, RunID: response.HarnessSessionID, Status: response.Status, Summary: firstOutputLine(response.Text)})
 	}
 	return out, nil
 }
@@ -270,7 +270,7 @@ func helperWorkflowLearnings(ctx context.Context, store *globaldb.Store, session
 		if strings.TrimSpace(response.Text) == "" {
 			continue
 		}
-		learnings = append(learnings, WorkflowLearning{SourceKind: "final_response", SourceID: response.RunID, Summary: firstOutputLine(response.Text)})
+		learnings = append(learnings, WorkflowLearning{SourceKind: "final_response", SourceID: response.HarnessSessionID, Summary: firstOutputLine(response.Text)})
 	}
 	for _, proof := range proofs {
 		summary := strings.TrimSpace(proof.Command)
@@ -341,7 +341,7 @@ func helperLatestFailedRunExplanation(ctx context.Context, store *globaldb.Store
 		if response.Status != "failed" {
 			continue
 		}
-		return HelperExplainResponse{Topic: "latest failed run", Explanation: firstOutputLine(response.Text), Anchors: []string{"final_response.list", "ari.run.explain_latest"}, RunID: response.RunID}, nil
+		return HelperExplainResponse{Topic: "latest failed run", Explanation: firstOutputLine(response.Text), Anchors: []string{"final_response.list", "ari.run.explain_latest"}, RunID: response.HarnessSessionID}, nil
 	}
 	return HelperExplainResponse{Topic: "latest failed run", Explanation: "No failed final response records are available for this workspace yet.", Anchors: []string{"final_response.list"}}, nil
 }

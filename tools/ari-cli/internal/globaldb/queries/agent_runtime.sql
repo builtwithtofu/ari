@@ -1,13 +1,13 @@
 -- name: CreateHarnessSessionConfig :exec
-INSERT INTO agent_session_configs (agent_id, workspace_id, name, harness, model, prompt)
+INSERT INTO harness_session_configs (agent_id, workspace_id, name, harness, model, prompt)
 VALUES (?, ?, ?, ?, ?, ?);
 
 -- name: EnsureHarnessSessionConfig :exec
-INSERT OR IGNORE INTO agent_session_configs (agent_id, workspace_id, name, harness, model, prompt)
+INSERT OR IGNORE INTO harness_session_configs (agent_id, workspace_id, name, harness, model, prompt)
 VALUES (?, ?, ?, ?, ?, ?);
 
 -- name: CreateHarnessSession :exec
-INSERT INTO agent_sessions (
+INSERT INTO harness_sessions (
   session_id,
   workspace_id,
   agent_id,
@@ -32,18 +32,18 @@ INSERT INTO agent_sessions (
 
 -- name: GetHarnessSession :one
 SELECT session_id, workspace_id, agent_id, harness, model, provider_session_id, provider_run_id, provider_thread_id, cwd, folder_scope_json, status, usage, source_session_id, source_agent_id, prompt_hash, context_payload_ids_json, permission_mode, sandbox_mode, tool_scope_json, provider_metadata_json
-FROM agent_sessions
+FROM harness_sessions
 WHERE session_id = ?;
 
 -- name: ListHarnessSessions :many
 SELECT session_id, workspace_id, agent_id, harness, model, provider_session_id, provider_run_id, provider_thread_id, cwd, folder_scope_json, status, usage, source_session_id, source_agent_id, prompt_hash, context_payload_ids_json, permission_mode, sandbox_mode, tool_scope_json, provider_metadata_json
-FROM agent_sessions
+FROM harness_sessions
 WHERE workspace_id = ?
 ORDER BY created_at ASC, session_id ASC;
 
 -- name: GetHarnessSessionIdentity :one
 SELECT workspace_id, agent_id
-FROM agent_sessions
+FROM harness_sessions
 WHERE session_id = ?;
 
 -- name: AppendRunLogMessage :exec
@@ -205,6 +205,23 @@ SELECT
 FROM context_excerpts
 WHERE context_excerpt_id = ?;
 
+-- name: ListContextExcerptsByWorkspace :many
+SELECT
+  context_excerpt_id,
+  workspace_id,
+  source_session_id,
+  source_agent_id,
+  target_agent_id,
+  target_session_id,
+  selector_type,
+  selector_json,
+  visibility,
+  appended_message,
+  content_hash
+FROM context_excerpts
+WHERE workspace_id = ?
+ORDER BY created_at ASC, context_excerpt_id ASC;
+
 -- name: ListContextExcerptItems :many
 SELECT
   sequence,
@@ -233,27 +250,58 @@ INSERT INTO agent_messages (
 INSERT INTO agent_message_context_excerpts (agent_message_id, context_excerpt_id, sequence)
 VALUES (?, ?, ?);
 
+-- name: ListAgentMessagesByWorkspace :many
+SELECT
+  agent_message_id,
+  workspace_id,
+  source_agent_id,
+  source_session_id,
+  target_agent_id,
+  target_session_id,
+  body,
+  status,
+  delivered_session_id
+FROM agent_messages
+WHERE workspace_id = ?
+ORDER BY created_at ASC, agent_message_id ASC;
+
+-- name: ListAgentMessageContextExcerptIDs :many
+SELECT context_excerpt_id
+FROM agent_message_context_excerpts
+WHERE agent_message_id = ?
+ORDER BY sequence ASC;
+
 -- name: GetHarnessSessionConfig :one
 SELECT agent_id, workspace_id, name, harness, model, prompt
-FROM agent_session_configs
+FROM harness_session_configs
 WHERE agent_id = ?;
 
 -- name: ListHarnessSessionConfigs :many
 SELECT agent_id, workspace_id, name, harness, model, prompt
-FROM agent_session_configs
+FROM harness_session_configs
 WHERE workspace_id = ?
 ORDER BY name ASC, agent_id ASC;
 
 -- name: UpdateHarnessSessionConfig :exec
-UPDATE agent_session_configs
+UPDATE harness_session_configs
 SET name = ?, harness = ?, model = ?, prompt = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 WHERE agent_id = ? AND workspace_id = ?;
 
 -- name: DeleteHarnessSessionConfig :exec
-DELETE FROM agent_session_configs
+DELETE FROM harness_session_configs
 WHERE agent_id = ?;
 
 -- name: MarkRunningHarnessSessionsLost :exec
-UPDATE agent_sessions
+UPDATE harness_sessions
 SET status = 'lost'
 WHERE status = 'running';
+
+-- name: UpdateHarnessSessionStatus :execrows
+UPDATE harness_sessions
+SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE session_id = ?;
+
+-- name: UpdateHarnessSessionProvider :execrows
+UPDATE harness_sessions
+SET provider_session_id = ?, provider_run_id = ?, provider_metadata_json = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE session_id = ?;

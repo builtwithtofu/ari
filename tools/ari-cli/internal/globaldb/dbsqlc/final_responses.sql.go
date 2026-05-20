@@ -12,7 +12,7 @@ import (
 const getFinalResponseByID = `-- name: GetFinalResponseByID :one
 SELECT
   final_response_id,
-  run_id,
+  session_id,
   workspace_id,
   task_id,
   context_packet_id,
@@ -36,7 +36,7 @@ func (q *Queries) GetFinalResponseByID(ctx context.Context, arg GetFinalResponse
 	var i FinalResponse
 	err := row.Scan(
 		&i.FinalResponseID,
-		&i.RunID,
+		&i.SessionID,
 		&i.WorkspaceID,
 		&i.TaskID,
 		&i.ContextPacketID,
@@ -50,10 +50,10 @@ func (q *Queries) GetFinalResponseByID(ctx context.Context, arg GetFinalResponse
 	return i, err
 }
 
-const getFinalResponseByRunID = `-- name: GetFinalResponseByRunID :one
+const getFinalResponseBySessionID = `-- name: GetFinalResponseBySessionID :one
 SELECT
   final_response_id,
-  run_id,
+  session_id,
   workspace_id,
   task_id,
   context_packet_id,
@@ -64,20 +64,20 @@ SELECT
   created_at,
   updated_at
 FROM final_responses
-WHERE run_id = ?
+WHERE session_id = ?
 LIMIT 1
 `
 
-type GetFinalResponseByRunIDParams struct {
-	RunID string `json:"run_id"`
+type GetFinalResponseBySessionIDParams struct {
+	SessionID string `json:"session_id"`
 }
 
-func (q *Queries) GetFinalResponseByRunID(ctx context.Context, arg GetFinalResponseByRunIDParams) (FinalResponse, error) {
-	row := q.db.QueryRowContext(ctx, getFinalResponseByRunID, arg.RunID)
+func (q *Queries) GetFinalResponseBySessionID(ctx context.Context, arg GetFinalResponseBySessionIDParams) (FinalResponse, error) {
+	row := q.db.QueryRowContext(ctx, getFinalResponseBySessionID, arg.SessionID)
 	var i FinalResponse
 	err := row.Scan(
 		&i.FinalResponseID,
-		&i.RunID,
+		&i.SessionID,
 		&i.WorkspaceID,
 		&i.TaskID,
 		&i.ContextPacketID,
@@ -94,7 +94,7 @@ func (q *Queries) GetFinalResponseByRunID(ctx context.Context, arg GetFinalRespo
 const listFinalResponsesByWorkspace = `-- name: ListFinalResponsesByWorkspace :many
 SELECT
   final_response_id,
-  run_id,
+  session_id,
   workspace_id,
   task_id,
   context_packet_id,
@@ -124,7 +124,7 @@ func (q *Queries) ListFinalResponsesByWorkspace(ctx context.Context, arg ListFin
 		var i FinalResponse
 		if err := rows.Scan(
 			&i.FinalResponseID,
-			&i.RunID,
+			&i.SessionID,
 			&i.WorkspaceID,
 			&i.TaskID,
 			&i.ContextPacketID,
@@ -151,7 +151,7 @@ func (q *Queries) ListFinalResponsesByWorkspace(ctx context.Context, arg ListFin
 const upsertFinalResponse = `-- name: UpsertFinalResponse :exec
 INSERT INTO final_responses (
   final_response_id,
-  run_id,
+  session_id,
   workspace_id,
   task_id,
   context_packet_id,
@@ -162,7 +162,7 @@ INSERT INTO final_responses (
   created_at,
   updated_at
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(run_id) DO UPDATE SET
+ON CONFLICT(session_id) DO UPDATE SET
   status = excluded.status,
   text = excluded.text,
   evidence_links = excluded.evidence_links,
@@ -171,7 +171,7 @@ ON CONFLICT(run_id) DO UPDATE SET
 
 type UpsertFinalResponseParams struct {
 	FinalResponseID string  `json:"final_response_id"`
-	RunID           string  `json:"run_id"`
+	SessionID       string  `json:"session_id"`
 	WorkspaceID     string  `json:"workspace_id"`
 	TaskID          string  `json:"task_id"`
 	ContextPacketID string  `json:"context_packet_id"`
@@ -186,7 +186,7 @@ type UpsertFinalResponseParams struct {
 func (q *Queries) UpsertFinalResponse(ctx context.Context, arg UpsertFinalResponseParams) error {
 	_, err := q.db.ExecContext(ctx, upsertFinalResponse,
 		arg.FinalResponseID,
-		arg.RunID,
+		arg.SessionID,
 		arg.WorkspaceID,
 		arg.TaskID,
 		arg.ContextPacketID,
