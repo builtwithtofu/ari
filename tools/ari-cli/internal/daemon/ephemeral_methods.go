@@ -30,9 +30,11 @@ func (d *Daemon) callEphemeral(ctx context.Context, store *globaldb.Store, req E
 		markEphemeralSessionFailed(ctx, store, setup.SessionID)
 		return EphemeralCallResponse{}, err
 	}
-	response, err := completeEphemeralCall(ctx, store, setup, request, requestDM, result, req.ReplyAgentMessageID)
+	response, markFailed, err := completeEphemeralCall(ctx, store, setup, request, requestDM, result, req.ReplyAgentMessageID)
 	if err != nil {
-		markEphemeralSessionFailed(ctx, store, setup.SessionID)
+		if markFailed {
+			markEphemeralSessionFailed(ctx, store, setup.SessionID)
+		}
 		return EphemeralCallResponse{}, err
 	}
 	return response, nil
@@ -237,13 +239,13 @@ func (d *Daemon) runEphemeralHarness(ctx context.Context, store *globaldb.Store,
 	return ephemeralHarnessResult{Items: items, InvocationMode: invocationMode}, nil
 }
 
-func completeEphemeralCall(ctx context.Context, store *globaldb.Store, setup ephemeralCallSetup, request ephemeralCall, requestDM globaldb.AgentMessage, result ephemeralHarnessResult, replyAgentMessageID string) (EphemeralCallResponse, error) {
+func completeEphemeralCall(ctx context.Context, store *globaldb.Store, setup ephemeralCallSetup, request ephemeralCall, requestDM globaldb.AgentMessage, result ephemeralHarnessResult, replyAgentMessageID string) (EphemeralCallResponse, bool, error) {
 	if result.InvocationMode == string(HarnessInvocationModeBackground) {
 		storedRun, err := store.GetHarnessSession(ctx, setup.SessionID)
 		if err != nil {
-			return EphemeralCallResponse{}, err
+			return EphemeralCallResponse{}, false, err
 		}
-		return EphemeralCallResponse{Run: storedRun, Request: agentMessageResponse(requestDM)}, nil
+		return EphemeralCallResponse{Run: storedRun, Request: agentMessageResponse(requestDM)}, false, nil
 	}
 	replyBody := lastAgentText(result.Items)
 	if replyBody == "" {
@@ -257,24 +259,24 @@ func completeEphemeralCall(ctx context.Context, store *globaldb.Store, setup eph
 	if err != nil {
 		if errors.Is(err, globaldb.ErrInvalidInput) || errors.Is(err, globaldb.ErrNotFound) {
 			if errors.Is(err, globaldb.ErrNotFound) {
-				return EphemeralCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "unknown_reply_target_agent", "target_agent_id": setup.SourceRun.AgentID, "start_invoked": false})
+				return EphemeralCallResponse{}, true, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "unknown_reply_target_agent", "target_agent_id": setup.SourceRun.AgentID, "start_invoked": false})
 			}
-			return EphemeralCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "invalid_ephemeral_reply_message", "call_id": request.CallID, "agent_message_id": replyID, "source_session_id": setup.SessionID, "target_session_id": setup.SourceRun.SessionID, "target_agent_id": setup.SourceRun.AgentID, "start_invoked": false})
+			return EphemeralCallResponse{}, true, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "invalid_ephemeral_reply_message", "call_id": request.CallID, "agent_message_id": replyID, "source_session_id": setup.SessionID, "target_session_id": setup.SourceRun.SessionID, "target_agent_id": setup.SourceRun.AgentID, "start_invoked": false})
 		}
-		return EphemeralCallResponse{}, err
+		return EphemeralCallResponse{}, true, err
 	}
 	if err := store.UpdateHarnessSessionStatus(ctx, setup.SessionID, "completed"); err != nil {
-		return EphemeralCallResponse{}, err
+		return EphemeralCallResponse{}, true, err
 	}
 	storedRun, err := store.GetHarnessSession(ctx, setup.SessionID)
 	if err != nil {
-		return EphemeralCallResponse{}, err
+		return EphemeralCallResponse{}, false, err
 	}
 	links, _ := json.Marshal([]FinalResponseEvidenceLink{{Kind: "harness_session", ID: storedRun.SessionID}, {Kind: "agent_message", ID: requestDM.AgentMessageID}, {Kind: "agent_message", ID: replyDM.AgentMessageID}})
 	if err := store.UpsertFinalResponse(ctx, globaldb.FinalResponse{FinalResponseID: "fr_" + replyID, HarnessSessionID: storedRun.SessionID, WorkspaceID: storedRun.WorkspaceID, TaskID: request.TaskID, ContextPacketID: request.ContextPacketID, ProfileID: storedRun.AgentID, Status: "completed", Text: replyBody, EvidenceLinksJSON: string(links)}); err != nil {
-		return EphemeralCallResponse{}, err
+		return EphemeralCallResponse{}, false, err
 	}
-	return EphemeralCallResponse{Run: storedRun, Request: agentMessageResponse(requestDM), Reply: agentMessageResponse(replyDM)}, nil
+	return EphemeralCallResponse{Run: storedRun, Request: agentMessageResponse(requestDM), Reply: agentMessageResponse(replyDM)}, false, nil
 }
 
 func markEphemeralSessionFailed(ctx context.Context, store *globaldb.Store, sessionID string) {

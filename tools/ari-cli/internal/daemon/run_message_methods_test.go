@@ -1100,6 +1100,18 @@ func TestEphemeralCallMarksSessionFailedWhenHarnessItemsFail(t *testing.T) {
 	}
 }
 
+func TestCompleteEphemeralCallDoesNotMarkBackgroundReadFailureFailed(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	_, markFailed, err := completeEphemeralCall(ctx, store, ephemeralCallSetup{SessionID: "missing-background-run"}, ephemeralCall{CallID: "call-background"}, globaldb.AgentMessage{}, ephemeralHarnessResult{InvocationMode: string(HarnessInvocationModeBackground)}, "")
+	if err == nil {
+		t.Fatal("completeEphemeralCall error = nil, want missing background run read error")
+	}
+	if markFailed {
+		t.Fatal("markFailed = true, want false for background read error after handoff")
+	}
+}
+
 type itemsFailHarness struct{}
 
 func (itemsFailHarness) Descriptor() HarnessAdapterDescriptor {
