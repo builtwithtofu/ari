@@ -6,7 +6,7 @@ A durable, headless workspace runtime for LLM harnesses.
 
 ## Workspace
 
-A durable switchable unit of work, similar to an IDE project window. A workspace contains one or more folders plus the harness sessions, commands, logs, context, messages, outputs, attention state, and coordination history for that work.
+A durable switchable unit of work, similar to an IDE project window. A workspace can exist before folders are attached, and may contain folders plus the harness sessions, commands, logs, context, messages, outputs, attention state, and coordination history for that work.
 
 ## Folder
 

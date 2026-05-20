@@ -51,10 +51,11 @@ func TestCommandSmokeLifecycleOverRPC(t *testing.T) {
 	create := WorkspaceCreateResponse{}
 	callDaemonMethod(t, socketPath, "workspace.create", WorkspaceCreateRequest{
 		Name:          "alpha",
-		Folder:        repoRoot,
 		OriginRoot:    originRoot,
 		CleanupPolicy: "manual",
 	}, &create)
+	addFolder := WorkspaceAddFolderResponse{}
+	callDaemonMethod(t, socketPath, "workspace.add_folder", WorkspaceAddFolderRequest{WorkspaceID: create.WorkspaceID, FolderPath: repoRoot}, &addFolder)
 
 	run := CommandRunResponse{}
 	callDaemonMethod(t, socketPath, "command.run", CommandRunRequest{

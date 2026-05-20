@@ -559,7 +559,7 @@ func TestWorkspaceSetWithEnvOverrideMentionsOverride(t *testing.T) {
 	}
 }
 
-func TestWorkspaceCreateUsesCWDDefaults(t *testing.T) {
+func TestWorkspaceCreateDefaultsToEmptyWorkspace(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -580,26 +580,19 @@ func TestWorkspaceCreateUsesCWDDefaults(t *testing.T) {
 	var gotReq daemon.WorkspaceCreateRequest
 	workspaceCreateRPC = func(_ context.Context, _ string, req daemon.WorkspaceCreateRequest) (daemon.WorkspaceCreateResponse, error) {
 		gotReq = req
-		return daemon.WorkspaceCreateResponse{WorkspaceID: "sess-1", Name: req.Name, Status: "active", Folder: req.Folder, VCSType: "git", IsPrimary: true, OriginRoot: req.OriginRoot}, nil
+		return daemon.WorkspaceCreateResponse{WorkspaceID: "sess-1", Name: req.Name, Status: "active", OriginRoot: req.OriginRoot}, nil
 	}
 	t.Cleanup(func() {
 		workspaceCreateRPC = originalCreate
 	})
-
-	if err := os.MkdirAll(filepath.Join(cwd, ".git"), 0o755); err != nil {
-		t.Fatalf("create .git dir: %v", err)
-	}
 
 	out, err := executeRootCommand("workspace", "create", "alpha")
 	if err != nil {
 		t.Fatalf("execute workspace create: %v", err)
 	}
 
-	if gotReq.Folder != cwd {
-		t.Fatalf("create folder = %q, want %q", gotReq.Folder, cwd)
-	}
-	if gotReq.OriginRoot != cwd {
-		t.Fatalf("create origin root = %q, want %q", gotReq.OriginRoot, cwd)
+	if gotReq.OriginRoot != "" {
+		t.Fatalf("create origin root = %q, want empty", gotReq.OriginRoot)
 	}
 	if gotReq.CleanupPolicy != "manual" {
 		t.Fatalf("create cleanup policy = %q, want %q", gotReq.CleanupPolicy, "manual")
@@ -612,7 +605,7 @@ func TestWorkspaceCreateUsesCWDDefaults(t *testing.T) {
 	}
 }
 
-func TestWorkspaceCreateUsesDetectedVCSRootForDefaultFolder(t *testing.T) {
+func TestWorkspaceCreateUsesExplicitFolder(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -637,28 +630,70 @@ func TestWorkspaceCreateUsesDetectedVCSRootForDefaultFolder(t *testing.T) {
 	}
 
 	originalCreate := workspaceCreateRPC
+	originalAdd := workspaceAddFolderRPC
 	var gotReq daemon.WorkspaceCreateRequest
+	var gotAdd daemon.WorkspaceAddFolderRequest
 	workspaceCreateRPC = func(_ context.Context, _ string, req daemon.WorkspaceCreateRequest) (daemon.WorkspaceCreateResponse, error) {
 		gotReq = req
-		return daemon.WorkspaceCreateResponse{WorkspaceID: "sess-1", Name: req.Name, Status: "active", Folder: req.Folder, VCSType: "git", IsPrimary: true, OriginRoot: req.OriginRoot}, nil
+		return daemon.WorkspaceCreateResponse{WorkspaceID: "sess-1", Name: req.Name, Status: "active", OriginRoot: req.OriginRoot}, nil
+	}
+	workspaceAddFolderRPC = func(_ context.Context, _ string, req daemon.WorkspaceAddFolderRequest) (daemon.WorkspaceAddFolderResponse, error) {
+		gotAdd = req
+		return daemon.WorkspaceAddFolderResponse{FolderPath: req.FolderPath, VCSType: "git"}, nil
 	}
 	t.Cleanup(func() {
 		workspaceCreateRPC = originalCreate
+		workspaceAddFolderRPC = originalAdd
 	})
 
-	_, err = executeRootCommand("workspace", "create", "alpha")
+	_, err = executeRootCommand("workspace", "create", "alpha", "--folder", repoRoot)
 	if err != nil {
 		t.Fatalf("execute workspace create: %v", err)
 	}
 
-	if gotReq.Folder != repoRoot {
-		t.Fatalf("create folder = %q, want repo root %q", gotReq.Folder, repoRoot)
+	if gotReq.OriginRoot != "" {
+		t.Fatalf("create origin root = %q, want empty until folder attaches", gotReq.OriginRoot)
 	}
-	if gotReq.OriginRoot != subdir {
-		t.Fatalf("create origin root = %q, want %q", gotReq.OriginRoot, subdir)
+	if gotAdd.WorkspaceID != "sess-1" || gotAdd.FolderPath != repoRoot {
+		t.Fatalf("add folder request = %#v, want workspace sess-1 repo root %q", gotAdd, repoRoot)
 	}
 	if gotReq.VCSPreference != "auto" {
 		t.Fatalf("create vcs preference = %q, want %q", gotReq.VCSPreference, "auto")
+	}
+}
+
+func TestWorkspaceCreateWithFolderReportsPartialAttachFailure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalWD) })
+	if err := os.Chdir(cwd); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	originalCreate := workspaceCreateRPC
+	originalAdd := workspaceAddFolderRPC
+	workspaceCreateRPC = func(_ context.Context, _ string, req daemon.WorkspaceCreateRequest) (daemon.WorkspaceCreateResponse, error) {
+		return daemon.WorkspaceCreateResponse{WorkspaceID: "sess-1", Name: req.Name, Status: "active"}, nil
+	}
+	workspaceAddFolderRPC = func(context.Context, string, daemon.WorkspaceAddFolderRequest) (daemon.WorkspaceAddFolderResponse, error) {
+		return daemon.WorkspaceAddFolderResponse{}, &jsonrpc2.Error{Code: int64(rpc.InvalidParams), Message: "folder is not a VCS root"}
+	}
+	t.Cleanup(func() {
+		workspaceCreateRPC = originalCreate
+		workspaceAddFolderRPC = originalAdd
+	})
+
+	_, err = executeRootCommand("workspace", "create", "alpha", "--folder", ".")
+	if err == nil {
+		t.Fatal("workspace create returned nil error for folder attach failure")
+	}
+	if !strings.Contains(err.Error(), "Workspace created: alpha (sess-1), but adding folder failed") || !strings.Contains(err.Error(), "folder is not a VCS root") {
+		t.Fatalf("workspace create error = %q, want partial attach failure", err.Error())
 	}
 }
 
@@ -1268,7 +1303,7 @@ func TestWorkspaceCreateAllowsVCSPreferenceOverride(t *testing.T) {
 	var gotReq daemon.WorkspaceCreateRequest
 	workspaceCreateRPC = func(_ context.Context, _ string, req daemon.WorkspaceCreateRequest) (daemon.WorkspaceCreateResponse, error) {
 		gotReq = req
-		return daemon.WorkspaceCreateResponse{WorkspaceID: "sess-1", Name: req.Name, Status: "active", Folder: req.Folder, VCSType: "git", IsPrimary: true, OriginRoot: req.OriginRoot}, nil
+		return daemon.WorkspaceCreateResponse{WorkspaceID: "sess-1", Name: req.Name, Status: "active", OriginRoot: req.OriginRoot}, nil
 	}
 	t.Cleanup(func() {
 		workspaceCreateRPC = originalCreate

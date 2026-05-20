@@ -18,7 +18,6 @@ import (
 var (
 	ErrInvalidInput = errors.New("invalid globaldb input")
 	ErrNotFound     = errors.New("globaldb record not found")
-	ErrLastFolder   = errors.New("cannot remove last workspace folder")
 )
 
 const (
@@ -986,10 +985,6 @@ func (s *Store) CreateWorkspace(ctx context.Context, id, name, originRoot, clean
 	if err := validateVCSPreference(vcsPreference); err != nil {
 		return err
 	}
-	if originRoot == "" {
-		return fmt.Errorf("%w: origin root is required", ErrInvalidInput)
-	}
-
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if err := s.sqlcQueries().CreateWorkspace(ctx, dbsqlc.CreateWorkspaceParams{WorkspaceID: id, Name: name, Status: statusActive, VcsPreference: vcsPreference, OriginRoot: originRoot, CleanupPolicy: cleanupPolicy, CreatedAt: now, UpdatedAt: now}); err != nil {
 		return fmt.Errorf("create workspace %q: %w", id, err)
@@ -1116,47 +1111,9 @@ func (s *Store) RemoveFolder(ctx context.Context, workspaceID, folderPath string
 		return fmt.Errorf("%w: folder path is required", ErrInvalidInput)
 	}
 
-	rowsAffected, err := s.sqlcQueries().DeleteWorkspaceFolderIfNotLast(ctx, dbsqlc.DeleteWorkspaceFolderIfNotLastParams{WorkspaceID: workspaceID, FolderPath: folderPath, WorkspaceID_2: workspaceID})
-	if err != nil {
-		return fmt.Errorf("remove workspace folder %q: %w", folderPath, err)
-	}
-	if rowsAffected == 0 {
-		folders, listErr := s.ListFolders(ctx, workspaceID)
-		if listErr != nil {
-			return listErr
-		}
-
-		for _, folder := range folders {
-			if folder.FolderPath == folderPath {
-				return fmt.Errorf("%w: workspace id %q", ErrLastFolder, workspaceID)
-			}
-		}
-
-		return fmt.Errorf("%w: folder %q for workspace %q", ErrNotFound, folderPath, workspaceID)
-	}
-
-	folders, err := s.ListFolders(ctx, workspaceID)
-	if err != nil {
-		return err
-	}
-	if len(folders) == 0 {
-		return fmt.Errorf("%w: workspace id %q", ErrLastFolder, workspaceID)
-	}
-
-	hasPrimary := false
-	for _, folder := range folders {
-		if folder.IsPrimary {
-			hasPrimary = true
-			break
-		}
-	}
-	if !hasPrimary {
-		if err := s.sqlcQueries().PromotePrimaryWorkspaceFolder(ctx, dbsqlc.PromotePrimaryWorkspaceFolderParams{FolderPath: folders[0].FolderPath, WorkspaceID: workspaceID}); err != nil {
-			return fmt.Errorf("promote workspace primary folder %q: %w", folders[0].FolderPath, err)
-		}
-	}
-
-	return nil
+	return s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
+		return removeFolderInTransaction(ctx, queries, workspaceID, folderPath)
+	})
 }
 
 func (s *Store) ListFolders(ctx context.Context, workspaceID string) ([]WorkspaceFolder, error) {
@@ -1199,7 +1156,11 @@ func addFolderInTransaction(ctx context.Context, queries *dbsqlc.Queries, worksp
 	}
 
 	primary := 0
-	if isPrimary {
+	existingFolders, err := queries.ListWorkspaceFolders(ctx, dbsqlc.ListWorkspaceFoldersParams{WorkspaceID: workspaceID})
+	if err != nil {
+		return err
+	}
+	if isPrimary || len(existingFolders) == 0 {
 		primary = 1
 	}
 
@@ -1211,6 +1172,42 @@ func addFolderInTransaction(ctx context.Context, queries *dbsqlc.Queries, worksp
 	if isPrimary {
 		if err := queries.PromotePrimaryWorkspaceFolder(ctx, dbsqlc.PromotePrimaryWorkspaceFolderParams{FolderPath: folderPath, WorkspaceID: workspaceID}); err != nil {
 			return fmt.Errorf("promote workspace primary folder %q: %w", folderPath, err)
+		}
+	}
+
+	return nil
+}
+
+func removeFolderInTransaction(ctx context.Context, queries *dbsqlc.Queries, workspaceID, folderPath string) error {
+	rowsAffected, err := queries.DeleteWorkspaceFolder(ctx, dbsqlc.DeleteWorkspaceFolderParams{WorkspaceID: workspaceID, FolderPath: folderPath})
+	if err != nil {
+		return fmt.Errorf("remove workspace folder %q: %w", folderPath, err)
+	}
+	if rowsAffected == 0 {
+		if _, err := queries.GetWorkspaceByID(ctx, dbsqlc.GetWorkspaceByIDParams{WorkspaceID: workspaceID}); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("%w: workspace id %q", ErrNotFound, workspaceID)
+			}
+			return err
+		}
+
+		return fmt.Errorf("%w: folder %q for workspace %q", ErrNotFound, folderPath, workspaceID)
+	}
+
+	folders, err := queries.ListWorkspaceFolders(ctx, dbsqlc.ListWorkspaceFoldersParams{WorkspaceID: workspaceID})
+	if err != nil {
+		return err
+	}
+	hasPrimary := false
+	for _, folder := range folders {
+		if folder.IsPrimary != 0 {
+			hasPrimary = true
+			break
+		}
+	}
+	if !hasPrimary && len(folders) > 0 {
+		if err := queries.PromotePrimaryWorkspaceFolder(ctx, dbsqlc.PromotePrimaryWorkspaceFolderParams{FolderPath: folders[0].FolderPath, WorkspaceID: workspaceID}); err != nil {
+			return fmt.Errorf("promote workspace primary folder %q: %w", folders[0].FolderPath, err)
 		}
 	}
 
