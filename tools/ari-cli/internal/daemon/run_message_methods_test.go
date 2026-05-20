@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -1057,6 +1058,69 @@ func TestEphemeralCallRejectsReplyTargetAgentMissingConfigWithStructuredError(t 
 	if data["reason"] != "unknown_reply_target_agent" || data["target_agent_id"] != "agent-missing" || data["start_invoked"] != false {
 		t.Fatalf("error data = %#v, want unknown reply target agent details", data)
 	}
+	failedRun, err := store.GetHarnessSession(ctx, "call-missing-reply-target-run")
+	if err != nil {
+		t.Fatalf("GetHarnessSession failed ephemeral run returned error: %v", err)
+	}
+	if failedRun.Status != "failed" {
+		t.Fatalf("failed ephemeral run status = %q, want failed", failedRun.Status)
+	}
+}
+
+func TestEphemeralCallMarksSessionFailedWhenHarnessItemsFail(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "items-fail-harness", Model: "model-1", Prompt: "research"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
+	}
+
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest("items-fail-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return itemsFailHarness{}, nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-items-fail", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research this"})
+	if err == nil {
+		t.Fatal("session.call.ephemeral error = nil, want items failure")
+	}
+	failedRun, getErr := store.GetHarnessSession(ctx, "call-items-fail-run")
+	if getErr != nil {
+		t.Fatalf("GetHarnessSession failed ephemeral run returned error: %v", getErr)
+	}
+	if failedRun.Status != "failed" {
+		t.Fatalf("failed ephemeral run status = %q, want failed", failedRun.Status)
+	}
+}
+
+type itemsFailHarness struct{}
+
+func (itemsFailHarness) Descriptor() HarnessAdapterDescriptor {
+	return HarnessAdapterDescriptor{Name: "items-fail-harness", Capabilities: []HarnessCapability{HarnessCapabilityHarnessSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems}}
+}
+
+func (itemsFailHarness) Start(ctx context.Context, req ExecutorStartRequest) (ExecutorRun, error) {
+	_ = ctx
+	return ExecutorRun{SessionID: req.SessionID, Executor: "items-fail-harness", ProviderSessionID: req.SessionID, CapabilityNames: []string{string(HarnessCapabilityTimelineItems)}}, nil
+}
+
+func (itemsFailHarness) Items(ctx context.Context, sessionID string) ([]TimelineItem, error) {
+	_ = ctx
+	_ = sessionID
+	return nil, errors.New("items failed")
+}
+
+func (itemsFailHarness) Stop(ctx context.Context, sessionID string) error {
+	_ = ctx
+	_ = sessionID
+	return nil
 }
 
 func TestEphemeralCallRejectsDuplicateCallIDRequestMessageConflictWithStructuredError(t *testing.T) {

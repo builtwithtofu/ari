@@ -420,6 +420,96 @@ VALUES ('agt-1', 'sess-1', 'claude', 'claude-code', '[]', 'running', '2026-01-01
 	}
 }
 
+func TestDaemonStartMarksRunningHarnessSessionsLost(t *testing.T) {
+	socketPath := testSocketPath(t)
+	dbPath := filepath.Join(t.TempDir(), "ari.db")
+	pidPath := filepath.Join(t.TempDir(), "daemon.pid")
+
+	originalBootstrap := bootstrapDatabase
+	bootstrapDatabase = func(ctx context.Context, dbPath string) error {
+		_ = ctx
+		if err := applyMigrationSQLFiles(dbPath); err != nil {
+			return err
+		}
+		db, err := sql.Open("sqlite", dbPath)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			_ = db.Close()
+		}()
+		_, err = db.Exec(`
+INSERT INTO workspaces (workspace_id, name, status, vcs_preference, origin_root, cleanup_policy, created_at, updated_at)
+VALUES ('ws-1', 'alpha', 'active', 'auto', '/tmp', 'manual', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+INSERT INTO harness_session_configs (agent_id, workspace_id, name, harness, model, prompt, created_at, updated_at)
+VALUES ('agent-1', 'ws-1', 'planner', 'pty', 'model', 'prompt', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+INSERT INTO harness_sessions (session_id, workspace_id, agent_id, harness, model, status, usage, created_at, updated_at)
+VALUES ('sticky-1', 'ws-1', 'agent-1', 'pty', 'model', 'running', 'sticky', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+       ('ephemeral-1', 'ws-1', 'agent-1', 'pty', 'model', 'running', 'ephemeral', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+       ('done-1', 'ws-1', 'agent-1', 'pty', 'model', 'completed', 'ephemeral', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+`)
+		return err
+	}
+	t.Cleanup(func() {
+		bootstrapDatabase = originalBootstrap
+	})
+
+	d := New(socketPath, dbPath, pidPath, "defaults", "defaults", "test-version")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- d.Start(ctx)
+	}()
+
+	callDaemonMethod(t, socketPath, "daemon.status", StatusRequest{}, &StatusResponse{})
+
+	verifyDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		d.Stop()
+		<-errCh
+		t.Fatalf("open verify db: %v", err)
+	}
+	defer func() {
+		_ = verifyDB.Close()
+	}()
+
+	statuses := map[string]string{}
+	rows, err := verifyDB.Query(`SELECT session_id, status FROM harness_sessions ORDER BY session_id`)
+	if err != nil {
+		d.Stop()
+		<-errCh
+		t.Fatalf("query harness session statuses: %v", err)
+	}
+	for rows.Next() {
+		var sessionID, status string
+		if err := rows.Scan(&sessionID, &status); err != nil {
+			_ = rows.Close()
+			d.Stop()
+			<-errCh
+			t.Fatalf("scan harness session status: %v", err)
+		}
+		statuses[sessionID] = status
+	}
+	if err := rows.Close(); err != nil {
+		d.Stop()
+		<-errCh
+		t.Fatalf("close harness session status rows: %v", err)
+	}
+	if statuses["sticky-1"] != "lost" || statuses["ephemeral-1"] != "lost" || statuses["done-1"] != "completed" {
+		d.Stop()
+		<-errCh
+		t.Fatalf("harness session statuses = %#v, want running sticky/ephemeral lost and completed unchanged", statuses)
+	}
+
+	d.Stop()
+	if err := <-errCh; err != nil {
+		t.Fatalf("daemon start returned error: %v", err)
+	}
+}
+
 func callDaemonMethod(t *testing.T, socketPath, method string, params any, result any) {
 	t.Helper()
 
