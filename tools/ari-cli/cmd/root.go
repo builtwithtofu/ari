@@ -6,7 +6,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/builtwithtofu/ari/tools/ari-cli/internal/client"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/config"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
 	"github.com/spf13/cobra"
@@ -29,20 +28,10 @@ var rootDeps = rootRunDeps{
 	ensureDaemonRunning:     ensureDaemonRunning,
 	resolveWorkspaceFromCWD: resolveWorkspaceFromCWD,
 	dashboardRPC: func(ctx context.Context, socketPath, cwd string) (daemon.DashboardGetResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.DashboardGetResponse
-		if err := rpcClient.Call(ctx, "dashboard.get", daemon.DashboardGetRequest{CWD: cwd}, &response); err != nil {
-			return daemon.DashboardGetResponse{}, err
-		}
-		return response, nil
+		return callDaemonRPC[daemon.DashboardGetResponse](ctx, socketPath, "dashboard.get", daemon.DashboardGetRequest{CWD: cwd})
 	},
 	timelineRPC: func(ctx context.Context, socketPath, workspaceID string) (daemon.WorkspaceTimelineResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.WorkspaceTimelineResponse
-		if err := rpcClient.Call(ctx, "workspace.timeline", daemon.WorkspaceTimelineRequest{WorkspaceID: workspaceID}, &response); err != nil {
-			return daemon.WorkspaceTimelineResponse{}, err
-		}
-		return response, nil
+		return callDaemonRPC[daemon.WorkspaceTimelineResponse](ctx, socketPath, "workspace.timeline", daemon.WorkspaceTimelineRequest{WorkspaceID: workspaceID})
 	},
 }
 

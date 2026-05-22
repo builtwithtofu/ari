@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/builtwithtofu/ari/tools/ari-cli/internal/client"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
 	"github.com/spf13/cobra"
 )
@@ -14,12 +13,7 @@ import (
 var (
 	telemetryEnsureDaemonRunning = ensureDaemonRunning
 	telemetryRollupRPC           = func(ctx context.Context, socketPath string, req daemon.TelemetryRollupRequest) (daemon.TelemetryRollupResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.TelemetryRollupResponse
-		if err := rpcClient.Call(ctx, "telemetry.rollup", req, &response); err != nil {
-			return daemon.TelemetryRollupResponse{}, err
-		}
-		return response, nil
+		return callDaemonRPC[daemon.TelemetryRollupResponse](ctx, socketPath, "telemetry.rollup", req)
 	}
 )
 

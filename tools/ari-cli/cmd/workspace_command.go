@@ -6,48 +6,26 @@ import (
 	"strings"
 	"time"
 
-	"github.com/builtwithtofu/ari/tools/ari-cli/internal/client"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/config"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
 	"github.com/spf13/cobra"
 )
 
 var (
-	workspaceCommandReadActiveSession = config.ReadActiveWorkspace
-	workspaceCommandEnsureScope       = func(session *daemon.WorkspaceGetResponse, workspaceOverride string) error {
-		return enforceActiveWorkspaceScope(session, workspaceOverride)
+	workspaceCommandEnsureScope = func(workspace *daemon.WorkspaceGetResponse, workspaceOverride string) error {
+		return enforceActiveWorkspaceScope(workspace, workspaceOverride)
 	}
 	workspaceCommandCreateRPC = func(ctx context.Context, socketPath string, req daemon.WorkspaceCommandCreateRequest) (daemon.WorkspaceCommandCreateResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.WorkspaceCommandCreateResponse
-		if err := rpcClient.Call(ctx, "workspace.command.create", req, &response); err != nil {
-			return daemon.WorkspaceCommandCreateResponse{}, err
-		}
-		return response, nil
+		return callDaemonRPC[daemon.WorkspaceCommandCreateResponse](ctx, socketPath, "workspace.command.create", req)
 	}
 	workspaceCommandListRPC = func(ctx context.Context, socketPath string, req daemon.WorkspaceCommandListRequest) (daemon.WorkspaceCommandListResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.WorkspaceCommandListResponse
-		if err := rpcClient.Call(ctx, "workspace.command.list", req, &response); err != nil {
-			return daemon.WorkspaceCommandListResponse{}, err
-		}
-		return response, nil
+		return callDaemonRPC[daemon.WorkspaceCommandListResponse](ctx, socketPath, "workspace.command.list", req)
 	}
 	workspaceCommandGetRPC = func(ctx context.Context, socketPath string, req daemon.WorkspaceCommandGetRequest) (daemon.WorkspaceCommandGetResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.WorkspaceCommandGetResponse
-		if err := rpcClient.Call(ctx, "workspace.command.get", req, &response); err != nil {
-			return daemon.WorkspaceCommandGetResponse{}, err
-		}
-		return response, nil
+		return callDaemonRPC[daemon.WorkspaceCommandGetResponse](ctx, socketPath, "workspace.command.get", req)
 	}
 	workspaceCommandRemoveRPC = func(ctx context.Context, socketPath string, req daemon.WorkspaceCommandRemoveRequest) (daemon.WorkspaceCommandRemoveResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.WorkspaceCommandRemoveResponse
-		if err := rpcClient.Call(ctx, "workspace.command.remove", req, &response); err != nil {
-			return daemon.WorkspaceCommandRemoveResponse{}, err
-		}
-		return response, nil
+		return callDaemonRPC[daemon.WorkspaceCommandRemoveResponse](ctx, socketPath, "workspace.command.remove", req)
 	}
 )
 
@@ -282,26 +260,21 @@ func newWorkspaceCommandRunCmd() *cobra.Command {
 	return cmd
 }
 
-func resolveWorkspaceCommandTarget(ctx context.Context, cfg *config.Config, workspaceOverride string) (resolvedSessionTarget, error) {
+func resolveWorkspaceCommandTarget(ctx context.Context, cfg *config.Config, workspaceOverride string) (WorkflowContext, error) {
 	if ctx == nil {
-		return resolvedSessionTarget{}, fmt.Errorf("workspace command: context is required")
+		return WorkflowContext{}, fmt.Errorf("workspace command: context is required")
 	}
 	if cfg == nil {
-		return resolvedSessionTarget{}, fmt.Errorf("workspace command: config is required")
+		return WorkflowContext{}, fmt.Errorf("workspace command: config is required")
 	}
 
-	workspaceRef, err := resolveWorkspaceReference(workspaceOverride, workspaceCommandReadActiveSession)
+	workflowCtx, err := workflowContextResolver.Resolve(ctx, cfg.Daemon.SocketPath, workspaceOverride)
 	if err != nil {
-		return resolvedSessionTarget{}, err
+		return WorkflowContext{}, err
+	}
+	if err := workspaceCommandEnsureScope(workflowCtx.Workspace, workspaceOverride); err != nil {
+		return WorkflowContext{}, err
 	}
 
-	target, err := resolveSessionTarget(ctx, cfg.Daemon.SocketPath, workspaceRef)
-	if err != nil {
-		return resolvedSessionTarget{}, err
-	}
-	if err := workspaceCommandEnsureScope(target.Session, workspaceOverride); err != nil {
-		return resolvedSessionTarget{}, err
-	}
-
-	return target, nil
+	return workflowCtx, nil
 }

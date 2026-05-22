@@ -3,7 +3,6 @@ package cmd
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,11 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/builtwithtofu/ari/tools/ari-cli/internal/client"
-	"github.com/builtwithtofu/ari/tools/ari-cli/internal/config"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
-	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
-	"github.com/sourcegraph/jsonrpc2"
 	"github.com/spf13/cobra"
 )
 
@@ -25,73 +20,32 @@ var (
 		return isInteractiveTerminal(cmd)
 	}
 	workspaceCreateRPC = func(ctx context.Context, socketPath string, req daemon.WorkspaceCreateRequest) (daemon.WorkspaceCreateResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.WorkspaceCreateResponse
-		if err := rpcClient.Call(ctx, "workspace.create", req, &response); err != nil {
-			return daemon.WorkspaceCreateResponse{}, err
-		}
-		return response, nil
+		return callDaemonRPC[daemon.WorkspaceCreateResponse](ctx, socketPath, "workspace.create", req)
 	}
 	workspaceSetupExistingRPC = func(ctx context.Context, socketPath string, req daemon.WorkspaceSetupExistingRequest) (daemon.WorkspaceSetupExistingResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.WorkspaceSetupExistingResponse
-		if err := rpcClient.Call(ctx, "workspace.setup_existing", req, &response); err != nil {
-			return daemon.WorkspaceSetupExistingResponse{}, err
-		}
-		return response, nil
+		return callDaemonRPC[daemon.WorkspaceSetupExistingResponse](ctx, socketPath, "workspace.setup_existing", req)
 	}
 	workspaceListRPC = func(ctx context.Context, socketPath string) (daemon.WorkspaceListResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.WorkspaceListResponse
-		if err := rpcClient.Call(ctx, "workspace.list", daemon.WorkspaceListRequest{}, &response); err != nil {
-			return daemon.WorkspaceListResponse{}, err
-		}
-		return response, nil
+		return callDaemonRPC[daemon.WorkspaceListResponse](ctx, socketPath, "workspace.list", daemon.WorkspaceListRequest{})
 	}
-	workspaceGetRPC = func(ctx context.Context, socketPath, sessionID string) (daemon.WorkspaceGetResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.WorkspaceGetResponse
-		if err := rpcClient.Call(ctx, "workspace.get", daemon.WorkspaceGetRequest{WorkspaceID: sessionID}, &response); err != nil {
-			return daemon.WorkspaceGetResponse{}, err
-		}
-		return response, nil
+	workspaceGetRPC = func(ctx context.Context, socketPath, workspaceID string) (daemon.WorkspaceGetResponse, error) {
+		return callDaemonRPC[daemon.WorkspaceGetResponse](ctx, socketPath, "workspace.get", daemon.WorkspaceGetRequest{WorkspaceID: workspaceID})
 	}
-	workspaceSuspendRPC = func(ctx context.Context, socketPath, sessionID string) (daemon.WorkspaceSuspendResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.WorkspaceSuspendResponse
-		if err := rpcClient.Call(ctx, "workspace.suspend", daemon.WorkspaceSuspendRequest{WorkspaceID: sessionID}, &response); err != nil {
-			return daemon.WorkspaceSuspendResponse{}, err
-		}
-		return response, nil
+	workspaceSuspendRPC = func(ctx context.Context, socketPath, workspaceID string) (daemon.WorkspaceSuspendResponse, error) {
+		return callDaemonRPC[daemon.WorkspaceSuspendResponse](ctx, socketPath, "workspace.suspend", daemon.WorkspaceSuspendRequest{WorkspaceID: workspaceID})
 	}
-	workspaceResumeRPC = func(ctx context.Context, socketPath, sessionID string) (daemon.WorkspaceResumeResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.WorkspaceResumeResponse
-		if err := rpcClient.Call(ctx, "workspace.resume", daemon.WorkspaceResumeRequest{WorkspaceID: sessionID}, &response); err != nil {
-			return daemon.WorkspaceResumeResponse{}, err
-		}
-		return response, nil
+	workspaceResumeRPC = func(ctx context.Context, socketPath, workspaceID string) (daemon.WorkspaceResumeResponse, error) {
+		return callDaemonRPC[daemon.WorkspaceResumeResponse](ctx, socketPath, "workspace.resume", daemon.WorkspaceResumeRequest{WorkspaceID: workspaceID})
 	}
 	workspaceAddFolderRPC = func(ctx context.Context, socketPath string, req daemon.WorkspaceAddFolderRequest) (daemon.WorkspaceAddFolderResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.WorkspaceAddFolderResponse
-		if err := rpcClient.Call(ctx, "workspace.add_folder", req, &response); err != nil {
-			return daemon.WorkspaceAddFolderResponse{}, err
-		}
-		return response, nil
+		return callDaemonRPC[daemon.WorkspaceAddFolderResponse](ctx, socketPath, "workspace.add_folder", req)
 	}
 	workspaceRemoveFolderRPC = func(ctx context.Context, socketPath string, req daemon.WorkspaceRemoveFolderRequest) error {
-		rpcClient := client.New(socketPath)
-		var response daemon.WorkspaceRemoveFolderResponse
-		return rpcClient.Call(ctx, "workspace.remove_folder", req, &response)
+		_, err := callDaemonRPC[daemon.WorkspaceRemoveFolderResponse](ctx, socketPath, "workspace.remove_folder", req)
+		return err
 	}
 	workspaceContextSetRPC = func(ctx context.Context, socketPath string, req daemon.ContextSetRequest) (daemon.ContextSetResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.ContextSetResponse
-		if err := rpcClient.Call(ctx, "context.set", req, &response); err != nil {
-			return daemon.ContextSetResponse{}, err
-		}
-		return response, nil
+		return callDaemonRPC[daemon.ContextSetResponse](ctx, socketPath, "context.set", req)
 	}
 )
 
@@ -175,15 +129,15 @@ func newWorkspaceUseCmd() *cobra.Command {
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
-			workspaceID, err := resolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, args[0])
+			workspaceID, err := resolveWorkspaceIdentifier(ctx, cfg.Daemon.SocketPath, args[0])
 			if err != nil {
 				return err
 			}
 			resp, err := workspaceContextSetRPC(ctx, cfg.Daemon.SocketPath, daemon.ContextSetRequest{WorkspaceID: workspaceID})
 			if err != nil {
-				return mapSessionRPCError(err)
+				return mapWorkspaceRPCError(err)
 			}
-			return writeAndReportActiveSession(cmd, resp.Current.WorkspaceID)
+			return writeAndReportActiveWorkspace(cmd, resp.Current.WorkspaceID)
 		},
 	}
 }
@@ -206,11 +160,11 @@ func newWorkspaceSetCmd() *cobra.Command {
 			lookupCtx, lookupCancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer lookupCancel()
 
-			sessionID, err := resolveSessionIdentifier(lookupCtx, cfg.Daemon.SocketPath, args[0])
+			workspaceID, err := resolveWorkspaceIdentifier(lookupCtx, cfg.Daemon.SocketPath, args[0])
 			if err != nil {
 				return err
 			}
-			if err := writeAndReportActiveSession(cmd, sessionID); err != nil {
+			if err := writeAndReportActiveWorkspace(cmd, workspaceID); err != nil {
 				return err
 			}
 			return nil
@@ -224,14 +178,11 @@ func newWorkspaceCurrentCmd() *cobra.Command {
 		Short:  "Show active workspace",
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			sessionID, err := config.ReadActiveWorkspace()
+			workspaceID, err := readActiveWorkspaceID()
 			if err != nil {
 				return err
 			}
-			if strings.TrimSpace(sessionID) == "" {
-				return userFacingError{message: "No active workspace is set"}
-			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Current workspace: %s\n", sessionID)
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Current workspace: %s\n", workspaceID)
 			return err
 		},
 	}
@@ -243,15 +194,7 @@ func newWorkspaceClearCmd() *cobra.Command {
 		Short:  "Clear active workspace",
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := config.WriteActiveWorkspace(""); err != nil {
-				return err
-			}
-			if strings.TrimSpace(os.Getenv("ARI_ACTIVE_WORKSPACE")) != "" {
-				_, err := fmt.Fprintln(cmd.OutOrStdout(), "Cleared persisted active workspace; ARI_ACTIVE_WORKSPACE still overrides it in this shell")
-				return err
-			}
-			_, err := fmt.Fprintln(cmd.OutOrStdout(), "Cleared active workspace")
-			return err
+			return clearAndReportActiveWorkspace(cmd)
 		},
 	}
 }
@@ -278,7 +221,7 @@ func newWorkspaceSwitchCmd() *cobra.Command {
 
 			response, err := workspaceListRPC(ctx, cfg.Daemon.SocketPath)
 			if err != nil {
-				return mapSessionRPCError(err)
+				return mapWorkspaceRPCError(err)
 			}
 
 			available := response.Workspaces
@@ -294,8 +237,8 @@ func newWorkspaceSwitchCmd() *cobra.Command {
 				if _, err := fmt.Fprintln(cmd.OutOrStdout(), "Select workspace:"); err != nil {
 					return err
 				}
-				for index, session := range available {
-					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  %d) %s (%s)\n", index+1, session.Name, session.WorkspaceID); err != nil {
+				for index, workspace := range available {
+					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  %d) %s (%s)\n", index+1, workspace.Name, workspace.WorkspaceID); err != nil {
 						return err
 					}
 				}
@@ -314,30 +257,12 @@ func newWorkspaceSwitchCmd() *cobra.Command {
 				selected = available[selection-1]
 			}
 
-			if err := writeAndReportActiveSession(cmd, selected.WorkspaceID); err != nil {
+			if err := writeAndReportActiveWorkspace(cmd, selected.WorkspaceID); err != nil {
 				return err
 			}
 			return nil
 		},
 	}
-}
-
-func writeAndReportActiveSession(cmd *cobra.Command, sessionID string) error {
-	if cmd == nil {
-		return fmt.Errorf("active workspace write: command is required")
-	}
-	if strings.TrimSpace(sessionID) == "" {
-		return userFacingError{message: "Workspace identifier is required"}
-	}
-	if err := config.WriteActiveWorkspace(sessionID); err != nil {
-		return err
-	}
-	if strings.TrimSpace(os.Getenv("ARI_ACTIVE_WORKSPACE")) != "" {
-		_, err := fmt.Fprintf(cmd.OutOrStdout(), "Persisted active workspace set: %s; ARI_ACTIVE_WORKSPACE still overrides it in this shell\n", sessionID)
-		return err
-	}
-	_, err := fmt.Fprintf(cmd.OutOrStdout(), "Active workspace set: %s\n", sessionID)
-	return err
 }
 
 func newWorkspaceCreateCmd() *cobra.Command {
@@ -386,7 +311,7 @@ func newWorkspaceCreateCmd() *cobra.Command {
 				VCSPreference: vcsPreference,
 			})
 			if err != nil {
-				return mapSessionRPCError(err)
+				return mapWorkspaceRPCError(err)
 			}
 
 			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Workspace created: %s (%s)\n", response.Name, response.WorkspaceID); err != nil {
@@ -395,7 +320,7 @@ func newWorkspaceCreateCmd() *cobra.Command {
 			if folderPath != "" {
 				addResp, err := workspaceAddFolderRPC(createCtx, cfg.Daemon.SocketPath, daemon.WorkspaceAddFolderRequest{WorkspaceID: response.WorkspaceID, FolderPath: folderPath})
 				if err != nil {
-					return userFacingError{message: fmt.Sprintf("Workspace created: %s (%s), but adding folder failed: %v", response.Name, response.WorkspaceID, mapSessionRPCError(err))}
+					return userFacingError{message: fmt.Sprintf("Workspace created: %s (%s), but adding folder failed: %v", response.Name, response.WorkspaceID, mapWorkspaceRPCError(err))}
 				}
 				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  Folder: %s (%s)\n", addResp.FolderPath, addResp.VCSType); err != nil {
 					return err
@@ -436,18 +361,18 @@ func newWorkspaceListCmd() *cobra.Command {
 
 			response, err := workspaceListRPC(ctx, cfg.Daemon.SocketPath)
 			if err != nil {
-				return mapSessionRPCError(err)
+				return mapWorkspaceRPCError(err)
 			}
 
 			if _, err := fmt.Fprintln(cmd.OutOrStdout(), "ID       NAME          STATUS     FOLDERS  CREATED"); err != nil {
 				return err
 			}
-			for _, session := range response.Workspaces {
-				shortID := session.WorkspaceID
+			for _, workspace := range response.Workspaces {
+				shortID := workspace.WorkspaceID
 				if len(shortID) > 8 {
 					shortID = shortID[:8]
 				}
-				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%-8s %-13s %-10s %-7d %s\n", shortID, session.Name, session.Status, session.FolderCount, session.CreatedAt); err != nil {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%-8s %-13s %-10s %-7d %s\n", shortID, workspace.Name, workspace.Status, workspace.FolderCount, workspace.CreatedAt); err != nil {
 					return err
 				}
 			}
@@ -474,14 +399,14 @@ func newWorkspaceShowCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			sessionID, err := resolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, args[0])
+			workspaceID, err := resolveWorkspaceIdentifier(ctx, cfg.Daemon.SocketPath, args[0])
 			if err != nil {
 				return err
 			}
 
-			response, err := workspaceGetRPC(ctx, cfg.Daemon.SocketPath, sessionID)
+			response, err := workspaceGetRPC(ctx, cfg.Daemon.SocketPath, workspaceID)
 			if err != nil {
-				return mapSessionRPCError(err)
+				return mapWorkspaceRPCError(err)
 			}
 
 			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Workspace: %s (%s)\n", response.Name, response.WorkspaceID); err != nil {
@@ -525,8 +450,8 @@ func newWorkspaceShowCmd() *cobra.Command {
 }
 
 func newWorkspaceSuspendCmd() *cobra.Command {
-	return newWorkspaceStatusCommand("suspend", "Suspend workspace", func(ctx context.Context, socketPath, sessionID string) (string, error) {
-		resp, err := workspaceSuspendRPC(ctx, socketPath, sessionID)
+	return newWorkspaceStatusCommand("suspend", "Suspend workspace", func(ctx context.Context, socketPath, workspaceID string) (string, error) {
+		resp, err := workspaceSuspendRPC(ctx, socketPath, workspaceID)
 		if err != nil {
 			return "", err
 		}
@@ -535,8 +460,8 @@ func newWorkspaceSuspendCmd() *cobra.Command {
 }
 
 func newWorkspaceResumeCmd() *cobra.Command {
-	return newWorkspaceStatusCommand("resume", "Resume workspace", func(ctx context.Context, socketPath, sessionID string) (string, error) {
-		resp, err := workspaceResumeRPC(ctx, socketPath, sessionID)
+	return newWorkspaceStatusCommand("resume", "Resume workspace", func(ctx context.Context, socketPath, workspaceID string) (string, error) {
+		resp, err := workspaceResumeRPC(ctx, socketPath, workspaceID)
 		if err != nil {
 			return "", err
 		}
@@ -561,14 +486,14 @@ func newWorkspaceStatusCommand(use, short string, call func(context.Context, str
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			sessionID, err := resolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, args[0])
+			workspaceID, err := resolveWorkspaceIdentifier(ctx, cfg.Daemon.SocketPath, args[0])
 			if err != nil {
 				return err
 			}
 
-			status, err := call(ctx, cfg.Daemon.SocketPath, sessionID)
+			status, err := call(ctx, cfg.Daemon.SocketPath, workspaceID)
 			if err != nil {
-				return mapSessionRPCError(err)
+				return mapWorkspaceRPCError(err)
 			}
 
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Workspace %s: %s\n", use, status)
@@ -596,7 +521,7 @@ func newWorkspaceFolderCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			sessionID, err := resolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, args[0])
+			workspaceID, err := resolveWorkspaceIdentifier(ctx, cfg.Daemon.SocketPath, args[0])
 			if err != nil {
 				return err
 			}
@@ -610,9 +535,9 @@ func newWorkspaceFolderCmd() *cobra.Command {
 				return err
 			}
 
-			response, err := workspaceAddFolderRPC(ctx, cfg.Daemon.SocketPath, daemon.WorkspaceAddFolderRequest{WorkspaceID: sessionID, FolderPath: folderPath})
+			response, err := workspaceAddFolderRPC(ctx, cfg.Daemon.SocketPath, daemon.WorkspaceAddFolderRequest{WorkspaceID: workspaceID, FolderPath: folderPath})
 			if err != nil {
-				return mapSessionRPCError(err)
+				return mapWorkspaceRPCError(err)
 			}
 
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Added folder: %s (%s)\n", response.FolderPath, response.VCSType)
@@ -636,7 +561,7 @@ func newWorkspaceFolderCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			sessionID, err := resolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, args[0])
+			workspaceID, err := resolveWorkspaceIdentifier(ctx, cfg.Daemon.SocketPath, args[0])
 			if err != nil {
 				return err
 			}
@@ -650,8 +575,8 @@ func newWorkspaceFolderCmd() *cobra.Command {
 				return err
 			}
 
-			if err := workspaceRemoveFolderRPC(ctx, cfg.Daemon.SocketPath, daemon.WorkspaceRemoveFolderRequest{WorkspaceID: sessionID, FolderPath: folderPath}); err != nil {
-				return mapSessionRPCError(err)
+			if err := workspaceRemoveFolderRPC(ctx, cfg.Daemon.SocketPath, daemon.WorkspaceRemoveFolderRequest{WorkspaceID: workspaceID, FolderPath: folderPath}); err != nil {
+				return mapWorkspaceRPCError(err)
 			}
 
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Removed folder: %s\n", folderPath)
@@ -660,174 +585,6 @@ func newWorkspaceFolderCmd() *cobra.Command {
 	})
 
 	return cmd
-}
-
-func resolveSessionIdentifier(ctx context.Context, socketPath, idOrName string) (string, error) {
-	target, err := resolveSessionTarget(ctx, socketPath, idOrName)
-	if err != nil {
-		return "", err
-	}
-	return target.WorkspaceID, nil
-}
-
-type resolvedSessionTarget struct {
-	WorkspaceID string
-	Session     *daemon.WorkspaceGetResponse
-}
-
-func resolveSessionTarget(ctx context.Context, socketPath, idOrName string) (resolvedSessionTarget, error) {
-	idOrName = strings.TrimSpace(idOrName)
-	if idOrName == "" {
-		return resolvedSessionTarget{}, userFacingError{message: "Workspace identifier is required"}
-	}
-
-	var directNameLookup *daemon.WorkspaceGetResponse
-
-	if session, err := workspaceGetRPC(ctx, socketPath, idOrName); err == nil {
-		workspaceID := strings.TrimSpace(session.WorkspaceID)
-		if workspaceID == idOrName {
-			resolved := session
-			return resolvedSessionTarget{WorkspaceID: session.WorkspaceID, Session: &resolved}, nil
-		}
-		resolved := session
-		directNameLookup = &resolved
-	} else if !isSessionNotFoundError(err) {
-		return resolvedSessionTarget{}, mapSessionRPCError(err)
-	}
-
-	list, err := workspaceListRPC(ctx, socketPath)
-	if err != nil {
-		if directNameLookup != nil {
-			return resolvedSessionTarget{WorkspaceID: directNameLookup.WorkspaceID, Session: directNameLookup}, nil
-		}
-		return resolvedSessionTarget{}, mapSessionRPCError(err)
-	}
-
-	exactIDMatches := make([]daemon.WorkspaceSummary, 0)
-	nameMatches := make([]daemon.WorkspaceSummary, 0)
-	prefixMatches := make([]string, 0)
-	for _, session := range list.Workspaces {
-		if session.WorkspaceID == idOrName {
-			exactIDMatches = append(exactIDMatches, session)
-		}
-		if session.Name == idOrName {
-			nameMatches = append(nameMatches, session)
-		}
-		if strings.HasPrefix(session.WorkspaceID, idOrName) {
-			prefixMatches = append(prefixMatches, session.WorkspaceID)
-		}
-	}
-	if len(exactIDMatches) == 1 {
-		session, err := workspaceGetRPC(ctx, socketPath, exactIDMatches[0].WorkspaceID)
-		if err != nil {
-			return resolvedSessionTarget{}, mapSessionRPCError(err)
-		}
-		resolved := session
-		return resolvedSessionTarget{WorkspaceID: session.WorkspaceID, Session: &resolved}, nil
-	}
-	if len(exactIDMatches) > 1 {
-		return resolvedSessionTarget{}, userFacingError{message: "Workspace ID prefix is ambiguous"}
-	}
-	if len(nameMatches) == 1 {
-		resolved := resolvedSessionTarget{WorkspaceID: nameMatches[0].WorkspaceID}
-		if directNameLookup != nil && strings.TrimSpace(directNameLookup.WorkspaceID) == nameMatches[0].WorkspaceID {
-			resolved.Session = directNameLookup
-		}
-		return resolved, nil
-	}
-	if len(nameMatches) > 1 {
-		workspaceID, err := resolveNameCollisionByCWD(ctx, socketPath, nameMatches)
-		if err != nil {
-			return resolvedSessionTarget{}, err
-		}
-		return resolvedSessionTarget{WorkspaceID: workspaceID}, nil
-	}
-	if len(prefixMatches) == 1 {
-		return resolvedSessionTarget{WorkspaceID: prefixMatches[0]}, nil
-	}
-	if len(prefixMatches) > 1 {
-		return resolvedSessionTarget{}, userFacingError{message: "Workspace ID prefix is ambiguous"}
-	}
-
-	if directNameLookup != nil {
-		return resolvedSessionTarget{WorkspaceID: directNameLookup.WorkspaceID, Session: directNameLookup}, nil
-	}
-
-	return resolvedSessionTarget{}, userFacingError{message: "Workspace not found"}
-}
-
-func resolveNameCollisionByCWD(ctx context.Context, socketPath string, nameMatches []daemon.WorkspaceSummary) (string, error) {
-	if len(nameMatches) < 2 {
-		return "", fmt.Errorf("name collision requires at least two matches")
-	}
-
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-
-	candidates, err := loadLiveWorkspaceCandidates(ctx, socketPath, nameMatches)
-	if err != nil {
-		return "", err
-	}
-
-	if len(candidates) == 0 {
-		return "", userFacingError{message: "Workspace not found"}
-	}
-
-	if len(candidates) == 1 {
-		return candidates[0].WorkspaceID, nil
-	}
-
-	workspaceID, resolveErr := resolveWorkspaceByCWD(cwd, candidates)
-	if resolveErr == nil {
-		return workspaceID, nil
-	}
-
-	if isWorkspaceCWDNoMatch(resolveErr) {
-		return "", userFacingError{message: "Workspace name is ambiguous; run `ari workspace set <id-or-name>` to choose one"}
-	}
-
-	return "", resolveErr
-}
-
-func mapSessionRPCError(err error) error {
-	if err == nil {
-		return nil
-	}
-	if isDaemonUnavailable(err) {
-		return userFacingError{message: notRunningMessage()}
-	}
-	if isPermissionDenied(err) {
-		cfg, cfgErr := configuredDaemonConfig()
-		if cfgErr != nil {
-			return err
-		}
-		return socketPermissionError(cfg.Daemon.SocketPath)
-	}
-	if isTimeoutError(err) {
-		return timeoutError()
-	}
-
-	var rpcErr *jsonrpc2.Error
-	if errors.As(err, &rpcErr) {
-		if rpcErr.Code == int64(rpc.SessionNotFound) {
-			return userFacingError{message: "Workspace not found"}
-		}
-		if rpcErr.Code == int64(rpc.InvalidParams) {
-			return userFacingError{message: rpcErr.Message}
-		}
-	}
-
-	return err
-}
-
-func isSessionNotFoundError(err error) bool {
-	var rpcErr *jsonrpc2.Error
-	if !errors.As(err, &rpcErr) {
-		return false
-	}
-	return rpcErr.Code == int64(rpc.SessionNotFound)
 }
 
 func absolutizeInputPath(cwd, input string) (string, error) {

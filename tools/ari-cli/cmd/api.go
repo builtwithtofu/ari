@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/builtwithtofu/ari/tools/ari-cli/internal/client"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -22,12 +21,7 @@ var apiDeps = apiRunDeps{
 	configuredDaemonConfig: configuredDaemonConfig,
 	ensureDaemonRunning:    ensureDaemonRunning,
 	call: func(ctx context.Context, socketPath, method string, params json.RawMessage) (json.RawMessage, error) {
-		rpcClient := client.New(socketPath)
-		var response json.RawMessage
-		if err := rpcClient.Call(ctx, method, json.RawMessage(params), &response); err != nil {
-			return nil, err
-		}
-		return response, nil
+		return callDaemonRPC[json.RawMessage](ctx, socketPath, method, json.RawMessage(params))
 	},
 }
 

@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/builtwithtofu/ari/tools/ari-cli/internal/client"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/config"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
 	"github.com/spf13/cobra"
@@ -17,68 +16,28 @@ var (
 	sessionReadActiveWorkspace = config.ReadActiveWorkspace
 	sessionEnsureDaemonRunning = ensureDaemonRunning
 	sessionStartRPC            = func(ctx context.Context, socketPath string, req daemon.HarnessSessionStartRequest) (daemon.HarnessSessionStartResponse, error) {
-		rpcClient := client.New(socketPath)
-		var resp daemon.HarnessSessionStartResponse
-		if err := rpcClient.Call(ctx, "session.start", req, &resp); err != nil {
-			return daemon.HarnessSessionStartResponse{}, err
-		}
-		return resp, nil
+		return callDaemonRPC[daemon.HarnessSessionStartResponse](ctx, socketPath, "session.start", req)
 	}
 	sessionListRPC = func(ctx context.Context, socketPath string, req daemon.SessionListRequest) (daemon.SessionListResponse, error) {
-		rpcClient := client.New(socketPath)
-		var resp daemon.SessionListResponse
-		if err := rpcClient.Call(ctx, "session.list", req, &resp); err != nil {
-			return daemon.SessionListResponse{}, err
-		}
-		return resp, nil
+		return callDaemonRPC[daemon.SessionListResponse](ctx, socketPath, "session.list", req)
 	}
 	sessionGetRPC = func(ctx context.Context, socketPath string, req daemon.SessionGetRequest) (daemon.SessionGetResponse, error) {
-		rpcClient := client.New(socketPath)
-		var resp daemon.SessionGetResponse
-		if err := rpcClient.Call(ctx, "session.get", req, &resp); err != nil {
-			return daemon.SessionGetResponse{}, err
-		}
-		return resp, nil
+		return callDaemonRPC[daemon.SessionGetResponse](ctx, socketPath, "session.get", req)
 	}
 	sessionMessageSendRPC = func(ctx context.Context, socketPath string, req daemon.AgentMessageSendRequest) (daemon.AgentMessageSendResponse, error) {
-		rpcClient := client.New(socketPath)
-		var resp daemon.AgentMessageSendResponse
-		if err := rpcClient.Call(ctx, "session.message.send", req, &resp); err != nil {
-			return daemon.AgentMessageSendResponse{}, err
-		}
-		return resp, nil
+		return callDaemonRPC[daemon.AgentMessageSendResponse](ctx, socketPath, "session.message.send", req)
 	}
 	sessionCallRPC = func(ctx context.Context, socketPath string, req daemon.EphemeralCallRequest) (daemon.EphemeralCallResponse, error) {
-		rpcClient := client.New(socketPath)
-		var resp daemon.EphemeralCallResponse
-		if err := rpcClient.Call(ctx, "session.call.ephemeral", req, &resp); err != nil {
-			return daemon.EphemeralCallResponse{}, err
-		}
-		return resp, nil
+		return callDaemonRPC[daemon.EphemeralCallResponse](ctx, socketPath, "session.call.ephemeral", req)
 	}
 	sessionFanoutRPC = func(ctx context.Context, socketPath string, req daemon.AgentMessageSendRequest) (daemon.AgentMessageSendResponse, error) {
-		rpcClient := client.New(socketPath)
-		var resp daemon.AgentMessageSendResponse
-		if err := rpcClient.Call(ctx, "session.fanout", req, &resp); err != nil {
-			return daemon.AgentMessageSendResponse{}, err
-		}
-		return resp, nil
+		return callDaemonRPC[daemon.AgentMessageSendResponse](ctx, socketPath, "session.fanout", req)
 	}
 	sessionClaudeLogsRPC = func(ctx context.Context, socketPath string, req daemon.ClaudeSessionLogsRequest) (daemon.ClaudeSessionLogsResponse, error) {
-		rpcClient := client.New(socketPath)
-		var resp daemon.ClaudeSessionLogsResponse
-		if err := rpcClient.Call(ctx, "session.claude.logs", req, &resp); err != nil {
-			return daemon.ClaudeSessionLogsResponse{}, err
-		}
-		return resp, nil
+		return callDaemonRPC[daemon.ClaudeSessionLogsResponse](ctx, socketPath, "session.claude.logs", req)
 	}
 	sessionClaudeAttachRPC = func(ctx context.Context, socketPath string, req daemon.ClaudeSessionAttachRequest) (daemon.ClaudeSessionAttachResponse, error) {
-		rpcClient := client.New(socketPath)
-		var resp daemon.ClaudeSessionAttachResponse
-		if err := rpcClient.Call(ctx, "session.claude.attach", req, &resp); err != nil {
-			return daemon.ClaudeSessionAttachResponse{}, err
-		}
-		return resp, nil
+		return callDaemonRPC[daemon.ClaudeSessionAttachResponse](ctx, socketPath, "session.claude.attach", req)
 	}
 )
 
@@ -116,7 +75,7 @@ func newSessionStartCmd() *cobra.Command {
 		ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 		defer cancel()
 		if cmd.Flags().Changed("workspace") {
-			resolvedWorkspaceID, err := resolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, workspaceID)
+			resolvedWorkspaceID, err := resolveWorkspaceIdentifier(ctx, cfg.Daemon.SocketPath, workspaceID)
 			if err != nil {
 				return err
 			}
@@ -175,7 +134,7 @@ func newSessionListCmd() *cobra.Command {
 		ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 		defer cancel()
 		if cmd.Flags().Changed("workspace") {
-			resolvedWorkspaceID, err := resolveSessionIdentifier(ctx, cfg.Daemon.SocketPath, workspaceID)
+			resolvedWorkspaceID, err := resolveWorkspaceIdentifier(ctx, cfg.Daemon.SocketPath, workspaceID)
 			if err != nil {
 				return err
 			}

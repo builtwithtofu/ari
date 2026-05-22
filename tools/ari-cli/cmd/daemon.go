@@ -12,7 +12,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/builtwithtofu/ari/tools/ari-cli/internal/client"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/config"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
 	"github.com/spf13/cobra"
@@ -26,17 +25,11 @@ var (
 
 	daemonPIDCheck = daemon.CheckPIDFile
 	daemonStopRPC  = func(ctx context.Context, socketPath string) error {
-		rpcClient := client.New(socketPath)
-		var response daemon.StopResponse
-		return rpcClient.Call(ctx, "daemon.stop", daemon.StopRequest{}, &response)
+		_, err := callDaemonRPC[daemon.StopResponse](ctx, socketPath, "daemon.stop", daemon.StopRequest{})
+		return err
 	}
 	daemonStatusRPC = func(ctx context.Context, socketPath string) (daemon.StatusResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.StatusResponse
-		if err := rpcClient.Call(ctx, "daemon.status", daemon.StatusRequest{}, &response); err != nil {
-			return daemon.StatusResponse{}, err
-		}
-		return response, nil
+		return callDaemonRPC[daemon.StatusResponse](ctx, socketPath, "daemon.status", daemon.StatusRequest{})
 	}
 	daemonSignalProcess = func(pid int, sig syscall.Signal) error {
 		return syscall.Kill(pid, sig)

@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -305,6 +307,57 @@ func TestRootHelpExposesPublicOrchestrationCommands(t *testing.T) {
 	for _, hidden := range []string{"agents"} {
 		if strings.Contains(out, "\n  "+hidden+" ") {
 			t.Fatalf("root help = %q, want non-orchestration command %q hidden", out, hidden)
+		}
+	}
+}
+
+func TestCuratedCommandsUseSharedDaemonRPCClient(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("ReadDir cmd package returned error: %v", err)
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") || name == "rpc.go" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(".", name))
+		if err != nil {
+			t.Fatalf("ReadFile %s returned error: %v", name, err)
+		}
+		content := string(data)
+		if strings.Contains(content, "internal/client") || strings.Contains(content, "client.New(") {
+			t.Fatalf("%s opens daemon RPC clients directly; curated commands should use callDaemonRPC so ari api remains the raw escape hatch", name)
+		}
+	}
+}
+
+func TestWorkspaceCommandFlowsUseWorkspaceTargetBoundaryNames(t *testing.T) {
+	for _, name := range []string{"command.go", "workspace_command.go"} {
+		data, err := os.ReadFile(filepath.Join(".", name))
+		if err != nil {
+			t.Fatalf("ReadFile %s returned error: %v", name, err)
+		}
+		content := string(data)
+		for _, stale := range []string{"commandResolveSessionTarget", "commandReadActiveSession", "workspaceCommandReadActiveSession", "resolveSessionTarget("} {
+			if strings.Contains(content, stale) {
+				t.Fatalf("%s still uses stale workspace-as-session seam %q", name, stale)
+			}
+		}
+	}
+}
+
+func TestActiveWorkspaceConfigAccessStaysInsideBoundary(t *testing.T) {
+	for _, name := range []string{"command.go", "workspace.go", "workspace_command.go"} {
+		data, err := os.ReadFile(filepath.Join(".", name))
+		if err != nil {
+			t.Fatalf("ReadFile %s returned error: %v", name, err)
+		}
+		content := string(data)
+		for _, stale := range []string{"config.ReadActiveWorkspace", "config.WriteActiveWorkspace"} {
+			if strings.Contains(content, stale) {
+				t.Fatalf("%s accesses active workspace config directly; use active_workspace.go boundary", name)
+			}
 		}
 	}
 }

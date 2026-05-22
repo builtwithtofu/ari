@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/builtwithtofu/ari/tools/ari-cli/internal/client"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/config"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
@@ -16,52 +15,43 @@ import (
 )
 
 var (
-	commandResolveSessionIdentifier = resolveSessionIdentifier
-	commandResolveSessionTarget     = resolveSessionTarget
-	commandReadActiveSession        = config.ReadActiveWorkspace
-	commandEnsureDaemonRunning      = ensureDaemonRunning
-	commandEnsureWorkspaceScope     = func(session *daemon.WorkspaceGetResponse, sessionOverride string) error {
-		return enforceActiveWorkspaceScope(session, sessionOverride)
+	commandResolveWorkspaceIdentifier = resolveWorkspaceIdentifier
+	commandResolveWorkspaceTarget     = resolveWorkspaceTarget
+	commandResolveWorkflowContext     = func(ctx context.Context, socketPath, workspaceOverride string) (WorkflowContext, error) {
+		workspaceRef := strings.TrimSpace(workspaceOverride)
+		source := WorkflowContextSourceExplicit
+		if workspaceRef == "" {
+			var err error
+			workspaceRef, err = workflowContextResolver.ActiveWorkspaceID()
+			if err != nil {
+				return WorkflowContext{}, err
+			}
+			source = WorkflowContextSourceActiveWorkspace
+		}
+		target, err := commandResolveWorkspaceTarget(ctx, socketPath, workspaceRef)
+		if err != nil {
+			return WorkflowContext{}, err
+		}
+		return WorkflowContext{WorkspaceID: target.WorkspaceID, Workspace: target.Workspace, Source: source}, nil
+	}
+	commandEnsureDaemonRunning  = ensureDaemonRunning
+	commandEnsureWorkspaceScope = func(workspace *daemon.WorkspaceGetResponse, workspaceOverride string) error {
+		return enforceActiveWorkspaceScope(workspace, workspaceOverride)
 	}
 	commandRunRPC = func(ctx context.Context, socketPath string, req daemon.CommandRunRequest) (daemon.CommandRunResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.CommandRunResponse
-		if err := rpcClient.Call(ctx, "command.run", req, &response); err != nil {
-			return daemon.CommandRunResponse{}, err
-		}
-		return response, nil
+		return callDaemonRPC[daemon.CommandRunResponse](ctx, socketPath, "command.run", req)
 	}
-	commandListRPC = func(ctx context.Context, socketPath, sessionID string) (daemon.CommandListResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.CommandListResponse
-		if err := rpcClient.Call(ctx, "command.list", daemon.CommandListRequest{WorkspaceID: sessionID}, &response); err != nil {
-			return daemon.CommandListResponse{}, err
-		}
-		return response, nil
+	commandListRPC = func(ctx context.Context, socketPath, workspaceID string) (daemon.CommandListResponse, error) {
+		return callDaemonRPC[daemon.CommandListResponse](ctx, socketPath, "command.list", daemon.CommandListRequest{WorkspaceID: workspaceID})
 	}
-	commandGetRPC = func(ctx context.Context, socketPath, sessionID, commandID string) (daemon.CommandGetResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.CommandGetResponse
-		if err := rpcClient.Call(ctx, "command.get", daemon.CommandGetRequest{WorkspaceID: sessionID, CommandID: commandID}, &response); err != nil {
-			return daemon.CommandGetResponse{}, err
-		}
-		return response, nil
+	commandGetRPC = func(ctx context.Context, socketPath, workspaceID, commandID string) (daemon.CommandGetResponse, error) {
+		return callDaemonRPC[daemon.CommandGetResponse](ctx, socketPath, "command.get", daemon.CommandGetRequest{WorkspaceID: workspaceID, CommandID: commandID})
 	}
-	commandOutputRPC = func(ctx context.Context, socketPath, sessionID, commandID string) (daemon.CommandOutputResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.CommandOutputResponse
-		if err := rpcClient.Call(ctx, "command.output", daemon.CommandOutputRequest{WorkspaceID: sessionID, CommandID: commandID}, &response); err != nil {
-			return daemon.CommandOutputResponse{}, err
-		}
-		return response, nil
+	commandOutputRPC = func(ctx context.Context, socketPath, workspaceID, commandID string) (daemon.CommandOutputResponse, error) {
+		return callDaemonRPC[daemon.CommandOutputResponse](ctx, socketPath, "command.output", daemon.CommandOutputRequest{WorkspaceID: workspaceID, CommandID: commandID})
 	}
-	commandStopRPC = func(ctx context.Context, socketPath, sessionID, commandID string) (daemon.CommandStopResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.CommandStopResponse
-		if err := rpcClient.Call(ctx, "command.stop", daemon.CommandStopRequest{WorkspaceID: sessionID, CommandID: commandID}, &response); err != nil {
-			return daemon.CommandStopResponse{}, err
-		}
-		return response, nil
+	commandStopRPC = func(ctx context.Context, socketPath, workspaceID, commandID string) (daemon.CommandStopResponse, error) {
+		return callDaemonRPC[daemon.CommandStopResponse](ctx, socketPath, "command.stop", daemon.CommandStopRequest{WorkspaceID: workspaceID, CommandID: commandID})
 	}
 	oneOffCommandMaxDuration = 24 * time.Hour
 )
@@ -77,7 +67,7 @@ func NewExecCmd() *cobra.Command {
 }
 
 func newCommandRunCmd() *cobra.Command {
-	var sessionRef string
+	var workspaceRef string
 	cmd := &cobra.Command{
 		Use:   "run [--workspace <id-or-name>] -- <command> [args...]",
 		Short: "Run command in workspace",
@@ -92,9 +82,10 @@ func newCommandRunCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			sessionReference, err := commandSessionReference(sessionRef)
-			if err != nil {
-				return err
+			if strings.TrimSpace(workspaceRef) == "" {
+				if _, err := workflowContextResolver.ActiveWorkspaceID(); err != nil {
+					return err
+				}
 			}
 			if err := commandEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
@@ -103,23 +94,23 @@ func newCommandRunCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			target, err := commandResolveSessionTarget(ctx, cfg.Daemon.SocketPath, sessionReference)
+			workflowCtx, err := commandResolveWorkflowContext(ctx, cfg.Daemon.SocketPath, workspaceRef)
 			if err != nil {
 				return err
 			}
-			if err := commandEnsureWorkspaceScope(target.Session, sessionRef); err != nil {
+			if err := commandEnsureWorkspaceScope(workflowCtx.Workspace, workspaceRef); err != nil {
 				return err
 			}
 
-			return runOneOffCommand(cmd, cfg, target.WorkspaceID, args[0], args[1:])
+			return runOneOffCommand(cmd, cfg, workflowCtx.WorkspaceID, args[0], args[1:])
 		},
 	}
-	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
+	cmd.Flags().StringVar(&workspaceRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
 	return cmd
 }
 
 func newCommandListCmd() *cobra.Command {
-	var sessionRef string
+	var workspaceRef string
 	cmd := &cobra.Command{
 		Use:   "list [--workspace <id-or-name>]",
 		Short: "List commands for a workspace",
@@ -129,9 +120,10 @@ func newCommandListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			sessionReference, err := commandSessionReference(sessionRef)
-			if err != nil {
-				return err
+			if strings.TrimSpace(workspaceRef) == "" {
+				if _, err := workflowContextResolver.ActiveWorkspaceID(); err != nil {
+					return err
+				}
 			}
 			if err := commandEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
@@ -140,15 +132,15 @@ func newCommandListCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			target, err := commandResolveSessionTarget(ctx, cfg.Daemon.SocketPath, sessionReference)
+			workflowCtx, err := commandResolveWorkflowContext(ctx, cfg.Daemon.SocketPath, workspaceRef)
 			if err != nil {
 				return err
 			}
-			if err := commandEnsureWorkspaceScope(target.Session, sessionRef); err != nil {
+			if err := commandEnsureWorkspaceScope(workflowCtx.Workspace, workspaceRef); err != nil {
 				return err
 			}
 
-			resp, err := commandListRPC(ctx, cfg.Daemon.SocketPath, target.WorkspaceID)
+			resp, err := commandListRPC(ctx, cfg.Daemon.SocketPath, workflowCtx.WorkspaceID)
 			if err != nil {
 				return mapCommandRPCError(err)
 			}
@@ -169,12 +161,12 @@ func newCommandListCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
+	cmd.Flags().StringVar(&workspaceRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
 	return cmd
 }
 
 func newCommandShowCmd() *cobra.Command {
-	var sessionRef string
+	var workspaceRef string
 	cmd := &cobra.Command{
 		Use:   "show <command-id> [--workspace <id-or-name>]",
 		Short: "Show command details",
@@ -184,9 +176,10 @@ func newCommandShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			sessionReference, err := commandSessionReference(sessionRef)
-			if err != nil {
-				return err
+			if strings.TrimSpace(workspaceRef) == "" {
+				if _, err := workflowContextResolver.ActiveWorkspaceID(); err != nil {
+					return err
+				}
 			}
 			if err := commandEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
@@ -195,15 +188,15 @@ func newCommandShowCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			target, err := commandResolveSessionTarget(ctx, cfg.Daemon.SocketPath, sessionReference)
+			workflowCtx, err := commandResolveWorkflowContext(ctx, cfg.Daemon.SocketPath, workspaceRef)
 			if err != nil {
 				return err
 			}
-			if err := commandEnsureWorkspaceScope(target.Session, sessionRef); err != nil {
+			if err := commandEnsureWorkspaceScope(workflowCtx.Workspace, workspaceRef); err != nil {
 				return err
 			}
 
-			resp, err := commandGetRPC(ctx, cfg.Daemon.SocketPath, target.WorkspaceID, strings.TrimSpace(args[0]))
+			resp, err := commandGetRPC(ctx, cfg.Daemon.SocketPath, workflowCtx.WorkspaceID, strings.TrimSpace(args[0]))
 			if err != nil {
 				return mapCommandRPCError(err)
 			}
@@ -231,12 +224,12 @@ func newCommandShowCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
+	cmd.Flags().StringVar(&workspaceRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
 	return cmd
 }
 
 func newCommandOutputCmd() *cobra.Command {
-	var sessionRef string
+	var workspaceRef string
 	cmd := &cobra.Command{
 		Use:   "output <command-id> [--workspace <id-or-name>]",
 		Short: "Show command output snapshot",
@@ -246,9 +239,10 @@ func newCommandOutputCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			sessionReference, err := commandSessionReference(sessionRef)
-			if err != nil {
-				return err
+			if strings.TrimSpace(workspaceRef) == "" {
+				if _, err := workflowContextResolver.ActiveWorkspaceID(); err != nil {
+					return err
+				}
 			}
 			if err := commandEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
@@ -257,15 +251,15 @@ func newCommandOutputCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			target, err := commandResolveSessionTarget(ctx, cfg.Daemon.SocketPath, sessionReference)
+			workflowCtx, err := commandResolveWorkflowContext(ctx, cfg.Daemon.SocketPath, workspaceRef)
 			if err != nil {
 				return err
 			}
-			if err := commandEnsureWorkspaceScope(target.Session, sessionRef); err != nil {
+			if err := commandEnsureWorkspaceScope(workflowCtx.Workspace, workspaceRef); err != nil {
 				return err
 			}
 
-			resp, err := commandOutputRPC(ctx, cfg.Daemon.SocketPath, target.WorkspaceID, strings.TrimSpace(args[0]))
+			resp, err := commandOutputRPC(ctx, cfg.Daemon.SocketPath, workflowCtx.WorkspaceID, strings.TrimSpace(args[0]))
 			if err != nil {
 				return mapCommandRPCError(err)
 			}
@@ -274,12 +268,12 @@ func newCommandOutputCmd() *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
+	cmd.Flags().StringVar(&workspaceRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
 	return cmd
 }
 
 func newCommandStopCmd() *cobra.Command {
-	var sessionRef string
+	var workspaceRef string
 	cmd := &cobra.Command{
 		Use:   "stop <command-id> [--workspace <id-or-name>]",
 		Short: "Stop a running command",
@@ -289,9 +283,10 @@ func newCommandStopCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			sessionReference, err := commandSessionReference(sessionRef)
-			if err != nil {
-				return err
+			if strings.TrimSpace(workspaceRef) == "" {
+				if _, err := workflowContextResolver.ActiveWorkspaceID(); err != nil {
+					return err
+				}
 			}
 			if err := commandEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 				return err
@@ -300,15 +295,15 @@ func newCommandStopCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			target, err := commandResolveSessionTarget(ctx, cfg.Daemon.SocketPath, sessionReference)
+			workflowCtx, err := commandResolveWorkflowContext(ctx, cfg.Daemon.SocketPath, workspaceRef)
 			if err != nil {
 				return err
 			}
-			if err := commandEnsureWorkspaceScope(target.Session, sessionRef); err != nil {
+			if err := commandEnsureWorkspaceScope(workflowCtx.Workspace, workspaceRef); err != nil {
 				return err
 			}
 
-			resp, err := commandStopRPC(ctx, cfg.Daemon.SocketPath, target.WorkspaceID, strings.TrimSpace(args[0]))
+			resp, err := commandStopRPC(ctx, cfg.Daemon.SocketPath, workflowCtx.WorkspaceID, strings.TrimSpace(args[0]))
 			if err != nil {
 				return mapCommandRPCError(err)
 			}
@@ -317,12 +312,8 @@ func newCommandStopCmd() *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().StringVar(&sessionRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
+	cmd.Flags().StringVar(&workspaceRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
 	return cmd
-}
-
-func commandSessionReference(overrideSession string) (string, error) {
-	return resolveWorkspaceReference(overrideSession, commandReadActiveSession)
 }
 
 func runOneOffCommand(cmd *cobra.Command, cfg *config.Config, workspaceID, command string, args []string) error {
