@@ -15,24 +15,10 @@ import (
 )
 
 var (
-	commandResolveWorkspaceIdentifier = resolveWorkspaceIdentifier
-	commandResolveWorkspaceTarget     = resolveWorkspaceTarget
-	commandResolveWorkflowContext     = func(ctx context.Context, socketPath, workspaceOverride string) (WorkflowContext, error) {
-		workspaceRef := strings.TrimSpace(workspaceOverride)
-		source := WorkflowContextSourceExplicit
-		if workspaceRef == "" {
-			var err error
-			workspaceRef, err = workflowContextResolver.ActiveWorkspaceID()
-			if err != nil {
-				return WorkflowContext{}, err
-			}
-			source = WorkflowContextSourceActiveWorkspace
-		}
-		target, err := commandResolveWorkspaceTarget(ctx, socketPath, workspaceRef)
-		if err != nil {
-			return WorkflowContext{}, err
-		}
-		return WorkflowContext{WorkspaceID: target.WorkspaceID, Workspace: target.Workspace, Source: source}, nil
+	commandResolveWorkspaceTarget = resolveWorkspaceTarget
+	commandResolveWorkflowContext = func(ctx context.Context, socketPath, workspaceOverride string) (WorkflowContext, error) {
+		resolver := &WorkflowContextResolver{store: workflowContextResolver.store, resolveTarget: commandResolveWorkspaceTarget}
+		return resolver.Resolve(ctx, socketPath, workspaceOverride)
 	}
 	commandEnsureDaemonRunning  = ensureDaemonRunning
 	commandEnsureWorkspaceScope = func(workspace *daemon.WorkspaceGetResponse, workspaceOverride string) error {
