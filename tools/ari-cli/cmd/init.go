@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/builtwithtofu/ari/tools/ari-cli/internal/client"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
 	"github.com/spf13/cobra"
 )
@@ -23,20 +22,10 @@ var (
 	initConfiguredDaemonConfig = configuredDaemonConfig
 	initEnsureDaemonRunning    = ensureDaemonRunning
 	initOptionsRPC             = func(ctx context.Context, socketPath string) (daemon.InitOptionsResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.InitOptionsResponse
-		if err := rpcClient.Call(ctx, "init.options", daemon.InitOptionsRequest{}, &response); err != nil {
-			return daemon.InitOptionsResponse{}, err
-		}
-		return response, nil
+		return callDaemonRPC[daemon.InitOptionsResponse](ctx, socketPath, "init.options", daemon.InitOptionsRequest{})
 	}
 	initApplyRPC = func(ctx context.Context, socketPath string, req daemon.InitApplyRequest) (daemon.InitApplyResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.InitApplyResponse
-		if err := rpcClient.Call(ctx, "init.apply", req, &response); err != nil {
-			return daemon.InitApplyResponse{}, err
-		}
-		return response, nil
+		return callDaemonRPC[daemon.InitApplyResponse](ctx, socketPath, "init.apply", req)
 	}
 	initPromptHarness   = promptInitHarness
 	initPromptSelection = promptInitSelection

@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/builtwithtofu/ari/tools/ari-cli/internal/client"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
 	"github.com/spf13/cobra"
 )
@@ -14,36 +13,16 @@ import (
 var (
 	contextEnsureDaemonRunning = ensureDaemonRunning
 	contextTailRPC             = func(ctx context.Context, socketPath string, req daemon.ContextExcerptCreateFromTailRequest) (daemon.ContextExcerptResponse, error) {
-		rpcClient := client.New(socketPath)
-		var resp daemon.ContextExcerptResponse
-		if err := rpcClient.Call(ctx, "context.excerpt.create_from_tail", req, &resp); err != nil {
-			return daemon.ContextExcerptResponse{}, err
-		}
-		return resp, nil
+		return callDaemonRPC[daemon.ContextExcerptResponse](ctx, socketPath, "context.excerpt.create_from_tail", req)
 	}
 	contextGetRPC = func(ctx context.Context, socketPath string, req daemon.ContextExcerptGetRequest) (daemon.ContextExcerptResponse, error) {
-		rpcClient := client.New(socketPath)
-		var resp daemon.ContextExcerptResponse
-		if err := rpcClient.Call(ctx, "context.excerpt.get", req, &resp); err != nil {
-			return daemon.ContextExcerptResponse{}, err
-		}
-		return resp, nil
+		return callDaemonRPC[daemon.ContextExcerptResponse](ctx, socketPath, "context.excerpt.get", req)
 	}
 	contextRangeRPC = func(ctx context.Context, socketPath string, req daemon.ContextExcerptCreateFromRangeRequest) (daemon.ContextExcerptResponse, error) {
-		rpcClient := client.New(socketPath)
-		var resp daemon.ContextExcerptResponse
-		if err := rpcClient.Call(ctx, "context.excerpt.create_from_range", req, &resp); err != nil {
-			return daemon.ContextExcerptResponse{}, err
-		}
-		return resp, nil
+		return callDaemonRPC[daemon.ContextExcerptResponse](ctx, socketPath, "context.excerpt.create_from_range", req)
 	}
 	contextMessagesRPC = func(ctx context.Context, socketPath string, req daemon.ContextExcerptCreateFromExplicitIDsRequest) (daemon.ContextExcerptResponse, error) {
-		rpcClient := client.New(socketPath)
-		var resp daemon.ContextExcerptResponse
-		if err := rpcClient.Call(ctx, "context.excerpt.create_from_explicit_ids", req, &resp); err != nil {
-			return daemon.ContextExcerptResponse{}, err
-		}
-		return resp, nil
+		return callDaemonRPC[daemon.ContextExcerptResponse](ctx, socketPath, "context.excerpt.create_from_explicit_ids", req)
 	}
 )
 

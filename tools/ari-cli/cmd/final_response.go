@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/builtwithtofu/ari/tools/ari-cli/internal/client"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
 	"github.com/spf13/cobra"
 )
@@ -14,20 +13,10 @@ import (
 var (
 	finalResponseEnsureDaemonRunning = ensureDaemonRunning
 	finalResponseGetRPC              = func(ctx context.Context, socketPath string, req daemon.FinalResponseGetRequest) (daemon.FinalResponseResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.FinalResponseResponse
-		if err := rpcClient.Call(ctx, "final_response.get", req, &response); err != nil {
-			return daemon.FinalResponseResponse{}, err
-		}
-		return response, nil
+		return callDaemonRPC[daemon.FinalResponseResponse](ctx, socketPath, "final_response.get", req)
 	}
 	finalResponseListRPC = func(ctx context.Context, socketPath string, req daemon.FinalResponseListRequest) (daemon.FinalResponseListResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.FinalResponseListResponse
-		if err := rpcClient.Call(ctx, "final_response.list", req, &response); err != nil {
-			return daemon.FinalResponseListResponse{}, err
-		}
-		return response, nil
+		return callDaemonRPC[daemon.FinalResponseListResponse](ctx, socketPath, "final_response.list", req)
 	}
 )
 

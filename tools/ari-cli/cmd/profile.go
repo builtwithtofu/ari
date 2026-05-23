@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/builtwithtofu/ari/tools/ari-cli/internal/client"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/config"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
 	"github.com/spf13/cobra"
@@ -16,28 +15,13 @@ import (
 var (
 	profileEnsureDaemonRunning = ensureDaemonRunning
 	profileCreateRPC           = func(ctx context.Context, socketPath string, req daemon.ProfileCreateRequest) (daemon.ProfileResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.ProfileResponse
-		if err := rpcClient.Call(ctx, "profile.create", req, &response); err != nil {
-			return daemon.ProfileResponse{}, err
-		}
-		return response, nil
+		return callDaemonRPC[daemon.ProfileResponse](ctx, socketPath, "profile.create", req)
 	}
 	profileGetRPC = func(ctx context.Context, socketPath string, req daemon.ProfileGetRequest) (daemon.ProfileResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.ProfileResponse
-		if err := rpcClient.Call(ctx, "profile.get", req, &response); err != nil {
-			return daemon.ProfileResponse{}, err
-		}
-		return response, nil
+		return callDaemonRPC[daemon.ProfileResponse](ctx, socketPath, "profile.get", req)
 	}
 	profileListRPC = func(ctx context.Context, socketPath string, req daemon.ProfileListRequest) (daemon.ProfileListResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.ProfileListResponse
-		if err := rpcClient.Call(ctx, "profile.list", req, &response); err != nil {
-			return daemon.ProfileListResponse{}, err
-		}
-		return response, nil
+		return callDaemonRPC[daemon.ProfileListResponse](ctx, socketPath, "profile.list", req)
 	}
 )
 

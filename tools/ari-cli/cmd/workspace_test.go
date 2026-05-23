@@ -86,7 +86,7 @@ func TestWorkspaceCommandCreateListShowRemoveLifecycle(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	originalReadActive := workspaceCommandReadActiveSession
+	originalResolver := workflowContextResolver
 	originalCreateRPC := workspaceCommandCreateRPC
 	originalListRPC := workspaceCommandListRPC
 	originalGetRPC := workspaceCommandGetRPC
@@ -95,7 +95,7 @@ func TestWorkspaceCommandCreateListShowRemoveLifecycle(t *testing.T) {
 	originalWorkspaceGet := workspaceGetRPC
 	originalWorkspaceList := workspaceListRPC
 
-	workspaceCommandReadActiveSession = func() (string, error) { return "ws-1", nil }
+	workflowContextResolver = &WorkflowContextResolver{store: activeWorkspaceStoreFunc{read: func() (string, error) { return "ws-1", nil }}, resolveTarget: resolveWorkspaceTarget}
 	workspaceCommandEnsureScope = func(*daemon.WorkspaceGetResponse, string) error { return nil }
 	workspaceGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
 		return daemon.WorkspaceGetResponse{WorkspaceID: "ws-1", Name: "alpha", OriginRoot: t.TempDir()}, nil
@@ -125,7 +125,7 @@ func TestWorkspaceCommandCreateListShowRemoveLifecycle(t *testing.T) {
 		return daemon.WorkspaceCommandRemoveResponse{Status: "removed"}, nil
 	}
 	t.Cleanup(func() {
-		workspaceCommandReadActiveSession = originalReadActive
+		workflowContextResolver = originalResolver
 		workspaceCommandCreateRPC = originalCreateRPC
 		workspaceCommandListRPC = originalListRPC
 		workspaceCommandGetRPC = originalGetRPC
@@ -178,22 +178,22 @@ func TestWorkspaceCommandRunExecutesDefinitionAndPrintsOutput(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	originalReadActive := workspaceCommandReadActiveSession
+	originalResolver := workflowContextResolver
 	originalEnsureScope := workspaceCommandEnsureScope
 	originalGetDef := workspaceCommandGetRPC
-	originalResolveTarget := commandResolveSessionTarget
+	originalResolveTarget := commandResolveWorkspaceTarget
 	originalEnsure := commandEnsureDaemonRunning
 	originalRun := commandRunRPC
 	originalGet := commandGetRPC
 	originalOutput := commandOutputRPC
 
-	workspaceCommandReadActiveSession = func() (string, error) { return "ws-1", nil }
+	workflowContextResolver = &WorkflowContextResolver{store: activeWorkspaceStoreFunc{read: func() (string, error) { return "ws-1", nil }}, resolveTarget: resolveWorkspaceTarget}
 	workspaceCommandEnsureScope = func(*daemon.WorkspaceGetResponse, string) error { return nil }
 	workspaceCommandGetRPC = func(context.Context, string, daemon.WorkspaceCommandGetRequest) (daemon.WorkspaceCommandGetResponse, error) {
 		return daemon.WorkspaceCommandGetResponse{CommandID: "cmd-def-1", Name: "test", Command: "go", Args: []string{"test", "./..."}}, nil
 	}
-	commandResolveSessionTarget = func(context.Context, string, string) (resolvedSessionTarget, error) {
-		return resolvedSessionTarget{WorkspaceID: "ws-1", Session: &daemon.WorkspaceGetResponse{WorkspaceID: "ws-1", OriginRoot: t.TempDir()}}, nil
+	commandResolveWorkspaceTarget = func(context.Context, string, string) (resolvedWorkspaceTarget, error) {
+		return resolvedWorkspaceTarget{WorkspaceID: "ws-1", Workspace: &daemon.WorkspaceGetResponse{WorkspaceID: "ws-1", OriginRoot: t.TempDir()}}, nil
 	}
 	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	gotRun := daemon.CommandRunRequest{}
@@ -208,10 +208,10 @@ func TestWorkspaceCommandRunExecutesDefinitionAndPrintsOutput(t *testing.T) {
 		return daemon.CommandOutputResponse{Output: "ok\n"}, nil
 	}
 	t.Cleanup(func() {
-		workspaceCommandReadActiveSession = originalReadActive
+		workflowContextResolver = originalResolver
 		workspaceCommandEnsureScope = originalEnsureScope
 		workspaceCommandGetRPC = originalGetDef
-		commandResolveSessionTarget = originalResolveTarget
+		commandResolveWorkspaceTarget = originalResolveTarget
 		commandEnsureDaemonRunning = originalEnsure
 		commandRunRPC = originalRun
 		commandGetRPC = originalGet
@@ -237,16 +237,16 @@ func TestWorkspaceCommandListRejectsUnexpectedArgs(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	originalReadActive := workspaceCommandReadActiveSession
+	originalResolver := workflowContextResolver
 	originalListRPC := workspaceCommandListRPC
-	workspaceCommandReadActiveSession = func() (string, error) { return "ws-1", nil }
+	workflowContextResolver = &WorkflowContextResolver{store: activeWorkspaceStoreFunc{read: func() (string, error) { return "ws-1", nil }}, resolveTarget: resolveWorkspaceTarget}
 	called := false
 	workspaceCommandListRPC = func(context.Context, string, daemon.WorkspaceCommandListRequest) (daemon.WorkspaceCommandListResponse, error) {
 		called = true
 		return daemon.WorkspaceCommandListResponse{}, nil
 	}
 	t.Cleanup(func() {
-		workspaceCommandReadActiveSession = originalReadActive
+		workflowContextResolver = originalResolver
 		workspaceCommandListRPC = originalListRPC
 	})
 
@@ -811,7 +811,7 @@ func TestResolveSessionIdentifierByNameAndPrefix(t *testing.T) {
 		workspaceListRPC = originalList
 	})
 
-	byName, err := resolveSessionIdentifier(context.Background(), "/tmp/daemon.sock", "alpha")
+	byName, err := resolveWorkspaceIdentifier(context.Background(), "/tmp/daemon.sock", "alpha")
 	if err != nil {
 		t.Fatalf("resolve by name returned error: %v", err)
 	}
@@ -819,7 +819,7 @@ func TestResolveSessionIdentifierByNameAndPrefix(t *testing.T) {
 		t.Fatalf("resolve by name = %q, want %q", byName, "aaaaaaaa-1111-1111-1111-111111111111")
 	}
 
-	byPrefix, err := resolveSessionIdentifier(context.Background(), "/tmp/daemon.sock", "bbbb")
+	byPrefix, err := resolveWorkspaceIdentifier(context.Background(), "/tmp/daemon.sock", "bbbb")
 	if err != nil {
 		t.Fatalf("resolve by prefix returned error: %v", err)
 	}
@@ -846,7 +846,7 @@ func TestResolveSessionIdentifierRejectsAmbiguousPrefix(t *testing.T) {
 		workspaceListRPC = originalList
 	})
 
-	_, err := resolveSessionIdentifier(context.Background(), "/tmp/daemon.sock", "abc")
+	_, err := resolveWorkspaceIdentifier(context.Background(), "/tmp/daemon.sock", "abc")
 	if err == nil {
 		t.Fatal("resolve ambiguous prefix returned nil error")
 	}
@@ -901,9 +901,9 @@ func TestResolveSessionIdentifierResolvesDuplicateNamesByCWD(t *testing.T) {
 		workspaceListRPC = originalList
 	})
 
-	workspaceID, err := resolveSessionIdentifier(context.Background(), "/tmp/daemon.sock", "clay")
+	workspaceID, err := resolveWorkspaceIdentifier(context.Background(), "/tmp/daemon.sock", "clay")
 	if err != nil {
-		t.Fatalf("resolveSessionIdentifier returned error: %v", err)
+		t.Fatalf("resolveWorkspaceIdentifier returned error: %v", err)
 	}
 	if workspaceID != "ws-right" {
 		t.Fatalf("workspaceID = %q, want %q", workspaceID, "ws-right")
@@ -958,9 +958,9 @@ func TestResolveSessionIdentifierPrefersCWDWhenWorkspaceGetByNameWouldSucceed(t 
 		workspaceListRPC = originalList
 	})
 
-	workspaceID, err := resolveSessionIdentifier(context.Background(), "/tmp/daemon.sock", "clay")
+	workspaceID, err := resolveWorkspaceIdentifier(context.Background(), "/tmp/daemon.sock", "clay")
 	if err != nil {
-		t.Fatalf("resolveSessionIdentifier returned error: %v", err)
+		t.Fatalf("resolveWorkspaceIdentifier returned error: %v", err)
 	}
 	if workspaceID != "ws-right" {
 		t.Fatalf("workspaceID = %q, want %q", workspaceID, "ws-right")
@@ -1017,12 +1017,12 @@ func TestResolveSessionIdentifierRejectsDuplicateNamesWithoutCWDMatch(t *testing
 		workspaceListRPC = originalList
 	})
 
-	_, err = resolveSessionIdentifier(context.Background(), "/tmp/daemon.sock", "clay")
+	_, err = resolveWorkspaceIdentifier(context.Background(), "/tmp/daemon.sock", "clay")
 	if err == nil {
-		t.Fatal("resolveSessionIdentifier returned nil error")
+		t.Fatal("resolveWorkspaceIdentifier returned nil error")
 	}
 	if err.Error() != "Workspace name is ambiguous; run `ari workspace set <id-or-name>` to choose one" {
-		t.Fatalf("resolveSessionIdentifier error = %q, want %q", err.Error(), "Workspace name is ambiguous; run `ari workspace set <id-or-name>` to choose one")
+		t.Fatalf("resolveWorkspaceIdentifier error = %q, want %q", err.Error(), "Workspace name is ambiguous; run `ari workspace set <id-or-name>` to choose one")
 	}
 }
 
@@ -1046,9 +1046,9 @@ func TestResolveSessionIdentifierUsesDirectNameLookupWhenWorkspaceListFails(t *t
 		workspaceListRPC = originalList
 	})
 
-	workspaceID, err := resolveSessionIdentifier(context.Background(), "/tmp/daemon.sock", "clay")
+	workspaceID, err := resolveWorkspaceIdentifier(context.Background(), "/tmp/daemon.sock", "clay")
 	if err != nil {
-		t.Fatalf("resolveSessionIdentifier returned error: %v", err)
+		t.Fatalf("resolveWorkspaceIdentifier returned error: %v", err)
 	}
 	if workspaceID != "ws-stale" {
 		t.Fatalf("workspaceID = %q, want %q", workspaceID, "ws-stale")
@@ -1097,9 +1097,9 @@ func TestResolveSessionIdentifierIgnoresStaleDuplicateWhenCWDMatchesLiveWorkspac
 		workspaceListRPC = originalList
 	})
 
-	workspaceID, err := resolveSessionIdentifier(context.Background(), "/tmp/daemon.sock", "clay")
+	workspaceID, err := resolveWorkspaceIdentifier(context.Background(), "/tmp/daemon.sock", "clay")
 	if err != nil {
-		t.Fatalf("resolveSessionIdentifier returned error: %v", err)
+		t.Fatalf("resolveWorkspaceIdentifier returned error: %v", err)
 	}
 	if workspaceID != "ws-right" {
 		t.Fatalf("workspaceID = %q, want %q", workspaceID, "ws-right")
@@ -1152,9 +1152,9 @@ func TestResolveSessionIdentifierReturnsLiveDuplicateWithoutCWDMatch(t *testing.
 		workspaceListRPC = originalList
 	})
 
-	workspaceID, err := resolveSessionIdentifier(context.Background(), "/tmp/daemon.sock", "clay")
+	workspaceID, err := resolveWorkspaceIdentifier(context.Background(), "/tmp/daemon.sock", "clay")
 	if err != nil {
-		t.Fatalf("resolveSessionIdentifier returned error: %v", err)
+		t.Fatalf("resolveWorkspaceIdentifier returned error: %v", err)
 	}
 	if workspaceID != "ws-right" {
 		t.Fatalf("workspaceID = %q, want %q", workspaceID, "ws-right")
@@ -1183,9 +1183,9 @@ func TestResolveSessionIdentifierFallsBackToDirectNameLookupAfterListMismatch(t 
 		workspaceListRPC = originalList
 	})
 
-	workspaceID, err := resolveSessionIdentifier(context.Background(), "/tmp/daemon.sock", "clay")
+	workspaceID, err := resolveWorkspaceIdentifier(context.Background(), "/tmp/daemon.sock", "clay")
 	if err != nil {
-		t.Fatalf("resolveSessionIdentifier returned error: %v", err)
+		t.Fatalf("resolveWorkspaceIdentifier returned error: %v", err)
 	}
 	if workspaceID != "ws-stale" {
 		t.Fatalf("workspaceID = %q, want %q", workspaceID, "ws-stale")
@@ -1212,9 +1212,9 @@ func TestResolveSessionIdentifierReturnsUniqueNameMatchFromWorkspaceList(t *test
 		workspaceListRPC = originalList
 	})
 
-	workspaceID, err := resolveSessionIdentifier(context.Background(), "/tmp/daemon.sock", "alpha")
+	workspaceID, err := resolveWorkspaceIdentifier(context.Background(), "/tmp/daemon.sock", "alpha")
 	if err != nil {
-		t.Fatalf("resolveSessionIdentifier returned error: %v", err)
+		t.Fatalf("resolveWorkspaceIdentifier returned error: %v", err)
 	}
 	if workspaceID != "ws-stale" {
 		t.Fatalf("workspaceID = %q, want %q", workspaceID, "ws-stale")
@@ -1241,14 +1241,14 @@ func TestResolveSessionTargetUniqueNameKeepsSessionWhenDirectLookupSucceeds(t *t
 		workspaceListRPC = originalList
 	})
 
-	target, err := resolveSessionTarget(context.Background(), "/tmp/daemon.sock", "alpha")
+	target, err := resolveWorkspaceTarget(context.Background(), "/tmp/daemon.sock", "alpha")
 	if err != nil {
-		t.Fatalf("resolveSessionTarget returned error: %v", err)
+		t.Fatalf("resolveWorkspaceTarget returned error: %v", err)
 	}
 	if target.WorkspaceID != "ws-1" {
 		t.Fatalf("workspaceID = %q, want %q", target.WorkspaceID, "ws-1")
 	}
-	if target.Session == nil {
+	if target.Workspace == nil {
 		t.Fatal("target session = nil, want non-nil")
 	}
 }
@@ -1271,12 +1271,12 @@ func TestResolveSessionIdentifierReturnsNotFoundWhenAllDuplicateMatchesStale(t *
 		workspaceListRPC = originalList
 	})
 
-	_, err := resolveSessionIdentifier(context.Background(), "/tmp/daemon.sock", "clay")
+	_, err := resolveWorkspaceIdentifier(context.Background(), "/tmp/daemon.sock", "clay")
 	if err == nil {
-		t.Fatal("resolveSessionIdentifier returned nil error")
+		t.Fatal("resolveWorkspaceIdentifier returned nil error")
 	}
 	if err.Error() != "Workspace not found" {
-		t.Fatalf("resolveSessionIdentifier error = %q, want %q", err.Error(), "Workspace not found")
+		t.Fatalf("resolveWorkspaceIdentifier error = %q, want %q", err.Error(), "Workspace not found")
 	}
 }
 

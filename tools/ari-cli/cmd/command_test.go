@@ -189,18 +189,14 @@ func TestCommandListRejectsActiveSessionOutsideWorkspace(t *testing.T) {
 		_ = os.Chdir(originalWD)
 	})
 
-	originalResolve := commandResolveSessionIdentifier
-	originalReadActive := commandReadActiveSession
+	originalResolver := workflowContextResolver
 	originalEnsure := commandEnsureDaemonRunning
 	originalSessionGet := workspaceGetRPC
 	originalList := commandListRPC
 
-	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+	workflowContextResolver = &WorkflowContextResolver{store: activeWorkspaceStoreFunc{read: func() (string, error) {
 		return "sess-1", nil
-	}
-	commandReadActiveSession = func() (string, error) {
-		return "sess-1", nil
-	}
+	}}, resolveTarget: resolveWorkspaceTarget}
 	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	workspaceGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
 		return daemon.WorkspaceGetResponse{WorkspaceID: "sess-1", OriginRoot: t.TempDir()}, nil
@@ -209,8 +205,7 @@ func TestCommandListRejectsActiveSessionOutsideWorkspace(t *testing.T) {
 		return daemon.CommandListResponse{}, errors.New("command list should not be called")
 	}
 	t.Cleanup(func() {
-		commandResolveSessionIdentifier = originalResolve
-		commandReadActiveSession = originalReadActive
+		workflowContextResolver = originalResolver
 		commandEnsureDaemonRunning = originalEnsure
 		workspaceGetRPC = originalSessionGet
 		commandListRPC = originalList
@@ -229,18 +224,14 @@ func TestCommandListSessionOverrideBypassesWorkspaceSafety(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	originalResolve := commandResolveSessionIdentifier
-	originalReadActive := commandReadActiveSession
+	originalResolver := workflowContextResolver
 	originalEnsure := commandEnsureDaemonRunning
 	originalSessionGet := workspaceGetRPC
 	originalList := commandListRPC
 
-	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
-		return "sess-1", nil
-	}
-	commandReadActiveSession = func() (string, error) {
+	workflowContextResolver = &WorkflowContextResolver{store: activeWorkspaceStoreFunc{read: func() (string, error) {
 		return "", errors.New("active workspace should not be read when --workspace is provided")
-	}
+	}}, resolveTarget: resolveWorkspaceTarget}
 	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	workspaceGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
 		return daemon.WorkspaceGetResponse{WorkspaceID: "sess-1", OriginRoot: t.TempDir()}, nil
@@ -251,8 +242,7 @@ func TestCommandListSessionOverrideBypassesWorkspaceSafety(t *testing.T) {
 		return daemon.CommandListResponse{}, nil
 	}
 	t.Cleanup(func() {
-		commandResolveSessionIdentifier = originalResolve
-		commandReadActiveSession = originalReadActive
+		workflowContextResolver = originalResolver
 		commandEnsureDaemonRunning = originalEnsure
 		workspaceGetRPC = originalSessionGet
 		commandListRPC = originalList
@@ -290,18 +280,14 @@ func TestCommandListAllowsOriginRootWhenBroaderThanFolder(t *testing.T) {
 		_ = os.Chdir(originalWD)
 	})
 
-	originalResolve := commandResolveSessionIdentifier
-	originalReadActive := commandReadActiveSession
+	originalResolver := workflowContextResolver
 	originalEnsure := commandEnsureDaemonRunning
 	originalSessionGet := workspaceGetRPC
 	originalList := commandListRPC
 
-	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+	workflowContextResolver = &WorkflowContextResolver{store: activeWorkspaceStoreFunc{read: func() (string, error) {
 		return "sess-1", nil
-	}
-	commandReadActiveSession = func() (string, error) {
-		return "sess-1", nil
-	}
+	}}, resolveTarget: resolveWorkspaceTarget}
 	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	workspaceGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
 		return daemon.WorkspaceGetResponse{
@@ -316,8 +302,7 @@ func TestCommandListAllowsOriginRootWhenBroaderThanFolder(t *testing.T) {
 		return daemon.CommandListResponse{}, nil
 	}
 	t.Cleanup(func() {
-		commandResolveSessionIdentifier = originalResolve
-		commandReadActiveSession = originalReadActive
+		workflowContextResolver = originalResolver
 		commandEnsureDaemonRunning = originalEnsure
 		workspaceGetRPC = originalSessionGet
 		commandListRPC = originalList
@@ -337,18 +322,14 @@ func TestCommandListEnvActiveSessionBypassesWorkspaceSafety(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("ARI_ACTIVE_WORKSPACE", "sess-env")
 
-	originalResolve := commandResolveSessionIdentifier
-	originalReadActive := commandReadActiveSession
+	originalResolver := workflowContextResolver
 	originalEnsure := commandEnsureDaemonRunning
 	originalSessionGet := workspaceGetRPC
 	originalList := commandListRPC
 
-	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+	workflowContextResolver = &WorkflowContextResolver{store: activeWorkspaceStoreFunc{read: func() (string, error) {
 		return "sess-env", nil
-	}
-	commandReadActiveSession = func() (string, error) {
-		return "sess-env", nil
-	}
+	}}, resolveTarget: resolveWorkspaceTarget}
 	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	workspaceGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
 		return daemon.WorkspaceGetResponse{WorkspaceID: "sess-env", OriginRoot: t.TempDir()}, nil
@@ -359,8 +340,7 @@ func TestCommandListEnvActiveSessionBypassesWorkspaceSafety(t *testing.T) {
 		return daemon.CommandListResponse{}, nil
 	}
 	t.Cleanup(func() {
-		commandResolveSessionIdentifier = originalResolve
-		commandReadActiveSession = originalReadActive
+		workflowContextResolver = originalResolver
 		commandEnsureDaemonRunning = originalEnsure
 		workspaceGetRPC = originalSessionGet
 		commandListRPC = originalList
@@ -391,8 +371,7 @@ func TestCommandSubcommandsRejectActiveSessionOutsideWorkspace(t *testing.T) {
 		_ = os.Chdir(originalWD)
 	})
 
-	originalResolve := commandResolveSessionIdentifier
-	originalReadActive := commandReadActiveSession
+	originalResolver := workflowContextResolver
 	originalEnsure := commandEnsureDaemonRunning
 	originalSessionGet := workspaceGetRPC
 	originalRun := commandRunRPC
@@ -401,12 +380,9 @@ func TestCommandSubcommandsRejectActiveSessionOutsideWorkspace(t *testing.T) {
 	originalOutput := commandOutputRPC
 	originalStop := commandStopRPC
 
-	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+	workflowContextResolver = &WorkflowContextResolver{store: activeWorkspaceStoreFunc{read: func() (string, error) {
 		return "sess-1", nil
-	}
-	commandReadActiveSession = func() (string, error) {
-		return "sess-1", nil
-	}
+	}}, resolveTarget: resolveWorkspaceTarget}
 	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	workspaceGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
 		return daemon.WorkspaceGetResponse{WorkspaceID: "sess-1", OriginRoot: t.TempDir()}, nil
@@ -427,8 +403,7 @@ func TestCommandSubcommandsRejectActiveSessionOutsideWorkspace(t *testing.T) {
 		return daemon.CommandStopResponse{}, errors.New("command stop should not be called")
 	}
 	t.Cleanup(func() {
-		commandResolveSessionIdentifier = originalResolve
-		commandReadActiveSession = originalReadActive
+		workflowContextResolver = originalResolver
 		commandEnsureDaemonRunning = originalEnsure
 		workspaceGetRPC = originalSessionGet
 		commandRunRPC = originalRun
@@ -479,14 +454,14 @@ func TestCommandListUsesSingleSessionGetForActiveWorkspace(t *testing.T) {
 		_ = os.Chdir(originalWD)
 	})
 
-	originalReadActive := commandReadActiveSession
+	originalResolver := workflowContextResolver
 	originalEnsure := commandEnsureDaemonRunning
 	originalSessionGet := workspaceGetRPC
 	originalList := commandListRPC
 
-	commandReadActiveSession = func() (string, error) {
+	workflowContextResolver = &WorkflowContextResolver{store: activeWorkspaceStoreFunc{read: func() (string, error) {
 		return "sess-1", nil
-	}
+	}}, resolveTarget: resolveWorkspaceTarget}
 	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	sessionGetCalls := 0
 	workspaceGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
@@ -497,7 +472,7 @@ func TestCommandListUsesSingleSessionGetForActiveWorkspace(t *testing.T) {
 		return daemon.CommandListResponse{}, nil
 	}
 	t.Cleanup(func() {
-		commandReadActiveSession = originalReadActive
+		workflowContextResolver = originalResolver
 		commandEnsureDaemonRunning = originalEnsure
 		workspaceGetRPC = originalSessionGet
 		commandListRPC = originalList
@@ -546,20 +521,20 @@ func TestCommandRunUsesSeparatorArguments(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	originalResolveTarget := commandResolveSessionTarget
-	originalReadActive := commandReadActiveSession
+	originalResolveTarget := commandResolveWorkspaceTarget
+	originalResolver := workflowContextResolver
 	originalEnsure := commandEnsureDaemonRunning
 	originalEnsureScope := commandEnsureWorkspaceScope
 	originalRun := commandRunRPC
 	originalGet := commandGetRPC
 	originalOutput := commandOutputRPC
 
-	commandResolveSessionTarget = func(context.Context, string, string) (resolvedSessionTarget, error) {
-		return resolvedSessionTarget{WorkspaceID: "sess-1", Session: &daemon.WorkspaceGetResponse{WorkspaceID: "sess-1", OriginRoot: t.TempDir()}}, nil
+	commandResolveWorkspaceTarget = func(context.Context, string, string) (resolvedWorkspaceTarget, error) {
+		return resolvedWorkspaceTarget{WorkspaceID: "sess-1", Workspace: &daemon.WorkspaceGetResponse{WorkspaceID: "sess-1", OriginRoot: t.TempDir()}}, nil
 	}
-	commandReadActiveSession = func() (string, error) {
+	workflowContextResolver = &WorkflowContextResolver{store: activeWorkspaceStoreFunc{read: func() (string, error) {
 		return "sess-1", nil
-	}
+	}}, resolveTarget: resolveWorkspaceTarget}
 	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	commandEnsureWorkspaceScope = func(*daemon.WorkspaceGetResponse, string) error { return nil }
 	var gotReq daemon.CommandRunRequest
@@ -574,8 +549,8 @@ func TestCommandRunUsesSeparatorArguments(t *testing.T) {
 		return daemon.CommandOutputResponse{Output: "ok\n"}, nil
 	}
 	t.Cleanup(func() {
-		commandResolveSessionTarget = originalResolveTarget
-		commandReadActiveSession = originalReadActive
+		commandResolveWorkspaceTarget = originalResolveTarget
+		workflowContextResolver = originalResolver
 		commandEnsureDaemonRunning = originalEnsure
 		commandEnsureWorkspaceScope = originalEnsureScope
 		commandRunRPC = originalRun
@@ -606,18 +581,18 @@ func TestCommandRunStopsPollingAtConfiguredWallclockCap(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	originalResolveTarget := commandResolveSessionTarget
-	originalReadActive := commandReadActiveSession
+	originalResolveTarget := commandResolveWorkspaceTarget
+	originalResolver := workflowContextResolver
 	originalEnsure := commandEnsureDaemonRunning
 	originalEnsureScope := commandEnsureWorkspaceScope
 	originalRun := commandRunRPC
 	originalGet := commandGetRPC
 	originalMaxDuration := oneOffCommandMaxDuration
 
-	commandResolveSessionTarget = func(context.Context, string, string) (resolvedSessionTarget, error) {
-		return resolvedSessionTarget{WorkspaceID: "sess-1", Session: &daemon.WorkspaceGetResponse{WorkspaceID: "sess-1", OriginRoot: t.TempDir()}}, nil
+	commandResolveWorkspaceTarget = func(context.Context, string, string) (resolvedWorkspaceTarget, error) {
+		return resolvedWorkspaceTarget{WorkspaceID: "sess-1", Workspace: &daemon.WorkspaceGetResponse{WorkspaceID: "sess-1", OriginRoot: t.TempDir()}}, nil
 	}
-	commandReadActiveSession = func() (string, error) { return "sess-1", nil }
+	workflowContextResolver = &WorkflowContextResolver{store: activeWorkspaceStoreFunc{read: func() (string, error) { return "sess-1", nil }}, resolveTarget: resolveWorkspaceTarget}
 	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	commandEnsureWorkspaceScope = func(*daemon.WorkspaceGetResponse, string) error { return nil }
 	commandRunRPC = func(context.Context, string, daemon.CommandRunRequest) (daemon.CommandRunResponse, error) {
@@ -628,8 +603,8 @@ func TestCommandRunStopsPollingAtConfiguredWallclockCap(t *testing.T) {
 	}
 	oneOffCommandMaxDuration = 20 * time.Millisecond
 	t.Cleanup(func() {
-		commandResolveSessionTarget = originalResolveTarget
-		commandReadActiveSession = originalReadActive
+		commandResolveWorkspaceTarget = originalResolveTarget
+		workflowContextResolver = originalResolver
 		commandEnsureDaemonRunning = originalEnsure
 		commandEnsureWorkspaceScope = originalEnsureScope
 		commandRunRPC = originalRun
@@ -650,18 +625,18 @@ func TestCommandRunPrintsNoOutputMessageWhenOutputIsEmpty(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	originalResolveTarget := commandResolveSessionTarget
-	originalReadActive := commandReadActiveSession
+	originalResolveTarget := commandResolveWorkspaceTarget
+	originalResolver := workflowContextResolver
 	originalEnsure := commandEnsureDaemonRunning
 	originalEnsureScope := commandEnsureWorkspaceScope
 	originalRun := commandRunRPC
 	originalGet := commandGetRPC
 	originalOutput := commandOutputRPC
 
-	commandResolveSessionTarget = func(context.Context, string, string) (resolvedSessionTarget, error) {
-		return resolvedSessionTarget{WorkspaceID: "sess-1", Session: &daemon.WorkspaceGetResponse{WorkspaceID: "sess-1", OriginRoot: t.TempDir()}}, nil
+	commandResolveWorkspaceTarget = func(context.Context, string, string) (resolvedWorkspaceTarget, error) {
+		return resolvedWorkspaceTarget{WorkspaceID: "sess-1", Workspace: &daemon.WorkspaceGetResponse{WorkspaceID: "sess-1", OriginRoot: t.TempDir()}}, nil
 	}
-	commandReadActiveSession = func() (string, error) { return "sess-1", nil }
+	workflowContextResolver = &WorkflowContextResolver{store: activeWorkspaceStoreFunc{read: func() (string, error) { return "sess-1", nil }}, resolveTarget: resolveWorkspaceTarget}
 	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	commandEnsureWorkspaceScope = func(*daemon.WorkspaceGetResponse, string) error { return nil }
 	commandRunRPC = func(context.Context, string, daemon.CommandRunRequest) (daemon.CommandRunResponse, error) {
@@ -674,8 +649,8 @@ func TestCommandRunPrintsNoOutputMessageWhenOutputIsEmpty(t *testing.T) {
 		return daemon.CommandOutputResponse{Output: ""}, nil
 	}
 	t.Cleanup(func() {
-		commandResolveSessionTarget = originalResolveTarget
-		commandReadActiveSession = originalReadActive
+		commandResolveWorkspaceTarget = originalResolveTarget
+		workflowContextResolver = originalResolver
 		commandEnsureDaemonRunning = originalEnsure
 		commandEnsureWorkspaceScope = originalEnsureScope
 		commandRunRPC = originalRun
@@ -696,18 +671,18 @@ func TestCommandRunReturnsErrorOnNonZeroExit(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	originalResolveTarget := commandResolveSessionTarget
-	originalReadActive := commandReadActiveSession
+	originalResolveTarget := commandResolveWorkspaceTarget
+	originalResolver := workflowContextResolver
 	originalEnsure := commandEnsureDaemonRunning
 	originalEnsureScope := commandEnsureWorkspaceScope
 	originalRun := commandRunRPC
 	originalGet := commandGetRPC
 	originalOutput := commandOutputRPC
 
-	commandResolveSessionTarget = func(context.Context, string, string) (resolvedSessionTarget, error) {
-		return resolvedSessionTarget{WorkspaceID: "sess-1", Session: &daemon.WorkspaceGetResponse{WorkspaceID: "sess-1", OriginRoot: t.TempDir()}}, nil
+	commandResolveWorkspaceTarget = func(context.Context, string, string) (resolvedWorkspaceTarget, error) {
+		return resolvedWorkspaceTarget{WorkspaceID: "sess-1", Workspace: &daemon.WorkspaceGetResponse{WorkspaceID: "sess-1", OriginRoot: t.TempDir()}}, nil
 	}
-	commandReadActiveSession = func() (string, error) { return "sess-1", nil }
+	workflowContextResolver = &WorkflowContextResolver{store: activeWorkspaceStoreFunc{read: func() (string, error) { return "sess-1", nil }}, resolveTarget: resolveWorkspaceTarget}
 	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	commandEnsureWorkspaceScope = func(*daemon.WorkspaceGetResponse, string) error { return nil }
 	commandRunRPC = func(context.Context, string, daemon.CommandRunRequest) (daemon.CommandRunResponse, error) {
@@ -721,8 +696,8 @@ func TestCommandRunReturnsErrorOnNonZeroExit(t *testing.T) {
 		return daemon.CommandOutputResponse{Output: "failed\n"}, nil
 	}
 	t.Cleanup(func() {
-		commandResolveSessionTarget = originalResolveTarget
-		commandReadActiveSession = originalReadActive
+		commandResolveWorkspaceTarget = originalResolveTarget
+		workflowContextResolver = originalResolver
 		commandEnsureDaemonRunning = originalEnsure
 		commandEnsureWorkspaceScope = originalEnsureScope
 		commandRunRPC = originalRun
@@ -743,18 +718,14 @@ func TestCommandListShowOutputStop(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	originalResolve := commandResolveSessionIdentifier
-	originalReadActive := commandReadActiveSession
+	originalResolver := workflowContextResolver
 	originalList := commandListRPC
 	originalShow := commandGetRPC
 	originalOutput := commandOutputRPC
 	originalStop := commandStopRPC
-	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+	workflowContextResolver = &WorkflowContextResolver{store: activeWorkspaceStoreFunc{read: func() (string, error) {
 		return "sess-1", nil
-	}
-	commandReadActiveSession = func() (string, error) {
-		return "sess-1", nil
-	}
+	}}, resolveTarget: resolveWorkspaceTarget}
 	commandListRPC = func(context.Context, string, string) (daemon.CommandListResponse, error) {
 		return daemon.CommandListResponse{Commands: []daemon.CommandSummary{{CommandID: "cmd-1", Command: "go test", Status: "running", StartedAt: "now"}}}, nil
 	}
@@ -769,8 +740,7 @@ func TestCommandListShowOutputStop(t *testing.T) {
 		return daemon.CommandStopResponse{Status: "stopping"}, nil
 	}
 	t.Cleanup(func() {
-		commandResolveSessionIdentifier = originalResolve
-		commandReadActiveSession = originalReadActive
+		workflowContextResolver = originalResolver
 		commandListRPC = originalList
 		commandGetRPC = originalShow
 		commandOutputRPC = originalOutput
@@ -814,21 +784,16 @@ func TestCommandShowNotFoundMapsError(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	originalResolve := commandResolveSessionIdentifier
-	originalReadActive := commandReadActiveSession
+	originalResolver := workflowContextResolver
 	originalShow := commandGetRPC
-	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+	workflowContextResolver = &WorkflowContextResolver{store: activeWorkspaceStoreFunc{read: func() (string, error) {
 		return "sess-1", nil
-	}
-	commandReadActiveSession = func() (string, error) {
-		return "sess-1", nil
-	}
+	}}, resolveTarget: resolveWorkspaceTarget}
 	commandGetRPC = func(context.Context, string, string, string) (daemon.CommandGetResponse, error) {
 		return daemon.CommandGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.CommandNotFound), Message: "command not found"}
 	}
 	t.Cleanup(func() {
-		commandResolveSessionIdentifier = originalResolve
-		commandReadActiveSession = originalReadActive
+		workflowContextResolver = originalResolver
 		commandGetRPC = originalShow
 	})
 
@@ -845,21 +810,16 @@ func TestCommandShowSessionNotFoundMapsError(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	originalResolve := commandResolveSessionIdentifier
-	originalReadActive := commandReadActiveSession
+	originalResolver := workflowContextResolver
 	originalShow := commandGetRPC
-	commandResolveSessionIdentifier = func(context.Context, string, string) (string, error) {
+	workflowContextResolver = &WorkflowContextResolver{store: activeWorkspaceStoreFunc{read: func() (string, error) {
 		return "sess-missing", nil
-	}
-	commandReadActiveSession = func() (string, error) {
-		return "sess-missing", nil
-	}
+	}}, resolveTarget: resolveWorkspaceTarget}
 	commandGetRPC = func(context.Context, string, string, string) (daemon.CommandGetResponse, error) {
 		return daemon.CommandGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "session not found"}
 	}
 	t.Cleanup(func() {
-		commandResolveSessionIdentifier = originalResolve
-		commandReadActiveSession = originalReadActive
+		workflowContextResolver = originalResolver
 		commandGetRPC = originalShow
 	})
 
@@ -876,24 +836,24 @@ func TestCommandListUsesSessionFlagOverride(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	originalResolveTarget := commandResolveSessionTarget
-	originalReadActive := commandReadActiveSession
+	originalResolveTarget := commandResolveWorkspaceTarget
+	originalResolver := workflowContextResolver
 	originalList := commandListRPC
 
 	var gotLookup string
-	commandResolveSessionTarget = func(_ context.Context, _ string, idOrName string) (resolvedSessionTarget, error) {
+	commandResolveWorkspaceTarget = func(_ context.Context, _ string, idOrName string) (resolvedWorkspaceTarget, error) {
 		gotLookup = idOrName
-		return resolvedSessionTarget{WorkspaceID: "sess-override", Session: &daemon.WorkspaceGetResponse{WorkspaceID: "sess-override", OriginRoot: t.TempDir()}}, nil
+		return resolvedWorkspaceTarget{WorkspaceID: "sess-override", Workspace: &daemon.WorkspaceGetResponse{WorkspaceID: "sess-override", OriginRoot: t.TempDir()}}, nil
 	}
-	commandReadActiveSession = func() (string, error) {
+	workflowContextResolver = &WorkflowContextResolver{store: activeWorkspaceStoreFunc{read: func() (string, error) {
 		return "sess-active", nil
-	}
+	}}, resolveTarget: resolveWorkspaceTarget}
 	commandListRPC = func(context.Context, string, string) (daemon.CommandListResponse, error) {
 		return daemon.CommandListResponse{}, nil
 	}
 	t.Cleanup(func() {
-		commandResolveSessionTarget = originalResolveTarget
-		commandReadActiveSession = originalReadActive
+		commandResolveWorkspaceTarget = originalResolveTarget
+		workflowContextResolver = originalResolver
 		commandListRPC = originalList
 	})
 
@@ -910,12 +870,12 @@ func TestCommandListRequiresActiveWorkspaceWhenSessionNotProvided(t *testing.T) 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	originalReadActive := commandReadActiveSession
-	commandReadActiveSession = func() (string, error) {
+	originalResolver := workflowContextResolver
+	workflowContextResolver = &WorkflowContextResolver{store: activeWorkspaceStoreFunc{read: func() (string, error) {
 		return "", nil
-	}
+	}}, resolveTarget: resolveWorkspaceTarget}
 	t.Cleanup(func() {
-		commandReadActiveSession = originalReadActive
+		workflowContextResolver = originalResolver
 	})
 
 	_, err := executeRootCommand("exec", "list")
@@ -931,16 +891,16 @@ func TestCommandListMissingActiveSessionDoesNotCallEnsure(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	originalReadActive := commandReadActiveSession
+	originalResolver := workflowContextResolver
 	originalEnsure := commandEnsureDaemonRunning
-	commandReadActiveSession = func() (string, error) {
+	workflowContextResolver = &WorkflowContextResolver{store: activeWorkspaceStoreFunc{read: func() (string, error) {
 		return "", nil
-	}
+	}}, resolveTarget: resolveWorkspaceTarget}
 	commandEnsureDaemonRunning = func(context.Context, *config.Config) error {
 		return userFacingError{message: "ensure called unexpectedly"}
 	}
 	t.Cleanup(func() {
-		commandReadActiveSession = originalReadActive
+		workflowContextResolver = originalResolver
 		commandEnsureDaemonRunning = originalEnsure
 	})
 
@@ -957,8 +917,8 @@ func TestCommandSubcommandsUseSessionFlagOverride(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	originalResolveTarget := commandResolveSessionTarget
-	originalReadActive := commandReadActiveSession
+	originalResolveTarget := commandResolveWorkspaceTarget
+	originalResolver := workflowContextResolver
 	originalEnsure := commandEnsureDaemonRunning
 	originalRun := commandRunRPC
 	originalList := commandListRPC
@@ -966,9 +926,9 @@ func TestCommandSubcommandsUseSessionFlagOverride(t *testing.T) {
 	originalOutput := commandOutputRPC
 	originalStop := commandStopRPC
 
-	commandReadActiveSession = func() (string, error) {
+	workflowContextResolver = &WorkflowContextResolver{store: activeWorkspaceStoreFunc{read: func() (string, error) {
 		return "", errors.New("active workspace should not be read when --workspace is provided")
-	}
+	}}, resolveTarget: resolveWorkspaceTarget}
 	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	commandRunRPC = func(context.Context, string, daemon.CommandRunRequest) (daemon.CommandRunResponse, error) {
 		return daemon.CommandRunResponse{CommandID: "cmd-1", Status: "running"}, nil
@@ -986,8 +946,8 @@ func TestCommandSubcommandsUseSessionFlagOverride(t *testing.T) {
 		return daemon.CommandStopResponse{Status: "stopping"}, nil
 	}
 	t.Cleanup(func() {
-		commandResolveSessionTarget = originalResolveTarget
-		commandReadActiveSession = originalReadActive
+		commandResolveWorkspaceTarget = originalResolveTarget
+		workflowContextResolver = originalResolver
 		commandEnsureDaemonRunning = originalEnsure
 		commandRunRPC = originalRun
 		commandListRPC = originalList
@@ -1010,9 +970,9 @@ func TestCommandSubcommandsUseSessionFlagOverride(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			gotLookup := ""
-			commandResolveSessionTarget = func(_ context.Context, _ string, idOrName string) (resolvedSessionTarget, error) {
+			commandResolveWorkspaceTarget = func(_ context.Context, _ string, idOrName string) (resolvedWorkspaceTarget, error) {
 				gotLookup = idOrName
-				return resolvedSessionTarget{WorkspaceID: "sess-override", Session: &daemon.WorkspaceGetResponse{WorkspaceID: "sess-override", OriginRoot: t.TempDir()}}, nil
+				return resolvedWorkspaceTarget{WorkspaceID: "sess-override", Workspace: &daemon.WorkspaceGetResponse{WorkspaceID: "sess-override", OriginRoot: t.TempDir()}}, nil
 			}
 
 			_, err := executeRootCommand(tc.args...)

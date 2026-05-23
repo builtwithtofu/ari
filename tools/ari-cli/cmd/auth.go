@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/builtwithtofu/ari/tools/ari-cli/internal/client"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
 	"github.com/spf13/cobra"
 )
@@ -23,36 +22,16 @@ import (
 var (
 	authEnsureDaemonRunning = ensureDaemonRunning
 	authStatusRPC           = func(ctx context.Context, socketPath string, req daemon.HarnessAuthStatusRequest) (daemon.HarnessAuthStatusResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.HarnessAuthStatusResponse
-		if err := rpcClient.Call(ctx, "auth.status", req, &response); err != nil {
-			return daemon.HarnessAuthStatusResponse{}, err
-		}
-		return response, nil
+		return callDaemonRPC[daemon.HarnessAuthStatusResponse](ctx, socketPath, "auth.status", req)
 	}
 	authStartRPC = func(ctx context.Context, socketPath string, req daemon.HarnessAuthStartRequest) (daemon.HarnessAuthStartResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.HarnessAuthStartResponse
-		if err := rpcClient.Call(ctx, "auth.start", req, &response); err != nil {
-			return daemon.HarnessAuthStartResponse{}, err
-		}
-		return response, nil
+		return callDaemonRPC[daemon.HarnessAuthStartResponse](ctx, socketPath, "auth.start", req)
 	}
 	authLogoutRPC = func(ctx context.Context, socketPath string, req daemon.HarnessAuthLogoutRequest) (daemon.HarnessAuthLogoutResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.HarnessAuthLogoutResponse
-		if err := rpcClient.Call(ctx, "auth.logout", req, &response); err != nil {
-			return daemon.HarnessAuthLogoutResponse{}, err
-		}
-		return response, nil
+		return callDaemonRPC[daemon.HarnessAuthLogoutResponse](ctx, socketPath, "auth.logout", req)
 	}
 	authSlotSaveRPC = func(ctx context.Context, socketPath string, req daemon.AuthSlotSaveRequest) (daemon.AuthSlotResponse, error) {
-		rpcClient := client.New(socketPath)
-		var response daemon.AuthSlotResponse
-		if err := rpcClient.Call(ctx, "auth.slot.save", req, &response); err != nil {
-			return daemon.AuthSlotResponse{}, err
-		}
-		return response, nil
+		return callDaemonRPC[daemon.AuthSlotResponse](ctx, socketPath, "auth.slot.save", req)
 	}
 	authRunProviderLogin = runProviderLoginCommand
 	authOpenCodeMethods  = fetchOpenCodeAuthMethods
