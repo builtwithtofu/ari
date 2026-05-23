@@ -164,10 +164,6 @@ func (d *Daemon) Start(ctx context.Context) error {
 		_ = dbConn.Close()
 		return fmt.Errorf("reconcile running harness sessions: %w", err)
 	}
-	if err := store.MarkRunningAgentsLost(ctx); err != nil {
-		_ = dbConn.Close()
-		return fmt.Errorf("reconcile running agents: %w", err)
-	}
 	registry := rpc.NewMethodRegistry()
 	if err := d.registerMethods(registry, store); err != nil {
 		_ = dbConn.Close()

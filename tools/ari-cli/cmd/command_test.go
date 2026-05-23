@@ -173,7 +173,7 @@ func TestWorkspaceTargetingHelpRegistersWorkspaceFlagOnly(t *testing.T) {
 	}
 }
 
-func TestCommandListRejectsActiveSessionOutsideWorkspace(t *testing.T) {
+func TestCommandListRejectsActiveWorkspaceOutsideWorkspace(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -213,14 +213,14 @@ func TestCommandListRejectsActiveSessionOutsideWorkspace(t *testing.T) {
 
 	_, err = executeRootCommandRaw("exec", "list")
 	if err == nil {
-		t.Fatal("command list returned nil error for cross-workspace active session")
+		t.Fatal("command list returned nil error for cross-workspace active workspace")
 	}
 	if err.Error() != "Active workspace belongs to a different workspace; use --workspace <id-or-name> to target a workspace explicitly" {
 		t.Fatalf("command list error = %q, want %q", err.Error(), "Active workspace belongs to a different workspace; use --workspace <id-or-name> to target a workspace explicitly")
 	}
 }
 
-func TestCommandListSessionOverrideBypassesWorkspaceSafety(t *testing.T) {
+func TestCommandListWorkspaceOverrideBypassesWorkspaceSafety(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -317,7 +317,7 @@ func TestCommandListAllowsOriginRootWhenBroaderThanFolder(t *testing.T) {
 	}
 }
 
-func TestCommandListEnvActiveSessionBypassesWorkspaceSafety(t *testing.T) {
+func TestCommandListEnvActiveWorkspaceBypassesWorkspaceSafety(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("ARI_ACTIVE_WORKSPACE", "sess-env")
@@ -351,11 +351,11 @@ func TestCommandListEnvActiveSessionBypassesWorkspaceSafety(t *testing.T) {
 		t.Fatalf("command list with env override returned error: %v", err)
 	}
 	if !called {
-		t.Fatal("command list RPC not called with env active-session override")
+		t.Fatal("command list RPC not called with env active-workspace override")
 	}
 }
 
-func TestCommandSubcommandsRejectActiveSessionOutsideWorkspace(t *testing.T) {
+func TestCommandSubcommandsRejectActiveWorkspaceOutsideWorkspace(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -880,14 +880,14 @@ func TestCommandListRequiresActiveWorkspaceWhenSessionNotProvided(t *testing.T) 
 
 	_, err := executeRootCommand("exec", "list")
 	if err == nil {
-		t.Fatal("command list returned nil error without active session")
+		t.Fatal("command list returned nil error without active workspace")
 	}
 	if err.Error() != "No active workspace is set" {
 		t.Fatalf("command list error = %q, want %q", err.Error(), "No active workspace is set")
 	}
 }
 
-func TestCommandListMissingActiveSessionDoesNotCallEnsure(t *testing.T) {
+func TestCommandListMissingActiveWorkspaceDoesNotCallEnsure(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -906,7 +906,7 @@ func TestCommandListMissingActiveSessionDoesNotCallEnsure(t *testing.T) {
 
 	_, err := executeRootCommandRaw("exec", "list")
 	if err == nil {
-		t.Fatal("command list returned nil error without active session")
+		t.Fatal("command list returned nil error without active workspace")
 	}
 	if err.Error() != "No active workspace is set" {
 		t.Fatalf("command list error = %q, want %q", err.Error(), "No active workspace is set")

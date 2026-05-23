@@ -11,22 +11,22 @@ import (
 	"github.com/sourcegraph/jsonrpc2"
 )
 
-func TestWorkspaceMatchesSession(t *testing.T) {
+func TestWorkspaceMatchesWorkspace(t *testing.T) {
 	root := t.TempDir()
 	origin := filepath.Join(root, "workspace")
 	folder := filepath.Join(origin, "repo-a")
 	other := filepath.Join(root, "other")
 
 	tests := []struct {
-		name    string
-		cwd     string
-		session daemon.WorkspaceGetResponse
-		want    bool
+		name      string
+		cwd       string
+		workspace daemon.WorkspaceGetResponse
+		want      bool
 	}{
 		{
 			name: "matches origin root",
 			cwd:  origin,
-			session: daemon.WorkspaceGetResponse{
+			workspace: daemon.WorkspaceGetResponse{
 				OriginRoot: origin,
 				Folders:    []daemon.WorkspaceFolderInfo{{Path: folder}},
 			},
@@ -35,7 +35,7 @@ func TestWorkspaceMatchesSession(t *testing.T) {
 		{
 			name: "matches registered folder",
 			cwd:  folder,
-			session: daemon.WorkspaceGetResponse{
+			workspace: daemon.WorkspaceGetResponse{
 				OriginRoot: other,
 				Folders:    []daemon.WorkspaceFolderInfo{{Path: folder}},
 			},
@@ -44,34 +44,34 @@ func TestWorkspaceMatchesSession(t *testing.T) {
 		{
 			name: "rejects unrelated path",
 			cwd:  other,
-			session: daemon.WorkspaceGetResponse{
+			workspace: daemon.WorkspaceGetResponse{
 				OriginRoot: origin,
 				Folders:    []daemon.WorkspaceFolderInfo{{Path: folder}},
 			},
 			want: false,
 		},
 		{
-			name:    "rejects when roots absent",
-			cwd:     origin,
-			session: daemon.WorkspaceGetResponse{},
-			want:    false,
+			name:      "rejects when roots absent",
+			cwd:       origin,
+			workspace: daemon.WorkspaceGetResponse{},
+			want:      false,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := workspaceMatchesSession(tc.cwd, tc.session)
+			got, err := workspaceMatchesWorkspace(tc.cwd, tc.workspace)
 			if err != nil {
-				t.Fatalf("workspaceMatchesSession returned error: %v", err)
+				t.Fatalf("workspaceMatchesWorkspace returned error: %v", err)
 			}
 			if got != tc.want {
-				t.Fatalf("workspaceMatchesSession = %v, want %v", got, tc.want)
+				t.Fatalf("workspaceMatchesWorkspace = %v, want %v", got, tc.want)
 			}
 		})
 	}
 }
 
-func TestWorkspaceMatchesSessionNormalizesSymlinks(t *testing.T) {
+func TestWorkspaceMatchesWorkspaceNormalizesSymlinks(t *testing.T) {
 	root := t.TempDir()
 	origin := filepath.Join(root, "workspace")
 	repo := filepath.Join(origin, "repo-a")
@@ -84,16 +84,16 @@ func TestWorkspaceMatchesSessionNormalizesSymlinks(t *testing.T) {
 		t.Skipf("os.Symlink unsupported in this environment: %v", err)
 	}
 
-	matched, err := workspaceMatchesSession(filepath.Join(symlinkRoot, "repo-a"), daemon.WorkspaceGetResponse{OriginRoot: origin})
+	matched, err := workspaceMatchesWorkspace(filepath.Join(symlinkRoot, "repo-a"), daemon.WorkspaceGetResponse{OriginRoot: origin})
 	if err != nil {
-		t.Fatalf("workspaceMatchesSession returned error: %v", err)
+		t.Fatalf("workspaceMatchesWorkspace returned error: %v", err)
 	}
 	if !matched {
-		t.Fatal("workspaceMatchesSession = false, want true for symlink-equivalent path")
+		t.Fatal("workspaceMatchesWorkspace = false, want true for symlink-equivalent path")
 	}
 }
 
-func TestWorkspaceMatchesSessionAcceptsRelativeSessionPaths(t *testing.T) {
+func TestWorkspaceMatchesWorkspaceAcceptsRelativeWorkspacePaths(t *testing.T) {
 	originAbs := t.TempDir()
 	repoAbs := filepath.Join(originAbs, "repo-a")
 	if err := os.MkdirAll(repoAbs, 0o755); err != nil {
@@ -109,23 +109,23 @@ func TestWorkspaceMatchesSessionAcceptsRelativeSessionPaths(t *testing.T) {
 		t.Skipf("filepath.Rel unsupported in this environment: %v", err)
 	}
 
-	matched, err := workspaceMatchesSession(repoAbs, daemon.WorkspaceGetResponse{OriginRoot: originRel})
+	matched, err := workspaceMatchesWorkspace(repoAbs, daemon.WorkspaceGetResponse{OriginRoot: originRel})
 	if err != nil {
-		t.Fatalf("workspaceMatchesSession returned error: %v", err)
+		t.Fatalf("workspaceMatchesWorkspace returned error: %v", err)
 	}
 	if !matched {
-		t.Fatal("workspaceMatchesSession = false, want true for relative-equivalent session root")
+		t.Fatal("workspaceMatchesWorkspace = false, want true for relative-equivalent workspace root")
 	}
 }
 
-func TestWorkspaceMatchesSessionIgnoresBlankFolderEntries(t *testing.T) {
+func TestWorkspaceMatchesWorkspaceIgnoresBlankFolderEntries(t *testing.T) {
 	origin := t.TempDir()
 	repo := filepath.Join(origin, "repo-a")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatalf("os.MkdirAll returned error: %v", err)
 	}
 
-	matched, err := workspaceMatchesSession(repo, daemon.WorkspaceGetResponse{
+	matched, err := workspaceMatchesWorkspace(repo, daemon.WorkspaceGetResponse{
 		Folders: []daemon.WorkspaceFolderInfo{
 			{Path: ""},
 			{Path: "   "},
@@ -133,10 +133,10 @@ func TestWorkspaceMatchesSessionIgnoresBlankFolderEntries(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("workspaceMatchesSession returned error: %v", err)
+		t.Fatalf("workspaceMatchesWorkspace returned error: %v", err)
 	}
 	if !matched {
-		t.Fatal("workspaceMatchesSession = false, want true when one non-blank folder matches")
+		t.Fatal("workspaceMatchesWorkspace = false, want true when one non-blank folder matches")
 	}
 }
 

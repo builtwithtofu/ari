@@ -16,10 +16,12 @@ import (
 
 func TestSessionStartCallsPublicSessionStartRPC(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	originalReadActive := sessionReadActiveWorkspace
+	originalResolver := workflowContextResolver
 	originalEnsure := sessionEnsureDaemonRunning
 	originalStart := sessionStartRPC
-	sessionReadActiveWorkspace = func() (string, error) { return "ws-1", nil }
+	workflowContextResolver = &WorkflowContextResolver{store: activeWorkspaceStoreFunc{read: func() (string, error) { return "ws-1", nil }}, resolveTarget: func(context.Context, string, string) (resolvedWorkspaceTarget, error) {
+		return resolvedWorkspaceTarget{WorkspaceID: "ws-1", Workspace: &daemon.WorkspaceGetResponse{WorkspaceID: "ws-1"}}, nil
+	}}
 	sessionEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	sessionStartRPC = func(_ context.Context, _ string, req daemon.HarnessSessionStartRequest) (daemon.HarnessSessionStartResponse, error) {
 		if req.WorkspaceID != "ws-1" || req.Profile != "executor" || req.SessionID != "executor-main" || req.Message != "Start phase 1" || req.Prompt != "replacement behavior" {
@@ -28,7 +30,7 @@ func TestSessionStartCallsPublicSessionStartRPC(t *testing.T) {
 		return daemon.HarnessSessionStartResponse{Run: daemon.HarnessSession{HarnessSessionID: req.SessionID, SessionID: req.SessionID, WorkspaceID: req.WorkspaceID, Status: "waiting"}}, nil
 	}
 	t.Cleanup(func() {
-		sessionReadActiveWorkspace = originalReadActive
+		workflowContextResolver = originalResolver
 		sessionEnsureDaemonRunning = originalEnsure
 		sessionStartRPC = originalStart
 	})
@@ -79,10 +81,12 @@ func TestSessionStartPromptFileSuppliesReplacementPrompt(t *testing.T) {
 	if err := os.WriteFile(promptPath, []byte("file behavior\n"), 0o644); err != nil {
 		t.Fatalf("write prompt file: %v", err)
 	}
-	originalReadActive := sessionReadActiveWorkspace
+	originalResolver := workflowContextResolver
 	originalEnsure := sessionEnsureDaemonRunning
 	originalStart := sessionStartRPC
-	sessionReadActiveWorkspace = func() (string, error) { return "ws-1", nil }
+	workflowContextResolver = &WorkflowContextResolver{store: activeWorkspaceStoreFunc{read: func() (string, error) { return "ws-1", nil }}, resolveTarget: func(context.Context, string, string) (resolvedWorkspaceTarget, error) {
+		return resolvedWorkspaceTarget{WorkspaceID: "ws-1", Workspace: &daemon.WorkspaceGetResponse{WorkspaceID: "ws-1"}}, nil
+	}}
 	sessionEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	sessionStartRPC = func(_ context.Context, _ string, req daemon.HarnessSessionStartRequest) (daemon.HarnessSessionStartResponse, error) {
 		if req.Prompt != "file behavior\n" {
@@ -91,7 +95,7 @@ func TestSessionStartPromptFileSuppliesReplacementPrompt(t *testing.T) {
 		return daemon.HarnessSessionStartResponse{Run: daemon.HarnessSession{HarnessSessionID: "executor-main", SessionID: "executor-main", WorkspaceID: req.WorkspaceID, Status: "waiting"}}, nil
 	}
 	t.Cleanup(func() {
-		sessionReadActiveWorkspace = originalReadActive
+		workflowContextResolver = originalResolver
 		sessionEnsureDaemonRunning = originalEnsure
 		sessionStartRPC = originalStart
 	})
@@ -103,10 +107,12 @@ func TestSessionStartPromptFileSuppliesReplacementPrompt(t *testing.T) {
 
 func TestSessionListCallsPublicSessionListRPC(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	originalReadActive := sessionReadActiveWorkspace
+	originalResolver := workflowContextResolver
 	originalEnsure := sessionEnsureDaemonRunning
 	originalList := sessionListRPC
-	sessionReadActiveWorkspace = func() (string, error) { return "ws-1", nil }
+	workflowContextResolver = &WorkflowContextResolver{store: activeWorkspaceStoreFunc{read: func() (string, error) { return "ws-1", nil }}, resolveTarget: func(context.Context, string, string) (resolvedWorkspaceTarget, error) {
+		return resolvedWorkspaceTarget{WorkspaceID: "ws-1", Workspace: &daemon.WorkspaceGetResponse{WorkspaceID: "ws-1"}}, nil
+	}}
 	sessionEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
 	sessionListRPC = func(_ context.Context, _ string, req daemon.SessionListRequest) (daemon.SessionListResponse, error) {
 		if req.WorkspaceID != "ws-1" {
@@ -115,7 +121,7 @@ func TestSessionListCallsPublicSessionListRPC(t *testing.T) {
 		return daemon.SessionListResponse{Sessions: []daemon.HarnessSession{{SessionID: "executor-main", Status: "running", Executor: "codex"}}}, nil
 	}
 	t.Cleanup(func() {
-		sessionReadActiveWorkspace = originalReadActive
+		workflowContextResolver = originalResolver
 		sessionEnsureDaemonRunning = originalEnsure
 		sessionListRPC = originalList
 	})

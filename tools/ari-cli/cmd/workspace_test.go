@@ -298,7 +298,7 @@ func TestWorkspaceSwitchSelectsOnlyAvailableWorkspace(t *testing.T) {
 		t.Fatalf("execute workspace switch: %v", err)
 	}
 	if !strings.Contains(out, "Active workspace set: sess-11111111") {
-		t.Fatalf("session switch output = %q, want active workspace confirmation", out)
+		t.Fatalf("workspace switch output = %q, want active workspace confirmation", out)
 	}
 
 	active, err := config.ReadPersistedActiveWorkspace()
@@ -306,7 +306,7 @@ func TestWorkspaceSwitchSelectsOnlyAvailableWorkspace(t *testing.T) {
 		t.Fatalf("ReadPersistedActiveWorkspace returned error: %v", err)
 	}
 	if active != "sess-11111111" {
-		t.Fatalf("persisted active session = %q, want %q", active, "sess-11111111")
+		t.Fatalf("persisted active workspace = %q, want %q", active, "sess-11111111")
 	}
 }
 
@@ -360,7 +360,7 @@ func TestWorkspaceSwitchInteractiveSelectionForMultipleWorkspaces(t *testing.T) 
 		t.Fatalf("workspace switch output = %q, want selection prompt", out)
 	}
 	if !strings.Contains(out, "sess-11111111") || !strings.Contains(out, "sess-22222222") {
-		t.Fatalf("session switch output = %q, want full session ids", out)
+		t.Fatalf("workspace switch output = %q, want full workspace ids", out)
 	}
 
 	active, err := config.ReadPersistedActiveWorkspace()
@@ -368,7 +368,7 @@ func TestWorkspaceSwitchInteractiveSelectionForMultipleWorkspaces(t *testing.T) 
 		t.Fatalf("ReadPersistedActiveWorkspace returned error: %v", err)
 	}
 	if active != "sess-22222222" {
-		t.Fatalf("persisted active session = %q, want %q", active, "sess-22222222")
+		t.Fatalf("persisted active workspace = %q, want %q", active, "sess-22222222")
 	}
 }
 
@@ -528,7 +528,7 @@ func TestWorkspaceClearWithEnvOverrideClearsPersistedValue(t *testing.T) {
 		t.Fatalf("ReadPersistedActiveWorkspace returned error: %v", err)
 	}
 	if persisted != "" {
-		t.Fatalf("persisted active session after clear = %q, want empty", persisted)
+		t.Fatalf("persisted active workspace after clear = %q, want empty", persisted)
 	}
 }
 
@@ -1221,7 +1221,7 @@ func TestResolveSessionIdentifierReturnsUniqueNameMatchFromWorkspaceList(t *test
 	}
 }
 
-func TestResolveSessionTargetUniqueNameKeepsSessionWhenDirectLookupSucceeds(t *testing.T) {
+func TestResolveWorkspaceTargetUniqueNameKeepsWorkspaceWhenDirectLookupSucceeds(t *testing.T) {
 	originalGet := workspaceGetRPC
 	originalList := workspaceListRPC
 

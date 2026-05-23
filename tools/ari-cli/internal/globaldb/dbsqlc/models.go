@@ -4,22 +4,6 @@
 
 package dbsqlc
 
-type Agent struct {
-	AgentID            string  `json:"agent_id"`
-	WorkspaceID        string  `json:"workspace_id"`
-	Name               *string `json:"name"`
-	Command            string  `json:"command"`
-	Args               string  `json:"args"`
-	Status             string  `json:"status"`
-	ExitCode           *int64  `json:"exit_code"`
-	StartedAt          string  `json:"started_at"`
-	StoppedAt          *string `json:"stopped_at"`
-	Harness            *string `json:"harness"`
-	HarnessResumableID *string `json:"harness_resumable_id"`
-	HarnessMetadata    string  `json:"harness_metadata"`
-	InvocationClass    string  `json:"invocation_class"`
-}
-
 type AgentMessage struct {
 	AgentMessageID     string `json:"agent_message_id"`
 	WorkspaceID        string `json:"workspace_id"`
@@ -148,20 +132,14 @@ type HarnessSession struct {
 }
 
 type HarnessSessionConfig struct {
-	AgentID              string  `json:"agent_id"`
-	WorkspaceID          *string `json:"workspace_id"`
-	Name                 string  `json:"name"`
-	Harness              string  `json:"harness"`
-	Model                string  `json:"model"`
-	Prompt               string  `json:"prompt"`
-	AuthSlotID           string  `json:"auth_slot_id"`
-	AuthPoolJson         string  `json:"auth_pool_json"`
-	ToolScopeJson        string  `json:"tool_scope_json"`
-	PermissionPolicyJson string  `json:"permission_policy_json"`
-	ContextPolicyJson    string  `json:"context_policy_json"`
-	DefaultsJson         string  `json:"defaults_json"`
-	CreatedAt            string  `json:"created_at"`
-	UpdatedAt            string  `json:"updated_at"`
+	AgentID     string  `json:"agent_id"`
+	WorkspaceID *string `json:"workspace_id"`
+	Name        string  `json:"name"`
+	Harness     string  `json:"harness"`
+	Model       string  `json:"model"`
+	Prompt      string  `json:"prompt"`
+	CreatedAt   string  `json:"created_at"`
+	UpdatedAt   string  `json:"updated_at"`
 }
 
 type HarnessSessionTelemetry struct {

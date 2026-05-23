@@ -2,15 +2,10 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
-	"time"
 
-	"github.com/builtwithtofu/ari/tools/ari-cli/internal/config"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
-	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
-	"github.com/sourcegraph/jsonrpc2"
 	"github.com/spf13/cobra"
 )
 
@@ -39,7 +34,6 @@ var (
 	commandStopRPC = func(ctx context.Context, socketPath, workspaceID, commandID string) (daemon.CommandStopResponse, error) {
 		return callDaemonRPC[daemon.CommandStopResponse](ctx, socketPath, "command.stop", daemon.CommandStopRequest{WorkspaceID: workspaceID, CommandID: commandID})
 	}
-	oneOffCommandMaxDuration = 24 * time.Hour
 )
 
 func NewExecCmd() *cobra.Command {
@@ -64,31 +58,13 @@ func newCommandRunCmd() *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := configuredDaemonConfig()
+			workflow, err := startExecWorkflow(cmd, workspaceRef)
 			if err != nil {
 				return err
 			}
-			if strings.TrimSpace(workspaceRef) == "" {
-				if _, err := workflowContextResolver.ActiveWorkspaceID(); err != nil {
-					return err
-				}
-			}
-			if err := commandEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
-				return err
-			}
+			defer workflow.cancel()
 
-			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
-			defer cancel()
-
-			workflowCtx, err := commandResolveWorkflowContext(ctx, cfg.Daemon.SocketPath, workspaceRef)
-			if err != nil {
-				return err
-			}
-			if err := commandEnsureWorkspaceScope(workflowCtx.Workspace, workspaceRef); err != nil {
-				return err
-			}
-
-			return runOneOffCommand(cmd, cfg, workflowCtx.WorkspaceID, args[0], args[1:])
+			return workflow.runOneOffCommand(cmd, args[0], args[1:])
 		},
 	}
 	cmd.Flags().StringVar(&workspaceRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
@@ -102,33 +78,15 @@ func newCommandListCmd() *cobra.Command {
 		Short: "List commands for a workspace",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := configuredDaemonConfig()
+			workflow, err := startExecWorkflow(cmd, workspaceRef)
 			if err != nil {
 				return err
 			}
-			if strings.TrimSpace(workspaceRef) == "" {
-				if _, err := workflowContextResolver.ActiveWorkspaceID(); err != nil {
-					return err
-				}
-			}
-			if err := commandEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
-				return err
-			}
+			defer workflow.cancel()
 
-			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
-			defer cancel()
-
-			workflowCtx, err := commandResolveWorkflowContext(ctx, cfg.Daemon.SocketPath, workspaceRef)
+			resp, err := workflow.listCommands()
 			if err != nil {
 				return err
-			}
-			if err := commandEnsureWorkspaceScope(workflowCtx.Workspace, workspaceRef); err != nil {
-				return err
-			}
-
-			resp, err := commandListRPC(ctx, cfg.Daemon.SocketPath, workflowCtx.WorkspaceID)
-			if err != nil {
-				return mapCommandRPCError(err)
 			}
 
 			if _, err := fmt.Fprintln(cmd.OutOrStdout(), "ID       STATUS     STARTED                COMMAND"); err != nil {
@@ -158,33 +116,15 @@ func newCommandShowCmd() *cobra.Command {
 		Short: "Show command details",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := configuredDaemonConfig()
+			workflow, err := startExecWorkflow(cmd, workspaceRef)
 			if err != nil {
 				return err
 			}
-			if strings.TrimSpace(workspaceRef) == "" {
-				if _, err := workflowContextResolver.ActiveWorkspaceID(); err != nil {
-					return err
-				}
-			}
-			if err := commandEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
-				return err
-			}
+			defer workflow.cancel()
 
-			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
-			defer cancel()
-
-			workflowCtx, err := commandResolveWorkflowContext(ctx, cfg.Daemon.SocketPath, workspaceRef)
+			resp, err := workflow.getCommand(strings.TrimSpace(args[0]))
 			if err != nil {
 				return err
-			}
-			if err := commandEnsureWorkspaceScope(workflowCtx.Workspace, workspaceRef); err != nil {
-				return err
-			}
-
-			resp, err := commandGetRPC(ctx, cfg.Daemon.SocketPath, workflowCtx.WorkspaceID, strings.TrimSpace(args[0]))
-			if err != nil {
-				return mapCommandRPCError(err)
 			}
 
 			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Command: %s (%s)\n", resp.CommandID, resp.Command); err != nil {
@@ -221,33 +161,15 @@ func newCommandOutputCmd() *cobra.Command {
 		Short: "Show command output snapshot",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := configuredDaemonConfig()
+			workflow, err := startExecWorkflow(cmd, workspaceRef)
 			if err != nil {
 				return err
 			}
-			if strings.TrimSpace(workspaceRef) == "" {
-				if _, err := workflowContextResolver.ActiveWorkspaceID(); err != nil {
-					return err
-				}
-			}
-			if err := commandEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
-				return err
-			}
+			defer workflow.cancel()
 
-			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
-			defer cancel()
-
-			workflowCtx, err := commandResolveWorkflowContext(ctx, cfg.Daemon.SocketPath, workspaceRef)
+			resp, err := workflow.commandOutput(strings.TrimSpace(args[0]))
 			if err != nil {
 				return err
-			}
-			if err := commandEnsureWorkspaceScope(workflowCtx.Workspace, workspaceRef); err != nil {
-				return err
-			}
-
-			resp, err := commandOutputRPC(ctx, cfg.Daemon.SocketPath, workflowCtx.WorkspaceID, strings.TrimSpace(args[0]))
-			if err != nil {
-				return mapCommandRPCError(err)
 			}
 
 			_, err = fmt.Fprint(cmd.OutOrStdout(), resp.Output)
@@ -265,33 +187,15 @@ func newCommandStopCmd() *cobra.Command {
 		Short: "Stop a running command",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := configuredDaemonConfig()
+			workflow, err := startExecWorkflow(cmd, workspaceRef)
 			if err != nil {
 				return err
 			}
-			if strings.TrimSpace(workspaceRef) == "" {
-				if _, err := workflowContextResolver.ActiveWorkspaceID(); err != nil {
-					return err
-				}
-			}
-			if err := commandEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
-				return err
-			}
+			defer workflow.cancel()
 
-			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
-			defer cancel()
-
-			workflowCtx, err := commandResolveWorkflowContext(ctx, cfg.Daemon.SocketPath, workspaceRef)
+			resp, err := workflow.stopCommand(strings.TrimSpace(args[0]))
 			if err != nil {
 				return err
-			}
-			if err := commandEnsureWorkspaceScope(workflowCtx.Workspace, workspaceRef); err != nil {
-				return err
-			}
-
-			resp, err := commandStopRPC(ctx, cfg.Daemon.SocketPath, workflowCtx.WorkspaceID, strings.TrimSpace(args[0]))
-			if err != nil {
-				return mapCommandRPCError(err)
 			}
 
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Command stop: %s\n", resp.Status)
@@ -300,144 +204,4 @@ func newCommandStopCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&workspaceRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")
 	return cmd
-}
-
-func runOneOffCommand(cmd *cobra.Command, cfg *config.Config, workspaceID, command string, args []string) error {
-	if cmd == nil {
-		return fmt.Errorf("exec run: command is required")
-	}
-	if cfg == nil {
-		return fmt.Errorf("exec run: config is required")
-	}
-	if strings.TrimSpace(workspaceID) == "" {
-		return userFacingError{message: "Workspace not found"}
-	}
-	if strings.TrimSpace(command) == "" {
-		return userFacingError{message: "Command is required"}
-	}
-
-	parentCtx := cmd.Context()
-	if parentCtx == nil {
-		parentCtx = context.Background()
-	}
-	runCtx, runCancel := context.WithTimeout(parentCtx, oneOffCommandMaxDuration)
-	defer runCancel()
-
-	startCtx, startCancel := context.WithTimeout(runCtx, 5*time.Second)
-	defer startCancel()
-
-	resp, err := commandRunRPC(startCtx, cfg.Daemon.SocketPath, daemon.CommandRunRequest{
-		WorkspaceID: workspaceID,
-		Command:     command,
-		Args:        args,
-	})
-	if err != nil {
-		return mapCommandRPCError(err)
-	}
-
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Command started: %s\n", resp.CommandID); err != nil {
-		return err
-	}
-
-	terminalState, err := waitForCommandCompletion(runCtx, cfg.Daemon.SocketPath, workspaceID, resp.CommandID)
-	if err != nil {
-		return err
-	}
-
-	outputCtx, outputCancel := context.WithTimeout(runCtx, 5*time.Second)
-	defer outputCancel()
-	outputResp, err := commandOutputRPC(outputCtx, cfg.Daemon.SocketPath, workspaceID, resp.CommandID)
-	if err != nil {
-		return mapCommandRPCError(err)
-	}
-	if strings.TrimSpace(outputResp.Output) != "" {
-		_, err = fmt.Fprint(cmd.OutOrStdout(), outputResp.Output)
-	} else {
-		_, err = fmt.Fprintln(cmd.OutOrStdout(), "Command produced no output.")
-	}
-	if err != nil {
-		return err
-	}
-	return commandTerminalError(terminalState)
-}
-
-func waitForCommandCompletion(ctx context.Context, socketPath, workspaceID, commandID string) (daemon.CommandGetResponse, error) {
-	if ctx == nil {
-		return daemon.CommandGetResponse{}, fmt.Errorf("wait command completion: context is required")
-	}
-	if strings.TrimSpace(socketPath) == "" {
-		return daemon.CommandGetResponse{}, fmt.Errorf("wait command completion: socket path is required")
-	}
-	if strings.TrimSpace(workspaceID) == "" {
-		return daemon.CommandGetResponse{}, userFacingError{message: "Workspace not found"}
-	}
-	if strings.TrimSpace(commandID) == "" {
-		return daemon.CommandGetResponse{}, userFacingError{message: "Command not found"}
-	}
-
-	ticker := time.NewTicker(200 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		resp, err := commandGetRPC(ctx, socketPath, workspaceID, commandID)
-		if err != nil {
-			return daemon.CommandGetResponse{}, mapCommandRPCError(err)
-		}
-		if !strings.EqualFold(strings.TrimSpace(resp.Status), "running") {
-			return resp, nil
-		}
-
-		select {
-		case <-ctx.Done():
-			return daemon.CommandGetResponse{}, ctx.Err()
-		case <-ticker.C:
-		}
-	}
-}
-
-func commandTerminalError(state daemon.CommandGetResponse) error {
-	status := strings.ToLower(strings.TrimSpace(state.Status))
-	if status == "running" {
-		return userFacingError{message: "Command is still running"}
-	}
-	if status == "lost" {
-		return userFacingError{message: "Command ended unexpectedly"}
-	}
-	if state.ExitCode != nil && *state.ExitCode != 0 {
-		return userFacingError{message: fmt.Sprintf("Command exited with code %d", *state.ExitCode)}
-	}
-	return nil
-}
-
-func mapCommandRPCError(err error) error {
-	if err == nil {
-		return nil
-	}
-	if isDaemonUnavailable(err) {
-		return userFacingError{message: notRunningMessage()}
-	}
-	if isPermissionDenied(err) {
-		cfg, cfgErr := configuredDaemonConfig()
-		if cfgErr != nil {
-			return err
-		}
-		return socketPermissionError(cfg.Daemon.SocketPath)
-	}
-	if isTimeoutError(err) {
-		return timeoutError()
-	}
-
-	var rpcErr *jsonrpc2.Error
-	if errors.As(err, &rpcErr) {
-		switch rpcErr.Code {
-		case int64(rpc.SessionNotFound):
-			return userFacingError{message: "Workspace not found"}
-		case int64(rpc.CommandNotFound):
-			return userFacingError{message: "Command not found"}
-		case int64(rpc.InvalidParams):
-			return userFacingError{message: rpcErr.Message}
-		}
-	}
-
-	return err
 }

@@ -8,7 +8,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func TestMigrationsAddAgentHarnessIdentityColumns(t *testing.T) {
+func TestMigrationsKeepHarnessSessionIdentityColumns(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "migration-check.db")
 	if err := applyMigrationSQLFiles(dbPath); err != nil {
 		t.Fatalf("applyMigrationSQLFiles returned error: %v", err)
@@ -30,13 +30,13 @@ func TestMigrationsAddAgentHarnessIdentityColumns(t *testing.T) {
 
 	wantColumns := []columnInfo{
 		{name: "harness"},
-		{name: "harness_resumable_id"},
-		{name: "harness_metadata", hasDefault: true, defaultValue: "'{}'"},
+		{name: "provider_session_id", hasDefault: true, defaultValue: "''"},
+		{name: "provider_metadata_json", hasDefault: true, defaultValue: "'{}'"},
 	}
 
 	for _, tc := range wantColumns {
 		t.Run(tc.name, func(t *testing.T) {
-			rows, err := db.Query("PRAGMA table_info(agents)")
+			rows, err := db.Query("PRAGMA table_info(harness_sessions)")
 			if err != nil {
 				t.Fatalf("PRAGMA table_info returned error: %v", err)
 			}
@@ -72,7 +72,7 @@ func TestMigrationsAddAgentHarnessIdentityColumns(t *testing.T) {
 				t.Fatalf("rows.Err returned error: %v", err)
 			}
 			if !found {
-				t.Fatalf("agents column %s not found", tc.name)
+				t.Fatalf("harness_sessions column %s not found", tc.name)
 			}
 		})
 	}

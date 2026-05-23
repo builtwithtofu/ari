@@ -179,11 +179,3 @@ func isWorkspaceNotFoundError(err error) bool {
 	}
 	return rpcErr.Code == int64(rpc.SessionNotFound)
 }
-
-func mapSessionRPCError(err error) error {
-	return mapWorkspaceRPCError(err)
-}
-
-func isSessionNotFoundError(err error) bool {
-	return isWorkspaceNotFoundError(err)
-}

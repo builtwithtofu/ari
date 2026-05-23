@@ -12,14 +12,14 @@ import (
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
 )
 
-func enforceActiveWorkspaceScope(session *daemon.WorkspaceGetResponse, sessionOverride string) error {
-	if strings.TrimSpace(sessionOverride) != "" {
+func enforceActiveWorkspaceScope(workspace *daemon.WorkspaceGetResponse, workspaceOverride string) error {
+	if strings.TrimSpace(workspaceOverride) != "" {
 		return nil
 	}
 	if strings.TrimSpace(os.Getenv("ARI_ACTIVE_WORKSPACE")) != "" {
 		return nil
 	}
-	if session == nil {
+	if workspace == nil {
 		return userFacingError{message: "Active workspace details are unavailable; use --workspace <id-or-name> to target a workspace explicitly"}
 	}
 
@@ -27,7 +27,7 @@ func enforceActiveWorkspaceScope(session *daemon.WorkspaceGetResponse, sessionOv
 	if err != nil {
 		return err
 	}
-	matches, err := workspaceMatchesSession(cwd, *session)
+	matches, err := workspaceMatchesWorkspace(cwd, *workspace)
 	if err != nil {
 		return err
 	}
@@ -37,8 +37,8 @@ func enforceActiveWorkspaceScope(session *daemon.WorkspaceGetResponse, sessionOv
 	return nil
 }
 
-func workspaceMatchesSession(cwd string, session daemon.WorkspaceGetResponse) (bool, error) {
-	_, matched, err := workspaceMatchScore(cwd, session)
+func workspaceMatchesWorkspace(cwd string, workspace daemon.WorkspaceGetResponse) (bool, error) {
+	_, matched, err := workspaceMatchScore(cwd, workspace)
 	if err != nil {
 		return false, err
 	}
@@ -86,7 +86,7 @@ func resolveWorkspaceFromCWD(ctx context.Context, socketPath, cwd string) (daemo
 
 	listResponse, err := workspaceListRPC(ctx, socketPath)
 	if err != nil {
-		return daemon.WorkspaceGetResponse{}, mapSessionRPCError(err)
+		return daemon.WorkspaceGetResponse{}, mapWorkspaceRPCError(err)
 	}
 
 	candidates, err := loadLiveWorkspaceCandidates(ctx, socketPath, listResponse.Workspaces)
@@ -125,10 +125,10 @@ func loadLiveWorkspaceCandidates(ctx context.Context, socketPath string, summari
 
 		workspace, getErr := workspaceGetRPC(ctx, socketPath, workspaceID)
 		if getErr != nil {
-			if isSessionNotFoundError(getErr) {
+			if isWorkspaceNotFoundError(getErr) {
 				continue
 			}
-			return nil, mapSessionRPCError(getErr)
+			return nil, mapWorkspaceRPCError(getErr)
 		}
 		candidates = append(candidates, workspace)
 	}

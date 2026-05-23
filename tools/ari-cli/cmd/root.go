@@ -67,7 +67,7 @@ var rootRunNonInteractive = func(cmd *cobra.Command, _ []string) error {
 
 	dashboard, err := rootDeps.dashboardRPC(ctx, cfg.Daemon.SocketPath, cwd)
 	if err != nil {
-		return mapSessionRPCError(err)
+		return mapWorkspaceRPCError(err)
 	}
 	return renderDashboard(cmd, dashboard)
 }
@@ -237,7 +237,7 @@ func newTimelineCmd() *cobra.Command {
 			if ws == "" {
 				dashboard, err := rootDeps.dashboardRPC(ctx, cfg.Daemon.SocketPath, "")
 				if err != nil {
-					return mapSessionRPCError(err)
+					return mapWorkspaceRPCError(err)
 				}
 				ws = dashboard.EffectiveWorkspaceID
 			}
@@ -246,7 +246,7 @@ func newTimelineCmd() *cobra.Command {
 			}
 			resp, err := rootDeps.timelineRPC(ctx, cfg.Daemon.SocketPath, ws)
 			if err != nil {
-				return mapSessionRPCError(err)
+				return mapWorkspaceRPCError(err)
 			}
 			for _, item := range resp.Items {
 				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", item.ID, item.Kind, item.Status); err != nil {
