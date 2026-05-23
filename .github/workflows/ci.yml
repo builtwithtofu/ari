@@ -33,9 +33,6 @@ jobs:
           primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
           restore-prefixes-first-match: nix-${{ runner.os }}-
 
-      - name: Install just
-        uses: extractions/setup-just@v2
-
       - name: Check Nix formatting
         run: nix run nixpkgs#nixpkgs-fmt -- --check .
 
@@ -66,9 +63,6 @@ jobs:
           primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
           restore-prefixes-first-match: nix-${{ runner.os }}-
 
-      - name: Install just
-        uses: extractions/setup-just@v2
-
       - name: Run linter
         run: nix develop --command just lint
 
@@ -92,9 +86,6 @@ jobs:
         with:
           primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
           restore-prefixes-first-match: nix-${{ runner.os }}-
-
-      - name: Install just
-        uses: extractions/setup-just@v2
 
       - name: Build
         run: nix develop --command just build
@@ -147,9 +138,6 @@ jobs:
         with:
           primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
           restore-prefixes-first-match: nix-${{ runner.os }}-
-
-      - name: Install just
-        uses: extractions/setup-just@v2
 
       - name: Run tests
         run: nix develop --command just test
