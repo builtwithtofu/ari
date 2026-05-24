@@ -38,7 +38,7 @@ func (d *Daemon) completeEphemeralCallAsync(ctx context.Context, store *globaldb
 		markEphemeralFailedWithFinalResponse(context.Background(), store, setup, request, ephemeralFailureText(err))
 		return
 	}
-	_, markFailed, err := completeEphemeralCall(ctx, store, setup, request, requestDM, result, replyAgentMessageID)
+	_, markFailed, err := completeEphemeralCall(context.Background(), store, setup, request, requestDM, result, replyAgentMessageID)
 	if err != nil && markFailed {
 		markEphemeralFailedWithFinalResponse(context.Background(), store, setup, request, ephemeralFailureText(err))
 	}
