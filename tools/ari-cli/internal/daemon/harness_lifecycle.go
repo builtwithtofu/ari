@@ -39,7 +39,12 @@ func (l harnessLifecycle) persistExistingEphemeralResult(ctx context.Context, re
 	if err := l.store.UpdateHarnessSessionProvider(ctx, run.HarnessSessionID, run.ProviderSessionID, run.ProviderRunID, string(providerMetadata)); err != nil {
 		return err
 	}
-	return l.persistResultArtifacts(ctx, result, profile)
+	run = result.HarnessSession
+	sample := agentSessionProcessMetricsSampler(ctx, run)
+	if run.ProcessSample != nil {
+		sample = *run.ProcessSample
+	}
+	return storeHarnessSessionTelemetry(ctx, l.store, result, sample, profile)
 }
 
 func (l harnessLifecycle) persistResultArtifacts(ctx context.Context, result HarnessCallResult, profile ...Profile) error {

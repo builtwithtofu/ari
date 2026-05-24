@@ -26,14 +26,10 @@ func (d *Daemon) callEphemeral(ctx context.Context, store *globaldb.Store, req E
 		newHarnessLifecycle(store).markFailed(ctx, setup.SessionID)
 		return EphemeralCallResponse{}, err
 	}
-	storedRun, err := store.GetHarnessSession(ctx, setup.SessionID)
-	if err != nil {
-		return EphemeralCallResponse{}, err
-	}
 	d.startHarnessLifecycleWork(func(runCtx context.Context) {
 		d.completeEphemeralCallAsync(runCtx, store, setup, request, requestDM, req.ReplyAgentMessageID)
 	})
-	return EphemeralCallResponse{Run: storedRun, Request: agentMessageResponse(requestDM)}, nil
+	return EphemeralCallResponse{Run: setup.initialRun(), Request: agentMessageResponse(requestDM)}, nil
 }
 
 func (d *Daemon) completeEphemeralCallAsync(ctx context.Context, store *globaldb.Store, setup ephemeralCallSetup, request ephemeralCall, requestDM globaldb.AgentMessage, replyAgentMessageID string) {
@@ -71,9 +67,14 @@ type ephemeralCallSetup struct {
 	SessionID     string
 }
 
+func (setup ephemeralCallSetup) initialRun() globaldb.HarnessSession {
+	return globaldb.HarnessSession{SessionID: setup.SessionID, WorkspaceID: setup.SourceRun.WorkspaceID, AgentID: setup.TargetAgent.AgentID, Harness: setup.TargetAgent.Harness, Model: setup.TargetAgent.Model, Status: "running", Usage: globaldb.HarnessSessionUsageEphemeral, SourceSessionID: setup.SourceRun.SessionID, SourceAgentID: setup.SourceRun.AgentID}
+}
+
 type ephemeralHarnessResult struct {
 	Items          []TimelineItem
 	InvocationMode string
+	FinalText      string
 }
 
 func newEphemeralCall(req EphemeralCallRequest) (ephemeralCall, error) {
@@ -170,7 +171,8 @@ func createEphemeralSession(ctx context.Context, store *globaldb.Store, request 
 			return ephemeralCallSetup{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "context_excerpt_mismatch", "context_excerpt_id": contextExcerptID, "start_invoked": false})
 		}
 	}
-	run := globaldb.HarnessSession{SessionID: request.SessionID, WorkspaceID: sourceRun.WorkspaceID, AgentID: targetAgent.AgentID, Harness: targetAgent.Harness, Model: targetAgent.Model, Status: "running", Usage: "ephemeral", SourceSessionID: sourceRun.SessionID, SourceAgentID: sourceRun.AgentID}
+	setup := ephemeralCallSetup{SourceRun: sourceRun, TargetAgent: targetAgent, TargetProfile: targetProfile, SessionID: request.SessionID}
+	run := setup.initialRun()
 	if err := store.CreateHarnessSession(ctx, run); err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "unique constraint failed") {
 			return ephemeralCallSetup{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "session_id_conflict", "session_id": request.SessionID, "start_invoked": false})
@@ -180,7 +182,7 @@ func createEphemeralSession(ctx context.Context, store *globaldb.Store, request 
 		}
 		return ephemeralCallSetup{}, err
 	}
-	return ephemeralCallSetup{SourceRun: sourceRun, TargetAgent: targetAgent, TargetProfile: targetProfile, SessionID: request.SessionID}, nil
+	return setup, nil
 }
 
 func createEphemeralRequestMessage(ctx context.Context, store *globaldb.Store, setup ephemeralCallSetup, request ephemeralCall, contextExcerptIDs []string) (globaldb.AgentMessage, error) {
@@ -246,7 +248,11 @@ func (d *Daemon) runEphemeralHarness(ctx context.Context, store *globaldb.Store,
 	}
 	items := result.Items
 	invocationMode, _ := harnessModeMetadataFromItems(items)
-	return ephemeralHarnessResult{Items: items, InvocationMode: invocationMode}, nil
+	finalText := ""
+	if result.FinalResponse != nil {
+		finalText = strings.TrimSpace(result.FinalResponse.Text)
+	}
+	return ephemeralHarnessResult{Items: items, InvocationMode: invocationMode, FinalText: finalText}, nil
 }
 
 func ephemeralFailureText(err error) string {
@@ -279,7 +285,10 @@ func completeEphemeralCall(ctx context.Context, store *globaldb.Store, setup eph
 		}
 		return EphemeralCallResponse{Run: storedRun, Request: agentMessageResponse(requestDM)}, false, nil
 	}
-	replyBody := lastAgentText(result.Items)
+	replyBody := strings.TrimSpace(result.FinalText)
+	if replyBody == "" {
+		replyBody = lastAgentText(result.Items)
+	}
 	if replyBody == "" {
 		replyBody = "completed"
 	}

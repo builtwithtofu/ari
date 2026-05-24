@@ -94,6 +94,7 @@ func NewWithSignalChannel(socketPath, dbPath, pidPath, configPath, configSource,
 		commands:        make(map[string]*process.Process),
 		commandLogs:     make(map[string]string),
 		commandLogOrder: make([]string, 0),
+		harnessCtx:      context.Background(),
 		executorRuns:    make(map[string]HarnessSession),
 		executorItems:   make(map[string][]TimelineItem),
 		harnessRegistry: NewDefaultHarnessRegistry(),
@@ -132,7 +133,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 		d.cancel = nil
 		d.stopCh = nil
 		d.transport = nil
-		d.harnessCtx = nil
+		d.harnessCtx = context.Background()
 		d.mu.Unlock()
 	}()
 
@@ -218,7 +219,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 		d.cancel = nil
 		d.stopCh = nil
 		d.transport = nil
-		d.harnessCtx = nil
+		d.harnessCtx = context.Background()
 		d.mu.Unlock()
 	}()
 
@@ -239,21 +240,21 @@ func (d *Daemon) Stop() {
 }
 
 func (d *Daemon) startHarnessLifecycleWork(fn func(context.Context)) {
-	ctx := context.Background()
-	if d != nil {
-		d.mu.RLock()
-		if d.harnessCtx != nil {
-			ctx = d.harnessCtx
-		}
-		d.harnessWG.Add(1)
-		d.mu.RUnlock()
-		go func() {
-			defer d.harnessWG.Done()
-			fn(ctx)
-		}()
+	if d == nil {
+		go fn(context.Background())
 		return
 	}
-	go fn(ctx)
+	d.mu.RLock()
+	ctx := d.harnessCtx
+	d.harnessWG.Add(1)
+	d.mu.RUnlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	go func() {
+		defer d.harnessWG.Done()
+		fn(ctx)
+	}()
 }
 
 func (d *Daemon) status() StatusResponse {

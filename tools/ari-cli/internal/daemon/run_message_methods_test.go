@@ -557,14 +557,7 @@ func TestEphemeralCallTimeoutStopsHarnessAndMarksFailed(t *testing.T) {
 		t.Fatalf("final response status = %q, want failed", final.Status)
 	}
 	close(release)
-	time.Sleep(50 * time.Millisecond)
-	storedAfterRelease, err := store.GetHarnessSession(ctx, got.Run.SessionID)
-	if err != nil {
-		t.Fatalf("GetHarnessSession after release returned error: %v", err)
-	}
-	if storedAfterRelease.Status != "failed" {
-		t.Fatalf("run status after release = %q, want failed", storedAfterRelease.Status)
-	}
+	assertHarnessSessionStatusRemains(t, ctx, store, got.Run.SessionID, "failed", 150*time.Millisecond)
 }
 
 func TestEphemeralClaudeCallHonorsExplicitHeadlessProfileDefault(t *testing.T) {
@@ -1277,6 +1270,21 @@ func waitForStoredHarnessSession(t *testing.T, ctx context.Context, store *globa
 	}
 	t.Fatalf("stored harness session %q did not reach expected state; last=%#v", sessionID, last)
 	return globaldb.HarnessSession{}
+}
+
+func assertHarnessSessionStatusRemains(t *testing.T, ctx context.Context, store *globaldb.Store, sessionID, want string, duration time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(duration)
+	for time.Now().Before(deadline) {
+		run, err := store.GetHarnessSession(ctx, sessionID)
+		if err != nil {
+			t.Fatalf("GetHarnessSession(%q) returned error: %v", sessionID, err)
+		}
+		if run.Status != want {
+			t.Fatalf("session %q status changed to %q, want it to remain %q", sessionID, run.Status, want)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 type itemsFailHarness struct{}
