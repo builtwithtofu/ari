@@ -53,7 +53,8 @@ var (
 		}()
 
 		command := newDaemonAutoStartCommand(execPath)
-		command.Env = append(os.Environ(),
+		command.Env = append(
+			os.Environ(),
 			"ARI_DAEMON_SOCKET_PATH="+cfg.Daemon.SocketPath,
 			"ARI_DAEMON_DB_PATH="+cfg.Daemon.DBPath,
 			"ARI_DAEMON_PID_PATH="+cfg.Daemon.PIDPath,

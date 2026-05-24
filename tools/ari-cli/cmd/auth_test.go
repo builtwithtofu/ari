@@ -139,6 +139,148 @@ func TestAuthLogoutCommandUsesDefaultAccountWhenNameOmitted(t *testing.T) {
 	}
 }
 
+func TestAuthCommandRegistersDoctor(t *testing.T) {
+	cmd := NewAuthCmd()
+	for _, subcommand := range cmd.Commands() {
+		if subcommand.Name() == "doctor" {
+			return
+		}
+	}
+	t.Fatalf("auth command did not register doctor subcommand")
+}
+
+func TestAuthDoctorCommandUsesDaemonDiagnosis(t *testing.T) {
+	restore := replaceAuthCommandDeps(t)
+	defer restore()
+	var ensured bool
+	authEnsureDaemonRunning = func(ctx context.Context, cfg *config.Config) error {
+		_ = ctx
+		if cfg.Daemon.SocketPath != "/tmp/ari-test.sock" {
+			t.Fatalf("socket path = %q, want test socket", cfg.Daemon.SocketPath)
+		}
+		ensured = true
+		return nil
+	}
+	var diagnoseReq daemon.HarnessAuthDiagnoseRequest
+	authDiagnoseRPC = func(ctx context.Context, socketPath string, req daemon.HarnessAuthDiagnoseRequest) (daemon.HarnessAuthDiagnoseResponse, error) {
+		_ = ctx
+		if socketPath != "/tmp/ari-test.sock" {
+			t.Fatalf("diagnose socket = %q, want test socket", socketPath)
+		}
+		diagnoseReq = req
+		return daemon.HarnessAuthDiagnoseResponse{Harnesses: []daemon.HarnessAuthDiagnostic{
+			{Harness: daemon.HarnessNameClaude, Installed: true, Status: daemon.HarnessAuthAuthenticated, DefaultSlot: daemon.HarnessAuthStatus{Harness: daemon.HarnessNameClaude, Name: "default", AuthSlotID: "claude-default", Status: daemon.HarnessAuthAuthenticated, AriSecretStorage: daemon.HarnessAriSecretStorageNone}, Auth: daemon.HarnessAuthDescriptor{NamedSlotStatus: daemon.HarnessAuthSupportPartial, NamedSlotExecution: daemon.HarnessAuthSupportUnsupported, SlotScope: "global", RiskLabels: []string{"provider_owned", "client_side_login"}, Caveats: []string{"macos_keychain_limits_named_slot_isolation"}}, ProviderMethods: daemon.HarnessAuthProviderMethodDiagnostic{Status: "skipped"}, Remediation: "none"},
+			{Harness: daemon.HarnessNameCodex, Installed: true, Status: daemon.HarnessAuthRequired, DefaultSlot: daemon.HarnessAuthStatus{Harness: daemon.HarnessNameCodex, Name: "default", AuthSlotID: "codex-default", Status: daemon.HarnessAuthRequired, AriSecretStorage: daemon.HarnessAriSecretStorageNone}, NamedSlots: []daemon.AuthSlotResponse{{AuthSlotID: "codex-work", Harness: daemon.HarnessNameCodex, Label: "work", ProviderLabel: "chatgpt", CredentialOwner: string(daemon.HarnessCredentialOwnerProvider), Status: string(daemon.HarnessAuthRequired)}}, Auth: daemon.HarnessAuthDescriptor{NamedSlotStatus: daemon.HarnessAuthSupportUnsupported, NamedSlotExecution: daemon.HarnessAuthSupportUnsupported, SlotScope: "global", RiskLabels: []string{"named_slot_projection_required", "provider_owned"}, Caveats: []string{"named_slot_execution_blocked_until_codex_home_projection"}}, ProviderMethods: daemon.HarnessAuthProviderMethodDiagnostic{Status: "skipped"}, Remediation: "device_code"},
+			{Harness: daemon.HarnessNameOpenCode, Installed: false, Status: daemon.HarnessAuthNotInstalled, DefaultSlot: daemon.HarnessAuthStatus{Harness: daemon.HarnessNameOpenCode, Name: "default", AuthSlotID: "opencode-default", Status: daemon.HarnessAuthNotInstalled, AriSecretStorage: daemon.HarnessAriSecretStorageNone}, Auth: daemon.HarnessAuthDescriptor{NamedSlotStatus: daemon.HarnessAuthSupportPartial, NamedSlotExecution: daemon.HarnessAuthSupportUnsupported, SlotScope: "global", RiskLabels: []string{"ari_secrets_required_for_isolated_named_execution", "provider_owned"}, Caveats: []string{"provider_methods_discovery_is_optional"}}, ProviderMethods: daemon.HarnessAuthProviderMethodDiagnostic{Status: "skipped"}, Remediation: "install_opencode"},
+		}}, nil
+	}
+	cmd := newAuthDoctorCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"--workspace-id", "ws_123"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("auth doctor returned error: %v", err)
+	}
+	if !ensured {
+		t.Fatalf("auth doctor did not ensure daemon running")
+	}
+	if diagnoseReq.WorkspaceID != "ws_123" {
+		t.Fatalf("diagnose request = %#v, want workspace diagnosis", diagnoseReq)
+	}
+	if diagnoseReq.DiscoverProviderMethods {
+		t.Fatalf("diagnose request = %#v, did not expect provider method discovery by default", diagnoseReq)
+	}
+	got := out.String()
+	for _, want := range []string{
+		"claude\n  installed:       installed\n  status:          authenticated",
+		"codex\n  installed:       installed\n  status:          auth_required",
+		"  named slots:     work(chatgpt):auth_required",
+		"  next step:       Run `ari auth login --harness codex --method device_code`.",
+		"opencode\n  installed:       not_installed\n  status:          not_installed",
+		"  next step:       Install OpenCode, then run `ari auth login --harness opencode`.",
+	} {
+		if !bytes.Contains([]byte(got), []byte(want)) {
+			t.Fatalf("output = %q, want line containing %q", got, want)
+		}
+	}
+	for _, hidden := range []string{"named execution:", "risks:", "caveats:", "method discovery:", "provider methods:", "remediation:", "next step:       none"} {
+		if bytes.Contains([]byte(got), []byte(hidden)) {
+			t.Fatalf("output = %q, did not expect detailed field %q", got, hidden)
+		}
+	}
+	assertAuthDoctorOutputHasNoSecretFields(t, got)
+}
+
+func TestAuthDoctorRequestsDaemonProviderMethodDiscovery(t *testing.T) {
+	restore := replaceAuthCommandDeps(t)
+	defer restore()
+	authEnsureDaemonRunning = func(ctx context.Context, cfg *config.Config) error {
+		_ = ctx
+		_ = cfg
+		return nil
+	}
+	authDiagnoseRPC = func(ctx context.Context, socketPath string, req daemon.HarnessAuthDiagnoseRequest) (daemon.HarnessAuthDiagnoseResponse, error) {
+		_ = ctx
+		_ = socketPath
+		if !req.DiscoverProviderMethods {
+			t.Fatalf("diagnose request = %#v, want provider method discovery", req)
+		}
+		return daemon.HarnessAuthDiagnoseResponse{Harnesses: []daemon.HarnessAuthDiagnostic{{Harness: daemon.HarnessNameOpenCode, Installed: true, Status: daemon.HarnessAuthAuthenticated, DefaultSlot: daemon.HarnessAuthStatus{Harness: daemon.HarnessNameOpenCode, Name: "default", AuthSlotID: "opencode-default", Status: daemon.HarnessAuthAuthenticated, AriSecretStorage: daemon.HarnessAriSecretStorageNone}, Auth: daemon.HarnessAuthDescriptor{NamedSlotStatus: daemon.HarnessAuthSupportPartial, NamedSlotExecution: daemon.HarnessAuthSupportUnsupported, SlotScope: "global", RiskLabels: []string{"provider_owned"}, Caveats: []string{"provider_methods_discovery_is_optional"}}, ProviderMethods: daemon.HarnessAuthProviderMethodDiagnostic{Status: "ok", Providers: map[string][]daemon.HarnessAuthMethodInfo{"anthropic": {{Type: "api", Label: "Anthropic API key"}}, "openai": {{Type: "oauth", Label: "ChatGPT browser"}, {Type: "api", Label: "OpenAI API key"}}}}, Remediation: "none"}}}, nil
+	}
+	cmd := newAuthDoctorCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"--discover-methods", "--detailed"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("auth doctor returned error: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"method discovery: ok", "provider methods: anthropic:api,openai:api+oauth", "named execution: unsupported"} {
+		if !bytes.Contains([]byte(got), []byte(want)) {
+			t.Fatalf("output = %q, want %q", got, want)
+		}
+	}
+	assertAuthDoctorOutputHasNoSecretFields(t, got)
+}
+
+func TestAuthDoctorRendererOmitsCredentialSourceAndRawMetadataFields(t *testing.T) {
+	var out bytes.Buffer
+	err := writeAuthDoctorResponse(&out, []daemon.HarnessAuthDiagnostic{
+		{Harness: daemon.HarnessNameOpenCode, Installed: true, Status: daemon.HarnessAuthAuthenticated, DefaultSlot: daemon.HarnessAuthStatus{Harness: daemon.HarnessNameOpenCode, AuthSlotID: "opencode-default", Name: "default", Status: daemon.HarnessAuthAuthenticated, AriSecretStorage: daemon.HarnessAriSecretStorageNone}, NamedSlots: []daemon.AuthSlotResponse{{AuthSlotID: "opencode-work", Harness: daemon.HarnessNameOpenCode, Label: "work\trow", ProviderLabel: "openai\nprovider", CredentialOwner: string(daemon.HarnessCredentialOwnerProvider), Status: string(daemon.HarnessAuthAuthenticated)}}, Auth: daemon.HarnessAuthDescriptor{StatusCheck: daemon.HarnessAuthSupportSupported, Login: daemon.HarnessAuthSupportPartial, LoginMethods: []string{"opencode_interactive"}, Logout: daemon.HarnessAuthSupportSupported, NamedSlotStatus: daemon.HarnessAuthSupportPartial, NamedSlotExecution: daemon.HarnessAuthSupportUnsupported, SlotScope: "global", CredentialOwner: daemon.HarnessCredentialOwnerProvider, RiskLabels: []string{"provider_owned", "ari_secrets_required_for_isolated_named_execution"}, Caveats: []string{"provider hints are labels, not credentials"}}, ProviderMethods: daemon.HarnessAuthProviderMethodDiagnostic{Status: "ok", Providers: map[string][]daemon.HarnessAuthMethodInfo{"openai": {{Type: "oauth", Label: "Browser"}}}}, Remediation: "none"},
+	}, true)
+	if err != nil {
+		t.Fatalf("writeAuthDoctorResponse returned error: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"provider methods: openai:oauth", "named slots:     work_row(openai_provider):authenticated", "named execution: unsupported", "caveats:         provider hints are labels, not credentials"} {
+		if !bytes.Contains([]byte(got), []byte(want)) {
+			t.Fatalf("output = %q, want %q", got, want)
+		}
+	}
+	assertAuthDoctorOutputHasNoSecretFields(t, got)
+}
+
+func assertAuthDoctorOutputHasNoSecretFields(t *testing.T, output string) {
+	t.Helper()
+	for _, secretField := range []string{"access_token", "refresh_token", "api_key", "credential_source_ref", "source_ref", "metadata_json", "raw_metadata"} {
+		if bytes.Contains([]byte(output), []byte(secretField)) {
+			t.Fatalf("output = %q, must not include secret field %q", output, secretField)
+		}
+	}
+}
+
+func TestAuthDoctorRendersDaemonDiagnostics(t *testing.T) {
+	var out bytes.Buffer
+	if err := writeAuthDoctorResponse(&out, []daemon.HarnessAuthDiagnostic{{Harness: daemon.HarnessNameClaude, Installed: true, Status: daemon.HarnessAuthUnknown, DefaultSlot: daemon.HarnessAuthStatus{Harness: daemon.HarnessNameClaude, AuthSlotID: "claude-default", Status: daemon.HarnessAuthUnknown}, Auth: daemon.HarnessAuthDescriptor{NamedSlotExecution: daemon.HarnessAuthSupportUnsupported, RiskLabels: []string{"provider_owned"}}, Remediation: "check_provider_auth"}}, true); err != nil {
+		t.Fatalf("writeAuthDoctorResponse returned error: %v", err)
+	}
+	if got := out.String(); !bytes.Contains([]byte(got), []byte("claude\n  installed:       installed\n  status:          unknown")) || !bytes.Contains([]byte(got), []byte("named execution: unsupported")) || !bytes.Contains([]byte(got), []byte("risks:           provider_owned")) {
+		t.Fatalf("output = %q, want rendered daemon diagnostic", got)
+	}
+}
+
 func TestAuthLogoutCommandUsesNamedAccount(t *testing.T) {
 	restore := replaceAuthCommandDeps(t)
 	defer restore()
@@ -280,6 +422,7 @@ func replaceAuthCommandDeps(t *testing.T) func() {
 	originalStatus := authStatusRPC
 	originalStart := authStartRPC
 	originalLogout := authLogoutRPC
+	originalDiagnose := authDiagnoseRPC
 	originalSlotSave := authSlotSaveRPC
 	originalProviderLogin := authRunProviderLogin
 	originalOpenCodeMethods := authOpenCodeMethods
@@ -306,6 +449,12 @@ func replaceAuthCommandDeps(t *testing.T) func() {
 		_ = req
 		return daemon.HarnessAuthLogoutResponse{}, nil
 	}
+	authDiagnoseRPC = func(ctx context.Context, socketPath string, req daemon.HarnessAuthDiagnoseRequest) (daemon.HarnessAuthDiagnoseResponse, error) {
+		_ = ctx
+		_ = socketPath
+		_ = req
+		return daemon.HarnessAuthDiagnoseResponse{}, nil
+	}
 	authSlotSaveRPC = func(ctx context.Context, socketPath string, req daemon.AuthSlotSaveRequest) (daemon.AuthSlotResponse, error) {
 		_ = ctx
 		_ = socketPath
@@ -328,6 +477,7 @@ func replaceAuthCommandDeps(t *testing.T) func() {
 		authStatusRPC = originalStatus
 		authStartRPC = originalStart
 		authLogoutRPC = originalLogout
+		authDiagnoseRPC = originalDiagnose
 		authSlotSaveRPC = originalSlotSave
 		authRunProviderLogin = originalProviderLogin
 		authOpenCodeMethods = originalOpenCodeMethods

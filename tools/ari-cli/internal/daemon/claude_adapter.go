@@ -131,7 +131,7 @@ func (e *ClaudeExecutor) AuthLogout(ctx context.Context, slot HarnessAuthSlot) (
 }
 
 func (e *ClaudeExecutor) Descriptor() HarnessAdapterDescriptor {
-	return HarnessAdapterDescriptor{Name: HarnessNameClaude, Capabilities: []HarnessCapability{HarnessCapabilityHarnessSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems, HarnessCapabilityFinalResponse, HarnessCapabilityMeasuredTokenTelemetry}}
+	return HarnessAdapterDescriptor{Name: HarnessNameClaude, Capabilities: []HarnessCapability{HarnessCapabilityHarnessSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems, HarnessCapabilityFinalResponse, HarnessCapabilityMeasuredTokenTelemetry}, Auth: HarnessAuthDescriptor{StatusCheck: HarnessAuthSupportSupported, Login: HarnessAuthSupportPartial, LoginMethods: []string{"browser", "console", "api_key"}, Logout: HarnessAuthSupportSupported, NamedSlotStatus: HarnessAuthSupportPartial, NamedSlotExecution: HarnessAuthSupportUnsupported, SlotScope: "global", CredentialOwner: HarnessCredentialOwnerProvider, RiskLabels: []string{"provider_owned", "client_side_login", "keychain_slot_isolation_risk"}, Caveats: []string{"client_side_login", "macos_keychain_limits_named_slot_isolation"}}}
 }
 
 func (e *ClaudeExecutor) Start(ctx context.Context, req ExecutorStartRequest) (ExecutorRun, error) {

@@ -297,7 +297,29 @@ func authSlotIsDefaultForHarness(harness, slotID string) bool {
 type HarnessAdapterDescriptor struct {
 	Name         string
 	Capabilities []HarnessCapability
+	Auth         HarnessAuthDescriptor
 }
+
+type HarnessAuthDescriptor struct {
+	StatusCheck        HarnessAuthSupport     `json:"status_check"`
+	Login              HarnessAuthSupport     `json:"login"`
+	LoginMethods       []string               `json:"login_methods,omitempty"`
+	Logout             HarnessAuthSupport     `json:"logout"`
+	NamedSlotStatus    HarnessAuthSupport     `json:"named_slot_status"`
+	NamedSlotExecution HarnessAuthSupport     `json:"named_slot_execution"`
+	SlotScope          string                 `json:"slot_scope"`
+	CredentialOwner    HarnessCredentialOwner `json:"credential_owner"`
+	RiskLabels         []string               `json:"risk_labels,omitempty"`
+	Caveats            []string               `json:"caveats,omitempty"`
+}
+
+type HarnessAuthSupport string
+
+const (
+	HarnessAuthSupportSupported   HarnessAuthSupport = "supported"
+	HarnessAuthSupportPartial     HarnessAuthSupport = "partial"
+	HarnessAuthSupportUnsupported HarnessAuthSupport = "unsupported"
+)
 
 type HarnessDescriber interface {
 	Descriptor() HarnessAdapterDescriptor

@@ -30,6 +30,9 @@ var (
 	authLogoutRPC = func(ctx context.Context, socketPath string, req daemon.HarnessAuthLogoutRequest) (daemon.HarnessAuthLogoutResponse, error) {
 		return callDaemonRPC[daemon.HarnessAuthLogoutResponse](ctx, socketPath, "auth.logout", req)
 	}
+	authDiagnoseRPC = func(ctx context.Context, socketPath string, req daemon.HarnessAuthDiagnoseRequest) (daemon.HarnessAuthDiagnoseResponse, error) {
+		return callDaemonRPC[daemon.HarnessAuthDiagnoseResponse](ctx, socketPath, "auth.diagnose", req)
+	}
 	authSlotSaveRPC = func(ctx context.Context, socketPath string, req daemon.AuthSlotSaveRequest) (daemon.AuthSlotResponse, error) {
 		return callDaemonRPC[daemon.AuthSlotResponse](ctx, socketPath, "auth.slot.save", req)
 	}
@@ -39,7 +42,39 @@ var (
 
 func NewAuthCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "auth", Short: "Inspect provider-owned harness auth"}
-	cmd.AddCommand(newAuthStatusCmd(), newAuthLoginCmd(), newAuthLogoutCmd())
+	cmd.AddCommand(newAuthStatusCmd(), newAuthLoginCmd(), newAuthLogoutCmd(), newAuthDoctorCmd())
+	return cmd
+}
+
+func newAuthDoctorCmd() *cobra.Command {
+	var workspaceID string
+	var discoverMethods bool
+	var detailed bool
+	cmd := &cobra.Command{
+		Use:   "doctor",
+		Short: "Diagnose provider-owned harness auth readiness",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_ = args
+			cfg, err := configuredDaemonConfig()
+			if err != nil {
+				return err
+			}
+			if err := authEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
+				return err
+			}
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			defer cancel()
+			resp, err := authDiagnoseRPC(ctx, cfg.Daemon.SocketPath, daemon.HarnessAuthDiagnoseRequest{WorkspaceID: workspaceID, DiscoverProviderMethods: discoverMethods})
+			if err != nil {
+				return err
+			}
+			return writeAuthDoctorResponse(cmd.OutOrStdout(), resp.Harnesses, detailed)
+		},
+	}
+	cmd.Flags().StringVar(&workspaceID, "workspace-id", "", "Workspace id for provider-home context")
+	cmd.Flags().BoolVar(&discoverMethods, "discover-methods", false, "Discover provider auth methods when a harness supports daemon-side discovery")
+	cmd.Flags().BoolVar(&detailed, "detailed", false, "Show capability details, caveats, risks, and discovered provider methods")
 	return cmd
 }
 
@@ -493,6 +528,167 @@ func authHarnessOptions(statuses []daemon.HarnessAuthStatus) []string {
 		options = append(options, harness)
 	}
 	return options
+}
+
+func writeAuthDoctorResponse(w io.Writer, diagnostics []daemon.HarnessAuthDiagnostic, detailed bool) error {
+	for _, diagnostic := range diagnostics {
+		installed := "installed"
+		if !diagnostic.Installed {
+			installed = "not_installed"
+		}
+		if _, err := fmt.Fprintf(w, "%s\n", authDoctorSafeField(diagnostic.Harness)); err != nil {
+			return err
+		}
+		fields := [][2]string{
+			{"installed", installed},
+			{"status", string(diagnostic.Status)},
+			{"default slot", authDoctorSafeField(authDisplayName(diagnostic.DefaultSlot))},
+			{"named slots", authDoctorNamedSlots(diagnostic.NamedSlots)},
+		}
+		if detailed {
+			fields = append(
+				fields,
+				[2]string{"named execution", string(diagnostic.Auth.NamedSlotExecution)},
+				[2]string{"named status", string(diagnostic.Auth.NamedSlotStatus)},
+				[2]string{"slot scope", authDoctorSafeField(diagnostic.Auth.SlotScope)},
+				[2]string{"risks", authDoctorLabels(diagnostic.Auth.RiskLabels)},
+				[2]string{"caveats", authDoctorLabels(diagnostic.Auth.Caveats)},
+			)
+			if diagnostic.Harness == daemon.HarnessNameOpenCode {
+				fields = append(
+					fields,
+					[2]string{"method discovery", authDoctorSafeField(authDoctorMethodDiscoveryStatus(diagnostic.ProviderMethods.Status))},
+					[2]string{"provider methods", authDoctorOpenCodeProviderMethods(diagnostic.ProviderMethods.Providers)},
+				)
+			}
+		}
+		if nextStep := authDoctorNextStep(diagnostic.Remediation); nextStep != "" {
+			fields = append(fields, [2]string{"next step", nextStep})
+		}
+		for _, field := range fields {
+			if _, err := fmt.Fprintf(w, "  %-16s %s\n", field[0]+":", field[1]); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintln(w); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func authDoctorNextStep(remediation string) string {
+	remediation = strings.TrimSpace(remediation)
+	switch remediation {
+	case "", "none":
+		return ""
+	case "install_claude":
+		return "Install Claude Code, then run `ari auth login --harness claude`."
+	case "install_codex":
+		return "Install Codex, then run `ari auth login --harness codex`."
+	case "install_opencode":
+		return "Install OpenCode, then run `ari auth login --harness opencode`."
+	case "device_code":
+		return "Run `ari auth login --harness codex --method device_code`."
+	case "browser":
+		return "Run the provider browser login flow."
+	case "api_key":
+		return "Run the provider API-key login flow; Ari will not store the key."
+	case "opencode_interactive":
+		return "Run `ari auth login --harness opencode` and complete OpenCode's provider login."
+	case "provider_config", "provider_login", "check_provider_auth":
+		return "Run `ari auth login` for this harness or check the provider's native auth setup."
+	default:
+		return "Resolve provider auth: " + authDoctorSafeField(remediation) + "."
+	}
+}
+
+func authDoctorMethodDiscoveryStatus(status string) string {
+	status = strings.TrimSpace(status)
+	if status == "" {
+		return "skipped"
+	}
+	return status
+}
+
+func authDoctorOpenCodeProviderMethods(methods map[string][]daemon.HarnessAuthMethodInfo) string {
+	if len(methods) == 0 {
+		return "none"
+	}
+	providers := make([]string, 0, len(methods))
+	for provider := range methods {
+		providers = append(providers, provider)
+	}
+	slices.Sort(providers)
+	parts := make([]string, 0, len(providers))
+	for _, provider := range providers {
+		methodLabels := []string{}
+		for _, method := range methods[provider] {
+			methodType := strings.TrimSpace(method.Type)
+			if methodType != "" {
+				methodLabels = append(methodLabels, authDoctorSafeField(methodType))
+			}
+		}
+		if len(methodLabels) == 0 {
+			continue
+		}
+		slices.Sort(methodLabels)
+		parts = append(parts, authDoctorSafeField(provider)+":"+strings.Join(methodLabels, "+"))
+	}
+	if len(parts) == 0 {
+		return "none"
+	}
+	return strings.Join(parts, ",")
+}
+
+func authDoctorNamedSlots(slots []daemon.AuthSlotResponse) string {
+	named := []string{}
+	for _, slot := range slots {
+		label := strings.TrimSpace(slot.Label)
+		if label == "" || label == "default" || slot.AuthSlotID == slot.Harness+"-default" {
+			continue
+		}
+		provider := strings.TrimSpace(slot.ProviderLabel)
+		if provider != "" {
+			label += "(" + authDoctorSafeField(provider) + ")"
+		}
+		named = append(named, authDoctorSafeField(label)+":"+authDoctorSafeField(slot.Status))
+	}
+	if len(named) == 0 {
+		return "none"
+	}
+	slices.Sort(named)
+	return strings.Join(named, ",")
+}
+
+func authDoctorLabels(labels []string) string {
+	cleaned := []string{}
+	for _, label := range labels {
+		label = strings.TrimSpace(label)
+		if label == "" {
+			continue
+		}
+		cleaned = append(cleaned, authDoctorSafeField(label))
+	}
+	if len(cleaned) == 0 {
+		return "none"
+	}
+	slices.Sort(cleaned)
+	return strings.Join(cleaned, ",")
+}
+
+func authDoctorSafeField(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.Map(func(r rune) rune {
+		if r == '\t' || r == '\n' || r == '\r' {
+			return '_'
+		}
+		return r
+	}, value)
+	if value == "" {
+		return "none"
+	}
+	return value
 }
 
 func promptAuthHarness(cmd *cobra.Command, options []string) (string, error) {
