@@ -153,6 +153,7 @@ type AgentMessageSendParams struct {
 	Body              string
 	ContextExcerptIDs []string
 	StartSessionID    string
+	DaemonEvent       *DaemonEvent
 }
 
 func (s *Store) CreateHarnessSessionConfig(ctx context.Context, agent HarnessSessionConfig) error {
@@ -698,6 +699,21 @@ func (s *Store) SendAgentMessage(ctx context.Context, params AgentMessageSendPar
 	}
 	if err := appendRunLogMessageTx(ctx, qtx, RunLogMessage{MessageID: params.AgentMessageID + "-message", SessionID: targetSessionID, WorkspaceID: source.WorkspaceID, AgentID: targetAgent.AgentID, Sequence: int(nextSequence), Role: "user", Status: "completed", Parts: []RunLogMessagePart{{PartID: params.AgentMessageID + "-part-1", Sequence: 1, Kind: "text", Text: params.Body}}}); err != nil {
 		return AgentMessage{}, err
+	}
+	if params.DaemonEvent != nil {
+		event := *params.DaemonEvent
+		if strings.TrimSpace(event.WorkspaceID) == "" {
+			event.WorkspaceID = source.WorkspaceID
+		}
+		if strings.TrimSpace(event.SessionID) == "" {
+			event.SessionID = targetSessionID
+		}
+		if strings.TrimSpace(event.SubjectID) == "" {
+			event.SubjectID = params.AgentMessageID
+		}
+		if _, err := appendDaemonEventWithQueries(ctx, qtx, event); err != nil {
+			return AgentMessage{}, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return AgentMessage{}, err

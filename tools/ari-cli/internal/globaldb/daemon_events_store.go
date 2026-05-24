@@ -28,6 +28,10 @@ type DaemonEvent struct {
 type AppendDaemonEventParams = DaemonEvent
 
 func (s *Store) AppendDaemonEvent(ctx context.Context, event AppendDaemonEventParams) (DaemonEvent, error) {
+	return appendDaemonEventWithQueries(ctx, s.sqlcQueries(), event)
+}
+
+func appendDaemonEventWithQueries(ctx context.Context, queries *dbsqlc.Queries, event AppendDaemonEventParams) (DaemonEvent, error) {
 	event = normalizeDaemonEvent(event)
 	if err := validateDaemonEvent(event); err != nil {
 		return DaemonEvent{}, err
@@ -43,7 +47,7 @@ func (s *Store) AppendDaemonEvent(ctx context.Context, event AppendDaemonEventPa
 		formatted := event.AttentionClearedAt.UTC().Format(time.RFC3339Nano)
 		clearedAt = &formatted
 	}
-	if err := s.sqlcQueries().CreateDaemonEvent(ctx, dbsqlc.CreateDaemonEventParams{EventID: event.EventID, WorkspaceID: optionalString(event.WorkspaceID), SessionID: optionalString(event.SessionID), EventType: event.EventType, SubjectType: event.SubjectType, SubjectID: event.SubjectID, PayloadJson: event.PayloadJSON, AttentionRequired: boolInt64(event.AttentionRequired), AttentionClearedAt: clearedAt, CreatedAt: event.CreatedAt.UTC().Format(time.RFC3339Nano)}); err != nil {
+	if err := queries.CreateDaemonEvent(ctx, dbsqlc.CreateDaemonEventParams{EventID: event.EventID, WorkspaceID: optionalString(event.WorkspaceID), SessionID: optionalString(event.SessionID), EventType: event.EventType, SubjectType: event.SubjectType, SubjectID: event.SubjectID, PayloadJson: event.PayloadJSON, AttentionRequired: boolInt64(event.AttentionRequired), AttentionClearedAt: clearedAt, CreatedAt: event.CreatedAt.UTC().Format(time.RFC3339Nano)}); err != nil {
 		return DaemonEvent{}, fmt.Errorf("append daemon event %q: %w", event.EventID, err)
 	}
 	return event, nil

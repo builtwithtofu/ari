@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -54,6 +55,9 @@ func (d *Daemon) registerDaemonEventMethods(registry *rpc.MethodRegistry, store 
 		Handler: func(ctx context.Context, req DaemonEventsAfterRequest) (DaemonEventsResponse, error) {
 			events, err := store.ListDaemonEventsAfter(ctx, req.AfterEventID, req.Limit)
 			if err != nil {
+				if errors.Is(err, globaldb.ErrNotFound) {
+					return DaemonEventsResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "unknown_event_cursor", "after_event_id": req.AfterEventID})
+				}
 				return DaemonEventsResponse{}, err
 			}
 			return DaemonEventsResponse{Events: daemonEventResponses(events)}, nil

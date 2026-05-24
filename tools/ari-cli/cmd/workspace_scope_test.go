@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
@@ -30,6 +31,23 @@ func TestWorkspaceMatchesWorkspaceUsesDaemonResolver(t *testing.T) {
 	}
 	if gotReq.Identifier != "" || gotReq.CWD != "/workspace/repo" {
 		t.Fatalf("resolver request = %#v, want cwd-only request", gotReq)
+	}
+}
+
+func TestWorkspaceMatchesWorkspaceUsesStructuredNoMatchReason(t *testing.T) {
+	originalResolve := workspaceResolveRPC
+	data := json.RawMessage(`{"reason":"no_match"}`)
+	workspaceResolveRPC = func(context.Context, string, daemon.WorkspaceResolveRequest) (daemon.WorkspaceResolveResponse, error) {
+		return daemon.WorkspaceResolveResponse{}, &jsonrpc2.Error{Code: int64(rpc.InvalidParams), Message: "resolver text changed", Data: &data}
+	}
+	t.Cleanup(func() { workspaceResolveRPC = originalResolve })
+
+	matches, err := workspaceMatchesWorkspace(context.Background(), "/tmp/daemon.sock", "/tmp", daemon.WorkspaceGetResponse{WorkspaceID: "ws-1"})
+	if err != nil {
+		t.Fatalf("workspaceMatchesWorkspace returned error: %v", err)
+	}
+	if matches {
+		t.Fatal("workspaceMatchesWorkspace = true, want false for structured no_match")
 	}
 }
 

@@ -82,7 +82,7 @@ func TestWorkspaceCommandCreateListShowRemoveLifecycle(t *testing.T) {
 		workspace := daemon.WorkspaceGetResponse{WorkspaceID: "ws-1", Name: "alpha", OriginRoot: t.TempDir()}
 		return resolvedWorkspaceTarget{WorkspaceID: workspace.WorkspaceID, Workspace: &workspace}, nil
 	}}
-	workspaceCommandEnsureScope = func(*daemon.WorkspaceGetResponse, string) error { return nil }
+	workspaceCommandEnsureScope = func(context.Context, *daemon.WorkspaceGetResponse, string) error { return nil }
 	workspaceGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
 		return daemon.WorkspaceGetResponse{WorkspaceID: "ws-1", Name: "alpha", OriginRoot: t.TempDir()}, nil
 	}
@@ -177,7 +177,7 @@ func TestWorkspaceCommandRunExecutesDefinitionAndPrintsOutput(t *testing.T) {
 		workspace := daemon.WorkspaceGetResponse{WorkspaceID: "ws-1", OriginRoot: t.TempDir()}
 		return resolvedWorkspaceTarget{WorkspaceID: workspace.WorkspaceID, Workspace: &workspace}, nil
 	}}
-	workspaceCommandEnsureScope = func(*daemon.WorkspaceGetResponse, string) error { return nil }
+	workspaceCommandEnsureScope = func(context.Context, *daemon.WorkspaceGetResponse, string) error { return nil }
 	workspaceCommandGetRPC = func(context.Context, string, daemon.WorkspaceCommandGetRequest) (daemon.WorkspaceCommandGetResponse, error) {
 		return daemon.WorkspaceCommandGetResponse{CommandID: "cmd-def-1", Name: "test", Command: "go", Args: []string{"test", "./..."}}, nil
 	}
@@ -541,10 +541,6 @@ func TestWorkspaceListPrintsEntries(t *testing.T) {
 
 func TestResolveWorkspaceTargetUsesDaemonResolver(t *testing.T) {
 	originalResolve := workspaceResolveRPC
-	originalWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("os.Getwd returned error: %v", err)
-	}
 	var gotReq daemon.WorkspaceResolveRequest
 	workspaceResolveRPC = func(_ context.Context, socketPath string, req daemon.WorkspaceResolveRequest) (daemon.WorkspaceResolveResponse, error) {
 		if socketPath != "/tmp/daemon.sock" {
@@ -562,8 +558,8 @@ func TestResolveWorkspaceTargetUsesDaemonResolver(t *testing.T) {
 	if target.WorkspaceID != "ws-1" || target.Workspace == nil || target.Workspace.Name != "alpha" {
 		t.Fatalf("target = %#v, want resolved workspace", target)
 	}
-	if gotReq.Identifier != "alpha" || gotReq.CWD != originalWD {
-		t.Fatalf("resolver request = %#v, want identifier alpha and cwd %q", gotReq, originalWD)
+	if gotReq.Identifier != "alpha" || gotReq.CWD != "" {
+		t.Fatalf("resolver request = %#v, want identifier alpha without cwd", gotReq)
 	}
 }
 

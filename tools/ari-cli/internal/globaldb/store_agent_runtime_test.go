@@ -620,6 +620,30 @@ func TestAgentMessageToExistingRunAppendsAfterCurrentTail(t *testing.T) {
 	}
 }
 
+func TestAgentMessageRollsBackWhenDaemonEventCannotBeAppended(t *testing.T) {
+	store := newGlobalDBTestStore(t, "agent-message-event-rollback")
+	ctx := context.Background()
+	seedHarnessSessionConfigSession(t, store, ctx)
+
+	_, err := store.SendAgentMessage(ctx, AgentMessageSendParams{AgentMessageID: "dm-1", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "continue", StartSessionID: "run-2", DaemonEvent: &DaemonEvent{EventType: "session.message.sent", SubjectType: "agent_message", PayloadJSON: "not-json", AttentionRequired: true}})
+	if err == nil {
+		t.Fatal("SendAgentMessage returned nil error, want daemon event append failure")
+	}
+	if _, err := store.GetHarnessSession(ctx, "run-2"); err != ErrNotFound {
+		t.Fatalf("GetHarnessSession run-2 error = %v, want ErrNotFound after rollback", err)
+	}
+	if _, err := store.TailRunLogMessages(ctx, "run-2", 1); err != ErrNotFound {
+		t.Fatalf("TailRunLogMessages run-2 error = %v, want ErrNotFound after rollback", err)
+	}
+	events, err := store.ListDaemonEventsAfter(ctx, "", 10)
+	if err != nil {
+		t.Fatalf("ListDaemonEventsAfter returned error: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("daemon events = %#v, want none after rollback", events)
+	}
+}
+
 func TestAgentMessageResolvesTargetAgentFromTargetSession(t *testing.T) {
 	store := newGlobalDBTestStore(t, "agent-message-resolve-target-session")
 	ctx := context.Background()

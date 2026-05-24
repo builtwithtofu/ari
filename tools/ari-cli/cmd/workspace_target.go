@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"errors"
-	"os"
 	"strings"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
@@ -30,12 +29,7 @@ func resolveWorkspaceTarget(ctx context.Context, socketPath, idOrName string) (r
 		return resolvedWorkspaceTarget{}, userFacingError{message: "Workspace identifier is required"}
 	}
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		return resolvedWorkspaceTarget{}, err
-	}
-
-	response, err := workspaceResolveRPC(ctx, socketPath, daemon.WorkspaceResolveRequest{Identifier: idOrName, CWD: cwd})
+	response, err := workspaceResolveRPC(ctx, socketPath, daemon.WorkspaceResolveRequest{Identifier: idOrName})
 	if err != nil {
 		return resolvedWorkspaceTarget{}, mapWorkspaceRPCError(err)
 	}

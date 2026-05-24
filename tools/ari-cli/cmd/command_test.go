@@ -625,7 +625,7 @@ func TestCommandRunUsesSeparatorArguments(t *testing.T) {
 		return "sess-1", nil
 	}}, resolveTarget: resolveWorkspaceTarget}
 	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
-	commandEnsureWorkspaceScope = func(*daemon.WorkspaceGetResponse, string) error { return nil }
+	commandEnsureWorkspaceScope = func(context.Context, *daemon.WorkspaceGetResponse, string) error { return nil }
 	var gotReq daemon.CommandRunRequest
 	commandRunRPC = func(_ context.Context, _ string, req daemon.CommandRunRequest) (daemon.CommandRunResponse, error) {
 		gotReq = req
@@ -683,7 +683,7 @@ func TestCommandRunStopsPollingAtConfiguredWallclockCap(t *testing.T) {
 	}
 	workflowContextResolver = &WorkflowContextResolver{store: activeWorkspaceStoreFunc{read: func() (string, error) { return "sess-1", nil }}, resolveTarget: resolveWorkspaceTarget}
 	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
-	commandEnsureWorkspaceScope = func(*daemon.WorkspaceGetResponse, string) error { return nil }
+	commandEnsureWorkspaceScope = func(context.Context, *daemon.WorkspaceGetResponse, string) error { return nil }
 	commandRunRPC = func(context.Context, string, daemon.CommandRunRequest) (daemon.CommandRunResponse, error) {
 		return daemon.CommandRunResponse{CommandID: "cmd-1", Status: "running"}, nil
 	}
@@ -727,7 +727,7 @@ func TestCommandRunPrintsNoOutputMessageWhenOutputIsEmpty(t *testing.T) {
 	}
 	workflowContextResolver = &WorkflowContextResolver{store: activeWorkspaceStoreFunc{read: func() (string, error) { return "sess-1", nil }}, resolveTarget: resolveWorkspaceTarget}
 	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
-	commandEnsureWorkspaceScope = func(*daemon.WorkspaceGetResponse, string) error { return nil }
+	commandEnsureWorkspaceScope = func(context.Context, *daemon.WorkspaceGetResponse, string) error { return nil }
 	commandRunRPC = func(context.Context, string, daemon.CommandRunRequest) (daemon.CommandRunResponse, error) {
 		return daemon.CommandRunResponse{CommandID: "cmd-1", Status: "running"}, nil
 	}
@@ -773,7 +773,7 @@ func TestCommandRunReturnsErrorOnNonZeroExit(t *testing.T) {
 	}
 	workflowContextResolver = &WorkflowContextResolver{store: activeWorkspaceStoreFunc{read: func() (string, error) { return "sess-1", nil }}, resolveTarget: resolveWorkspaceTarget}
 	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
-	commandEnsureWorkspaceScope = func(*daemon.WorkspaceGetResponse, string) error { return nil }
+	commandEnsureWorkspaceScope = func(context.Context, *daemon.WorkspaceGetResponse, string) error { return nil }
 	commandRunRPC = func(context.Context, string, daemon.CommandRunRequest) (daemon.CommandRunResponse, error) {
 		return daemon.CommandRunResponse{CommandID: "cmd-1", Status: "running"}, nil
 	}
@@ -821,7 +821,7 @@ func TestCommandListShowOutputStop(t *testing.T) {
 		return resolvedWorkspaceTarget{WorkspaceID: workspace.WorkspaceID, Workspace: &workspace}, nil
 	}}
 	commandResolveWorkspaceTarget = workflowContextResolver.resolveTarget
-	commandEnsureWorkspaceScope = func(*daemon.WorkspaceGetResponse, string) error { return nil }
+	commandEnsureWorkspaceScope = func(context.Context, *daemon.WorkspaceGetResponse, string) error { return nil }
 	commandListRPC = func(context.Context, string, string) (daemon.CommandListResponse, error) {
 		return daemon.CommandListResponse{Commands: []daemon.CommandSummary{{CommandID: "cmd-1", Command: "go test", Status: "running", StartedAt: "now"}}}, nil
 	}
@@ -893,7 +893,7 @@ func TestCommandShowNotFoundMapsError(t *testing.T) {
 		return resolvedWorkspaceTarget{WorkspaceID: workspace.WorkspaceID, Workspace: &workspace}, nil
 	}}
 	commandResolveWorkspaceTarget = workflowContextResolver.resolveTarget
-	commandEnsureWorkspaceScope = func(*daemon.WorkspaceGetResponse, string) error { return nil }
+	commandEnsureWorkspaceScope = func(context.Context, *daemon.WorkspaceGetResponse, string) error { return nil }
 	commandGetRPC = func(context.Context, string, string, string) (daemon.CommandGetResponse, error) {
 		return daemon.CommandGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.CommandNotFound), Message: "command not found"}
 	}
@@ -928,7 +928,7 @@ func TestCommandShowSessionNotFoundMapsError(t *testing.T) {
 		return resolvedWorkspaceTarget{WorkspaceID: workspace.WorkspaceID, Workspace: &workspace}, nil
 	}}
 	commandResolveWorkspaceTarget = workflowContextResolver.resolveTarget
-	commandEnsureWorkspaceScope = func(*daemon.WorkspaceGetResponse, string) error { return nil }
+	commandEnsureWorkspaceScope = func(context.Context, *daemon.WorkspaceGetResponse, string) error { return nil }
 	commandGetRPC = func(context.Context, string, string, string) (daemon.CommandGetResponse, error) {
 		return daemon.CommandGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "session not found"}
 	}

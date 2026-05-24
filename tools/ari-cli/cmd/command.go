@@ -16,8 +16,8 @@ var (
 		return resolver.Resolve(ctx, socketPath, workspaceOverride)
 	}
 	commandEnsureDaemonRunning  = ensureDaemonRunning
-	commandEnsureWorkspaceScope = func(workspace *daemon.WorkspaceGetResponse, workspaceOverride string) error {
-		return enforceActiveWorkspaceScope(workspace, workspaceOverride)
+	commandEnsureWorkspaceScope = func(ctx context.Context, workspace *daemon.WorkspaceGetResponse, workspaceOverride string) error {
+		return enforceActiveWorkspaceScope(ctx, workspace, workspaceOverride)
 	}
 	commandRunRPC = func(ctx context.Context, socketPath string, req daemon.CommandRunRequest) (daemon.CommandRunResponse, error) {
 		return callDaemonRPC[daemon.CommandRunResponse](ctx, socketPath, "command.run", req)

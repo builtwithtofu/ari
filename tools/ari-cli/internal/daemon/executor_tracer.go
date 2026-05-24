@@ -1517,7 +1517,7 @@ func sendAgentMessage(ctx context.Context, store *globaldb.Store, req AgentMessa
 			return AgentMessageSendResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "source_workspace_mismatch", "source_session_id": sourceSessionID, "source_workspace_id": sourceRun.WorkspaceID, "workspace_id": workspaceID, "start_invoked": false})
 		}
 	}
-	dm, err := store.SendAgentMessage(ctx, globaldb.AgentMessageSendParams{AgentMessageID: agentMessageID, SourceSessionID: sourceSessionID, TargetAgentID: targetAgentID, TargetSessionID: targetSessionID, Body: body, ContextExcerptIDs: contextExcerptIDs, StartSessionID: startSessionID})
+	dm, err := store.SendAgentMessage(ctx, globaldb.AgentMessageSendParams{AgentMessageID: agentMessageID, SourceSessionID: sourceSessionID, TargetAgentID: targetAgentID, TargetSessionID: targetSessionID, Body: body, ContextExcerptIDs: contextExcerptIDs, StartSessionID: startSessionID, DaemonEvent: &globaldb.DaemonEvent{EventType: daemonEventSessionMessageSent, SubjectType: "agent_message", SubjectID: agentMessageID, PayloadJSON: daemonEventPayload(map[string]string{"source_session_id": sourceSessionID, "target_agent_id": targetAgentID, "target_session_id": effectiveTargetSessionID}), AttentionRequired: true}})
 	if err != nil {
 		errText := strings.ToLower(err.Error())
 		if strings.Contains(errText, "unique constraint failed") && strings.Contains(errText, "agent_messages.agent_message_id") {
@@ -1590,9 +1590,6 @@ func sendAgentMessage(ctx context.Context, store *globaldb.Store, req AgentMessa
 			}
 			return AgentMessageSendResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "invalid_session_message", "agent_message_id": agentMessageID, "source_session_id": sourceSessionID, "target_session_id": effectiveTargetSessionID, "target_agent_id": targetAgentID, "start_invoked": false})
 		}
-		return AgentMessageSendResponse{}, err
-	}
-	if err := appendDaemonEvent(ctx, store, globaldb.DaemonEvent{WorkspaceID: dm.WorkspaceID, SessionID: dm.TargetSessionID, EventType: daemonEventSessionMessageSent, SubjectType: "agent_message", SubjectID: dm.AgentMessageID, PayloadJSON: daemonEventPayload(map[string]string{"source_session_id": dm.SourceSessionID, "target_agent_id": dm.TargetAgentID, "target_session_id": dm.TargetSessionID}), AttentionRequired: true}); err != nil {
 		return AgentMessageSendResponse{}, err
 	}
 	return AgentMessageSendResponse{AgentMessage: AgentMessageResponse{AgentMessageID: dm.AgentMessageID, WorkspaceID: dm.WorkspaceID, SourceAgentID: dm.SourceAgentID, SourceSessionID: dm.SourceSessionID, TargetAgentID: dm.TargetAgentID, TargetSessionID: dm.TargetSessionID, Body: dm.Body, Status: dm.Status, DeliveredSessionID: dm.DeliveredSessionID, ContextExcerptIDs: dm.ContextExcerptIDs}}, nil

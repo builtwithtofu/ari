@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -9,9 +10,11 @@ import (
 	"strings"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
+	"github.com/sourcegraph/jsonrpc2"
 )
 
-func enforceActiveWorkspaceScope(workspace *daemon.WorkspaceGetResponse, workspaceOverride string) error {
+func enforceActiveWorkspaceScope(ctx context.Context, workspace *daemon.WorkspaceGetResponse, workspaceOverride string) error {
 	if strings.TrimSpace(workspaceOverride) != "" {
 		return nil
 	}
@@ -30,7 +33,7 @@ func enforceActiveWorkspaceScope(workspace *daemon.WorkspaceGetResponse, workspa
 	if err != nil {
 		return err
 	}
-	matches, err := workspaceMatchesWorkspace(context.Background(), cfg.Daemon.SocketPath, cwd, *workspace)
+	matches, err := workspaceMatchesWorkspace(ctx, cfg.Daemon.SocketPath, cwd, *workspace)
 	if err != nil {
 		return err
 	}
@@ -93,6 +96,9 @@ func resolveWorkspaceFromCWD(ctx context.Context, socketPath, cwd string) (daemo
 	}
 	response, err := workspaceResolveRPC(ctx, socketPath, daemon.WorkspaceResolveRequest{CWD: cwd})
 	if err != nil {
+		if cwdErr, ok := workspaceCWDResolutionErrorFromRPC(err); ok {
+			return daemon.WorkspaceGetResponse{}, cwdErr
+		}
 		return daemon.WorkspaceGetResponse{}, mapWorkspaceRPCError(err)
 	}
 	return response.Workspace, nil
@@ -129,5 +135,26 @@ func isWorkspaceCWDNoMatch(err error) bool {
 	if errors.As(err, &target) {
 		return target.reason == workspaceCWDReasonNoMatch
 	}
-	return err.Error() == "No workspace matches current directory"
+	return false
+}
+
+func workspaceCWDResolutionErrorFromRPC(err error) (workspaceCWDResolutionError, bool) {
+	var rpcErr *jsonrpc2.Error
+	if !errors.As(err, &rpcErr) || rpcErr.Code != int64(rpc.InvalidParams) || rpcErr.Data == nil {
+		return workspaceCWDResolutionError{}, false
+	}
+	var data struct {
+		Reason string `json:"reason"`
+	}
+	if unmarshalErr := json.Unmarshal(*rpcErr.Data, &data); unmarshalErr != nil {
+		return workspaceCWDResolutionError{}, false
+	}
+	switch workspaceCWDReason(data.Reason) {
+	case workspaceCWDReasonNoMatch:
+		return workspaceCWDResolutionError{reason: workspaceCWDReasonNoMatch}, true
+	case workspaceCWDReasonAmbiguous:
+		return workspaceCWDResolutionError{reason: workspaceCWDReasonAmbiguous}, true
+	default:
+		return workspaceCWDResolutionError{}, false
+	}
 }

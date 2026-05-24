@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
@@ -34,6 +35,28 @@ func TestDaemonEventRPCListAttentionAndClear(t *testing.T) {
 	all := callMethod[DaemonEventsResponse](t, registry, "daemon.events.after", DaemonEventsAfterRequest{})
 	if len(all.Events) != 1 || all.Events[0].EventID != "evt-1" || all.Events[0].AttentionClearedAt == "" {
 		t.Fatalf("daemon.events.after = %#v, want cleared evt-1", all)
+	}
+}
+
+func TestDaemonEventsAfterStaleCursorReturnsInvalidParams(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "daemon.events.after", DaemonEventsAfterRequest{AfterEventID: "evt-missing"})
+	var handlerErr *rpc.HandlerError
+	if !errors.As(err, &handlerErr) {
+		t.Fatalf("error = %T %v, want HandlerError", err, err)
+	}
+	if handlerErr.Code != rpc.InvalidParams {
+		t.Fatalf("error code = %d, want InvalidParams", handlerErr.Code)
+	}
+	data, ok := handlerErr.Data.(map[string]any)
+	if !ok || data["reason"] != "unknown_event_cursor" || data["after_event_id"] != "evt-missing" {
+		t.Fatalf("error data = %#v, want unknown_event_cursor for evt-missing", handlerErr.Data)
 	}
 }
 
