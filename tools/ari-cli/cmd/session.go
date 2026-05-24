@@ -31,11 +31,11 @@ var (
 	sessionFanoutRPC = func(ctx context.Context, socketPath string, req daemon.AgentMessageSendRequest) (daemon.AgentMessageSendResponse, error) {
 		return callDaemonRPC[daemon.AgentMessageSendResponse](ctx, socketPath, "session.fanout", req)
 	}
-	sessionClaudeLogsRPC = func(ctx context.Context, socketPath string, req daemon.ClaudeSessionLogsRequest) (daemon.ClaudeSessionLogsResponse, error) {
-		return callDaemonRPC[daemon.ClaudeSessionLogsResponse](ctx, socketPath, "session.claude.logs", req)
+	sessionLogsRPC = func(ctx context.Context, socketPath string, req daemon.SessionLogsRequest) (daemon.SessionLogsResponse, error) {
+		return callDaemonRPC[daemon.SessionLogsResponse](ctx, socketPath, "session.logs", req)
 	}
-	sessionClaudeAttachRPC = func(ctx context.Context, socketPath string, req daemon.ClaudeSessionAttachRequest) (daemon.ClaudeSessionAttachResponse, error) {
-		return callDaemonRPC[daemon.ClaudeSessionAttachResponse](ctx, socketPath, "session.claude.attach", req)
+	sessionAttachRPC = func(ctx context.Context, socketPath string, req daemon.SessionAttachRequest) (daemon.SessionAttachResponse, error) {
+		return callDaemonRPC[daemon.SessionAttachResponse](ctx, socketPath, "session.attach", req)
 	}
 )
 
@@ -45,7 +45,7 @@ func NewSessionCmd() *cobra.Command {
 		Short: "Manage workspace sessions, messages, calls, and fan-out",
 		Long:  "Manage workspace sessions, messages, calls, and fan-out. Claude Code sessions default to subscription-backed background mode; headless claude -p is opt-in API-credit automation.",
 	}
-	cmd.AddCommand(newSessionStartCmd(), newSessionListCmd(), newSessionShowCmd(), newSessionClaudeLogsCmd(), newSessionClaudeAttachCmd(), newSessionMessageCmd(), newSessionCallCmd(), newSessionFanoutCmd())
+	cmd.AddCommand(newSessionStartCmd(), newSessionListCmd(), newSessionShowCmd(), newSessionLogsCmd(), newSessionAttachCmd(), newSessionMessageCmd(), newSessionCallCmd(), newSessionFanoutCmd())
 	return cmd
 }
 
@@ -130,7 +130,7 @@ func newSessionListCmd() *cobra.Command {
 }
 
 func newSessionShowCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "show <session>", Short: "Show workspace session details", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "show <session>", Short: "Show workspace session details by global session id", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := configuredDaemonConfig()
 		if err != nil {
 			return err
@@ -167,8 +167,8 @@ func newSessionShowCmd() *cobra.Command {
 	return cmd
 }
 
-func newSessionClaudeLogsCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "logs <session>", Short: "Show Claude Code background session logs", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+func newSessionLogsCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "logs <session>", Short: "Show native harness session logs by global session id", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := configuredDaemonConfig()
 		if err != nil {
 			return err
@@ -178,7 +178,7 @@ func newSessionClaudeLogsCmd() *cobra.Command {
 		}
 		ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 		defer cancel()
-		resp, err := sessionClaudeLogsRPC(ctx, cfg.Daemon.SocketPath, daemon.ClaudeSessionLogsRequest{SessionID: strings.TrimSpace(args[0])})
+		resp, err := sessionLogsRPC(ctx, cfg.Daemon.SocketPath, daemon.SessionLogsRequest{SessionID: strings.TrimSpace(args[0])})
 		if err != nil {
 			return mapWorkspaceRPCError(err)
 		}
@@ -194,8 +194,8 @@ func newSessionClaudeLogsCmd() *cobra.Command {
 	return cmd
 }
 
-func newSessionClaudeAttachCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "attach-command <session>", Short: "Print the native Claude Code attach command", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+func newSessionAttachCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "attach-command <session>", Short: "Print the native harness attach command by global session id", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := configuredDaemonConfig()
 		if err != nil {
 			return err
@@ -205,7 +205,7 @@ func newSessionClaudeAttachCmd() *cobra.Command {
 		}
 		ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 		defer cancel()
-		resp, err := sessionClaudeAttachRPC(ctx, cfg.Daemon.SocketPath, daemon.ClaudeSessionAttachRequest{SessionID: strings.TrimSpace(args[0])})
+		resp, err := sessionAttachRPC(ctx, cfg.Daemon.SocketPath, daemon.SessionAttachRequest{SessionID: strings.TrimSpace(args[0])})
 		if err != nil {
 			return mapWorkspaceRPCError(err)
 		}
@@ -217,7 +217,7 @@ func newSessionClaudeAttachCmd() *cobra.Command {
 
 func newSessionMessageCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "message", Short: "Send visible messages between workspace sessions"}
-	var fromSessionID, targetSessionID, messageBody string
+	var fromSessionID, targetSessionID, messageBody, workspaceID string
 	var excerptIDs []string
 	send := &cobra.Command{Use: "send", Short: "Send a visible message to a session", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		cfg, err := configuredDaemonConfig()
@@ -235,8 +235,11 @@ func newSessionMessageCmd() *cobra.Command {
 		}
 		ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 		defer cancel()
-		messageID := fmt.Sprintf("dm-%d", time.Now().UnixNano())
-		resp, err := sessionMessageSendRPC(ctx, cfg.Daemon.SocketPath, daemon.AgentMessageSendRequest{AgentMessageID: messageID, SourceSessionID: fromSessionID, TargetSessionID: targetSessionID, Body: messageBody, ContextExcerptIDs: excerptIDs})
+		workflowCtx, err := workflowContextResolver.Resolve(ctx, cfg.Daemon.SocketPath, workspaceID)
+		if err != nil {
+			return err
+		}
+		resp, err := sessionMessageSendRPC(ctx, cfg.Daemon.SocketPath, daemon.AgentMessageSendRequest{WorkspaceID: workflowCtx.WorkspaceID, SourceSessionID: fromSessionID, TargetSessionID: targetSessionID, Body: messageBody, ContextExcerptIDs: excerptIDs})
 		if err != nil {
 			return mapWorkspaceRPCError(err)
 		}
@@ -245,6 +248,7 @@ func newSessionMessageCmd() *cobra.Command {
 	}}
 	send.Flags().StringVar(&fromSessionID, "from", "", "Source session id or name")
 	send.Flags().StringVar(&targetSessionID, "to", "", "Target session id")
+	send.Flags().StringVar(&workspaceID, "workspace", "", "Target workspace id or name (defaults to active workspace)")
 	send.Flags().StringArrayVar(&excerptIDs, "excerpt", nil, "Context excerpt id to attach as visible context")
 	send.Flags().StringVar(&messageBody, "message", "", "Visible message body")
 	cmd.AddCommand(send)
@@ -252,7 +256,7 @@ func newSessionMessageCmd() *cobra.Command {
 }
 
 func newSessionCallCmd() *cobra.Command {
-	var fromSessionID, targetProfile, messageBody string
+	var fromSessionID, targetProfile, messageBody, workspaceID string
 	var excerptIDs []string
 	cmd := &cobra.Command{Use: "call", Short: "Start an ephemeral profile call from a session", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		cfg, err := configuredDaemonConfig()
@@ -270,8 +274,11 @@ func newSessionCallCmd() *cobra.Command {
 		}
 		ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 		defer cancel()
-		callID := fmt.Sprintf("call-%d", time.Now().UnixNano())
-		resp, err := sessionCallRPC(ctx, cfg.Daemon.SocketPath, daemon.EphemeralCallRequest{CallID: callID, SourceSessionID: fromSessionID, TargetAgentID: targetProfile, Body: messageBody, ContextExcerptIDs: excerptIDs})
+		workflowCtx, err := workflowContextResolver.Resolve(ctx, cfg.Daemon.SocketPath, workspaceID)
+		if err != nil {
+			return err
+		}
+		resp, err := sessionCallRPC(ctx, cfg.Daemon.SocketPath, daemon.EphemeralCallRequest{WorkspaceID: workflowCtx.WorkspaceID, SourceSessionID: fromSessionID, TargetAgentID: targetProfile, Body: messageBody, ContextExcerptIDs: excerptIDs})
 		if err != nil {
 			return mapWorkspaceRPCError(err)
 		}
@@ -280,13 +287,14 @@ func newSessionCallCmd() *cobra.Command {
 	}}
 	cmd.Flags().StringVar(&fromSessionID, "from", "", "Source session id")
 	cmd.Flags().StringVar(&targetProfile, "profile", "", "Target profile name")
+	cmd.Flags().StringVar(&workspaceID, "workspace", "", "Target workspace id or name (defaults to active workspace)")
 	cmd.Flags().StringArrayVar(&excerptIDs, "excerpt", nil, "Context excerpt id to attach as visible context")
 	cmd.Flags().StringVar(&messageBody, "message", "", "Visible task message")
 	return cmd
 }
 
 func newSessionFanoutCmd() *cobra.Command {
-	var fromSessionID, messageBody string
+	var fromSessionID, messageBody, workspaceID string
 	var targetSessionIDs, targetProfiles, excerptIDs []string
 	cmd := &cobra.Command{Use: "fanout", Short: "Fan out messages or calls from a session", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		cfg, err := configuredDaemonConfig()
@@ -313,8 +321,11 @@ func newSessionFanoutCmd() *cobra.Command {
 		}
 		ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 		defer cancel()
-		messageID := fmt.Sprintf("fanout-%d", time.Now().UnixNano())
-		resp, err := sessionFanoutRPC(ctx, cfg.Daemon.SocketPath, daemon.AgentMessageSendRequest{AgentMessageID: messageID, SourceSessionID: fromSessionID, TargetSessionID: targetSessionID, Body: messageBody, ContextExcerptIDs: excerptIDs})
+		workflowCtx, err := workflowContextResolver.Resolve(ctx, cfg.Daemon.SocketPath, workspaceID)
+		if err != nil {
+			return err
+		}
+		resp, err := sessionFanoutRPC(ctx, cfg.Daemon.SocketPath, daemon.AgentMessageSendRequest{WorkspaceID: workflowCtx.WorkspaceID, SourceSessionID: fromSessionID, TargetSessionID: targetSessionID, Body: messageBody, ContextExcerptIDs: excerptIDs})
 		if err != nil {
 			return mapWorkspaceRPCError(err)
 		}
@@ -323,6 +334,7 @@ func newSessionFanoutCmd() *cobra.Command {
 	}}
 	cmd.Flags().StringVar(&fromSessionID, "from", "", "Source session id")
 	cmd.Flags().StringArrayVar(&targetSessionIDs, "to-session", nil, "Target session id")
+	cmd.Flags().StringVar(&workspaceID, "workspace", "", "Target workspace id or name (defaults to active workspace)")
 	cmd.Flags().StringArrayVar(&targetProfiles, "to-profile", nil, "Target profile name for an ephemeral call")
 	cmd.Flags().StringArrayVar(&excerptIDs, "excerpt", nil, "Context excerpt id to attach as visible context")
 	cmd.Flags().StringVar(&messageBody, "message", "", "Visible task message")

@@ -47,22 +47,22 @@ type SessionListResponse struct {
 	Sessions []HarnessSession `json:"sessions"`
 }
 
-type ClaudeSessionLogsRequest struct {
+type SessionLogsRequest struct {
 	SessionID string `json:"session_id"`
 }
 
-type ClaudeSessionLogsResponse struct {
+type SessionLogsResponse struct {
 	SessionID         string   `json:"session_id"`
 	ProviderSessionID string   `json:"provider_session_id"`
 	Command           []string `json:"command"`
 	Output            string   `json:"output"`
 }
 
-type ClaudeSessionAttachRequest struct {
+type SessionAttachRequest struct {
 	SessionID string `json:"session_id"`
 }
 
-type ClaudeSessionAttachResponse struct {
+type SessionAttachResponse struct {
 	SessionID         string   `json:"session_id"`
 	ProviderSessionID string   `json:"provider_session_id"`
 	Command           []string `json:"command"`
@@ -325,6 +325,7 @@ type HarnessSessionConfigResponse struct {
 
 type AgentMessageSendRequest struct {
 	AgentMessageID    string   `json:"agent_message_id"`
+	WorkspaceID       string   `json:"workspace_id,omitempty"`
 	SourceSessionID   string   `json:"source_session_id"`
 	TargetAgentID     string   `json:"target_agent_id"`
 	TargetSessionID   string   `json:"target_session_id,omitempty"`
@@ -352,6 +353,7 @@ type AgentMessageResponse struct {
 
 type EphemeralCallRequest struct {
 	CallID              string   `json:"call_id"`
+	WorkspaceID         string   `json:"workspace_id,omitempty"`
 	SourceSessionID     string   `json:"source_session_id"`
 	TargetAgentID       string   `json:"target_agent_id"`
 	Body                string   `json:"body"`
@@ -1473,7 +1475,15 @@ func agentSessionModeFromProviderMetadata(raw string) (string, string) {
 
 func sendAgentMessage(ctx context.Context, store *globaldb.Store, req AgentMessageSendRequest) (AgentMessageSendResponse, error) {
 	agentMessageID := strings.TrimSpace(req.AgentMessageID)
+	if agentMessageID == "" {
+		generated, err := newAriULID()
+		if err != nil {
+			return AgentMessageSendResponse{}, err
+		}
+		agentMessageID = "am_" + generated
+	}
 	sourceSessionID := strings.TrimSpace(req.SourceSessionID)
+	workspaceID := strings.TrimSpace(req.WorkspaceID)
 	body := strings.TrimSpace(req.Body)
 	targetAgentID := strings.TrimSpace(req.TargetAgentID)
 	targetSessionID := strings.TrimSpace(req.TargetSessionID)
@@ -1483,11 +1493,9 @@ func sendAgentMessage(ctx context.Context, store *globaldb.Store, req AgentMessa
 	if effectiveTargetSessionID == "" {
 		effectiveTargetSessionID = startSessionID
 	}
-	if agentMessageID == "" || sourceSessionID == "" || body == "" || (targetAgentID == "" && targetSessionID == "" && startSessionID == "") {
+	if sourceSessionID == "" || body == "" || (targetAgentID == "" && targetSessionID == "" && startSessionID == "") {
 		missingField := ""
 		switch {
-		case agentMessageID == "":
-			missingField = "agent_message_id"
 		case sourceSessionID == "":
 			missingField = "source_session_id"
 		case body == "":
@@ -1496,6 +1504,18 @@ func sendAgentMessage(ctx context.Context, store *globaldb.Store, req AgentMessa
 			missingField = "target_agent_id_or_target_session_id"
 		}
 		return AgentMessageSendResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "missing_required_fields", "missing_field": missingField, "start_invoked": false})
+	}
+	if workspaceID != "" {
+		sourceRun, sourceErr := store.GetHarnessSession(ctx, sourceSessionID)
+		if sourceErr != nil {
+			if errors.Is(sourceErr, globaldb.ErrNotFound) {
+				return AgentMessageSendResponse{}, rpc.NewHandlerError(rpc.InvalidParams, sourceErr.Error(), map[string]any{"reason": "unknown_source_session", "source_session_id": sourceSessionID, "workspace_id": workspaceID, "start_invoked": false})
+			}
+			return AgentMessageSendResponse{}, sourceErr
+		}
+		if strings.TrimSpace(sourceRun.WorkspaceID) != workspaceID {
+			return AgentMessageSendResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "source_workspace_mismatch", "source_session_id": sourceSessionID, "source_workspace_id": sourceRun.WorkspaceID, "workspace_id": workspaceID, "start_invoked": false})
+		}
 	}
 	dm, err := store.SendAgentMessage(ctx, globaldb.AgentMessageSendParams{AgentMessageID: agentMessageID, SourceSessionID: sourceSessionID, TargetAgentID: targetAgentID, TargetSessionID: targetSessionID, Body: body, ContextExcerptIDs: contextExcerptIDs, StartSessionID: startSessionID})
 	if err != nil {
@@ -1570,6 +1590,9 @@ func sendAgentMessage(ctx context.Context, store *globaldb.Store, req AgentMessa
 			}
 			return AgentMessageSendResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "invalid_session_message", "agent_message_id": agentMessageID, "source_session_id": sourceSessionID, "target_session_id": effectiveTargetSessionID, "target_agent_id": targetAgentID, "start_invoked": false})
 		}
+		return AgentMessageSendResponse{}, err
+	}
+	if err := appendDaemonEvent(ctx, store, globaldb.DaemonEvent{WorkspaceID: dm.WorkspaceID, SessionID: dm.TargetSessionID, EventType: daemonEventSessionMessageSent, SubjectType: "agent_message", SubjectID: dm.AgentMessageID, PayloadJSON: daemonEventPayload(map[string]string{"source_session_id": dm.SourceSessionID, "target_agent_id": dm.TargetAgentID, "target_session_id": dm.TargetSessionID}), AttentionRequired: true}); err != nil {
 		return AgentMessageSendResponse{}, err
 	}
 	return AgentMessageSendResponse{AgentMessage: AgentMessageResponse{AgentMessageID: dm.AgentMessageID, WorkspaceID: dm.WorkspaceID, SourceAgentID: dm.SourceAgentID, SourceSessionID: dm.SourceSessionID, TargetAgentID: dm.TargetAgentID, TargetSessionID: dm.TargetSessionID, Body: dm.Body, Status: dm.Status, DeliveredSessionID: dm.DeliveredSessionID, ContextExcerptIDs: dm.ContextExcerptIDs}}, nil

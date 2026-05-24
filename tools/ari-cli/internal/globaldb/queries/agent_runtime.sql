@@ -293,7 +293,10 @@ WHERE agent_id = ?;
 
 -- name: MarkRunningHarnessSessionsLost :exec
 UPDATE harness_sessions
-SET status = 'lost'
+SET status = CASE
+  WHEN usage = 'sticky' AND trim(provider_session_id) <> '' THEN 'reattach_required'
+  ELSE 'lost'
+END
 WHERE status = 'running';
 
 -- name: UpdateHarnessSessionStatus :execrows

@@ -54,6 +54,17 @@ func (l harnessLifecycle) persistResultArtifacts(ctx context.Context, result Har
 		}
 	}
 	run := result.HarnessSession
+	if run.Status == "completed" || run.Status == "failed" {
+		eventType := daemonEventSessionCompleted
+		attentionRequired := false
+		if run.Status == "failed" {
+			eventType = daemonEventSessionFailed
+			attentionRequired = true
+		}
+		if err := appendDaemonEvent(ctx, l.store, globaldb.DaemonEvent{WorkspaceID: run.WorkspaceID, SessionID: run.HarnessSessionID, EventType: eventType, SubjectType: "session", SubjectID: run.HarnessSessionID, PayloadJSON: daemonEventPayload(map[string]string{"executor": run.Executor, "status": run.Status}), AttentionRequired: attentionRequired}); err != nil {
+			return err
+		}
+	}
 	sample := agentSessionProcessMetricsSampler(ctx, run)
 	if run.ProcessSample != nil {
 		sample = *run.ProcessSample
@@ -62,16 +73,32 @@ func (l harnessLifecycle) persistResultArtifacts(ctx context.Context, result Har
 }
 
 func (l harnessLifecycle) markCompleted(ctx context.Context, sessionID string) error {
-	return l.store.UpdateHarnessSessionStatus(ctx, strings.TrimSpace(sessionID), "completed")
+	sessionID = strings.TrimSpace(sessionID)
+	if err := l.store.UpdateHarnessSessionStatus(ctx, sessionID, "completed"); err != nil {
+		return err
+	}
+	run, err := l.store.GetHarnessSession(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	return appendDaemonEvent(ctx, l.store, globaldb.DaemonEvent{WorkspaceID: run.WorkspaceID, SessionID: sessionID, EventType: daemonEventSessionCompleted, SubjectType: "session", SubjectID: sessionID, PayloadJSON: daemonEventPayload(map[string]string{"status": "completed"})})
 }
 
-func (l harnessLifecycle) markFailed(ctx context.Context, sessionID string) {
-	_ = l.store.UpdateHarnessSessionStatus(ctx, strings.TrimSpace(sessionID), "failed")
+func (l harnessLifecycle) markFailed(ctx context.Context, sessionID string) error {
+	sessionID = strings.TrimSpace(sessionID)
+	if err := l.store.UpdateHarnessSessionStatus(ctx, sessionID, "failed"); err != nil {
+		return err
+	}
+	run, err := l.store.GetHarnessSession(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	return appendDaemonEvent(ctx, l.store, globaldb.DaemonEvent{WorkspaceID: run.WorkspaceID, SessionID: sessionID, EventType: daemonEventSessionFailed, SubjectType: "session", SubjectID: sessionID, PayloadJSON: daemonEventPayload(map[string]string{"status": "failed"}), AttentionRequired: true})
 }
 
 func (l harnessLifecycle) markFailedWithFinalResponse(ctx context.Context, sessionID string, response globaldb.FinalResponse) {
 	sessionID = strings.TrimSpace(sessionID)
-	l.markFailed(ctx, sessionID)
+	_ = l.markFailed(ctx, sessionID)
 	response.HarnessSessionID = sessionID
 	response.Status = "failed"
 	response.Text = strings.TrimSpace(response.Text)

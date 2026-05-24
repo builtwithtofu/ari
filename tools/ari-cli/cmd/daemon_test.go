@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -897,43 +896,6 @@ func executeRootCommandRaw(args ...string) (string, error) {
 	root.SetContext(context.Background())
 	root.SetArgs(args)
 	err := root.Execute()
-	return out.String(), err
-}
-
-func executeRootCommandWithInput(stdin string, args ...string) (string, error) {
-	originalWorkspaceEnsure := workspaceEnsureDaemonRunning
-	workspaceEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
-	defer func() { workspaceEnsureDaemonRunning = originalWorkspaceEnsure }()
-
-	root := NewRootCmd()
-	var out bytes.Buffer
-	root.SetOut(&out)
-	root.SetErr(&out)
-	root.SetIn(strings.NewReader(stdin))
-	root.SetContext(context.Background())
-	root.SetArgs(args)
-
-	oldStdin := os.Stdin
-	read, write, err := os.Pipe()
-	if err != nil {
-		return "", err
-	}
-	if _, err := io.WriteString(write, stdin); err != nil {
-		_ = read.Close()
-		_ = write.Close()
-		return "", err
-	}
-	if err := write.Close(); err != nil {
-		_ = read.Close()
-		return "", err
-	}
-	os.Stdin = read
-	defer func() {
-		os.Stdin = oldStdin
-		_ = read.Close()
-	}()
-
-	err = root.Execute()
 	return out.String(), err
 }
 

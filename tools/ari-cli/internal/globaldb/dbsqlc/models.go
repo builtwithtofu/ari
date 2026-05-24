@@ -87,6 +87,19 @@ type ContextExcerptItem struct {
 	CopiedPartsJson  string `json:"copied_parts_json"`
 }
 
+type DaemonEvent struct {
+	EventID            string  `json:"event_id"`
+	WorkspaceID        *string `json:"workspace_id"`
+	SessionID          *string `json:"session_id"`
+	EventType          string  `json:"event_type"`
+	SubjectType        string  `json:"subject_type"`
+	SubjectID          string  `json:"subject_id"`
+	PayloadJson        string  `json:"payload_json"`
+	AttentionRequired  int64   `json:"attention_required"`
+	AttentionClearedAt *string `json:"attention_cleared_at"`
+	CreatedAt          string  `json:"created_at"`
+}
+
 type DaemonMetum struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`

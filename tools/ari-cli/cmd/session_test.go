@@ -50,7 +50,11 @@ func TestSessionStartResolvesWorkspaceNameBeforeRPC(t *testing.T) {
 	originalStart := sessionStartRPC
 	originalGet := workspaceGetRPC
 	originalList := workspaceListRPC
+	originalResolve := workspaceResolveRPC
 	sessionEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	workspaceResolveRPC = func(context.Context, string, daemon.WorkspaceResolveRequest) (daemon.WorkspaceResolveResponse, error) {
+		return daemon.WorkspaceResolveResponse{Workspace: daemon.WorkspaceGetResponse{WorkspaceID: "ws-1", Name: "app"}}, nil
+	}
 	workspaceGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
 		return daemon.WorkspaceGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "session not found"}
 	}
@@ -68,6 +72,7 @@ func TestSessionStartResolvesWorkspaceNameBeforeRPC(t *testing.T) {
 		sessionStartRPC = originalStart
 		workspaceGetRPC = originalGet
 		workspaceListRPC = originalList
+		workspaceResolveRPC = originalResolve
 	})
 
 	if _, err := executeRootCommand("session", "start", "executor", "--workspace", "app", "--session", "executor-main"); err != nil {
@@ -141,7 +146,11 @@ func TestSessionListResolvesWorkspaceNameBeforeRPC(t *testing.T) {
 	originalListSessions := sessionListRPC
 	originalGet := workspaceGetRPC
 	originalListWorkspaces := workspaceListRPC
+	originalResolve := workspaceResolveRPC
 	sessionEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	workspaceResolveRPC = func(context.Context, string, daemon.WorkspaceResolveRequest) (daemon.WorkspaceResolveResponse, error) {
+		return daemon.WorkspaceResolveResponse{Workspace: daemon.WorkspaceGetResponse{WorkspaceID: "ws-1", Name: "app"}}, nil
+	}
 	workspaceGetRPC = func(context.Context, string, string) (daemon.WorkspaceGetResponse, error) {
 		return daemon.WorkspaceGetResponse{}, &jsonrpc2.Error{Code: int64(rpc.SessionNotFound), Message: "session not found"}
 	}
@@ -159,6 +168,7 @@ func TestSessionListResolvesWorkspaceNameBeforeRPC(t *testing.T) {
 		sessionListRPC = originalListSessions
 		workspaceGetRPC = originalGet
 		workspaceListRPC = originalListWorkspaces
+		workspaceResolveRPC = originalResolve
 	})
 
 	if _, err := executeRootCommand("session", "list", "--workspace", "app"); err != nil {
@@ -193,28 +203,28 @@ func TestSessionShowCallsPublicSessionGetRPC(t *testing.T) {
 	}
 }
 
-func TestSessionClaudeLogsAndAttachCommands(t *testing.T) {
+func TestSessionLogsAndAttachCommandsUseNeutralRPCs(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	originalEnsure := sessionEnsureDaemonRunning
-	originalLogs := sessionClaudeLogsRPC
-	originalAttach := sessionClaudeAttachRPC
+	originalLogs := sessionLogsRPC
+	originalAttach := sessionAttachRPC
 	sessionEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
-	sessionClaudeLogsRPC = func(_ context.Context, _ string, req daemon.ClaudeSessionLogsRequest) (daemon.ClaudeSessionLogsResponse, error) {
+	sessionLogsRPC = func(_ context.Context, _ string, req daemon.SessionLogsRequest) (daemon.SessionLogsResponse, error) {
 		if req.SessionID != "executor-main" {
-			t.Fatalf("session.claude.logs request = %#v", req)
+			t.Fatalf("session.logs request = %#v", req)
 		}
-		return daemon.ClaudeSessionLogsResponse{SessionID: req.SessionID, ProviderSessionID: "provider-1", Command: []string{"claude", "logs", "provider-1"}, Output: "log line"}, nil
+		return daemon.SessionLogsResponse{SessionID: req.SessionID, ProviderSessionID: "provider-1", Command: []string{"claude", "logs", "provider-1"}, Output: "log line"}, nil
 	}
-	sessionClaudeAttachRPC = func(_ context.Context, _ string, req daemon.ClaudeSessionAttachRequest) (daemon.ClaudeSessionAttachResponse, error) {
+	sessionAttachRPC = func(_ context.Context, _ string, req daemon.SessionAttachRequest) (daemon.SessionAttachResponse, error) {
 		if req.SessionID != "executor-main" {
-			t.Fatalf("session.claude.attach request = %#v", req)
+			t.Fatalf("session.attach request = %#v", req)
 		}
-		return daemon.ClaudeSessionAttachResponse{SessionID: req.SessionID, ProviderSessionID: "provider-1", Command: []string{"claude", "attach", "provider-1"}}, nil
+		return daemon.SessionAttachResponse{SessionID: req.SessionID, ProviderSessionID: "provider-1", Command: []string{"claude", "attach", "provider-1"}}, nil
 	}
 	t.Cleanup(func() {
 		sessionEnsureDaemonRunning = originalEnsure
-		sessionClaudeLogsRPC = originalLogs
-		sessionClaudeAttachRPC = originalAttach
+		sessionLogsRPC = originalLogs
+		sessionAttachRPC = originalAttach
 	})
 
 	logsOut, err := executeRootCommand("session", "logs", "executor-main")
@@ -249,9 +259,13 @@ func TestSessionMessageSendCallsPublicRPC(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	originalEnsure := sessionEnsureDaemonRunning
 	originalSend := sessionMessageSendRPC
+	originalResolve := workspaceResolveRPC
 	sessionEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	workspaceResolveRPC = func(context.Context, string, daemon.WorkspaceResolveRequest) (daemon.WorkspaceResolveResponse, error) {
+		return daemon.WorkspaceResolveResponse{Workspace: daemon.WorkspaceGetResponse{WorkspaceID: "ws-1", Name: "alpha"}}, nil
+	}
 	sessionMessageSendRPC = func(_ context.Context, _ string, req daemon.AgentMessageSendRequest) (daemon.AgentMessageSendResponse, error) {
-		if req.SourceSessionID != "planner-main" || req.TargetSessionID != "executor-main" || req.TargetAgentID != "" || strings.TrimSpace(req.AgentMessageID) == "" || req.Body != "Begin phase 1" || len(req.ContextExcerptIDs) != 1 || req.ContextExcerptIDs[0] != "plan-tail" {
+		if req.WorkspaceID != "ws-1" || req.SourceSessionID != "planner-main" || req.TargetSessionID != "executor-main" || req.TargetAgentID != "" || strings.TrimSpace(req.AgentMessageID) != "" || req.Body != "Begin phase 1" || len(req.ContextExcerptIDs) != 1 || req.ContextExcerptIDs[0] != "plan-tail" {
 			t.Fatalf("session.message.send request = %#v", req)
 		}
 		return daemon.AgentMessageSendResponse{AgentMessage: daemon.AgentMessageResponse{AgentMessageID: "dm-1", Status: "delivered", TargetSessionID: "executor-main"}}, nil
@@ -259,9 +273,10 @@ func TestSessionMessageSendCallsPublicRPC(t *testing.T) {
 	t.Cleanup(func() {
 		sessionEnsureDaemonRunning = originalEnsure
 		sessionMessageSendRPC = originalSend
+		workspaceResolveRPC = originalResolve
 	})
 
-	out, err := executeRootCommand("session", "message", "send", "--from", "planner-main", "--to", "executor-main", "--excerpt", "plan-tail", "--message", "Begin phase 1")
+	out, err := executeRootCommand("session", "message", "send", "--workspace", "alpha", "--from", "planner-main", "--to", "executor-main", "--excerpt", "plan-tail", "--message", "Begin phase 1")
 	if err != nil {
 		t.Fatalf("session message send returned error: %v", err)
 	}
@@ -274,9 +289,13 @@ func TestSessionCallCallsPublicEphemeralRPC(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	originalEnsure := sessionEnsureDaemonRunning
 	originalCall := sessionCallRPC
+	originalResolve := workspaceResolveRPC
 	sessionEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	workspaceResolveRPC = func(context.Context, string, daemon.WorkspaceResolveRequest) (daemon.WorkspaceResolveResponse, error) {
+		return daemon.WorkspaceResolveResponse{Workspace: daemon.WorkspaceGetResponse{WorkspaceID: "ws-1", Name: "alpha"}}, nil
+	}
 	sessionCallRPC = func(_ context.Context, _ string, req daemon.EphemeralCallRequest) (daemon.EphemeralCallResponse, error) {
-		if req.SourceSessionID != "planner-main" || req.TargetAgentID != "reviewer" || req.Body != "Please review" || len(req.ContextExcerptIDs) != 1 || req.ContextExcerptIDs[0] != "plan-tail" || strings.TrimSpace(req.CallID) == "" {
+		if req.WorkspaceID != "ws-1" || req.SourceSessionID != "planner-main" || req.TargetAgentID != "reviewer" || req.Body != "Please review" || len(req.ContextExcerptIDs) != 1 || req.ContextExcerptIDs[0] != "plan-tail" || strings.TrimSpace(req.CallID) != "" {
 			t.Fatalf("session.call.ephemeral request = %#v", req)
 		}
 		return daemon.EphemeralCallResponse{Run: globaldb.HarnessSession{SessionID: "call-1-run", Status: "completed"}}, nil
@@ -284,9 +303,10 @@ func TestSessionCallCallsPublicEphemeralRPC(t *testing.T) {
 	t.Cleanup(func() {
 		sessionEnsureDaemonRunning = originalEnsure
 		sessionCallRPC = originalCall
+		workspaceResolveRPC = originalResolve
 	})
 
-	out, err := executeRootCommand("session", "call", "--from", "planner-main", "--profile", "reviewer", "--excerpt", "plan-tail", "--message", "Please review")
+	out, err := executeRootCommand("session", "call", "--workspace", "alpha", "--from", "planner-main", "--profile", "reviewer", "--excerpt", "plan-tail", "--message", "Please review")
 	if err != nil {
 		t.Fatalf("session call returned error: %v", err)
 	}
@@ -299,9 +319,13 @@ func TestSessionFanoutCallsPublicRPC(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	originalEnsure := sessionEnsureDaemonRunning
 	originalFanout := sessionFanoutRPC
+	originalResolve := workspaceResolveRPC
 	sessionEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	workspaceResolveRPC = func(context.Context, string, daemon.WorkspaceResolveRequest) (daemon.WorkspaceResolveResponse, error) {
+		return daemon.WorkspaceResolveResponse{Workspace: daemon.WorkspaceGetResponse{WorkspaceID: "ws-1", Name: "alpha"}}, nil
+	}
 	sessionFanoutRPC = func(_ context.Context, _ string, req daemon.AgentMessageSendRequest) (daemon.AgentMessageSendResponse, error) {
-		if req.SourceSessionID != "planner-main" || req.TargetSessionID != "executor-main" || strings.TrimSpace(req.AgentMessageID) == "" || req.Body != "Please execute" || len(req.ContextExcerptIDs) != 1 || req.ContextExcerptIDs[0] != "plan-tail" || req.TargetAgentID != "" {
+		if req.WorkspaceID != "ws-1" || req.SourceSessionID != "planner-main" || req.TargetSessionID != "executor-main" || strings.TrimSpace(req.AgentMessageID) != "" || req.Body != "Please execute" || len(req.ContextExcerptIDs) != 1 || req.ContextExcerptIDs[0] != "plan-tail" || req.TargetAgentID != "" {
 			t.Fatalf("session.fanout request = %#v", req)
 		}
 		return daemon.AgentMessageSendResponse{AgentMessage: daemon.AgentMessageResponse{AgentMessageID: "fanout-1", Status: "delivered", TargetSessionID: "executor-main"}}, nil
@@ -309,9 +333,10 @@ func TestSessionFanoutCallsPublicRPC(t *testing.T) {
 	t.Cleanup(func() {
 		sessionEnsureDaemonRunning = originalEnsure
 		sessionFanoutRPC = originalFanout
+		workspaceResolveRPC = originalResolve
 	})
 
-	out, err := executeRootCommand("session", "fanout", "--from", "planner-main", "--to-session", "executor-main", "--excerpt", "plan-tail", "--message", "Please execute")
+	out, err := executeRootCommand("session", "fanout", "--workspace", "alpha", "--from", "planner-main", "--to-session", "executor-main", "--excerpt", "plan-tail", "--message", "Please execute")
 	if err != nil {
 		t.Fatalf("session fanout returned error: %v", err)
 	}

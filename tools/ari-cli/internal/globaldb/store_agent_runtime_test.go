@@ -159,6 +159,8 @@ func TestMarkRunningHarnessSessionsLost(t *testing.T) {
 	}
 	for _, session := range []HarnessSession{
 		{SessionID: "run-running", WorkspaceID: "ws-1", AgentID: "agent-1", Harness: "codex", Status: "running", Usage: HarnessSessionUsageSticky, CWD: t.TempDir()},
+		{SessionID: "run-resumable", WorkspaceID: "ws-1", AgentID: "agent-1", Harness: "codex", Status: "running", Usage: HarnessSessionUsageSticky, ProviderSessionID: "provider-1", CWD: t.TempDir()},
+		{SessionID: "run-ephemeral", WorkspaceID: "ws-1", AgentID: "agent-1", Harness: "codex", Status: "running", Usage: HarnessSessionUsageEphemeral, ProviderSessionID: "provider-2", CWD: t.TempDir()},
 		{SessionID: "run-waiting", WorkspaceID: "ws-1", AgentID: "agent-1", Harness: "codex", Status: "waiting", Usage: HarnessSessionUsageSticky, CWD: t.TempDir()},
 	} {
 		if err := store.CreateHarnessSession(ctx, session); err != nil {
@@ -176,6 +178,20 @@ func TestMarkRunningHarnessSessionsLost(t *testing.T) {
 	}
 	if running.Status != "lost" {
 		t.Fatalf("running session status = %q, want lost", running.Status)
+	}
+	resumable, err := store.GetHarnessSession(ctx, "run-resumable")
+	if err != nil {
+		t.Fatalf("GetHarnessSession run-resumable returned error: %v", err)
+	}
+	if resumable.Status != "reattach_required" {
+		t.Fatalf("resumable session status = %q, want reattach_required", resumable.Status)
+	}
+	ephemeral, err := store.GetHarnessSession(ctx, "run-ephemeral")
+	if err != nil {
+		t.Fatalf("GetHarnessSession run-ephemeral returned error: %v", err)
+	}
+	if ephemeral.Status != "lost" {
+		t.Fatalf("ephemeral session status = %q, want lost", ephemeral.Status)
 	}
 	waiting, err := store.GetHarnessSession(ctx, "run-waiting")
 	if err != nil {

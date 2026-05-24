@@ -39,11 +39,6 @@ func startExecWorkflow(cmd *cobra.Command, workspaceRef string) (*execWorkflow, 
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(workspaceRef) == "" {
-		if _, err := workflowContextResolver.ActiveWorkspaceID(); err != nil {
-			return nil, err
-		}
-	}
 	if err := commandEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 		return nil, err
 	}
