@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -776,6 +777,9 @@ func startHarnessCallAfterCapabilityCheck(ctx context.Context, executor Executor
 	}
 	items, err := executor.Items(ctx, providerSessionID)
 	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			_ = executor.Stop(context.Background(), providerSessionID)
+		}
 		return HarnessSession{}, nil, err
 	}
 	invocationMode, usageBucket := harnessModeMetadataFromItems(items)

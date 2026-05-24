@@ -40,6 +40,8 @@ type Daemon struct {
 	commandLogs     map[string]string
 	commandLogOrder []string
 	commandWG       sync.WaitGroup
+	harnessCtx      context.Context
+	harnessWG       sync.WaitGroup
 	executorMu      sync.RWMutex
 	executorRuns    map[string]HarnessSession
 	executorItems   map[string][]TimelineItem
@@ -92,6 +94,7 @@ func NewWithSignalChannel(socketPath, dbPath, pidPath, configPath, configSource,
 		commands:        make(map[string]*process.Process),
 		commandLogs:     make(map[string]string),
 		commandLogOrder: make([]string, 0),
+		harnessCtx:      context.Background(),
 		executorRuns:    make(map[string]HarnessSession),
 		executorItems:   make(map[string][]TimelineItem),
 		harnessRegistry: NewDefaultHarnessRegistry(),
@@ -130,6 +133,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 		d.cancel = nil
 		d.stopCh = nil
 		d.transport = nil
+		d.harnessCtx = context.Background()
 		d.mu.Unlock()
 	}()
 
@@ -183,6 +187,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 	d.cancel = cancel
 	d.stopCh = stopCh
 	d.transport = transport
+	d.harnessCtx = runCtx
 	d.mu.Unlock()
 
 	go func() {
@@ -201,6 +206,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 		cancel()
 		d.stopAllCommands()
 		d.commandWG.Wait()
+		d.harnessWG.Wait()
 		_ = RemovePIDFileIfOwned(d.pidPath, d.pid)
 		if dbConn != nil {
 			_ = dbConn.Close()
@@ -213,6 +219,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 		d.cancel = nil
 		d.stopCh = nil
 		d.transport = nil
+		d.harnessCtx = context.Background()
 		d.mu.Unlock()
 	}()
 
@@ -230,6 +237,24 @@ func (d *Daemon) Stop() {
 		default:
 		}
 	}
+}
+
+func (d *Daemon) startHarnessLifecycleWork(fn func(context.Context)) {
+	if d == nil {
+		go fn(context.Background())
+		return
+	}
+	d.mu.RLock()
+	ctx := d.harnessCtx
+	d.harnessWG.Add(1)
+	d.mu.RUnlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	go func() {
+		defer d.harnessWG.Done()
+		fn(ctx)
+	}()
 }
 
 func (d *Daemon) status() StatusResponse {

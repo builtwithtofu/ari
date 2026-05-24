@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
@@ -382,16 +383,17 @@ func TestEphemeralCallRunsTargetAndRoutesReplyToCaller(t *testing.T) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
-		return newFakeHarness("test-harness", []TimelineItem{{Kind: "agent_text", Text: "Use Spring Boot 4 feature flags."}}), nil
+		return newFakeHarness("test-harness", []TimelineItem{{Kind: "usage", Metadata: map[string]any{"input_tokens": int64(11), "output_tokens": int64(7)}}, {Kind: "agent_text", Text: "Use Spring Boot 4 feature flags."}}), nil
 	})
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
 	got := callMethod[EphemeralCallResponse](t, registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-1", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research this", ContextExcerptIDs: []string{excerpt.ContextExcerptID}, ReplyAgentMessageID: "dm-reply-1"})
-	if got.Run.Usage != "ephemeral" || got.Run.Status != "completed" || got.Run.AgentID != "agent-2" || got.Reply.AgentMessageID != "dm-reply-1" || got.Reply.TargetSessionID != "run-1" {
-		t.Fatalf("ephemeral call = %#v, want ephemeral target run and reply routed to caller", got)
+	if got.Run.Usage != "ephemeral" || got.Run.Status != "running" || got.Run.AgentID != "agent-2" || got.Reply.AgentMessageID != "" {
+		t.Fatalf("ephemeral call = %#v, want inspectable running target run without synchronous reply", got)
 	}
+	waitForFinalResponseText(t, ctx, store, got.Run.SessionID, "Use Spring Boot 4 feature flags.")
 	targetTail, err := store.TailRunLogMessages(ctx, got.Run.SessionID, 3)
 	if err != nil {
 		t.Fatalf("TailRunLogMessages target returned error: %v", err)
@@ -409,6 +411,13 @@ func TestEphemeralCallRunsTargetAndRoutesReplyToCaller(t *testing.T) {
 	final := callMethod[FinalResponseResponse](t, registry, "final_response.get", FinalResponseGetRequest{SessionID: got.Run.SessionID})
 	if final.SessionID != got.Run.SessionID || final.Status != "completed" || final.Text != "Use Spring Boot 4 feature flags." {
 		t.Fatalf("final response = %#v, want persisted ephemeral call final response by session", final)
+	}
+	rollup, err := store.RollupHarnessSessionTelemetry(ctx, got.Run.WorkspaceID)
+	if err != nil {
+		t.Fatalf("RollupHarnessSessionTelemetry returned error: %v", err)
+	}
+	if len(rollup) != 1 || rollup[0].Group.InvocationClass != string(HarnessInvocationEphemeral) || rollup[0].Runs != 1 || !rollup[0].InputTokens.Known || *rollup[0].InputTokens.Value != 11 || !rollup[0].OutputTokens.Known || *rollup[0].OutputTokens.Value != 7 {
+		t.Fatalf("telemetry rollup = %#v, want one ephemeral lifecycle telemetry row", rollup)
 	}
 }
 
@@ -433,19 +442,122 @@ func TestEphemeralClaudeCallStartsBackgroundSessionWithoutSyntheticReply(t *test
 	}
 
 	got := callMethod[EphemeralCallResponse](t, registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-bg", SessionID: "call-bg-run", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Explore this"})
-	if got.Run.Status != "running" || got.Run.ProviderSessionID == "" || got.Reply.AgentMessageID != "" {
+	if got.Run.Status != "running" || got.Reply.AgentMessageID != "" {
 		t.Fatalf("ephemeral Claude call = %#v, want running background session without synthetic reply", got)
 	}
-	stored, err := store.GetHarnessSession(ctx, got.Run.SessionID)
-	if err != nil {
-		t.Fatalf("GetHarnessSession returned error: %v", err)
-	}
+	stored := waitForStoredHarnessSession(t, ctx, store, got.Run.SessionID, func(run globaldb.HarnessSession) bool { return run.ProviderSessionID != "" })
 	if stored.ProviderSessionID == "" || !strings.Contains(stored.ProviderMetadataJSON, `"invocation_mode":"background"`) || !strings.Contains(stored.ProviderMetadataJSON, `"usage_bucket":"subscription"`) {
 		t.Fatalf("stored run = %#v, want provider background metadata", stored)
 	}
 	if _, err := getFinalResponse(ctx, store, FinalResponseGetRequest{SessionID: got.Run.SessionID}); err == nil {
 		t.Fatalf("final response unexpectedly exists for running background session")
 	}
+}
+
+func TestEphemeralCallReturnsInspectableRunBeforeHarnessCompletes(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "librarian", Harness: "slow-harness", Model: "model-1", Prompt: "research"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
+	}
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest("slow-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return &blockingItemsHarness{name: "slow-harness", started: started, release: release, items: []TimelineItem{{Kind: "agent_text", Text: "async answer"}}}, nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	got := callMethod[EphemeralCallResponse](t, registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-async", SessionID: "call-async-run", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research this", ReplyAgentMessageID: "reply-async"})
+	if got.Run.SessionID != "call-async-run" || got.Run.Status != "running" || got.Reply.AgentMessageID != "" {
+		t.Fatalf("ephemeral response = %#v, want inspectable running run without synchronous reply", got)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("harness did not start asynchronously")
+	}
+	if _, err := getFinalResponse(ctx, store, FinalResponseGetRequest{SessionID: got.Run.SessionID}); err == nil {
+		t.Fatalf("final response exists before async harness completion")
+	}
+
+	close(release)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		final, err := getFinalResponse(ctx, store, FinalResponseGetRequest{SessionID: got.Run.SessionID})
+		if err == nil && final.Text == "async answer" {
+			stored, getErr := store.GetHarnessSession(ctx, got.Run.SessionID)
+			if getErr != nil {
+				t.Fatalf("GetHarnessSession returned error: %v", getErr)
+			}
+			if stored.Status != "completed" {
+				t.Fatalf("stored run status = %q, want completed", stored.Status)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("async ephemeral call did not persist final response")
+}
+
+func TestEphemeralCallTimeoutStopsHarnessAndMarksFailed(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "librarian", Harness: "timeout-harness", Model: "model-1", Prompt: "research"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
+	}
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	stopped := make(chan string, 1)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest("timeout-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return &blockingItemsHarness{name: "timeout-harness", providerSessionID: "provider-timeout-session", started: started, release: release, stopped: stopped, items: []TimelineItem{{Kind: "agent_text", Text: "too late"}}}, nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	got := callMethod[EphemeralCallResponse](t, registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-timeout", SessionID: "call-timeout-run", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research this", TimeoutMS: 25})
+	if got.Run.Status != "running" {
+		t.Fatalf("ephemeral response = %#v, want inspectable running run before timeout", got)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("harness did not start asynchronously")
+	}
+	failed := waitForStoredHarnessSession(t, ctx, store, got.Run.SessionID, func(run globaldb.HarnessSession) bool { return run.Status == "failed" })
+	if failed.Status != "failed" {
+		t.Fatalf("run status = %q, want failed", failed.Status)
+	}
+	select {
+	case stoppedSessionID := <-stopped:
+		if stoppedSessionID != "provider-timeout-session" {
+			t.Fatalf("stopped session = %q, want provider-timeout-session", stoppedSessionID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("executor Stop was not invoked after timeout")
+	}
+	final := waitForFinalResponseText(t, ctx, store, got.Run.SessionID, "timed out")
+	if final.Status != "failed" {
+		t.Fatalf("final response status = %q, want failed", final.Status)
+	}
+	close(release)
+	assertHarnessSessionStatusRemains(t, ctx, store, got.Run.SessionID, "failed", 150*time.Millisecond)
 }
 
 func TestEphemeralClaudeCallHonorsExplicitHeadlessProfileDefault(t *testing.T) {
@@ -473,8 +585,12 @@ func TestEphemeralClaudeCallHonorsExplicitHeadlessProfileDefault(t *testing.T) {
 	}
 
 	got := callMethod[EphemeralCallResponse](t, registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-headless", SourceSessionID: "run-1", TargetAgentID: "ap_librarian", Body: "Explore this", ReplyAgentMessageID: "reply-headless"})
+	if got.Run.Status != "running" || got.Reply.AgentMessageID != "" {
+		t.Fatalf("call = %#v, want async running response without synchronous reply", got)
+	}
+	waitForFinalResponseText(t, ctx, store, got.Run.SessionID, "Done")
 	args := strings.Join(runner.args, " ")
-	if got.Run.Status != "completed" || !strings.Contains(args, "--bare") || !strings.Contains(args, "-p") || strings.Contains(args, "--bg") || got.Reply.AgentMessageID != "reply-headless" {
+	if !strings.Contains(args, "--bare") || !strings.Contains(args, "-p") || strings.Contains(args, "--bg") {
 		t.Fatalf("call = %#v args = %q, want explicit headless profile to remain opt-in", got, args)
 	}
 }
@@ -504,7 +620,8 @@ func TestEphemeralCallResolvesTargetByProfileName(t *testing.T) {
 		t.Fatalf("CreateContextExcerptFromTail returned error: %v", err)
 	}
 	got := callMethod[EphemeralCallResponse](t, registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-1", SourceSessionID: "run-1", TargetAgentID: "reviewer", Body: "Research this", ContextExcerptIDs: []string{excerpt.ContextExcerptID}, ReplyAgentMessageID: "dm-reply-1"})
-	if got.Run.AgentID != created.ProfileID || got.Run.SourceSessionID != "run-1" || got.Reply.Body != "Reviewed" {
+	waitForFinalResponseText(t, ctx, store, got.Run.SessionID, "Reviewed")
+	if got.Run.AgentID != created.ProfileID || got.Run.SourceSessionID != "run-1" || got.Reply.AgentMessageID != "" {
 		t.Fatalf("call response = %#v, want profile-name resolution to stored target profile id", got)
 	}
 }
@@ -1049,21 +1166,17 @@ func TestEphemeralCallRejectsReplyTargetAgentMissingConfigWithStructuredError(t 
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
-	err := callMethodError(registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-missing-reply-target", SourceSessionID: "run-missing-agent", TargetAgentID: "agent-2", Body: "Research this"})
-	handlerErr, ok := err.(*rpc.HandlerError)
-	if !ok || handlerErr.Code != rpc.InvalidParams {
-		t.Fatalf("error = %T %[1]v, want InvalidParams handler error", err)
+	got := callMethod[EphemeralCallResponse](t, registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-missing-reply-target", SourceSessionID: "run-missing-agent", TargetAgentID: "agent-2", Body: "Research this"})
+	if got.Run.Status != "running" {
+		t.Fatalf("ephemeral response = %#v, want async running response before reply failure", got)
 	}
-	data := requireHandlerErrorData(t, err)
-	if data["reason"] != "unknown_reply_target_agent" || data["target_agent_id"] != "agent-missing" || data["start_invoked"] != false {
-		t.Fatalf("error data = %#v, want unknown reply target agent details", data)
-	}
-	failedRun, err := store.GetHarnessSession(ctx, "call-missing-reply-target-run")
-	if err != nil {
-		t.Fatalf("GetHarnessSession failed ephemeral run returned error: %v", err)
-	}
+	failedRun := waitForStoredHarnessSession(t, ctx, store, "call-missing-reply-target-run", func(run globaldb.HarnessSession) bool { return run.Status == "failed" })
 	if failedRun.Status != "failed" {
 		t.Fatalf("failed ephemeral run status = %q, want failed", failedRun.Status)
+	}
+	final := waitForFinalResponseContains(t, ctx, store, failedRun.SessionID, "unknown_reply_target_agent")
+	if final.Status != "failed" {
+		t.Fatalf("final response status = %q, want failed", final.Status)
 	}
 }
 
@@ -1087,16 +1200,17 @@ func TestEphemeralCallMarksSessionFailedWhenHarnessItemsFail(t *testing.T) {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
-	err := callMethodError(registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-items-fail", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research this"})
-	if err == nil {
-		t.Fatal("session.call.ephemeral error = nil, want items failure")
+	got := callMethod[EphemeralCallResponse](t, registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-items-fail", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research this"})
+	if got.Run.Status != "running" {
+		t.Fatalf("ephemeral response = %#v, want async running response before harness failure", got)
 	}
-	failedRun, getErr := store.GetHarnessSession(ctx, "call-items-fail-run")
-	if getErr != nil {
-		t.Fatalf("GetHarnessSession failed ephemeral run returned error: %v", getErr)
-	}
+	failedRun := waitForStoredHarnessSession(t, ctx, store, "call-items-fail-run", func(run globaldb.HarnessSession) bool { return run.Status == "failed" })
 	if failedRun.Status != "failed" {
 		t.Fatalf("failed ephemeral run status = %q, want failed", failedRun.Status)
+	}
+	final := waitForFinalResponseContains(t, ctx, store, failedRun.SessionID, "items failed")
+	if final.Status != "failed" {
+		t.Fatalf("final response status = %q, want failed", final.Status)
 	}
 }
 
@@ -1112,7 +1226,109 @@ func TestCompleteEphemeralCallDoesNotMarkBackgroundReadFailureFailed(t *testing.
 	}
 }
 
+func waitForFinalResponseText(t *testing.T, ctx context.Context, store *globaldb.Store, sessionID, text string) FinalResponseResponse {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		final, err := getFinalResponse(ctx, store, FinalResponseGetRequest{SessionID: sessionID})
+		if err == nil && final.Text == text {
+			return final
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("final response for session %q with text %q was not persisted", sessionID, text)
+	return FinalResponseResponse{}
+}
+
+func waitForFinalResponseContains(t *testing.T, ctx context.Context, store *globaldb.Store, sessionID, text string) FinalResponseResponse {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		final, err := getFinalResponse(ctx, store, FinalResponseGetRequest{SessionID: sessionID})
+		if err == nil && strings.Contains(final.Text, text) {
+			return final
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("final response for session %q containing %q was not persisted", sessionID, text)
+	return FinalResponseResponse{}
+}
+
+func waitForStoredHarnessSession(t *testing.T, ctx context.Context, store *globaldb.Store, sessionID string, accept func(globaldb.HarnessSession) bool) globaldb.HarnessSession {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	var last globaldb.HarnessSession
+	for time.Now().Before(deadline) {
+		run, err := store.GetHarnessSession(ctx, sessionID)
+		if err == nil {
+			last = run
+			if accept(run) {
+				return run
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("stored harness session %q did not reach expected state; last=%#v", sessionID, last)
+	return globaldb.HarnessSession{}
+}
+
+func assertHarnessSessionStatusRemains(t *testing.T, ctx context.Context, store *globaldb.Store, sessionID, want string, duration time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(duration)
+	for time.Now().Before(deadline) {
+		run, err := store.GetHarnessSession(ctx, sessionID)
+		if err != nil {
+			t.Fatalf("GetHarnessSession(%q) returned error: %v", sessionID, err)
+		}
+		if run.Status != want {
+			t.Fatalf("session %q status changed to %q, want it to remain %q", sessionID, run.Status, want)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 type itemsFailHarness struct{}
+
+type blockingItemsHarness struct {
+	name              string
+	providerSessionID string
+	started           chan struct{}
+	release           chan struct{}
+	stopped           chan string
+	items             []TimelineItem
+}
+
+func (h *blockingItemsHarness) Descriptor() HarnessAdapterDescriptor {
+	return HarnessAdapterDescriptor{Name: h.name, Capabilities: []HarnessCapability{HarnessCapabilityHarnessSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems}}
+}
+
+func (h *blockingItemsHarness) Start(ctx context.Context, req ExecutorStartRequest) (ExecutorRun, error) {
+	_ = ctx
+	providerSessionID := h.providerSessionID
+	if providerSessionID == "" {
+		providerSessionID = req.SessionID
+	}
+	return ExecutorRun{SessionID: providerSessionID, Executor: h.name, ProviderSessionID: providerSessionID, CapabilityNames: []string{string(HarnessCapabilityTimelineItems)}}, nil
+}
+
+func (h *blockingItemsHarness) Items(ctx context.Context, sessionID string) ([]TimelineItem, error) {
+	_ = sessionID
+	close(h.started)
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-h.release:
+		return append([]TimelineItem(nil), h.items...), nil
+	}
+}
+
+func (h *blockingItemsHarness) Stop(ctx context.Context, sessionID string) error {
+	_ = ctx
+	if h.stopped != nil {
+		h.stopped <- sessionID
+	}
+	return nil
+}
 
 func (itemsFailHarness) Descriptor() HarnessAdapterDescriptor {
 	return HarnessAdapterDescriptor{Name: "items-fail-harness", Capabilities: []HarnessCapability{HarnessCapabilityHarnessSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems}}

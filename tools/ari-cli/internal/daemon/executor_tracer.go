@@ -358,6 +358,7 @@ type EphemeralCallRequest struct {
 	ContextExcerptIDs   []string `json:"context_excerpt_ids,omitempty"`
 	SessionID           string   `json:"session_id,omitempty"`
 	ReplyAgentMessageID string   `json:"reply_agent_message_id,omitempty"`
+	TimeoutMS           int64    `json:"timeout_ms,omitempty"`
 }
 
 type EphemeralCallResponse struct {
@@ -1687,19 +1688,7 @@ func (d *Daemon) startHarnessSession(ctx context.Context, store *globaldb.Store,
 	run := result.HarnessSession
 	items := result.Items
 	d.recordExecutorRun(run, items)
-	if err := storeHarnessRunLogMessages(ctx, store, result, primaryFolder, profile...); err != nil {
-		return HarnessSessionStartResponse{}, err
-	}
-	if result.FinalResponse != nil {
-		if err := storeFinalResponse(ctx, store, result, profile...); err != nil {
-			return HarnessSessionStartResponse{}, err
-		}
-	}
-	sample := agentSessionProcessMetricsSampler(ctx, run)
-	if run.ProcessSample != nil {
-		sample = *run.ProcessSample
-	}
-	if err := storeHarnessSessionTelemetry(ctx, store, result, sample, profile...); err != nil {
+	if err := newHarnessLifecycle(store).persistNewStickyResult(ctx, result, primaryFolder, profile...); err != nil {
 		return HarnessSessionStartResponse{}, err
 	}
 	return HarnessSessionStartResponse{Run: run, Items: items}, nil
