@@ -172,6 +172,7 @@ func TestJourneyBackgroundHelperWorkIsProjectedWithoutProviderHierarchy(t *testi
 	if call.Run.Usage != globaldb.HarnessSessionUsageEphemeral || call.Run.SourceSessionID != "planner-run" {
 		t.Fatalf("ephemeral run = %#v, want helper linked to planner-run", call.Run)
 	}
+	waitForStoredHarnessSession(t, context.Background(), j.store, call.Run.SessionID, func(run globaldb.HarnessSession) bool { return run.Status == "completed" })
 	harness.requireStarts(1)
 
 	status := callMethod[WorkspaceStatusResponse](t, j.registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-1"})
