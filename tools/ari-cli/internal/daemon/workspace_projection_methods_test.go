@@ -345,24 +345,6 @@ func TestWorkspaceStatusAttentionIncludesRunningSessions(t *testing.T) {
 	}
 }
 
-func TestWorkspaceStatusIgnoresLegacyAgentRows(t *testing.T) {
-	store := newCommandMethodTestStore(t)
-	registry := rpc.NewMethodRegistry()
-	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	if err := d.registerMethods(registry, store); err != nil {
-		t.Fatalf("registerMethods returned error: %v", err)
-	}
-	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
-	if err := store.CreateAgent(context.Background(), globaldb.CreateAgentParams{AgentID: "legacy-agent", WorkspaceID: "ws-1", Command: "codex", Args: `[]`, Status: "running", StartedAt: "2026-04-25T00:00:01Z"}); err != nil {
-		t.Fatalf("CreateAgent returned error: %v", err)
-	}
-
-	resp := callMethod[WorkspaceStatusResponse](t, registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-1"})
-	if len(resp.Sessions) != 0 || len(resp.Attention.Items) != 0 || resp.Attention.Level != "none" {
-		t.Fatalf("status = %#v, want legacy agent row ignored by workspace.status", resp)
-	}
-}
-
 func TestWorkspaceStatusAttentionIncludesAuthRequired(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()

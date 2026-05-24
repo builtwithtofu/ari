@@ -231,13 +231,13 @@ func TestDashboardGetIncludesResumeAffordanceForPersistedRunningHarnessSession(t
 	}
 	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
 	if err := store.CreateHarnessSessionConfig(context.Background(), globaldb.HarnessSessionConfig{AgentID: "agent-1", WorkspaceID: "ws-1", Name: "executor", Harness: "codex"}); err != nil {
-		t.Fatalf("CreateAgent returned error: %v", err)
+		t.Fatalf("CreateHarnessSessionConfig returned error: %v", err)
 	}
 	if err := store.CreateHarnessSession(context.Background(), globaldb.HarnessSession{SessionID: "run-1", WorkspaceID: "ws-1", AgentID: "agent-1", Harness: "codex", Status: "running", Usage: globaldb.HarnessSessionUsageSticky}); err != nil {
 		t.Fatalf("CreateHarnessSession returned error: %v", err)
 	}
 	if err := store.CreateHarnessSessionConfig(context.Background(), globaldb.HarnessSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
-		t.Fatalf("CreateAgent ephemeral returned error: %v", err)
+		t.Fatalf("CreateHarnessSessionConfig ephemeral returned error: %v", err)
 	}
 	if err := store.CreateHarnessSession(context.Background(), globaldb.HarnessSession{SessionID: "run-2", WorkspaceID: "ws-1", AgentID: "agent-2", Harness: "opencode", Status: "running", Usage: "ephemeral"}); err != nil {
 		t.Fatalf("CreateHarnessSession ephemeral returned error: %v", err)
@@ -264,7 +264,7 @@ func TestResumeActionResolvesDashboardAffordance(t *testing.T) {
 	}
 	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
 	if err := store.CreateHarnessSessionConfig(context.Background(), globaldb.HarnessSessionConfig{AgentID: "agent-1", WorkspaceID: "ws-1", Name: "executor", Harness: "codex"}); err != nil {
-		t.Fatalf("CreateAgent returned error: %v", err)
+		t.Fatalf("CreateHarnessSessionConfig returned error: %v", err)
 	}
 	if err := store.CreateHarnessSession(context.Background(), globaldb.HarnessSession{SessionID: "run-1", WorkspaceID: "ws-1", AgentID: "agent-1", Harness: "codex", Status: "running", Usage: globaldb.HarnessSessionUsageSticky}); err != nil {
 		t.Fatalf("CreateHarnessSession returned error: %v", err)

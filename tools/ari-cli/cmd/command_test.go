@@ -144,6 +144,58 @@ func TestTopLevelExecSubcommandsExist(t *testing.T) {
 	}
 }
 
+func TestExecOperationUsesFreshContextAfterWorkflowSetup(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalResolveWorkflowContext := commandResolveWorkflowContext
+	originalEnsure := commandEnsureDaemonRunning
+	originalList := commandListRPC
+	var setupCtx context.Context
+	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	commandResolveWorkflowContext = func(ctx context.Context, _ string, workspaceOverride string) (WorkflowContext, error) {
+		setupCtx = ctx
+		return WorkflowContext{WorkspaceID: "ws-1", Workspace: &daemon.WorkspaceGetResponse{WorkspaceID: "ws-1", OriginRoot: t.TempDir()}, Source: WorkflowContextSourceExplicit}, nil
+	}
+	commandListRPC = func(ctx context.Context, _ string, workspaceID string) (daemon.CommandListResponse, error) {
+		if ctx == nil {
+			t.Fatal("command list RPC received nil context")
+		}
+		if setupCtx == nil {
+			t.Fatal("setup context was not captured")
+		}
+		if ctx == setupCtx {
+			t.Fatal("command list reused setup context; want a fresh operation timeout")
+		}
+		if _, ok := ctx.Deadline(); !ok {
+			t.Fatal("command list context has no operation deadline")
+		}
+		if workspaceID != "ws-1" {
+			t.Fatalf("workspaceID = %q, want ws-1", workspaceID)
+		}
+		return daemon.CommandListResponse{}, nil
+	}
+	t.Cleanup(func() {
+		commandResolveWorkflowContext = originalResolveWorkflowContext
+		commandEnsureDaemonRunning = originalEnsure
+		commandListRPC = originalList
+	})
+
+	if _, err := executeRootCommand("exec", "list", "--workspace", "alpha"); err != nil {
+		t.Fatalf("exec list returned error: %v", err)
+	}
+}
+
+func TestWorkspaceCommandRunDoesNotConstructPartialExecWorkflow(t *testing.T) {
+	data, err := os.ReadFile("workspace_command.go")
+	if err != nil {
+		t.Fatalf("ReadFile workspace_command.go returned error: %v", err)
+	}
+	if strings.Contains(string(data), "&execWorkflow{") {
+		t.Fatal("workspace command run constructs execWorkflow directly; use newExecWorkflow so ctx and cancel are initialized")
+	}
+}
+
 func TestWorkspaceTargetingHelpRegistersWorkspaceFlagOnly(t *testing.T) {
 	tests := []struct {
 		name string
@@ -173,7 +225,7 @@ func TestWorkspaceTargetingHelpRegistersWorkspaceFlagOnly(t *testing.T) {
 	}
 }
 
-func TestCommandListRejectsActiveSessionOutsideWorkspace(t *testing.T) {
+func TestCommandListRejectsActiveWorkspaceOutsideWorkspace(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -213,14 +265,14 @@ func TestCommandListRejectsActiveSessionOutsideWorkspace(t *testing.T) {
 
 	_, err = executeRootCommandRaw("exec", "list")
 	if err == nil {
-		t.Fatal("command list returned nil error for cross-workspace active session")
+		t.Fatal("command list returned nil error for cross-workspace active workspace")
 	}
 	if err.Error() != "Active workspace belongs to a different workspace; use --workspace <id-or-name> to target a workspace explicitly" {
 		t.Fatalf("command list error = %q, want %q", err.Error(), "Active workspace belongs to a different workspace; use --workspace <id-or-name> to target a workspace explicitly")
 	}
 }
 
-func TestCommandListSessionOverrideBypassesWorkspaceSafety(t *testing.T) {
+func TestCommandListWorkspaceOverrideBypassesWorkspaceSafety(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -317,7 +369,7 @@ func TestCommandListAllowsOriginRootWhenBroaderThanFolder(t *testing.T) {
 	}
 }
 
-func TestCommandListEnvActiveSessionBypassesWorkspaceSafety(t *testing.T) {
+func TestCommandListEnvActiveWorkspaceBypassesWorkspaceSafety(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("ARI_ACTIVE_WORKSPACE", "sess-env")
@@ -351,11 +403,11 @@ func TestCommandListEnvActiveSessionBypassesWorkspaceSafety(t *testing.T) {
 		t.Fatalf("command list with env override returned error: %v", err)
 	}
 	if !called {
-		t.Fatal("command list RPC not called with env active-session override")
+		t.Fatal("command list RPC not called with env active-workspace override")
 	}
 }
 
-func TestCommandSubcommandsRejectActiveSessionOutsideWorkspace(t *testing.T) {
+func TestCommandSubcommandsRejectActiveWorkspaceOutsideWorkspace(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -880,14 +932,14 @@ func TestCommandListRequiresActiveWorkspaceWhenSessionNotProvided(t *testing.T) 
 
 	_, err := executeRootCommand("exec", "list")
 	if err == nil {
-		t.Fatal("command list returned nil error without active session")
+		t.Fatal("command list returned nil error without active workspace")
 	}
 	if err.Error() != "No active workspace is set" {
 		t.Fatalf("command list error = %q, want %q", err.Error(), "No active workspace is set")
 	}
 }
 
-func TestCommandListMissingActiveSessionDoesNotCallEnsure(t *testing.T) {
+func TestCommandListMissingActiveWorkspaceDoesNotCallEnsure(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -906,7 +958,7 @@ func TestCommandListMissingActiveSessionDoesNotCallEnsure(t *testing.T) {
 
 	_, err := executeRootCommandRaw("exec", "list")
 	if err == nil {
-		t.Fatal("command list returned nil error without active session")
+		t.Fatal("command list returned nil error without active workspace")
 	}
 	if err.Error() != "No active workspace is set" {
 		t.Fatalf("command list error = %q, want %q", err.Error(), "No active workspace is set")

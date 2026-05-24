@@ -11,7 +11,7 @@ func TestAgentRuntimeSchemaUsesRuntimeTerminology(t *testing.T) {
 	store := newGlobalDBTestStore(t, "harness-session-terminology")
 	ctx := context.Background()
 
-	for _, table := range []string{"workspace_agents", "agent_runs", "agent_sessions", "agent_session_configs", "agent_run_telemetry", "run_messages", "run_message_parts", "message_shares", "message_share_items", "direct_messages", "direct_message_shares"} {
+	for _, table := range []string{"agents", "workspace_agents", "agent_runs", "agent_sessions", "agent_session_configs", "agent_run_telemetry", "run_messages", "run_message_parts", "message_shares", "message_share_items", "direct_messages", "direct_message_shares"} {
 		var count int
 		if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&count); err != nil {
 			t.Fatalf("query old table %s returned error: %v", table, err)
@@ -44,6 +44,26 @@ func TestAgentRuntimeSchemaUsesRuntimeTerminology(t *testing.T) {
 	}
 	if finalResponseSessionIDColumns != 1 {
 		t.Fatalf("final_responses.session_id exists = %d, want 1", finalResponseSessionIDColumns)
+	}
+
+	wantHarnessSessionConfigColumns := []string{"agent_id", "workspace_id", "name", "harness", "model", "prompt", "created_at", "updated_at"}
+	for _, column := range wantHarnessSessionConfigColumns {
+		var count int
+		if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('harness_session_configs') WHERE name = ?`, column).Scan(&count); err != nil {
+			t.Fatalf("query harness_session_configs.%s column returned error: %v", column, err)
+		}
+		if count != 1 {
+			t.Fatalf("harness_session_configs.%s exists = %d, want 1", column, count)
+		}
+	}
+	for _, column := range []string{"auth_slot_id", "auth_pool_json", "tool_scope_json", "permission_policy_json", "context_policy_json", "defaults_json"} {
+		var count int
+		if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('harness_session_configs') WHERE name = ?`, column).Scan(&count); err != nil {
+			t.Fatalf("query harness_session_configs.%s stale column returned error: %v", column, err)
+		}
+		if count != 0 {
+			t.Fatalf("harness_session_configs.%s exists; want schema aligned to store/query fields", column)
+		}
 	}
 }
 

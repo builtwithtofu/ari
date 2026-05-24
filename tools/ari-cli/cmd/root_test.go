@@ -333,13 +333,13 @@ func TestCuratedCommandsUseSharedDaemonRPCClient(t *testing.T) {
 }
 
 func TestWorkspaceCommandFlowsUseWorkspaceTargetBoundaryNames(t *testing.T) {
-	for _, name := range []string{"command.go", "workspace_command.go"} {
+	for _, name := range []string{"command.go", "context.go", "session.go", "workspace_command.go", "workspace_scope.go", "workspace_target.go"} {
 		data, err := os.ReadFile(filepath.Join(".", name))
 		if err != nil {
 			t.Fatalf("ReadFile %s returned error: %v", name, err)
 		}
 		content := string(data)
-		for _, stale := range []string{"commandResolveSessionTarget", "commandReadActiveSession", "workspaceCommandReadActiveSession", "resolveSessionTarget("} {
+		for _, stale := range []string{"commandResolveSessionTarget", "commandReadActiveSession", "workspaceCommandReadActiveSession", "resolveSessionTarget(", "mapSessionRPCError", "isSessionNotFoundError", "workspaceMatchesSession"} {
 			if strings.Contains(content, stale) {
 				t.Fatalf("%s still uses stale workspace-as-session seam %q", name, stale)
 			}
@@ -348,7 +348,7 @@ func TestWorkspaceCommandFlowsUseWorkspaceTargetBoundaryNames(t *testing.T) {
 }
 
 func TestActiveWorkspaceConfigAccessStaysInsideBoundary(t *testing.T) {
-	for _, name := range []string{"command.go", "workspace.go", "workspace_command.go"} {
+	for _, name := range []string{"command.go", "context.go", "session.go", "workspace.go", "workspace_command.go"} {
 		data, err := os.ReadFile(filepath.Join(".", name))
 		if err != nil {
 			t.Fatalf("ReadFile %s returned error: %v", name, err)

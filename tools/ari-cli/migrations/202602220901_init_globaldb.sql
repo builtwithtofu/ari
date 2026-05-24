@@ -56,33 +56,6 @@ CREATE TABLE IF NOT EXISTS workspace_command_definitions (
 CREATE UNIQUE INDEX IF NOT EXISTS workspace_command_definitions_workspace_name_uq
   ON workspace_command_definitions(workspace_id, name);
 
-CREATE TABLE IF NOT EXISTS agents (
-  agent_id TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL,
-  name TEXT,
-  command TEXT NOT NULL,
-  args TEXT NOT NULL DEFAULT '[]',
-  status TEXT NOT NULL DEFAULT 'running',
-  exit_code INTEGER,
-  started_at TEXT NOT NULL,
-  stopped_at TEXT,
-  harness TEXT,
-  harness_resumable_id TEXT,
-  harness_metadata TEXT NOT NULL DEFAULT '{}',
-  invocation_class TEXT NOT NULL DEFAULT 'sticky',
-  FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS agents_workspace_id_name_uq
-  ON agents(workspace_id, name)
-  WHERE name IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS agents_workspace_id_started_at_idx
-  ON agents(workspace_id, started_at DESC);
-
-CREATE INDEX IF NOT EXISTS agents_workspace_invocation_status_idx
-  ON agents(workspace_id, invocation_class, status);
-
 CREATE TABLE IF NOT EXISTS auth_slots (
   auth_slot_id TEXT PRIMARY KEY,
   harness TEXT NOT NULL,
@@ -228,12 +201,6 @@ CREATE TABLE IF NOT EXISTS harness_session_configs (
   harness TEXT NOT NULL DEFAULT '',
   model TEXT NOT NULL DEFAULT '',
   prompt TEXT NOT NULL DEFAULT '',
-  auth_slot_id TEXT NOT NULL DEFAULT '',
-  auth_pool_json TEXT NOT NULL DEFAULT '{}',
-  tool_scope_json TEXT NOT NULL DEFAULT '{}',
-  permission_policy_json TEXT NOT NULL DEFAULT '{}',
-  context_policy_json TEXT NOT NULL DEFAULT '{}',
-  defaults_json TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE

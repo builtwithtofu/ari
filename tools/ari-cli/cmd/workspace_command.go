@@ -253,7 +253,8 @@ func newWorkspaceCommandRunCmd() *cobra.Command {
 				return mapCommandRPCError(err)
 			}
 
-			return runOneOffCommand(cmd, cfg, target.WorkspaceID, definition.Command, definition.Args)
+			workflow := newExecWorkflow(cmd.Context(), cfg, target)
+			return workflow.runOneOffCommand(cmd, definition.Command, definition.Args)
 		},
 	}
 	cmd.Flags().StringVar(&workspaceRef, "workspace", "", "Target workspace id or name (defaults to active workspace)")

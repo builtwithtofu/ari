@@ -32,11 +32,6 @@ const (
 	commandStatusRunning = "running"
 	commandStatusExited  = "exited"
 	commandStatusLost    = "lost"
-
-	agentStatusRunning = "running"
-	agentStatusStopped = "stopped"
-	agentStatusExited  = "exited"
-	agentStatusLost    = "lost"
 )
 
 type Workspace struct {
@@ -104,46 +99,6 @@ type CreateWorkspaceCommandDefinitionParams struct {
 	Name        string
 	Command     string
 	Args        string
-}
-
-type Agent struct {
-	AgentID            string
-	WorkspaceID        string
-	Name               *string
-	Command            string
-	Args               string
-	Status             string
-	ExitCode           *int
-	StartedAt          string
-	StoppedAt          *string
-	Harness            *string
-	HarnessResumableID *string
-	HarnessMetadata    string
-	InvocationClass    string
-}
-
-type CreateAgentParams struct {
-	AgentID            string
-	WorkspaceID        string
-	Name               *string
-	Command            string
-	Args               string
-	Status             string
-	ExitCode           *int
-	StartedAt          string
-	StoppedAt          *string
-	Harness            *string
-	HarnessResumableID *string
-	HarnessMetadata    string
-	InvocationClass    string
-}
-
-type UpdateAgentStatusParams struct {
-	WorkspaceID string
-	AgentID     string
-	Status      string
-	ExitCode    *int
-	StoppedAt   *string
 }
 
 type Store struct {
@@ -951,10 +906,6 @@ func workspaceCommandDefinitionFromSQLC(row dbsqlc.WorkspaceCommandDefinition) W
 	return WorkspaceCommandDefinition{CommandID: row.CommandID, WorkspaceID: row.WorkspaceID, Name: row.Name, Command: row.Command, Args: row.Args, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
 }
 
-func agentFromSQLC(row dbsqlc.Agent) Agent {
-	return Agent{AgentID: row.AgentID, WorkspaceID: row.WorkspaceID, Name: row.Name, Command: row.Command, Args: row.Args, Status: row.Status, ExitCode: intPtrFromInt64(row.ExitCode), StartedAt: row.StartedAt, StoppedAt: row.StoppedAt, Harness: row.Harness, HarnessResumableID: row.HarnessResumableID, HarnessMetadata: row.HarnessMetadata, InvocationClass: row.InvocationClass}
-}
-
 func (s *Store) CreateWorkspace(ctx context.Context, id, name, originRoot, cleanupPolicy, vcsPreference string) error {
 	if id = strings.TrimSpace(id); id == "" {
 		return fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
@@ -1484,165 +1435,9 @@ func (s *Store) DeleteWorkspaceCommandDefinition(ctx context.Context, workspaceI
 	return nil
 }
 
-func (s *Store) CreateAgent(ctx context.Context, params CreateAgentParams) error {
-	if params.AgentID = strings.TrimSpace(params.AgentID); params.AgentID == "" {
-		return fmt.Errorf("%w: agent id is required", ErrInvalidInput)
-	}
-	if params.WorkspaceID = strings.TrimSpace(params.WorkspaceID); params.WorkspaceID == "" {
-		return fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
-	}
-	if _, err := s.GetWorkspace(ctx, params.WorkspaceID); err != nil {
-		return err
-	}
-	if params.Name != nil {
-		trimmedName := strings.TrimSpace(*params.Name)
-		if trimmedName == "" {
-			params.Name = nil
-		} else {
-			params.Name = &trimmedName
-		}
-	}
-	if params.Command = strings.TrimSpace(params.Command); params.Command == "" {
-		return fmt.Errorf("%w: command is required", ErrInvalidInput)
-	}
-	if params.Args = strings.TrimSpace(params.Args); params.Args == "" {
-		params.Args = "[]"
-	}
-	if params.Status = strings.TrimSpace(params.Status); params.Status == "" {
-		params.Status = agentStatusRunning
-	}
-	if !isValidAgentStatus(params.Status) {
-		return fmt.Errorf("%w: invalid agent status %q", ErrInvalidInput, params.Status)
-	}
-	if params.StartedAt = strings.TrimSpace(params.StartedAt); params.StartedAt == "" {
-		params.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
-	}
-	if params.Harness != nil {
-		trimmedHarness := strings.TrimSpace(*params.Harness)
-		if trimmedHarness == "" {
-			params.Harness = nil
-		} else {
-			params.Harness = &trimmedHarness
-		}
-	}
-	if params.HarnessResumableID != nil {
-		trimmedResumableID := strings.TrimSpace(*params.HarnessResumableID)
-		if trimmedResumableID == "" {
-			params.HarnessResumableID = nil
-		} else {
-			params.HarnessResumableID = &trimmedResumableID
-		}
-	}
-	if params.HarnessMetadata = strings.TrimSpace(params.HarnessMetadata); params.HarnessMetadata == "" {
-		params.HarnessMetadata = "{}"
-	}
-	if !json.Valid([]byte(params.HarnessMetadata)) {
-		return fmt.Errorf("%w: harness metadata must be valid json", ErrInvalidInput)
-	}
-	if params.InvocationClass = strings.TrimSpace(params.InvocationClass); params.InvocationClass == "" {
-		params.InvocationClass = HarnessSessionUsageSticky
-	}
-	if params.InvocationClass != HarnessSessionUsageSticky && params.InvocationClass != HarnessSessionUsageEphemeral {
-		return fmt.Errorf("%w: invalid invocation class %q", ErrInvalidInput, params.InvocationClass)
-	}
-
-	if err := s.sqlcQueries().CreateAgent(ctx, dbsqlc.CreateAgentParams{AgentID: params.AgentID, WorkspaceID: params.WorkspaceID, Name: params.Name, Command: params.Command, Args: params.Args, Status: params.Status, ExitCode: optionalInt(params.ExitCode), StartedAt: params.StartedAt, StoppedAt: params.StoppedAt, Harness: params.Harness, HarnessResumableID: params.HarnessResumableID, HarnessMetadata: params.HarnessMetadata, InvocationClass: params.InvocationClass}); err != nil {
-		return fmt.Errorf("create agent %q: %w", params.AgentID, err)
-	}
-
-	return nil
-}
-
-func (s *Store) GetAgent(ctx context.Context, workspaceID, agentID string) (*Agent, error) {
-	if workspaceID = strings.TrimSpace(workspaceID); workspaceID == "" {
-		return nil, fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
-	}
-	if agentID = strings.TrimSpace(agentID); agentID == "" {
-		return nil, fmt.Errorf("%w: agent id is required", ErrInvalidInput)
-	}
-
-	row, err := s.sqlcQueries().GetAgentByID(ctx, dbsqlc.GetAgentByIDParams{WorkspaceID: workspaceID, AgentID: agentID})
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("%w: agent id %q for workspace %q", ErrNotFound, agentID, workspaceID)
-		}
-		return nil, err
-	}
-	agent := agentFromSQLC(row)
-	return &agent, nil
-}
-
-func (s *Store) GetAgentByName(ctx context.Context, workspaceID, name string) (*Agent, error) {
-	if workspaceID = strings.TrimSpace(workspaceID); workspaceID == "" {
-		return nil, fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
-	}
-	if name = strings.TrimSpace(name); name == "" {
-		return nil, fmt.Errorf("%w: agent name is required", ErrInvalidInput)
-	}
-
-	row, err := s.sqlcQueries().GetAgentByName(ctx, dbsqlc.GetAgentByNameParams{WorkspaceID: workspaceID, Name: optionalString(name)})
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("%w: agent name %q for workspace %q", ErrNotFound, name, workspaceID)
-		}
-		return nil, err
-	}
-	agent := agentFromSQLC(row)
-	return &agent, nil
-}
-
-func (s *Store) ListAgents(ctx context.Context, workspaceID string) ([]Agent, error) {
-	if workspaceID = strings.TrimSpace(workspaceID); workspaceID == "" {
-		return nil, fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
-	}
-
-	rows, err := s.sqlcQueries().ListAgentsByWorkspace(ctx, dbsqlc.ListAgentsByWorkspaceParams{WorkspaceID: workspaceID})
-	if err != nil {
-		return nil, err
-	}
-	out := make([]Agent, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, agentFromSQLC(row))
-	}
-	return out, nil
-}
-
-func (s *Store) UpdateAgentStatus(ctx context.Context, params UpdateAgentStatusParams) error {
-	if params.WorkspaceID = strings.TrimSpace(params.WorkspaceID); params.WorkspaceID == "" {
-		return fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
-	}
-	if params.AgentID = strings.TrimSpace(params.AgentID); params.AgentID == "" {
-		return fmt.Errorf("%w: agent id is required", ErrInvalidInput)
-	}
-	if params.Status = strings.TrimSpace(params.Status); params.Status == "" {
-		return fmt.Errorf("%w: status is required", ErrInvalidInput)
-	}
-	if !isValidAgentStatus(params.Status) {
-		return fmt.Errorf("%w: invalid agent status %q", ErrInvalidInput, params.Status)
-	}
-
-	rowsAffected, err := s.sqlcQueries().UpdateAgentStatus(ctx, dbsqlc.UpdateAgentStatusParams{Status: params.Status, ExitCode: optionalInt(params.ExitCode), StoppedAt: params.StoppedAt, WorkspaceID: params.WorkspaceID, AgentID: params.AgentID})
-	if err != nil {
-		return fmt.Errorf("update agent status %q: %w", params.AgentID, err)
-	}
-	if rowsAffected == 0 {
-		return fmt.Errorf("%w: agent id %q for workspace %q", ErrNotFound, params.AgentID, params.WorkspaceID)
-	}
-
-	return nil
-}
-
 func (s *Store) MarkRunningHarnessSessionsLost(ctx context.Context) error {
 	if err := s.sqlcQueries().MarkRunningHarnessSessionsLost(ctx); err != nil {
 		return fmt.Errorf("mark running harness sessions lost: %w", err)
-	}
-
-	return nil
-}
-
-func (s *Store) MarkRunningAgentsLost(ctx context.Context) error {
-	if err := s.sqlcQueries().MarkRunningAgentsLost(ctx); err != nil {
-		return fmt.Errorf("mark running agents lost: %w", err)
 	}
 
 	return nil
@@ -1710,15 +1505,6 @@ func isValidVCSType(vcsType string) bool {
 func isValidCommandStatus(status string) bool {
 	switch status {
 	case commandStatusRunning, commandStatusExited, commandStatusLost:
-		return true
-	default:
-		return false
-	}
-}
-
-func isValidAgentStatus(status string) bool {
-	switch status {
-	case agentStatusRunning, agentStatusStopped, agentStatusExited, agentStatusLost:
 		return true
 	default:
 		return false

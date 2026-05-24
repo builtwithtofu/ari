@@ -7,13 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/builtwithtofu/ari/tools/ari-cli/internal/config"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
 	"github.com/spf13/cobra"
 )
 
 var (
-	sessionReadActiveWorkspace = config.ReadActiveWorkspace
 	sessionEnsureDaemonRunning = ensureDaemonRunning
 	sessionStartRPC            = func(ctx context.Context, socketPath string, req daemon.HarnessSessionStartRequest) (daemon.HarnessSessionStartResponse, error) {
 		return callDaemonRPC[daemon.HarnessSessionStartResponse](ctx, socketPath, "session.start", req)
@@ -61,25 +59,11 @@ func newSessionStartCmd() *cobra.Command {
 		if err := sessionEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 			return err
 		}
-		workspaceID = strings.TrimSpace(workspaceID)
-		if workspaceID == "" {
-			workspaceID, err = sessionReadActiveWorkspace()
-			if err != nil {
-				return err
-			}
-		}
-		workspaceID = strings.TrimSpace(workspaceID)
-		if workspaceID == "" {
-			return userFacingError{message: "No active workspace is set"}
-		}
 		ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 		defer cancel()
-		if cmd.Flags().Changed("workspace") {
-			resolvedWorkspaceID, err := resolveWorkspaceIdentifier(ctx, cfg.Daemon.SocketPath, workspaceID)
-			if err != nil {
-				return err
-			}
-			workspaceID = resolvedWorkspaceID
+		workflowCtx, err := workflowContextResolver.Resolve(ctx, cfg.Daemon.SocketPath, workspaceID)
+		if err != nil {
+			return err
 		}
 		if strings.TrimSpace(prompt) != "" && strings.TrimSpace(promptFile) != "" {
 			return userFacingError{message: "Use either --prompt or --prompt-file, not both"}
@@ -91,9 +75,9 @@ func newSessionStartCmd() *cobra.Command {
 			}
 			prompt = string(data)
 		}
-		resp, err := sessionStartRPC(ctx, cfg.Daemon.SocketPath, daemon.HarnessSessionStartRequest{WorkspaceID: workspaceID, Profile: strings.TrimSpace(args[0]), SessionID: strings.TrimSpace(sessionID), Message: strings.TrimSpace(message), Prompt: prompt})
+		resp, err := sessionStartRPC(ctx, cfg.Daemon.SocketPath, daemon.HarnessSessionStartRequest{WorkspaceID: workflowCtx.WorkspaceID, Profile: strings.TrimSpace(args[0]), SessionID: strings.TrimSpace(sessionID), Message: strings.TrimSpace(message), Prompt: prompt})
 		if err != nil {
-			return mapSessionRPCError(err)
+			return mapWorkspaceRPCError(err)
 		}
 		id := resp.Run.SessionID
 		if strings.TrimSpace(id) == "" {
@@ -120,29 +104,15 @@ func newSessionListCmd() *cobra.Command {
 		if err := sessionEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
 			return err
 		}
-		workspaceID = strings.TrimSpace(workspaceID)
-		if workspaceID == "" {
-			workspaceID, err = sessionReadActiveWorkspace()
-			if err != nil {
-				return err
-			}
-		}
-		workspaceID = strings.TrimSpace(workspaceID)
-		if workspaceID == "" {
-			return userFacingError{message: "No active workspace is set"}
-		}
 		ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 		defer cancel()
-		if cmd.Flags().Changed("workspace") {
-			resolvedWorkspaceID, err := resolveWorkspaceIdentifier(ctx, cfg.Daemon.SocketPath, workspaceID)
-			if err != nil {
-				return err
-			}
-			workspaceID = resolvedWorkspaceID
-		}
-		resp, err := sessionListRPC(ctx, cfg.Daemon.SocketPath, daemon.SessionListRequest{WorkspaceID: workspaceID})
+		workflowCtx, err := workflowContextResolver.Resolve(ctx, cfg.Daemon.SocketPath, workspaceID)
 		if err != nil {
-			return mapSessionRPCError(err)
+			return err
+		}
+		resp, err := sessionListRPC(ctx, cfg.Daemon.SocketPath, daemon.SessionListRequest{WorkspaceID: workflowCtx.WorkspaceID})
+		if err != nil {
+			return mapWorkspaceRPCError(err)
 		}
 		for _, session := range resp.Sessions {
 			id := strings.TrimSpace(session.SessionID)
@@ -172,7 +142,7 @@ func newSessionShowCmd() *cobra.Command {
 		defer cancel()
 		resp, err := sessionGetRPC(ctx, cfg.Daemon.SocketPath, daemon.SessionGetRequest{SessionID: strings.TrimSpace(args[0])})
 		if err != nil {
-			return mapSessionRPCError(err)
+			return mapWorkspaceRPCError(err)
 		}
 		session := resp.Session
 		id := strings.TrimSpace(session.SessionID)
@@ -210,7 +180,7 @@ func newSessionClaudeLogsCmd() *cobra.Command {
 		defer cancel()
 		resp, err := sessionClaudeLogsRPC(ctx, cfg.Daemon.SocketPath, daemon.ClaudeSessionLogsRequest{SessionID: strings.TrimSpace(args[0])})
 		if err != nil {
-			return mapSessionRPCError(err)
+			return mapWorkspaceRPCError(err)
 		}
 		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Command: %s\n", strings.Join(resp.Command, " ")); err != nil {
 			return err
@@ -237,7 +207,7 @@ func newSessionClaudeAttachCmd() *cobra.Command {
 		defer cancel()
 		resp, err := sessionClaudeAttachRPC(ctx, cfg.Daemon.SocketPath, daemon.ClaudeSessionAttachRequest{SessionID: strings.TrimSpace(args[0])})
 		if err != nil {
-			return mapSessionRPCError(err)
+			return mapWorkspaceRPCError(err)
 		}
 		_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s\n", strings.Join(resp.Command, " "))
 		return err
@@ -268,7 +238,7 @@ func newSessionMessageCmd() *cobra.Command {
 		messageID := fmt.Sprintf("dm-%d", time.Now().UnixNano())
 		resp, err := sessionMessageSendRPC(ctx, cfg.Daemon.SocketPath, daemon.AgentMessageSendRequest{AgentMessageID: messageID, SourceSessionID: fromSessionID, TargetSessionID: targetSessionID, Body: messageBody, ContextExcerptIDs: excerptIDs})
 		if err != nil {
-			return mapSessionRPCError(err)
+			return mapWorkspaceRPCError(err)
 		}
 		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Message sent: %s\n", resp.AgentMessage.AgentMessageID)
 		return err
@@ -303,7 +273,7 @@ func newSessionCallCmd() *cobra.Command {
 		callID := fmt.Sprintf("call-%d", time.Now().UnixNano())
 		resp, err := sessionCallRPC(ctx, cfg.Daemon.SocketPath, daemon.EphemeralCallRequest{CallID: callID, SourceSessionID: fromSessionID, TargetAgentID: targetProfile, Body: messageBody, ContextExcerptIDs: excerptIDs})
 		if err != nil {
-			return mapSessionRPCError(err)
+			return mapWorkspaceRPCError(err)
 		}
 		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Ephemeral call run: %s\n", resp.Run.SessionID)
 		return err
@@ -346,7 +316,7 @@ func newSessionFanoutCmd() *cobra.Command {
 		messageID := fmt.Sprintf("fanout-%d", time.Now().UnixNano())
 		resp, err := sessionFanoutRPC(ctx, cfg.Daemon.SocketPath, daemon.AgentMessageSendRequest{AgentMessageID: messageID, SourceSessionID: fromSessionID, TargetSessionID: targetSessionID, Body: messageBody, ContextExcerptIDs: excerptIDs})
 		if err != nil {
-			return mapSessionRPCError(err)
+			return mapWorkspaceRPCError(err)
 		}
 		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Fanout message: %s\n", resp.AgentMessage.AgentMessageID)
 		return err

@@ -54,7 +54,7 @@ func newContextExcerptCmd() *cobra.Command {
 		defer cancel()
 		resp, err := contextTailRPC(ctx, cfg.Daemon.SocketPath, daemon.ContextExcerptCreateFromTailRequest{ContextExcerptID: excerptID, SourceSessionID: sourceSessionID, Count: count})
 		if err != nil {
-			return mapSessionRPCError(err)
+			return mapWorkspaceRPCError(err)
 		}
 		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Context excerpt created: %s\n", resp.ContextExcerptID)
 		return err
@@ -82,7 +82,7 @@ func newContextExcerptCmd() *cobra.Command {
 		defer cancel()
 		resp, err := contextRangeRPC(ctx, cfg.Daemon.SocketPath, daemon.ContextExcerptCreateFromRangeRequest{ContextExcerptID: rangeExcerptID, SourceSessionID: rangeSourceSessionID, StartSequence: startSequence, EndSequence: endSequence})
 		if err != nil {
-			return mapSessionRPCError(err)
+			return mapWorkspaceRPCError(err)
 		}
 		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Context excerpt created: %s\n", resp.ContextExcerptID)
 		return err
@@ -111,7 +111,7 @@ func newContextExcerptCmd() *cobra.Command {
 		defer cancel()
 		resp, err := contextMessagesRPC(ctx, cfg.Daemon.SocketPath, daemon.ContextExcerptCreateFromExplicitIDsRequest{ContextExcerptID: messageExcerptID, SourceSessionID: messageSourceSessionID, MessageIDs: messageIDs})
 		if err != nil {
-			return mapSessionRPCError(err)
+			return mapWorkspaceRPCError(err)
 		}
 		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Context excerpt created: %s\n", resp.ContextExcerptID)
 		return err
@@ -132,7 +132,7 @@ func newContextExcerptCmd() *cobra.Command {
 		defer cancel()
 		resp, err := contextGetRPC(ctx, cfg.Daemon.SocketPath, daemon.ContextExcerptGetRequest{ContextExcerptID: strings.TrimSpace(args[0])})
 		if err != nil {
-			return mapSessionRPCError(err)
+			return mapWorkspaceRPCError(err)
 		}
 		for _, line := range []string{
 			"Context excerpt: " + resp.ContextExcerptID,

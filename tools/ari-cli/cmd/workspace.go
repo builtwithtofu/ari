@@ -95,7 +95,7 @@ func newWorkspaceSetupCmd() *cobra.Command {
 			defer cancel()
 			response, err := workspaceSetupExistingRPC(ctx, cfg.Daemon.SocketPath, daemon.WorkspaceSetupExistingRequest{Name: args[0], Folder: folderPath, VCSPreference: vcsPreference})
 			if err != nil {
-				return mapSessionRPCError(err)
+				return mapWorkspaceRPCError(err)
 			}
 			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Project workspace ready: %s (%s)\n", response.Name, response.WorkspaceID); err != nil {
 				return err
