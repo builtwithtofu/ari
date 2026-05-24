@@ -23,7 +23,7 @@ func (d *Daemon) callEphemeral(ctx context.Context, store *globaldb.Store, req E
 	}
 	requestDM, err := createEphemeralRequestMessage(ctx, store, setup, request, req.ContextExcerptIDs)
 	if err != nil {
-		newHarnessLifecycle(store).markFailed(ctx, setup.SessionID)
+		_ = newHarnessLifecycle(store).markFailed(ctx, setup.SessionID)
 		return EphemeralCallResponse{}, err
 	}
 	d.startHarnessLifecycleWork(func(runCtx context.Context) {
@@ -50,6 +50,7 @@ func markEphemeralFailedWithFinalResponse(ctx context.Context, store *globaldb.S
 
 type ephemeralCall struct {
 	CallID                string
+	WorkspaceID           string
 	SourceSessionID       string
 	TargetAgentID         string
 	Body                  string
@@ -79,14 +80,20 @@ type ephemeralHarnessResult struct {
 
 func newEphemeralCall(req EphemeralCallRequest) (ephemeralCall, error) {
 	callID := strings.TrimSpace(req.CallID)
+	if callID == "" {
+		generated, err := newAriULID()
+		if err != nil {
+			return ephemeralCall{}, err
+		}
+		callID = "ec_" + generated
+	}
 	sourceSessionID := strings.TrimSpace(req.SourceSessionID)
+	workspaceID := strings.TrimSpace(req.WorkspaceID)
 	targetAgentID := strings.TrimSpace(req.TargetAgentID)
 	body := strings.TrimSpace(req.Body)
-	if callID == "" || sourceSessionID == "" || targetAgentID == "" || body == "" {
+	if sourceSessionID == "" || targetAgentID == "" || body == "" {
 		missingField := ""
 		switch {
-		case callID == "":
-			missingField = "call_id"
 		case sourceSessionID == "":
 			missingField = "source_session_id"
 		case targetAgentID == "":
@@ -104,7 +111,7 @@ func newEphemeralCall(req EphemeralCallRequest) (ephemeralCall, error) {
 	if req.TimeoutMS > 0 {
 		timeout = time.Duration(req.TimeoutMS) * time.Millisecond
 	}
-	return ephemeralCall{CallID: callID, SourceSessionID: sourceSessionID, TargetAgentID: targetAgentID, Body: body, SessionID: sessionID, TaskID: callID, ContextPacketID: callID + "-context", RequestAgentMessageID: callID + "-request", Timeout: timeout}, nil
+	return ephemeralCall{CallID: callID, WorkspaceID: workspaceID, SourceSessionID: sourceSessionID, TargetAgentID: targetAgentID, Body: body, SessionID: sessionID, TaskID: callID, ContextPacketID: callID + "-context", RequestAgentMessageID: callID + "-request", Timeout: timeout}, nil
 }
 
 func createEphemeralSession(ctx context.Context, store *globaldb.Store, request ephemeralCall, contextExcerptIDs []string) (ephemeralCallSetup, error) {
@@ -114,6 +121,9 @@ func createEphemeralSession(ctx context.Context, store *globaldb.Store, request 
 			return ephemeralCallSetup{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "unknown_source_session", "source_session_id": request.SourceSessionID, "start_invoked": false})
 		}
 		return ephemeralCallSetup{}, err
+	}
+	if request.WorkspaceID != "" && sourceRun.WorkspaceID != request.WorkspaceID {
+		return ephemeralCallSetup{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "source_workspace_mismatch", "source_session_id": request.SourceSessionID, "source_workspace_id": sourceRun.WorkspaceID, "workspace_id": request.WorkspaceID, "start_invoked": false})
 	}
 	targetAgent, err := store.GetHarnessSessionConfig(ctx, request.TargetAgentID)
 	targetProfile := Profile{Harness: targetAgent.Harness}

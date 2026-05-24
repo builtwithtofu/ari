@@ -371,10 +371,11 @@ INSERT INTO workspaces (workspace_id, name, status, vcs_preference, origin_root,
 VALUES ('ws-1', 'alpha', 'active', 'auto', '/tmp', 'manual', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
 INSERT INTO harness_session_configs (agent_id, workspace_id, name, harness, model, prompt, created_at, updated_at)
 VALUES ('agent-1', 'ws-1', 'planner', 'pty', 'model', 'prompt', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
-INSERT INTO harness_sessions (session_id, workspace_id, agent_id, harness, model, status, usage, created_at, updated_at)
-VALUES ('sticky-1', 'ws-1', 'agent-1', 'pty', 'model', 'running', 'sticky', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
-       ('ephemeral-1', 'ws-1', 'agent-1', 'pty', 'model', 'running', 'ephemeral', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
-       ('done-1', 'ws-1', 'agent-1', 'pty', 'model', 'completed', 'ephemeral', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+INSERT INTO harness_sessions (session_id, workspace_id, agent_id, harness, model, provider_session_id, status, usage, created_at, updated_at)
+VALUES ('sticky-1', 'ws-1', 'agent-1', 'pty', 'model', 'provider-sticky', 'running', 'sticky', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+       ('sticky-unrecoverable-1', 'ws-1', 'agent-1', 'pty', 'model', '', 'running', 'sticky', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+       ('ephemeral-1', 'ws-1', 'agent-1', 'pty', 'model', 'provider-ephemeral', 'running', 'ephemeral', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+       ('done-1', 'ws-1', 'agent-1', 'pty', 'model', '', 'completed', 'ephemeral', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
 `)
 		return err
 	}
@@ -426,10 +427,10 @@ VALUES ('sticky-1', 'ws-1', 'agent-1', 'pty', 'model', 'running', 'sticky', '202
 		<-errCh
 		t.Fatalf("close harness session status rows: %v", err)
 	}
-	if statuses["sticky-1"] != "lost" || statuses["ephemeral-1"] != "lost" || statuses["done-1"] != "completed" {
+	if statuses["sticky-1"] != "reattach_required" || statuses["sticky-unrecoverable-1"] != "lost" || statuses["ephemeral-1"] != "lost" || statuses["done-1"] != "completed" {
 		d.Stop()
 		<-errCh
-		t.Fatalf("harness session statuses = %#v, want running sticky/ephemeral lost and completed unchanged", statuses)
+		t.Fatalf("harness session statuses = %#v, want resumable sticky reattach_required, unrecoverable running sessions lost, and completed unchanged", statuses)
 	}
 
 	d.Stop()

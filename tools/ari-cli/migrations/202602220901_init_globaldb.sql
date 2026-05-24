@@ -194,6 +194,28 @@ CREATE INDEX IF NOT EXISTS operation_records_parent_idx
   ON operation_records(parent_operation_id, created_at ASC, operation_id ASC)
   WHERE parent_operation_id IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS daemon_events (
+  event_id TEXT PRIMARY KEY,
+  workspace_id TEXT,
+  session_id TEXT,
+  event_type TEXT NOT NULL,
+  subject_type TEXT NOT NULL,
+  subject_id TEXT NOT NULL,
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  attention_required INTEGER NOT NULL DEFAULT 0,
+  attention_cleared_at TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE SET NULL,
+  FOREIGN KEY(session_id) REFERENCES harness_sessions(session_id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS daemon_events_created_idx
+  ON daemon_events(created_at ASC, event_id ASC);
+
+CREATE INDEX IF NOT EXISTS daemon_events_attention_idx
+  ON daemon_events(attention_required, attention_cleared_at, created_at ASC, event_id ASC)
+  WHERE attention_required = 1 AND attention_cleared_at IS NULL;
+
 CREATE TABLE IF NOT EXISTS harness_session_configs (
   agent_id TEXT PRIMARY KEY,
   workspace_id TEXT,

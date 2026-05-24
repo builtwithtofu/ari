@@ -389,11 +389,11 @@ func TestClaudeSessionLogsAndAttachUsePersistedProviderID(t *testing.T) {
 		return []byte("background log line\n"), nil
 	}
 
-	logs := callMethod[ClaudeSessionLogsResponse](t, registry, "session.claude.logs", ClaudeSessionLogsRequest{SessionID: "ari-session"})
+	logs := callMethod[SessionLogsResponse](t, registry, "session.logs", SessionLogsRequest{SessionID: "ari-session"})
 	if logs.ProviderSessionID != "550e8400-e29b-41d4-a716-446655440000" || strings.Join(logs.Command, " ") != "/opt/agents/claude logs 550e8400-e29b-41d4-a716-446655440000" || logs.Output != "background log line" {
 		t.Fatalf("logs = %#v, want native logs command and output", logs)
 	}
-	attach := callMethod[ClaudeSessionAttachResponse](t, registry, "session.claude.attach", ClaudeSessionAttachRequest{SessionID: "ari-session"})
+	attach := callMethod[SessionAttachResponse](t, registry, "session.attach", SessionAttachRequest{SessionID: "ari-session"})
 	if attach.ProviderSessionID != logs.ProviderSessionID || strings.Join(attach.Command, " ") != "/opt/agents/claude attach 550e8400-e29b-41d4-a716-446655440000" {
 		t.Fatalf("attach = %#v, want native attach command", attach)
 	}
@@ -424,7 +424,7 @@ func TestClaudeSessionLogsAllowPreMetadataBackgroundSession(t *testing.T) {
 		return []byte("legacy log line\n"), nil
 	}
 
-	logs := callMethod[ClaudeSessionLogsResponse](t, registry, "session.claude.logs", ClaudeSessionLogsRequest{SessionID: "ari-session"})
+	logs := callMethod[SessionLogsResponse](t, registry, "session.logs", SessionLogsRequest{SessionID: "ari-session"})
 	if logs.ProviderSessionID != "7c5dcf5d" || logs.Output != "legacy log line" {
 		t.Fatalf("logs = %#v, want legacy provider id logs", logs)
 	}

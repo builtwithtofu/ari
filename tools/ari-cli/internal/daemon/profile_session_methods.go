@@ -74,23 +74,23 @@ func (d *Daemon) registerProfileSessionMethods(registry *rpc.MethodRegistry, sto
 	}); err != nil {
 		return fmt.Errorf("register session.list: %w", err)
 	}
-	if err := rpc.RegisterMethod(registry, rpc.Method[ClaudeSessionLogsRequest, ClaudeSessionLogsResponse]{
-		Name:        "session.claude.logs",
-		Description: "Fetch Claude Code background session logs",
-		Handler: func(ctx context.Context, req ClaudeSessionLogsRequest) (ClaudeSessionLogsResponse, error) {
+	if err := rpc.RegisterMethod(registry, rpc.Method[SessionLogsRequest, SessionLogsResponse]{
+		Name:        "session.logs",
+		Description: "Fetch native harness session logs when supported",
+		Handler: func(ctx context.Context, req SessionLogsRequest) (SessionLogsResponse, error) {
 			return claudeSessionLogs(ctx, store, req)
 		},
 	}); err != nil {
-		return fmt.Errorf("register session.claude.logs: %w", err)
+		return fmt.Errorf("register session.logs: %w", err)
 	}
-	if err := rpc.RegisterMethod(registry, rpc.Method[ClaudeSessionAttachRequest, ClaudeSessionAttachResponse]{
-		Name:        "session.claude.attach",
-		Description: "Return the native Claude Code attach command for a background session",
-		Handler: func(ctx context.Context, req ClaudeSessionAttachRequest) (ClaudeSessionAttachResponse, error) {
+	if err := rpc.RegisterMethod(registry, rpc.Method[SessionAttachRequest, SessionAttachResponse]{
+		Name:        "session.attach",
+		Description: "Return the native harness attach command when supported",
+		Handler: func(ctx context.Context, req SessionAttachRequest) (SessionAttachResponse, error) {
 			return claudeSessionAttach(ctx, store, req)
 		},
 	}); err != nil {
-		return fmt.Errorf("register session.claude.attach: %w", err)
+		return fmt.Errorf("register session.attach: %w", err)
 	}
 	return nil
 }

@@ -1,12 +1,10 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -15,11 +13,8 @@ import (
 )
 
 var (
-	workspaceEnsureDaemonRunning         = ensureDaemonRunning
-	workspaceSwitchIsInteractiveTerminal = func(cmd *cobra.Command) bool {
-		return isInteractiveTerminal(cmd)
-	}
-	workspaceCreateRPC = func(ctx context.Context, socketPath string, req daemon.WorkspaceCreateRequest) (daemon.WorkspaceCreateResponse, error) {
+	workspaceEnsureDaemonRunning = ensureDaemonRunning
+	workspaceCreateRPC           = func(ctx context.Context, socketPath string, req daemon.WorkspaceCreateRequest) (daemon.WorkspaceCreateResponse, error) {
 		return callDaemonRPC[daemon.WorkspaceCreateResponse](ctx, socketPath, "workspace.create", req)
 	}
 	workspaceSetupExistingRPC = func(ctx context.Context, socketPath string, req daemon.WorkspaceSetupExistingRequest) (daemon.WorkspaceSetupExistingResponse, error) {
@@ -30,6 +25,9 @@ var (
 	}
 	workspaceGetRPC = func(ctx context.Context, socketPath, workspaceID string) (daemon.WorkspaceGetResponse, error) {
 		return callDaemonRPC[daemon.WorkspaceGetResponse](ctx, socketPath, "workspace.get", daemon.WorkspaceGetRequest{WorkspaceID: workspaceID})
+	}
+	workspaceResolveRPC = func(ctx context.Context, socketPath string, req daemon.WorkspaceResolveRequest) (daemon.WorkspaceResolveResponse, error) {
+		return callDaemonRPC[daemon.WorkspaceResolveResponse](ctx, socketPath, "workspace.resolve", req)
 	}
 	workspaceSuspendRPC = func(ctx context.Context, socketPath, workspaceID string) (daemon.WorkspaceSuspendResponse, error) {
 		return callDaemonRPC[daemon.WorkspaceSuspendResponse](ctx, socketPath, "workspace.suspend", daemon.WorkspaceSuspendRequest{WorkspaceID: workspaceID})
@@ -47,6 +45,9 @@ var (
 	workspaceContextSetRPC = func(ctx context.Context, socketPath string, req daemon.ContextSetRequest) (daemon.ContextSetResponse, error) {
 		return callDaemonRPC[daemon.ContextSetResponse](ctx, socketPath, "context.set", req)
 	}
+	workspaceContextGetRPC = func(ctx context.Context, socketPath string) (daemon.ContextGetResponse, error) {
+		return callDaemonRPC[daemon.ContextGetResponse](ctx, socketPath, "context.get", daemon.ContextGetRequest{})
+	}
 )
 
 func NewWorkspaceCmd() *cobra.Command {
@@ -57,11 +58,7 @@ func NewWorkspaceCmd() *cobra.Command {
 	cmd.AddCommand(newWorkspaceShowCmd())
 	cmd.AddCommand(newWorkspaceSuspendCmd())
 	cmd.AddCommand(newWorkspaceResumeCmd())
-	cmd.AddCommand(newWorkspaceSetCmd())
 	cmd.AddCommand(newWorkspaceUseCmd())
-	cmd.AddCommand(newWorkspaceCurrentCmd())
-	cmd.AddCommand(newWorkspaceSwitchCmd())
-	cmd.AddCommand(newWorkspaceClearCmd())
 	cmd.AddCommand(newWorkspaceFolderCmd())
 	return cmd
 }
@@ -137,130 +134,12 @@ func newWorkspaceUseCmd() *cobra.Command {
 			if err != nil {
 				return mapWorkspaceRPCError(err)
 			}
-			return writeAndReportActiveWorkspace(cmd, resp.Current.WorkspaceID)
-		},
-	}
-}
-
-func newWorkspaceSetCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:    "set <id-or-name>",
-		Short:  "Set active workspace",
-		Hidden: true,
-		Args:   cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := configuredDaemonConfig()
-			if err != nil {
+			if strings.TrimSpace(os.Getenv("ARI_ACTIVE_WORKSPACE")) != "" {
+				_, err := fmt.Fprintf(cmd.OutOrStdout(), "Active workspace set in daemon: %s; ARI_ACTIVE_WORKSPACE still overrides it in this shell\n", resp.Current.WorkspaceID)
 				return err
 			}
-			if err := workspaceEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
-				return err
-			}
-
-			lookupCtx, lookupCancel := context.WithTimeout(cmd.Context(), 5*time.Second)
-			defer lookupCancel()
-
-			workspaceID, err := resolveWorkspaceIdentifier(lookupCtx, cfg.Daemon.SocketPath, args[0])
-			if err != nil {
-				return err
-			}
-			if err := writeAndReportActiveWorkspace(cmd, workspaceID); err != nil {
-				return err
-			}
-			return nil
-		},
-	}
-}
-
-func newWorkspaceCurrentCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:    "current",
-		Short:  "Show active workspace",
-		Hidden: true,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			workspaceID, err := readActiveWorkspaceID()
-			if err != nil {
-				return err
-			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Current workspace: %s\n", workspaceID)
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Active workspace set: %s\n", resp.Current.WorkspaceID)
 			return err
-		},
-	}
-}
-
-func newWorkspaceClearCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:    "clear",
-		Short:  "Clear active workspace",
-		Hidden: true,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return clearAndReportActiveWorkspace(cmd)
-		},
-	}
-}
-
-func newWorkspaceSwitchCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:    "switch",
-		Short:  "Switch active workspace",
-		Hidden: true,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfg, err := configuredDaemonConfig()
-			if err != nil {
-				return err
-			}
-			if err := workspaceEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
-				return err
-			}
-			if !workspaceSwitchIsInteractiveTerminal(cmd) {
-				return userFacingError{message: "workspace switch requires an interactive terminal; use workspace set <id-or-name>"}
-			}
-
-			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
-			defer cancel()
-
-			response, err := workspaceListRPC(ctx, cfg.Daemon.SocketPath)
-			if err != nil {
-				return mapWorkspaceRPCError(err)
-			}
-
-			available := response.Workspaces
-
-			if len(available) == 0 {
-				return userFacingError{message: "No workspaces available; create one with `ari workspace create <name>`"}
-			}
-
-			selected := daemon.WorkspaceSummary{}
-			if len(available) == 1 {
-				selected = available[0]
-			} else {
-				if _, err := fmt.Fprintln(cmd.OutOrStdout(), "Select workspace:"); err != nil {
-					return err
-				}
-				for index, workspace := range available {
-					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  %d) %s (%s)\n", index+1, workspace.Name, workspace.WorkspaceID); err != nil {
-						return err
-					}
-				}
-				if _, err := fmt.Fprint(cmd.OutOrStdout(), "Enter selection number: "); err != nil {
-					return err
-				}
-
-				line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
-				if err != nil {
-					return userFacingError{message: "Unable to read workspace selection"}
-				}
-				selection, err := strconv.Atoi(strings.TrimSpace(line))
-				if err != nil || selection < 1 || selection > len(available) {
-					return userFacingError{message: "Invalid workspace selection"}
-				}
-				selected = available[selection-1]
-			}
-
-			if err := writeAndReportActiveWorkspace(cmd, selected.WorkspaceID); err != nil {
-				return err
-			}
-			return nil
 		},
 	}
 }

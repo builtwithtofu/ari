@@ -104,5 +104,9 @@ func (d *Daemon) registerMethods(registry *rpc.MethodRegistry, store *globaldb.S
 		return err
 	}
 
+	if err := d.registerDaemonEventMethods(registry, store); err != nil {
+		return err
+	}
+
 	return nil
 }

@@ -37,12 +37,12 @@ func TestOpenCodeExecutorMapsJSONEvents(t *testing.T) {
 	if got := strings.Join(runner.args, " "); !strings.Contains(got, "run") || !strings.Contains(got, "--format json") || !strings.Contains(got, "--model sonnet") {
 		t.Fatalf("opencode args = %q, want run json model invocation", got)
 	}
-	if strings.Contains(runner.prompt, "Build it") || !strings.Contains(runner.prompt, "ctx_123") {
-		t.Fatalf("opencode prompt = %q, want context packet without hidden profile behavior", runner.prompt)
+	if !strings.Contains(runner.prompt, "Build it") || !strings.Contains(runner.prompt, "ctx_123") {
+		t.Fatalf("opencode prompt = %q, want profile prompt and context packet", runner.prompt)
 	}
 }
 
-func TestOpenCodeExecutorDoesNotHideProfilePromptInVisibleRunInput(t *testing.T) {
+func TestOpenCodeExecutorIncludesProfilePromptInVisibleRunInput(t *testing.T) {
 	runner := &fakeOpenCodeRunner{output: []byte(strings.Join([]string{
 		`{"type":"session.status","properties":{"sessionID":"sess_123","status":{"type":"busy"}}}`,
 		`{"type":"session.status","properties":{"sessionID":"sess_123","status":{"type":"idle"}}}`,
@@ -55,8 +55,8 @@ func TestOpenCodeExecutorDoesNotHideProfilePromptInVisibleRunInput(t *testing.T)
 		t.Fatalf("StartExecutorRun returned error: %v", err)
 	}
 
-	if strings.Contains(runner.prompt, "Use builder behavior") {
-		t.Fatalf("opencode prompt = %q, must keep profile behavior out of visible task/context payload", runner.prompt)
+	if !strings.Contains(runner.prompt, "Use builder behavior") {
+		t.Fatalf("opencode prompt = %q, want profile behavior in visible run input", runner.prompt)
 	}
 	if !strings.Contains(runner.prompt, "ctx_123") {
 		t.Fatalf("opencode prompt = %q, want context packet visible in user payload", runner.prompt)

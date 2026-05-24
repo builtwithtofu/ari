@@ -1068,7 +1068,10 @@ func (q *Queries) ListRunLogMessages(ctx context.Context, arg ListRunLogMessages
 
 const markRunningHarnessSessionsLost = `-- name: MarkRunningHarnessSessionsLost :exec
 UPDATE harness_sessions
-SET status = 'lost'
+SET status = CASE
+  WHEN usage = 'sticky' AND trim(provider_session_id) <> '' THEN 'reattach_required'
+  ELSE 'lost'
+END
 WHERE status = 'running'
 `
 

@@ -176,6 +176,26 @@ func TestAgentMessageSendMethodDeliversVisibleMessage(t *testing.T) {
 	}
 }
 
+func TestAgentMessageSendMethodGeneratesAgentMessageIDWhenOmitted(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
+	}
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	got := callMethod[AgentMessageSendResponse](t, registry, "session.message.send", AgentMessageSendRequest{SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "review this", StartSessionID: "run-2"})
+	id := strings.TrimPrefix(got.AgentMessage.AgentMessageID, "am_")
+	if !strings.HasPrefix(got.AgentMessage.AgentMessageID, "am_") || !isULID(id) || got.AgentMessage.Status != "delivered" {
+		t.Fatalf("direct message = %#v, want generated am_ ULID delivered message", got.AgentMessage)
+	}
+}
+
 func TestAgentMessageSendMethodDeliversExcerptAppendedMessage(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
@@ -418,6 +438,32 @@ func TestEphemeralCallRunsTargetAndRoutesReplyToCaller(t *testing.T) {
 	}
 	if len(rollup) != 1 || rollup[0].Group.InvocationClass != string(HarnessInvocationEphemeral) || rollup[0].Runs != 1 || !rollup[0].InputTokens.Known || *rollup[0].InputTokens.Value != 11 || !rollup[0].OutputTokens.Known || *rollup[0].OutputTokens.Value != 7 {
 		t.Fatalf("telemetry rollup = %#v, want one ephemeral lifecycle telemetry row", rollup)
+	}
+}
+
+func TestEphemeralCallGeneratesCallIDWhenOmitted(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "librarian", Harness: "test-harness", Model: "model-1", Prompt: "research"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
+	}
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return newFakeHarness("test-harness", []TimelineItem{{Kind: "agent_text", Text: "Reviewed"}}), nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	got := callMethod[EphemeralCallResponse](t, registry, "session.call.ephemeral", EphemeralCallRequest{SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research this"})
+	id := strings.TrimSuffix(strings.TrimPrefix(got.Run.SessionID, "ec_"), "-run")
+	if !strings.HasPrefix(got.Run.SessionID, "ec_") || !strings.HasSuffix(got.Run.SessionID, "-run") || !isULID(id) || got.Request.AgentMessageID != got.Run.SessionID[:len(got.Run.SessionID)-4]+"-request" {
+		t.Fatalf("ephemeral call = %#v, want generated ec_ ULID-derived run and request IDs", got)
 	}
 }
 
@@ -741,6 +787,29 @@ func TestSessionFanoutSendsVisibleMessageToTargetSession(t *testing.T) {
 	got := callMethod[AgentMessageSendResponse](t, registry, "session.fanout", AgentMessageSendRequest{AgentMessageID: "fanout-1", SourceSessionID: "run-1", TargetSessionID: "reviewer-run", Body: "fan out"})
 	if got.AgentMessage.AgentMessageID != "fanout-1" || got.AgentMessage.TargetAgentID != "reviewer" || got.AgentMessage.TargetSessionID != "reviewer-run" || got.AgentMessage.Status != "delivered" {
 		t.Fatalf("fanout response = %#v, want delivered fanout message", got.AgentMessage)
+	}
+}
+
+func TestSessionFanoutGeneratesAgentMessageIDWhenOmitted(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "reviewer", WorkspaceID: "ws-1", Name: "reviewer", Harness: "opencode"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
+	}
+	if err := store.CreateHarnessSession(ctx, globaldb.HarnessSession{SessionID: "reviewer-run", WorkspaceID: "ws-1", AgentID: "reviewer", Harness: "opencode", Status: "waiting", Usage: globaldb.HarnessSessionUsageSticky}); err != nil {
+		t.Fatalf("CreateHarnessSession target returned error: %v", err)
+	}
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	got := callMethod[AgentMessageSendResponse](t, registry, "session.fanout", AgentMessageSendRequest{SourceSessionID: "run-1", TargetSessionID: "reviewer-run", Body: "fan out"})
+	id := strings.TrimPrefix(got.AgentMessage.AgentMessageID, "am_")
+	if !strings.HasPrefix(got.AgentMessage.AgentMessageID, "am_") || !isULID(id) || got.AgentMessage.TargetSessionID != "reviewer-run" || got.AgentMessage.Status != "delivered" {
+		t.Fatalf("fanout response = %#v, want generated am_ ULID delivered message", got.AgentMessage)
 	}
 }
 

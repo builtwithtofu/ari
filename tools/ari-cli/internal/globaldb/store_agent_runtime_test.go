@@ -159,6 +159,8 @@ func TestMarkRunningHarnessSessionsLost(t *testing.T) {
 	}
 	for _, session := range []HarnessSession{
 		{SessionID: "run-running", WorkspaceID: "ws-1", AgentID: "agent-1", Harness: "codex", Status: "running", Usage: HarnessSessionUsageSticky, CWD: t.TempDir()},
+		{SessionID: "run-resumable", WorkspaceID: "ws-1", AgentID: "agent-1", Harness: "codex", Status: "running", Usage: HarnessSessionUsageSticky, ProviderSessionID: "provider-1", CWD: t.TempDir()},
+		{SessionID: "run-ephemeral", WorkspaceID: "ws-1", AgentID: "agent-1", Harness: "codex", Status: "running", Usage: HarnessSessionUsageEphemeral, ProviderSessionID: "provider-2", CWD: t.TempDir()},
 		{SessionID: "run-waiting", WorkspaceID: "ws-1", AgentID: "agent-1", Harness: "codex", Status: "waiting", Usage: HarnessSessionUsageSticky, CWD: t.TempDir()},
 	} {
 		if err := store.CreateHarnessSession(ctx, session); err != nil {
@@ -176,6 +178,20 @@ func TestMarkRunningHarnessSessionsLost(t *testing.T) {
 	}
 	if running.Status != "lost" {
 		t.Fatalf("running session status = %q, want lost", running.Status)
+	}
+	resumable, err := store.GetHarnessSession(ctx, "run-resumable")
+	if err != nil {
+		t.Fatalf("GetHarnessSession run-resumable returned error: %v", err)
+	}
+	if resumable.Status != "reattach_required" {
+		t.Fatalf("resumable session status = %q, want reattach_required", resumable.Status)
+	}
+	ephemeral, err := store.GetHarnessSession(ctx, "run-ephemeral")
+	if err != nil {
+		t.Fatalf("GetHarnessSession run-ephemeral returned error: %v", err)
+	}
+	if ephemeral.Status != "lost" {
+		t.Fatalf("ephemeral session status = %q, want lost", ephemeral.Status)
 	}
 	waiting, err := store.GetHarnessSession(ctx, "run-waiting")
 	if err != nil {
@@ -601,6 +617,30 @@ func TestAgentMessageToExistingRunAppendsAfterCurrentTail(t *testing.T) {
 	}
 	if len(tail) != 2 || tail[0].MessageID != "existing-msg" || tail[1].Sequence != 2 || tail[1].Parts[0].Text != "continue" {
 		t.Fatalf("target tail = %#v, want direct message appended after existing message", tail)
+	}
+}
+
+func TestAgentMessageRollsBackWhenDaemonEventCannotBeAppended(t *testing.T) {
+	store := newGlobalDBTestStore(t, "agent-message-event-rollback")
+	ctx := context.Background()
+	seedHarnessSessionConfigSession(t, store, ctx)
+
+	_, err := store.SendAgentMessage(ctx, AgentMessageSendParams{AgentMessageID: "dm-1", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "continue", StartSessionID: "run-2", DaemonEvent: &DaemonEvent{EventType: "session.message.sent", SubjectType: "agent_message", PayloadJSON: "not-json", AttentionRequired: true}})
+	if err == nil {
+		t.Fatal("SendAgentMessage returned nil error, want daemon event append failure")
+	}
+	if _, err := store.GetHarnessSession(ctx, "run-2"); err != ErrNotFound {
+		t.Fatalf("GetHarnessSession run-2 error = %v, want ErrNotFound after rollback", err)
+	}
+	if _, err := store.TailRunLogMessages(ctx, "run-2", 1); err != ErrNotFound {
+		t.Fatalf("TailRunLogMessages run-2 error = %v, want ErrNotFound after rollback", err)
+	}
+	events, err := store.ListDaemonEventsAfter(ctx, "", 10)
+	if err != nil {
+		t.Fatalf("ListDaemonEventsAfter returned error: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("daemon events = %#v, want none after rollback", events)
 	}
 }
 

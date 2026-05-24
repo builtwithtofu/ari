@@ -25,25 +25,25 @@ var runClaudeSessionCommand = func(ctx context.Context, cwd string, args []strin
 	return output, nil
 }
 
-func claudeSessionLogs(ctx context.Context, store *globaldb.Store, req ClaudeSessionLogsRequest) (ClaudeSessionLogsResponse, error) {
+func claudeSessionLogs(ctx context.Context, store *globaldb.Store, req SessionLogsRequest) (SessionLogsResponse, error) {
 	session, providerID, err := claudeBackgroundSessionRef(ctx, store, req.SessionID)
 	if err != nil {
-		return ClaudeSessionLogsResponse{}, err
+		return SessionLogsResponse{}, err
 	}
 	command := claudeLogsCommand(providerID)
 	output, err := runClaudeSessionCommand(ctx, "", command[1:])
 	if err != nil {
-		return ClaudeSessionLogsResponse{}, err
+		return SessionLogsResponse{}, err
 	}
-	return ClaudeSessionLogsResponse{SessionID: session.SessionID, ProviderSessionID: providerID, Command: command, Output: strings.TrimSpace(string(output))}, nil
+	return SessionLogsResponse{SessionID: session.SessionID, ProviderSessionID: providerID, Command: command, Output: strings.TrimSpace(string(output))}, nil
 }
 
-func claudeSessionAttach(ctx context.Context, store *globaldb.Store, req ClaudeSessionAttachRequest) (ClaudeSessionAttachResponse, error) {
+func claudeSessionAttach(ctx context.Context, store *globaldb.Store, req SessionAttachRequest) (SessionAttachResponse, error) {
 	session, providerID, err := claudeBackgroundSessionRef(ctx, store, req.SessionID)
 	if err != nil {
-		return ClaudeSessionAttachResponse{}, err
+		return SessionAttachResponse{}, err
 	}
-	return ClaudeSessionAttachResponse{SessionID: session.SessionID, ProviderSessionID: providerID, Command: claudeAttachCommand(providerID)}, nil
+	return SessionAttachResponse{SessionID: session.SessionID, ProviderSessionID: providerID, Command: claudeAttachCommand(providerID)}, nil
 }
 
 func claudeBackgroundSessionRef(ctx context.Context, store *globaldb.Store, sessionID string) (globaldb.HarnessSession, string, error) {
@@ -56,7 +56,7 @@ func claudeBackgroundSessionRef(ctx context.Context, store *globaldb.Store, sess
 		return globaldb.HarnessSession{}, "", mapWorkspaceStoreError(err, sessionID)
 	}
 	if strings.TrimSpace(session.Harness) != HarnessNameClaude {
-		return globaldb.HarnessSession{}, "", rpc.NewHandlerError(rpc.InvalidParams, "session is not a Claude session", map[string]any{"reason": "not_claude_session", "session_id": sessionID})
+		return globaldb.HarnessSession{}, "", rpc.NewHandlerError(rpc.InvalidParams, "session harness does not support native logs or attach", map[string]any{"reason": "unsupported_harness_capability", "session_id": sessionID, "harness": session.Harness})
 	}
 	invocationMode, _ := agentSessionModeFromProviderMetadata(session.ProviderMetadataJSON)
 	if invocationMode != "" && invocationMode != string(HarnessInvocationModeBackground) {

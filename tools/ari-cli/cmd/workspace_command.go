@@ -12,8 +12,8 @@ import (
 )
 
 var (
-	workspaceCommandEnsureScope = func(workspace *daemon.WorkspaceGetResponse, workspaceOverride string) error {
-		return enforceActiveWorkspaceScope(workspace, workspaceOverride)
+	workspaceCommandEnsureScope = func(ctx context.Context, workspace *daemon.WorkspaceGetResponse, workspaceOverride string) error {
+		return enforceActiveWorkspaceScope(ctx, workspace, workspaceOverride)
 	}
 	workspaceCommandCreateRPC = func(ctx context.Context, socketPath string, req daemon.WorkspaceCommandCreateRequest) (daemon.WorkspaceCommandCreateResponse, error) {
 		return callDaemonRPC[daemon.WorkspaceCommandCreateResponse](ctx, socketPath, "workspace.command.create", req)
@@ -273,7 +273,7 @@ func resolveWorkspaceCommandTarget(ctx context.Context, cfg *config.Config, work
 	if err != nil {
 		return WorkflowContext{}, err
 	}
-	if err := workspaceCommandEnsureScope(workflowCtx.Workspace, workspaceOverride); err != nil {
+	if err := workspaceCommandEnsureScope(ctx, workflowCtx.Workspace, workspaceOverride); err != nil {
 		return WorkflowContext{}, err
 	}
 

@@ -2,17 +2,19 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/daemon"
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
+	"github.com/sourcegraph/jsonrpc2"
 )
 
-func enforceActiveWorkspaceScope(workspace *daemon.WorkspaceGetResponse, workspaceOverride string) error {
+func enforceActiveWorkspaceScope(ctx context.Context, workspace *daemon.WorkspaceGetResponse, workspaceOverride string) error {
 	if strings.TrimSpace(workspaceOverride) != "" {
 		return nil
 	}
@@ -27,7 +29,11 @@ func enforceActiveWorkspaceScope(workspace *daemon.WorkspaceGetResponse, workspa
 	if err != nil {
 		return err
 	}
-	matches, err := workspaceMatchesWorkspace(cwd, *workspace)
+	cfg, err := configuredDaemonConfig()
+	if err != nil {
+		return err
+	}
+	matches, err := workspaceMatchesWorkspace(ctx, cfg.Daemon.SocketPath, cwd, *workspace)
 	if err != nil {
 		return err
 	}
@@ -37,151 +43,65 @@ func enforceActiveWorkspaceScope(workspace *daemon.WorkspaceGetResponse, workspa
 	return nil
 }
 
-func workspaceMatchesWorkspace(cwd string, workspace daemon.WorkspaceGetResponse) (bool, error) {
-	_, matched, err := workspaceMatchScore(cwd, workspace)
+func workspaceMatchesWorkspace(ctx context.Context, socketPath, cwd string, workspace daemon.WorkspaceGetResponse) (bool, error) {
+	resolved, err := resolveWorkspaceFromCWD(ctx, socketPath, cwd)
+	if err != nil {
+		if isWorkspaceCWDNoMatch(err) {
+			return false, nil
+		}
+		if fallback, fallbackErr := workspaceContainsPath(cwd, workspace); fallbackErr == nil {
+			return fallback, nil
+		}
+		return false, err
+	}
+	return strings.TrimSpace(resolved.WorkspaceID) == strings.TrimSpace(workspace.WorkspaceID), nil
+}
+
+func workspaceContainsPath(cwd string, workspace daemon.WorkspaceGetResponse) (bool, error) {
+	path, err := filepath.Abs(strings.TrimSpace(cwd))
 	if err != nil {
 		return false, err
 	}
-
-	return matched, nil
-}
-
-func normalizeWorkspacePath(path string) (string, error) {
-	trimmed := strings.TrimSpace(path)
-	if trimmed == "" {
-		return "", fmt.Errorf("workspace path is required")
+	roots := make([]string, 0, len(workspace.Folders)+1)
+	if strings.TrimSpace(workspace.OriginRoot) != "" {
+		roots = append(roots, workspace.OriginRoot)
 	}
-	absPath, err := filepath.Abs(trimmed)
-	if err != nil {
-		return "", err
+	for _, folder := range workspace.Folders {
+		if strings.TrimSpace(folder.Path) != "" {
+			roots = append(roots, folder.Path)
+		}
 	}
-	resolvedPath, err := filepath.EvalSymlinks(absPath)
-	if err == nil {
-		return filepath.Clean(resolvedPath), nil
+	for _, root := range roots {
+		absRoot, err := filepath.Abs(root)
+		if err != nil {
+			return false, err
+		}
+		if path == absRoot {
+			return true, nil
+		}
+		rel, err := filepath.Rel(absRoot, path)
+		if err != nil {
+			return false, err
+		}
+		if rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+			return true, nil
+		}
 	}
-	return filepath.Clean(absPath), nil
-}
-
-func pathWithinRoot(path, root string) (bool, error) {
-	rel, err := filepath.Rel(root, path)
-	if err != nil {
-		return false, err
-	}
-	if rel == "." {
-		return true, nil
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-		return false, nil
-	}
-	return true, nil
+	return false, nil
 }
 
 func resolveWorkspaceFromCWD(ctx context.Context, socketPath, cwd string) (daemon.WorkspaceGetResponse, error) {
 	if ctx == nil {
 		return daemon.WorkspaceGetResponse{}, fmt.Errorf("context is required")
 	}
-	if strings.TrimSpace(socketPath) == "" {
-		return daemon.WorkspaceGetResponse{}, fmt.Errorf("socket path is required")
-	}
-
-	listResponse, err := workspaceListRPC(ctx, socketPath)
+	response, err := workspaceResolveRPC(ctx, socketPath, daemon.WorkspaceResolveRequest{CWD: cwd})
 	if err != nil {
+		if cwdErr, ok := workspaceCWDResolutionErrorFromRPC(err); ok {
+			return daemon.WorkspaceGetResponse{}, cwdErr
+		}
 		return daemon.WorkspaceGetResponse{}, mapWorkspaceRPCError(err)
 	}
-
-	candidates, err := loadLiveWorkspaceCandidates(ctx, socketPath, listResponse.Workspaces)
-	if err != nil {
-		return daemon.WorkspaceGetResponse{}, err
-	}
-
-	workspaceID, err := resolveWorkspaceByCWD(cwd, candidates)
-	if err != nil {
-		return daemon.WorkspaceGetResponse{}, err
-	}
-
-	for _, candidate := range candidates {
-		if candidate.WorkspaceID == workspaceID {
-			return candidate, nil
-		}
-	}
-
-	return daemon.WorkspaceGetResponse{}, userFacingError{message: "Workspace not found"}
-}
-
-func loadLiveWorkspaceCandidates(ctx context.Context, socketPath string, summaries []daemon.WorkspaceSummary) ([]daemon.WorkspaceGetResponse, error) {
-	if ctx == nil {
-		return nil, fmt.Errorf("context is required")
-	}
-	if strings.TrimSpace(socketPath) == "" {
-		return nil, fmt.Errorf("socket path is required")
-	}
-
-	candidates := make([]daemon.WorkspaceGetResponse, 0, len(summaries))
-	for _, summary := range summaries {
-		workspaceID := strings.TrimSpace(summary.WorkspaceID)
-		if workspaceID == "" {
-			continue
-		}
-
-		workspace, getErr := workspaceGetRPC(ctx, socketPath, workspaceID)
-		if getErr != nil {
-			if isWorkspaceNotFoundError(getErr) {
-				continue
-			}
-			return nil, mapWorkspaceRPCError(getErr)
-		}
-		candidates = append(candidates, workspace)
-	}
-
-	return candidates, nil
-}
-
-func resolveWorkspaceByCWD(cwd string, workspaces []daemon.WorkspaceGetResponse) (string, error) {
-	if strings.TrimSpace(cwd) == "" {
-		return "", fmt.Errorf("cwd is required")
-	}
-
-	if len(workspaces) == 0 {
-		return "", workspaceCWDResolutionError{reason: workspaceCWDReasonNoMatch}
-	}
-
-	type workspaceMatch struct {
-		workspaceID string
-		score       int
-	}
-
-	matches := make([]workspaceMatch, 0, len(workspaces))
-	for _, workspace := range workspaces {
-		workspaceID := strings.TrimSpace(workspace.WorkspaceID)
-		if workspaceID == "" {
-			continue
-		}
-
-		score, matched, matchErr := workspaceMatchScore(cwd, workspace)
-		if matchErr != nil {
-			return "", matchErr
-		}
-		if matched {
-			matches = append(matches, workspaceMatch{workspaceID: workspaceID, score: score})
-		}
-	}
-
-	if len(matches) == 0 {
-		return "", workspaceCWDResolutionError{reason: workspaceCWDReasonNoMatch}
-	}
-
-	sort.Slice(matches, func(i int, j int) bool {
-		if matches[i].score == matches[j].score {
-			return matches[i].workspaceID < matches[j].workspaceID
-		}
-		return matches[i].score > matches[j].score
-	})
-
-	if len(matches) > 1 && matches[0].score == matches[1].score {
-		return "", workspaceCWDResolutionError{reason: workspaceCWDReasonAmbiguous}
-	}
-
-	return matches[0].workspaceID, nil
+	return response.Workspace, nil
 }
 
 type workspaceCWDReason string
@@ -200,7 +120,7 @@ func (e workspaceCWDResolutionError) Error() string {
 	case workspaceCWDReasonNoMatch:
 		return "No workspace matches current directory"
 	case workspaceCWDReasonAmbiguous:
-		return "current directory matches multiple workspaces; run `ari workspace set <id-or-name>` to choose one"
+		return "current directory matches multiple workspaces; run `ari workspace use <id-or-name>` to choose one"
 	default:
 		return "workspace resolution from current directory failed"
 	}
@@ -212,73 +132,29 @@ func isWorkspaceCWDNoMatch(err error) bool {
 	}
 
 	target := workspaceCWDResolutionError{}
-	if !errors.As(err, &target) {
-		return false
+	if errors.As(err, &target) {
+		return target.reason == workspaceCWDReasonNoMatch
 	}
-	return target.reason == workspaceCWDReasonNoMatch
+	return false
 }
 
-func workspaceMatchScore(cwd string, workspace daemon.WorkspaceGetResponse) (int, bool, error) {
-	if strings.TrimSpace(cwd) == "" {
-		return 0, false, fmt.Errorf("cwd is required")
+func workspaceCWDResolutionErrorFromRPC(err error) (workspaceCWDResolutionError, bool) {
+	var rpcErr *jsonrpc2.Error
+	if !errors.As(err, &rpcErr) || rpcErr.Code != int64(rpc.InvalidParams) || rpcErr.Data == nil {
+		return workspaceCWDResolutionError{}, false
 	}
-
-	normalizedCWD, err := normalizeWorkspacePath(cwd)
-	if err != nil {
-		return 0, false, err
+	var data struct {
+		Reason string `json:"reason"`
 	}
-
-	workspaceRoots := workspaceRootCandidates(workspace)
-
-	bestScore := 0
-	matched := false
-	for _, root := range workspaceRoots {
-		normalizedRoot, err := normalizeWorkspacePath(root)
-		if err != nil {
-			return 0, false, err
-		}
-
-		within, err := pathWithinRoot(normalizedCWD, normalizedRoot)
-		if err != nil {
-			return 0, false, err
-		}
-		if !within {
-			continue
-		}
-
-		score := workspacePathSegmentCount(normalizedRoot)
-		if !matched || score > bestScore {
-			bestScore = score
-			matched = true
-		}
+	if unmarshalErr := json.Unmarshal(*rpcErr.Data, &data); unmarshalErr != nil {
+		return workspaceCWDResolutionError{}, false
 	}
-
-	return bestScore, matched, nil
-}
-
-func workspacePathSegmentCount(path string) int {
-	cleanPath := filepath.Clean(path)
-	if cleanPath == "." || cleanPath == string(os.PathSeparator) {
-		return 0
+	switch workspaceCWDReason(data.Reason) {
+	case workspaceCWDReasonNoMatch:
+		return workspaceCWDResolutionError{reason: workspaceCWDReasonNoMatch}, true
+	case workspaceCWDReasonAmbiguous:
+		return workspaceCWDResolutionError{reason: workspaceCWDReasonAmbiguous}, true
+	default:
+		return workspaceCWDResolutionError{}, false
 	}
-	trimmed := strings.Trim(cleanPath, string(os.PathSeparator))
-	if trimmed == "" {
-		return 0
-	}
-	return len(strings.Split(trimmed, string(os.PathSeparator)))
-}
-
-func workspaceRootCandidates(workspace daemon.WorkspaceGetResponse) []string {
-	workspaceRoots := make([]string, 0, len(workspace.Folders)+1)
-	if strings.TrimSpace(workspace.OriginRoot) != "" {
-		workspaceRoots = append(workspaceRoots, workspace.OriginRoot)
-	}
-	for _, folder := range workspace.Folders {
-		if strings.TrimSpace(folder.Path) == "" {
-			continue
-		}
-		workspaceRoots = append(workspaceRoots, folder.Path)
-	}
-
-	return workspaceRoots
 }

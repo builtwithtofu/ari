@@ -56,6 +56,15 @@ type WorkspaceMembership struct {
 	Active        bool   `json:"active"`
 }
 
+type WorkspaceResolveRequest struct {
+	Identifier string `json:"identifier,omitempty"`
+	CWD        string `json:"cwd,omitempty"`
+}
+
+type WorkspaceResolveResponse struct {
+	Workspace WorkspaceGetResponse `json:"workspace"`
+}
+
 type DashboardGetRequest struct {
 	WorkspaceID            string `json:"workspace_id,omitempty"`
 	CWD                    string `json:"cwd,omitempty"`
@@ -131,6 +140,16 @@ func (d *Daemon) registerActiveContextMethods(registry *rpc.MethodRegistry, stor
 		},
 	}); err != nil {
 		return fmt.Errorf("register workspace.memberships_for_path: %w", err)
+	}
+
+	if err := rpc.RegisterMethod(registry, rpc.Method[WorkspaceResolveRequest, WorkspaceResolveResponse]{
+		Name:        "workspace.resolve",
+		Description: "Resolve a workspace by ID, name, ID prefix, or containing path",
+		Handler: func(ctx context.Context, req WorkspaceResolveRequest) (WorkspaceResolveResponse, error) {
+			return workspaceResolve(ctx, store, req)
+		},
+	}); err != nil {
+		return fmt.Errorf("register workspace.resolve: %w", err)
 	}
 
 	if err := rpc.RegisterMethod(registry, rpc.Method[DashboardGetRequest, DashboardGetResponse]{
@@ -254,7 +273,7 @@ func folderExists(path string) bool {
 func resumeActionsForStatus(status WorkspaceStatusResponse) []ResumeAction {
 	actions := make([]ResumeAction, 0)
 	for _, agent := range status.Sessions {
-		if agent.Status != "running" {
+		if agent.Status != "running" && agent.Status != "reattach_required" {
 			continue
 		}
 		if agent.Usage == "ephemeral" {
@@ -264,7 +283,11 @@ func resumeActionsForStatus(status WorkspaceStatusResponse) []ResumeAction {
 		if label == "" {
 			label = strings.TrimSpace(agent.Executor)
 		}
-		actions = append(actions, ResumeAction{ID: "resume:session:" + agent.ID, Kind: "resume_session", WorkspaceID: status.WorkspaceID, SourceID: agent.ID, Label: label})
+		kind := "resume_session"
+		if agent.Status == "reattach_required" {
+			kind = "reattach_session"
+		}
+		actions = append(actions, ResumeAction{ID: "resume:session:" + agent.ID, Kind: kind, WorkspaceID: status.WorkspaceID, SourceID: agent.ID, Label: label})
 	}
 	return actions
 }
@@ -330,6 +353,194 @@ func workspaceMembershipsForPath(ctx context.Context, store *globaldb.Store, req
 		return memberships[i].WorkspaceID < memberships[j].WorkspaceID
 	})
 	return WorkspaceMembershipsForPathResponse{Path: normalized, Memberships: memberships}, nil
+}
+
+func workspaceResolve(ctx context.Context, store *globaldb.Store, req WorkspaceResolveRequest) (WorkspaceResolveResponse, error) {
+	identifier := strings.TrimSpace(req.Identifier)
+	workspaces, err := store.ListWorkspaces(ctx)
+	if err != nil {
+		return WorkspaceResolveResponse{}, err
+	}
+
+	if identifier == "" {
+		workspaceID, err := resolveWorkspaceIDByPath(ctx, store, req.CWD, workspaces)
+		if err != nil {
+			return WorkspaceResolveResponse{}, mapResolvePathError(err)
+		}
+		workspace, err := getWorkspaceResponse(ctx, store, workspaceID)
+		if err != nil {
+			return WorkspaceResolveResponse{}, err
+		}
+		return WorkspaceResolveResponse{Workspace: workspace}, nil
+	}
+
+	for _, workspace := range workspaces {
+		if workspace.ID == identifier {
+			resolved, err := getWorkspaceResponse(ctx, store, workspace.ID)
+			if err != nil {
+				return WorkspaceResolveResponse{}, err
+			}
+			return WorkspaceResolveResponse{Workspace: resolved}, nil
+		}
+	}
+
+	nameMatches := make([]globaldb.Workspace, 0)
+	prefixMatches := make([]globaldb.Workspace, 0)
+	for _, workspace := range workspaces {
+		if workspace.Name == identifier {
+			nameMatches = append(nameMatches, workspace)
+		}
+		if strings.HasPrefix(workspace.ID, identifier) {
+			prefixMatches = append(prefixMatches, workspace)
+		}
+	}
+
+	if len(nameMatches) == 1 {
+		resolved, err := getWorkspaceResponse(ctx, store, nameMatches[0].ID)
+		if err != nil {
+			return WorkspaceResolveResponse{}, err
+		}
+		return WorkspaceResolveResponse{Workspace: resolved}, nil
+	}
+	if len(nameMatches) > 1 {
+		workspaceID, err := resolveWorkspaceIDByPath(ctx, store, req.CWD, nameMatches)
+		if err != nil {
+			if isResolvePathNoMatch(err) {
+				return WorkspaceResolveResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "Workspace name is ambiguous; run `ari workspace set <id-or-name>` to choose one", map[string]any{"reason": "ambiguous_workspace_name"})
+			}
+			return WorkspaceResolveResponse{}, mapResolvePathError(err)
+		}
+		resolved, err := getWorkspaceResponse(ctx, store, workspaceID)
+		if err != nil {
+			return WorkspaceResolveResponse{}, err
+		}
+		return WorkspaceResolveResponse{Workspace: resolved}, nil
+	}
+
+	if len(prefixMatches) == 1 {
+		resolved, err := getWorkspaceResponse(ctx, store, prefixMatches[0].ID)
+		if err != nil {
+			return WorkspaceResolveResponse{}, err
+		}
+		return WorkspaceResolveResponse{Workspace: resolved}, nil
+	}
+	if len(prefixMatches) > 1 {
+		return WorkspaceResolveResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "Workspace ID prefix is ambiguous", map[string]any{"reason": "ambiguous_workspace_id_prefix"})
+	}
+
+	return WorkspaceResolveResponse{}, rpc.NewHandlerError(rpc.SessionNotFound, "Workspace not found", map[string]any{"workspace": identifier})
+}
+
+type resolvePathReason string
+
+const (
+	resolvePathNoMatch   resolvePathReason = "no_match"
+	resolvePathAmbiguous resolvePathReason = "ambiguous"
+)
+
+type resolvePathError struct {
+	reason resolvePathReason
+}
+
+func (e resolvePathError) Error() string {
+	switch e.reason {
+	case resolvePathNoMatch:
+		return "No workspace matches current directory"
+	case resolvePathAmbiguous:
+		return "current directory matches multiple workspaces; run `ari workspace set <id-or-name>` to choose one"
+	default:
+		return "workspace resolution from current directory failed"
+	}
+}
+
+func isResolvePathNoMatch(err error) bool {
+	var target resolvePathError
+	return errors.As(err, &target) && target.reason == resolvePathNoMatch
+}
+
+func mapResolvePathError(err error) error {
+	var target resolvePathError
+	if !errors.As(err, &target) {
+		return err
+	}
+	return rpc.NewHandlerError(rpc.InvalidParams, target.Error(), map[string]any{"reason": string(target.reason)})
+}
+
+func resolveWorkspaceIDByPath(ctx context.Context, store *globaldb.Store, cwd string, workspaces []globaldb.Workspace) (string, error) {
+	path := strings.TrimSpace(cwd)
+	if path == "" {
+		return "", rpc.NewHandlerError(rpc.InvalidParams, "cwd is required", nil)
+	}
+	normalized, err := filepath.Abs(path)
+	if err != nil {
+		return "", rpc.NewHandlerError(rpc.InvalidParams, err.Error(), nil)
+	}
+
+	type match struct {
+		workspaceID string
+		depth       int
+	}
+	matches := make([]match, 0)
+	for _, workspace := range workspaces {
+		bestDepth := -1
+		if strings.TrimSpace(workspace.OriginRoot) != "" {
+			originRoot, err := filepath.Abs(workspace.OriginRoot)
+			if err != nil {
+				return "", rpc.NewHandlerError(rpc.InvalidParams, err.Error(), nil)
+			}
+			if pathContains(originRoot, normalized) {
+				bestDepth = pathDepth(originRoot)
+			}
+		}
+		folders, err := store.ListFolders(ctx, workspace.ID)
+		if err != nil {
+			return "", mapWorkspaceStoreError(err, workspace.ID)
+		}
+		for _, folder := range folders {
+			folderPath, err := filepath.Abs(folder.FolderPath)
+			if err != nil {
+				return "", rpc.NewHandlerError(rpc.InvalidParams, err.Error(), nil)
+			}
+			if !pathContains(folderPath, normalized) {
+				continue
+			}
+			if depth := pathDepth(folderPath); depth > bestDepth {
+				bestDepth = depth
+			}
+		}
+		if bestDepth >= 0 {
+			matches = append(matches, match{workspaceID: workspace.ID, depth: bestDepth})
+		}
+	}
+	if len(matches) == 0 {
+		return "", resolvePathError{reason: resolvePathNoMatch}
+	}
+	sort.Slice(matches, func(i, j int) bool {
+		if matches[i].depth == matches[j].depth {
+			return matches[i].workspaceID < matches[j].workspaceID
+		}
+		return matches[i].depth > matches[j].depth
+	})
+	if len(matches) > 1 && matches[0].depth == matches[1].depth {
+		return "", resolvePathError{reason: resolvePathAmbiguous}
+	}
+	return matches[0].workspaceID, nil
+}
+
+func getWorkspaceResponse(ctx context.Context, store *globaldb.Store, workspaceID string) (WorkspaceGetResponse, error) {
+	workspace, err := store.GetWorkspace(ctx, workspaceID)
+	if err != nil {
+		return WorkspaceGetResponse{}, mapWorkspaceStoreError(err, workspaceID)
+	}
+	folders, err := store.ListFolders(ctx, workspace.ID)
+	if err != nil {
+		return WorkspaceGetResponse{}, mapWorkspaceStoreError(err, workspace.ID)
+	}
+	folderInfo := make([]WorkspaceFolderInfo, 0, len(folders))
+	for _, folder := range folders {
+		folderInfo = append(folderInfo, WorkspaceFolderInfo{Path: folder.FolderPath, VCSType: folder.VCSType, IsPrimary: folder.IsPrimary, AddedAt: folder.AddedAt, HasConfig: hasAriConfig(folder.FolderPath)})
+	}
+	return WorkspaceGetResponse{WorkspaceID: workspace.ID, Name: workspace.Name, Status: workspace.Status, VCSPreference: workspace.VCSPreference, OriginRoot: workspace.OriginRoot, CleanupPolicy: workspace.CleanupPolicy, CreatedAt: workspace.CreatedAt, UpdatedAt: workspace.UpdatedAt, Folders: folderInfo}, nil
 }
 
 func pathDepth(path string) int {

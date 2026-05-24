@@ -348,15 +348,15 @@ func TestWorkspaceCommandFlowsUseWorkspaceTargetBoundaryNames(t *testing.T) {
 }
 
 func TestActiveWorkspaceConfigAccessStaysInsideBoundary(t *testing.T) {
-	for _, name := range []string{"command.go", "context.go", "session.go", "workspace.go", "workspace_command.go"} {
+	for _, name := range []string{"command.go", "context.go", "session.go", "workspace.go", "workspace_command.go", "profile.go"} {
 		data, err := os.ReadFile(filepath.Join(".", name))
 		if err != nil {
 			t.Fatalf("ReadFile %s returned error: %v", name, err)
 		}
 		content := string(data)
-		for _, stale := range []string{"config.ReadActiveWorkspace", "config.WriteActiveWorkspace"} {
+		for _, stale := range []string{"config.ReadActiveWorkspace", "config.WriteActiveWorkspace", "config.WriteDefaultHarness", "config.WritePreferredModel", "config.WriteDefaultInvocationClass"} {
 			if strings.Contains(content, stale) {
-				t.Fatalf("%s accesses active workspace config directly; use active_workspace.go boundary", name)
+				t.Fatalf("%s accesses CLI config directly through %s; use an approved daemon-owned boundary", name, stale)
 			}
 		}
 	}

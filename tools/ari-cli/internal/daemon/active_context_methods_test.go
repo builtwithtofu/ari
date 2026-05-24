@@ -101,6 +101,71 @@ func TestWorkspaceMembershipsForPathDeduplicatesWorkspaceByClosestFolder(t *test
 	}
 }
 
+func TestWorkspaceResolveByIDNamePrefixAndCWD(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	root := t.TempDir()
+	alphaRoot := filepath.Join(root, "alpha")
+	betaRoot := filepath.Join(root, "beta")
+	nestedRoot := filepath.Join(alphaRoot, "nested")
+	seedSessionWithPrimaryFolder(t, store, "aaaaaaaa-1111", alphaRoot)
+	if err := store.CreateWorkspace(context.Background(), "bbbbbbbb-2222", "beta-name", t.TempDir(), "manual", "auto"); err != nil {
+		t.Fatalf("CreateWorkspace returned error: %v", err)
+	}
+	if err := store.AddFolder(context.Background(), "bbbbbbbb-2222", betaRoot, "git", true); err != nil {
+		t.Fatalf("AddFolder beta returned error: %v", err)
+	}
+	if err := store.AddFolder(context.Background(), "aaaaaaaa-1111", nestedRoot, "git", false); err != nil {
+		t.Fatalf("AddFolder returned error: %v", err)
+	}
+
+	byID := callMethod[WorkspaceResolveResponse](t, registry, "workspace.resolve", WorkspaceResolveRequest{Identifier: "aaaaaaaa-1111"})
+	if byID.Workspace.WorkspaceID != "aaaaaaaa-1111" {
+		t.Fatalf("by ID workspace = %q", byID.Workspace.WorkspaceID)
+	}
+	byName := callMethod[WorkspaceResolveResponse](t, registry, "workspace.resolve", WorkspaceResolveRequest{Identifier: "beta-name"})
+	if byName.Workspace.WorkspaceID != "bbbbbbbb-2222" {
+		t.Fatalf("by name workspace = %q", byName.Workspace.WorkspaceID)
+	}
+	byPrefix := callMethod[WorkspaceResolveResponse](t, registry, "workspace.resolve", WorkspaceResolveRequest{Identifier: "aaaa"})
+	if byPrefix.Workspace.WorkspaceID != "aaaaaaaa-1111" {
+		t.Fatalf("by prefix workspace = %q", byPrefix.Workspace.WorkspaceID)
+	}
+	byCWD := callMethod[WorkspaceResolveResponse](t, registry, "workspace.resolve", WorkspaceResolveRequest{CWD: filepath.Join(nestedRoot, "deeper")})
+	if byCWD.Workspace.WorkspaceID != "aaaaaaaa-1111" {
+		t.Fatalf("by cwd workspace = %q", byCWD.Workspace.WorkspaceID)
+	}
+}
+
+func TestWorkspaceResolveReportsPrefixAndCWDAmbiguity(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	shared := t.TempDir()
+	if err := store.CreateWorkspace(context.Background(), "abc111", "alpha", shared, "manual", "auto"); err != nil {
+		t.Fatalf("CreateWorkspace abc111 returned error: %v", err)
+	}
+	if err := store.CreateWorkspace(context.Background(), "abc222", "beta", shared, "manual", "auto"); err != nil {
+		t.Fatalf("CreateWorkspace abc222 returned error: %v", err)
+	}
+
+	prefixErr := callMethodError(registry, "workspace.resolve", WorkspaceResolveRequest{Identifier: "abc"})
+	if prefixErr == nil || prefixErr.Error() != "Workspace ID prefix is ambiguous" {
+		t.Fatalf("prefix error = %v, want ambiguous prefix", prefixErr)
+	}
+	cwdErr := callMethodError(registry, "workspace.resolve", WorkspaceResolveRequest{CWD: shared})
+	if cwdErr == nil || cwdErr.Error() != "current directory matches multiple workspaces; run `ari workspace set <id-or-name>` to choose one" {
+		t.Fatalf("cwd error = %v, want ambiguous cwd", cwdErr)
+	}
+}
+
 func TestDashboardGetUsesActiveContextAndIncludesCwdMemberships(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
