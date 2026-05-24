@@ -144,6 +144,58 @@ func TestTopLevelExecSubcommandsExist(t *testing.T) {
 	}
 }
 
+func TestExecOperationUsesFreshContextAfterWorkflowSetup(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalResolveWorkflowContext := commandResolveWorkflowContext
+	originalEnsure := commandEnsureDaemonRunning
+	originalList := commandListRPC
+	var setupCtx context.Context
+	commandEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	commandResolveWorkflowContext = func(ctx context.Context, _ string, workspaceOverride string) (WorkflowContext, error) {
+		setupCtx = ctx
+		return WorkflowContext{WorkspaceID: "ws-1", Workspace: &daemon.WorkspaceGetResponse{WorkspaceID: "ws-1", OriginRoot: t.TempDir()}, Source: WorkflowContextSourceExplicit}, nil
+	}
+	commandListRPC = func(ctx context.Context, _ string, workspaceID string) (daemon.CommandListResponse, error) {
+		if ctx == nil {
+			t.Fatal("command list RPC received nil context")
+		}
+		if setupCtx == nil {
+			t.Fatal("setup context was not captured")
+		}
+		if ctx == setupCtx {
+			t.Fatal("command list reused setup context; want a fresh operation timeout")
+		}
+		if _, ok := ctx.Deadline(); !ok {
+			t.Fatal("command list context has no operation deadline")
+		}
+		if workspaceID != "ws-1" {
+			t.Fatalf("workspaceID = %q, want ws-1", workspaceID)
+		}
+		return daemon.CommandListResponse{}, nil
+	}
+	t.Cleanup(func() {
+		commandResolveWorkflowContext = originalResolveWorkflowContext
+		commandEnsureDaemonRunning = originalEnsure
+		commandListRPC = originalList
+	})
+
+	if _, err := executeRootCommand("exec", "list", "--workspace", "alpha"); err != nil {
+		t.Fatalf("exec list returned error: %v", err)
+	}
+}
+
+func TestWorkspaceCommandRunDoesNotConstructPartialExecWorkflow(t *testing.T) {
+	data, err := os.ReadFile("workspace_command.go")
+	if err != nil {
+		t.Fatalf("ReadFile workspace_command.go returned error: %v", err)
+	}
+	if strings.Contains(string(data), "&execWorkflow{") {
+		t.Fatal("workspace command run constructs execWorkflow directly; use newExecWorkflow so ctx and cancel are initialized")
+	}
+}
+
 func TestWorkspaceTargetingHelpRegistersWorkspaceFlagOnly(t *testing.T) {
 	tests := []struct {
 		name string

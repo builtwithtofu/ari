@@ -253,7 +253,7 @@ func newWorkspaceCommandRunCmd() *cobra.Command {
 				return mapCommandRPCError(err)
 			}
 
-			workflow := &execWorkflow{cfg: cfg, workflowCtx: target}
+			workflow := newExecWorkflow(cmd.Context(), cfg, target)
 			return workflow.runOneOffCommand(cmd, definition.Command, definition.Args)
 		},
 	}

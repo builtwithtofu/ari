@@ -23,6 +23,13 @@ type execWorkflow struct {
 	workflowCtx WorkflowContext
 }
 
+func newExecWorkflow(ctx context.Context, cfg *config.Config, workflowCtx WorkflowContext) *execWorkflow {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return &execWorkflow{ctx: ctx, cancel: func() {}, cfg: cfg, workflowCtx: workflowCtx}
+}
+
 func startExecWorkflow(cmd *cobra.Command, workspaceRef string) (*execWorkflow, error) {
 	if cmd == nil {
 		return nil, fmt.Errorf("exec workflow: command is required")
@@ -41,22 +48,23 @@ func startExecWorkflow(cmd *cobra.Command, workspaceRef string) (*execWorkflow, 
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
-	workflowCtx, err := commandResolveWorkflowContext(ctx, cfg.Daemon.SocketPath, workspaceRef)
+	setupCtx, setupCancel := context.WithTimeout(cmd.Context(), 5*time.Second)
+	defer setupCancel()
+	workflowCtx, err := commandResolveWorkflowContext(setupCtx, cfg.Daemon.SocketPath, workspaceRef)
 	if err != nil {
-		cancel()
 		return nil, err
 	}
 	if err := commandEnsureWorkspaceScope(workflowCtx.Workspace, workspaceRef); err != nil {
-		cancel()
 		return nil, err
 	}
 
-	return &execWorkflow{ctx: ctx, cancel: cancel, cfg: cfg, workflowCtx: workflowCtx}, nil
+	return newExecWorkflow(cmd.Context(), cfg, workflowCtx), nil
 }
 
 func (workflow *execWorkflow) listCommands() (daemon.CommandListResponse, error) {
-	resp, err := commandListRPC(workflow.ctx, workflow.cfg.Daemon.SocketPath, workflow.workflowCtx.WorkspaceID)
+	ctx, cancel := workflow.operationContext()
+	defer cancel()
+	resp, err := commandListRPC(ctx, workflow.cfg.Daemon.SocketPath, workflow.workflowCtx.WorkspaceID)
 	if err != nil {
 		return daemon.CommandListResponse{}, mapCommandRPCError(err)
 	}
@@ -64,7 +72,9 @@ func (workflow *execWorkflow) listCommands() (daemon.CommandListResponse, error)
 }
 
 func (workflow *execWorkflow) getCommand(commandID string) (daemon.CommandGetResponse, error) {
-	resp, err := commandGetRPC(workflow.ctx, workflow.cfg.Daemon.SocketPath, workflow.workflowCtx.WorkspaceID, commandID)
+	ctx, cancel := workflow.operationContext()
+	defer cancel()
+	resp, err := commandGetRPC(ctx, workflow.cfg.Daemon.SocketPath, workflow.workflowCtx.WorkspaceID, commandID)
 	if err != nil {
 		return daemon.CommandGetResponse{}, mapCommandRPCError(err)
 	}
@@ -72,7 +82,9 @@ func (workflow *execWorkflow) getCommand(commandID string) (daemon.CommandGetRes
 }
 
 func (workflow *execWorkflow) commandOutput(commandID string) (daemon.CommandOutputResponse, error) {
-	resp, err := commandOutputRPC(workflow.ctx, workflow.cfg.Daemon.SocketPath, workflow.workflowCtx.WorkspaceID, commandID)
+	ctx, cancel := workflow.operationContext()
+	defer cancel()
+	resp, err := commandOutputRPC(ctx, workflow.cfg.Daemon.SocketPath, workflow.workflowCtx.WorkspaceID, commandID)
 	if err != nil {
 		return daemon.CommandOutputResponse{}, mapCommandRPCError(err)
 	}
@@ -80,11 +92,20 @@ func (workflow *execWorkflow) commandOutput(commandID string) (daemon.CommandOut
 }
 
 func (workflow *execWorkflow) stopCommand(commandID string) (daemon.CommandStopResponse, error) {
-	resp, err := commandStopRPC(workflow.ctx, workflow.cfg.Daemon.SocketPath, workflow.workflowCtx.WorkspaceID, commandID)
+	ctx, cancel := workflow.operationContext()
+	defer cancel()
+	resp, err := commandStopRPC(ctx, workflow.cfg.Daemon.SocketPath, workflow.workflowCtx.WorkspaceID, commandID)
 	if err != nil {
 		return daemon.CommandStopResponse{}, mapCommandRPCError(err)
 	}
 	return resp, nil
+}
+
+func (workflow *execWorkflow) operationContext() (context.Context, context.CancelFunc) {
+	if workflow == nil || workflow.ctx == nil {
+		return context.WithTimeout(context.Background(), 5*time.Second)
+	}
+	return context.WithTimeout(workflow.ctx, 5*time.Second)
 }
 
 func (workflow *execWorkflow) runOneOffCommand(cmd *cobra.Command, command string, args []string) error {
