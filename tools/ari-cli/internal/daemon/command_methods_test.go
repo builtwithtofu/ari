@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -693,11 +694,16 @@ func newCommandMethodTestStore(t *testing.T) *globaldb.Store {
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
+	if _, err := db.Exec("PRAGMA journal_mode = DELETE"); err != nil {
+		t.Fatalf("set journal mode: %v", err)
+	}
 	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
 		t.Fatalf("set busy timeout: %v", err)
 	}
 	t.Cleanup(func() {
 		_ = db.Close()
+		_ = os.Remove(dbPath + "-wal")
+		_ = os.Remove(dbPath + "-shm")
 	})
 
 	store, err := globaldb.NewSQLStore(db)

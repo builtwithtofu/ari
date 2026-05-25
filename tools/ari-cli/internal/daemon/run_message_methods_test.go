@@ -1512,7 +1512,8 @@ func TestEphemeralCallRejectsDuplicateCallIDRequestMessageConflictWithStructured
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
-	_ = callMethod[EphemeralCallResponse](t, registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-dup", SessionID: "call-dup-run-1", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research this"})
+	first := callMethod[EphemeralCallResponse](t, registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-dup", SessionID: "call-dup-run-1", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research this"})
+	waitForStoredHarnessSession(t, ctx, store, first.Run.SessionID, func(run globaldb.HarnessSession) bool { return run.Status == "completed" })
 	err := callMethodError(registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-dup", SessionID: "call-dup-run-2", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research this again"})
 	handlerErr, ok := err.(*rpc.HandlerError)
 	if !ok || handlerErr.Code != rpc.InvalidParams {
@@ -1586,6 +1587,9 @@ func TestEphemeralCallCoversPlannerExecutorReviewerAndParallelOrchestratorWorkfl
 	if executorCall.Run.AgentID != "executor" || reviewerCall.Run.AgentID != "reviewer" || plannerCall.Run.AgentID != "planner" {
 		t.Fatalf("calls = %#v %#v %#v, want target-specific ephemeral runs", executorCall.Run, reviewerCall.Run, plannerCall.Run)
 	}
+	waitForStoredHarnessSession(t, ctx, store, executorCall.Run.SessionID, func(run globaldb.HarnessSession) bool { return run.Status == "completed" })
+	waitForStoredHarnessSession(t, ctx, store, reviewerCall.Run.SessionID, func(run globaldb.HarnessSession) bool { return run.Status == "completed" })
+	waitForStoredHarnessSession(t, ctx, store, plannerCall.Run.SessionID, func(run globaldb.HarnessSession) bool { return run.Status == "completed" })
 	reviewerTail, err := store.TailRunLogMessages(ctx, reviewerCall.Run.SessionID, 4)
 	if err != nil {
 		t.Fatalf("TailRunLogMessages reviewer returned error: %v", err)
