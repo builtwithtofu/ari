@@ -212,3 +212,11 @@ func TestProfileRejectsSecretLikeDefaults(t *testing.T) {
 		}
 	}
 }
+
+func TestProfileAllowsNonSecretSourceDefaults(t *testing.T) {
+	store := newGlobalDBTestStore(t, "agent-profile-source-defaults")
+	err := store.UpsertProfile(context.Background(), Profile{ProfileID: "ap_source", Name: "source-default", DefaultsJSON: `{"source":"harness","source_ref":"provider-documentation"}`})
+	if err != nil {
+		t.Fatalf("UpsertProfile returned error for non-secret source defaults: %v", err)
+	}
+}

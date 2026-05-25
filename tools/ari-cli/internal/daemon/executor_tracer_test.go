@@ -486,6 +486,37 @@ func TestAuthStatusPersistsCodexNamedSlotReadiness(t *testing.T) {
 	}
 }
 
+func TestAuthStatusDoesNotReportOpenCodeNamedSlotReadyWithoutProjection(t *testing.T) {
+	registry := NewHarnessRegistry()
+	if err := registry.Register(HarnessNameOpenCode, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return &capturingHarness{name: HarnessNameOpenCode, authStatuses: map[string]HarnessAuthState{"opencode-work": HarnessAuthAuthenticated}}, nil
+	}); err != nil {
+		t.Fatalf("register harness: %v", err)
+	}
+	daemon := &Daemon{harnessRegistry: registry}
+	store := newCommandMethodTestStore(t)
+	if err := store.UpsertAuthSlot(context.Background(), globaldb.AuthSlot{AuthSlotID: "opencode-work", Harness: HarnessNameOpenCode, Label: "Work", Status: "unknown", MetadataJSON: "{}"}); err != nil {
+		t.Fatalf("UpsertAuthSlot returned error: %v", err)
+	}
+
+	resp, err := daemon.harnessAuthStatus(context.Background(), store, HarnessAuthStatusRequest{})
+	if err != nil {
+		t.Fatalf("harnessAuthStatus returned error: %v", err)
+	}
+	var found HarnessAuthStatus
+	for _, status := range resp.Statuses {
+		if status.AuthSlotID == "opencode-work" {
+			found = status
+		}
+	}
+	if found.Status != HarnessAuthRequired || found.Remediation == nil || found.Remediation.Method != "ari_secret_projection_required" {
+		t.Fatalf("status = %#v, want auth_required projection remediation", found)
+	}
+}
+
 func TestAuthStatusRejectsUnknownRequestedSlot(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()

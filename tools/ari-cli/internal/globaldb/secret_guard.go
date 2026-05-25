@@ -23,8 +23,6 @@ var secretLikeFieldNames = map[string]struct{}{
 	"secret":                {},
 	"session_key":           {},
 	"signing_key":           {},
-	"source":                {},
-	"source_ref":            {},
 	"ssh_key":               {},
 	"token":                 {},
 }

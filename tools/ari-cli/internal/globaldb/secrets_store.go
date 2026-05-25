@@ -233,10 +233,12 @@ func (s *Store) GrantSecretAccess(ctx context.Context, grant SecretGrant) (Secre
 	if err := s.sqlcQueries().UpsertSecretGrant(ctx, dbsqlc.UpsertSecretGrantParams{GrantID: grant.GrantID, SecretID: grant.SecretID, SubjectType: grant.SubjectType, SubjectID: grant.SubjectID, Purpose: grant.Purpose, CreatedAt: grant.CreatedAt.Format(time.RFC3339Nano), ExpiresAt: expiresAt}); err != nil {
 		return SecretGrant{}, fmt.Errorf("upsert secret grant %q: %w", grant.GrantID, err)
 	}
-	if existing, err := s.GetSecretGrantBySubject(ctx, grant.SecretID, grant.SubjectType, grant.SubjectID, grant.Purpose); err == nil {
-		grant.GrantID = existing.GrantID
-		grant.CreatedAt = existing.CreatedAt
+	existing, err := s.GetSecretGrantBySubject(ctx, grant.SecretID, grant.SubjectType, grant.SubjectID, grant.Purpose)
+	if err != nil {
+		return SecretGrant{}, fmt.Errorf("reload secret grant %q: %w", grant.GrantID, err)
 	}
+	grant.GrantID = existing.GrantID
+	grant.CreatedAt = existing.CreatedAt
 	if err := s.appendSecretAuditEvent(ctx, SecretAuditEventGranted, grant, false); err != nil {
 		return SecretGrant{}, err
 	}

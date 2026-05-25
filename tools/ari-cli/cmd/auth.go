@@ -341,7 +341,7 @@ func providerLoginEnv(harness, authSlotID string) ([]string, error) {
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		return nil, fmt.Errorf("create auth slot config dir: %w", err)
 	}
-	return append(os.Environ(), key+"="+home), nil
+	return environmentWithOverride(os.Environ(), key, home), nil
 }
 
 func safeAuthSlotPathComponent(value string) string {
@@ -352,10 +352,22 @@ func safeAuthSlotPathComponent(value string) string {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
 			out.WriteRune(r)
 		default:
-			out.WriteByte('-')
+			_, _ = fmt.Fprintf(&out, "-%x-", r)
 		}
 	}
 	return strings.Trim(strings.ToLower(out.String()), "-._")
+}
+
+func environmentWithOverride(env []string, key, value string) []string {
+	prefix := key + "="
+	out := make([]string, 0, len(env)+1)
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return append(out, prefix+value)
 }
 
 func authProviderLoginArgs(harness, method, provider string) []string {

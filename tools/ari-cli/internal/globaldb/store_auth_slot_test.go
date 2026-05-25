@@ -56,7 +56,7 @@ func TestAuthSlotRejectsSourceFieldsInMetadata(t *testing.T) {
 	ctx := context.Background()
 
 	for _, metadata := range []string{
-		`{"provider":{"source_ref":"/secret"}}`,
+		`{"provider":{"credential_source_ref":"/secret"}}`,
 		`{"api_key":"sk-test"}`,
 		`{"client_secret":"shh"}`,
 		`{"nested":{"bearer_token":"tok"}}`,
@@ -66,6 +66,14 @@ func TestAuthSlotRejectsSourceFieldsInMetadata(t *testing.T) {
 		if !errors.Is(err, ErrInvalidInput) {
 			t.Fatalf("UpsertAuthSlot metadata %s error = %v, want ErrInvalidInput", metadata, err)
 		}
+	}
+}
+
+func TestAuthSlotAllowsNonSecretSourceMetadata(t *testing.T) {
+	store := newGlobalDBTestStore(t, "auth-slot-source-metadata")
+	err := store.UpsertAuthSlot(context.Background(), AuthSlot{AuthSlotID: "codex-work", Harness: "codex", Label: "Work", Status: "authenticated", MetadataJSON: `{"source":"harness","source_ref":"provider-documentation"}`})
+	if err != nil {
+		t.Fatalf("UpsertAuthSlot returned error for non-secret source metadata: %v", err)
 	}
 }
 

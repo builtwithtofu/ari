@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/config"
@@ -58,7 +59,7 @@ func TestProviderLoginEnvScopesNamedClaudeAndCodexSlots(t *testing.T) {
 		wantKey  string
 		wantPath string
 	}{
-		{name: "codex", harness: daemon.HarnessNameCodex, slotID: "codex-Work/Org", wantKey: "CODEX_HOME", wantPath: filepath.Join(configRoot, "ari", "auth-slots", daemon.HarnessNameCodex, "codex-work-org")},
+		{name: "codex", harness: daemon.HarnessNameCodex, slotID: "codex-Work/Org", wantKey: "CODEX_HOME", wantPath: filepath.Join(configRoot, "ari", "auth-slots", daemon.HarnessNameCodex, "codex-work-2f-org")},
 		{name: "claude", harness: daemon.HarnessNameClaude, slotID: "claude-work", wantKey: "CLAUDE_CONFIG_DIR", wantPath: filepath.Join(configRoot, "ari", "auth-slots", daemon.HarnessNameClaude, "claude-work")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -74,6 +75,35 @@ func TestProviderLoginEnvScopesNamedClaudeAndCodexSlots(t *testing.T) {
 				t.Fatalf("env missing %q in %#v", want, env)
 			}
 		})
+	}
+}
+
+func TestProviderLoginEnvReplacesExistingProviderHome(t *testing.T) {
+	configRoot := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configRoot)
+	t.Setenv("CODEX_HOME", "/old/codex")
+
+	env, err := providerLoginEnv(daemon.HarnessNameCodex, "codex-work")
+	if err != nil {
+		t.Fatalf("providerLoginEnv returned error: %v", err)
+	}
+	want := "CODEX_HOME=" + filepath.Join(configRoot, "ari", "auth-slots", daemon.HarnessNameCodex, "codex-work")
+	var matches []string
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "CODEX_HOME=") {
+			matches = append(matches, entry)
+		}
+	}
+	if len(matches) != 1 || matches[0] != want {
+		t.Fatalf("CODEX_HOME entries = %#v, want only %q", matches, want)
+	}
+}
+
+func TestSafeAuthSlotPathComponentAvoidsPunctuationCollisions(t *testing.T) {
+	first := safeAuthSlotPathComponent("codex-work/org")
+	second := safeAuthSlotPathComponent("codex-work!org")
+	if first == second {
+		t.Fatalf("safeAuthSlotPathComponent collision = %q", first)
 	}
 }
 

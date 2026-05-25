@@ -1208,10 +1208,21 @@ func (d *Daemon) harnessAuthStatus(ctx context.Context, store *globaldb.Store, r
 		if err := storePersistAuthStatus(ctx, store, storedByID, slot.AuthSlotID, status.Status); err != nil {
 			return HarnessAuthStatusResponse{}, err
 		}
+		if status.Status == HarnessAuthAuthenticated && opencodeNamedSlotMissingProjection(storedByID[slot.AuthSlotID]) {
+			status = NewHarnessAuthRequired(harness, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, Method: "ari_secret_projection_required", SecretOwnedBy: HarnessNameOpenCode})
+		}
 		status.Name = authStatusName(slot, status.Harness)
 		statuses = append(statuses, status)
 	}
 	return HarnessAuthStatusResponse{Statuses: statuses}, nil
+}
+
+func opencodeNamedSlotMissingProjection(slot globaldb.AuthSlot) bool {
+	if strings.TrimSpace(slot.Harness) != HarnessNameOpenCode || authSlotIsDefaultForHarness(HarnessNameOpenCode, slot.AuthSlotID) {
+		return false
+	}
+	_, err := opencodeProjectionSecretID(slot.MetadataJSON)
+	return err != nil
 }
 
 func authStatusName(slot HarnessAuthSlot, harness string) string {
