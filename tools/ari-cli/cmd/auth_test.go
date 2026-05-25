@@ -3,6 +3,8 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/config"
@@ -43,6 +45,45 @@ func TestAuthSlotIDForNameKeepsAriNameSeparateFromOpenCodeProvider(t *testing.T)
 		if args[i] != want[i] {
 			t.Fatalf("args = %#v, want %#v", args, want)
 		}
+	}
+}
+
+func TestProviderLoginEnvScopesNamedClaudeAndCodexSlots(t *testing.T) {
+	configRoot := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configRoot)
+	for _, tc := range []struct {
+		name     string
+		harness  string
+		slotID   string
+		wantKey  string
+		wantPath string
+	}{
+		{name: "codex", harness: daemon.HarnessNameCodex, slotID: "codex-Work/Org", wantKey: "CODEX_HOME", wantPath: filepath.Join(configRoot, "ari", "auth-slots", daemon.HarnessNameCodex, "codex-work-org")},
+		{name: "claude", harness: daemon.HarnessNameClaude, slotID: "claude-work", wantKey: "CLAUDE_CONFIG_DIR", wantPath: filepath.Join(configRoot, "ari", "auth-slots", daemon.HarnessNameClaude, "claude-work")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env, err := providerLoginEnv(tc.harness, tc.slotID)
+			if err != nil {
+				t.Fatalf("providerLoginEnv returned error: %v", err)
+			}
+			if _, err := os.Stat(tc.wantPath); err != nil {
+				t.Fatalf("auth slot dir stat error = %v, want created %s", err, tc.wantPath)
+			}
+			want := tc.wantKey + "=" + tc.wantPath
+			if !containsString(env, want) {
+				t.Fatalf("env missing %q in %#v", want, env)
+			}
+		})
+	}
+}
+
+func TestProviderLoginEnvLeavesDefaultSlotsNative(t *testing.T) {
+	env, err := providerLoginEnv(daemon.HarnessNameCodex, "codex-default")
+	if err != nil {
+		t.Fatalf("providerLoginEnv returned error: %v", err)
+	}
+	if env != nil {
+		t.Fatalf("env = %#v, want nil for default native auth", env)
 	}
 }
 
@@ -139,14 +180,47 @@ func TestAuthLogoutCommandUsesDefaultAccountWhenNameOmitted(t *testing.T) {
 	}
 }
 
-func TestAuthCommandRegistersDoctor(t *testing.T) {
-	cmd := NewAuthCmd()
-	for _, subcommand := range cmd.Commands() {
-		if subcommand.Name() == "doctor" {
-			return
+func TestAuthStatusCommandRendersActualSecretOwner(t *testing.T) {
+	restore := replaceAuthCommandDeps(t)
+	defer restore()
+	authStatusRPC = func(ctx context.Context, socketPath string, req daemon.HarnessAuthStatusRequest) (daemon.HarnessAuthStatusResponse, error) {
+		_ = ctx
+		_ = socketPath
+		_ = req
+		return daemon.HarnessAuthStatusResponse{Statuses: []daemon.HarnessAuthStatus{
+			{Harness: daemon.HarnessNameCodex, AuthSlotID: "codex-default", Name: "default", Status: daemon.HarnessAuthAuthenticated, AriSecretStorage: daemon.HarnessAriSecretStorageNone},
+			{Harness: daemon.HarnessNameOpenCode, AuthSlotID: "opencode-work", Name: "work", Status: daemon.HarnessAuthAuthenticated, AriSecretStorage: daemon.HarnessAriSecretStorage("projected")},
+		}}, nil
+	}
+	cmd := newAuthStatusCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("auth status returned error: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"codex\tauthenticated\tname=default\tsecrets=provider-owned", "opencode\tauthenticated\tname=work\tsecrets=projected"} {
+		if !bytes.Contains([]byte(got), []byte(want)) {
+			t.Fatalf("output = %q, want %q", got, want)
 		}
 	}
-	t.Fatalf("auth command did not register doctor subcommand")
+	assertAuthDoctorOutputHasNoSecretFields(t, got)
+}
+
+func TestAuthCommandRegistersDoctor(t *testing.T) {
+	cmd := NewAuthCmd()
+	want := map[string]bool{"doctor": false, "list": false, "remove": false}
+	for _, subcommand := range cmd.Commands() {
+		if _, ok := want[subcommand.Name()]; ok {
+			want[subcommand.Name()] = true
+		}
+	}
+	for name, seen := range want {
+		if !seen {
+			t.Fatalf("auth command did not register %s subcommand", name)
+		}
+	}
 }
 
 func TestAuthDoctorCommandUsesDaemonDiagnosis(t *testing.T) {
@@ -332,6 +406,71 @@ func TestAuthLogoutCommandScopesTimeoutToFinalRPC(t *testing.T) {
 	}
 }
 
+func TestAuthListCommandUsesDaemonSlotList(t *testing.T) {
+	restore := replaceAuthCommandDeps(t)
+	defer restore()
+	var captured daemon.AuthSlotListRequest
+	authSlotListRPC = func(ctx context.Context, socketPath string, req daemon.AuthSlotListRequest) (daemon.AuthSlotListResponse, error) {
+		_ = ctx
+		if socketPath != "/tmp/ari-test.sock" {
+			t.Fatalf("socketPath = %q, want test socket", socketPath)
+		}
+		captured = req
+		return daemon.AuthSlotListResponse{Slots: []daemon.AuthSlotResponse{{AuthSlotID: "opencode-work", Harness: daemon.HarnessNameOpenCode, Label: "work\trow", ProviderLabel: "openai\nprovider", Status: string(daemon.HarnessAuthAuthenticated)}}}, nil
+	}
+	cmd := newAuthListCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"--harness", daemon.HarnessNameOpenCode})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("auth list returned error: %v", err)
+	}
+	if captured.Harness != daemon.HarnessNameOpenCode {
+		t.Fatalf("list request = %#v, want harness filter", captured)
+	}
+	got := out.String()
+	if !bytes.Contains([]byte(got), []byte("opencode\twork_row\topencode-work\tprovider=openai_provider\tstatus=authenticated")) {
+		t.Fatalf("output = %q, want sanitized slot row", got)
+	}
+	assertAuthDoctorOutputHasNoSecretFields(t, got)
+}
+
+func TestAuthRemoveCommandRequiresExplicitConfirmation(t *testing.T) {
+	cmd := newAuthRemoveCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--harness", daemon.HarnessNameOpenCode, "--name", "work"})
+	if err := cmd.Execute(); err == nil || !bytes.Contains([]byte(err.Error()), []byte("--yes")) {
+		t.Fatalf("auth remove error = %v, want --yes requirement", err)
+	}
+}
+
+func TestAuthRemoveCommandUsesDaemonSlotRemove(t *testing.T) {
+	restore := replaceAuthCommandDeps(t)
+	defer restore()
+	var captured daemon.AuthSlotRemoveRequest
+	authSlotRemoveRPC = func(ctx context.Context, socketPath string, req daemon.AuthSlotRemoveRequest) (daemon.AuthSlotRemoveResponse, error) {
+		_ = ctx
+		_ = socketPath
+		captured = req
+		return daemon.AuthSlotRemoveResponse{Status: "removed", AuthSlotID: req.AuthSlotID}, nil
+	}
+	cmd := newAuthRemoveCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"--harness", daemon.HarnessNameOpenCode, "--name", "work", "--yes"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("auth remove returned error: %v", err)
+	}
+	if captured.AuthSlotID != "opencode-work" {
+		t.Fatalf("remove request = %#v, want named slot id", captured)
+	}
+	if !bytes.Contains(out.Bytes(), []byte("removed auth slot opencode-work")) {
+		t.Fatalf("output = %q, want removal confirmation", out.String())
+	}
+}
+
 func TestAuthLoginCommandGetsOpenCodeProviderMethodsFromDaemon(t *testing.T) {
 	restore := replaceAuthCommandDeps(t)
 	defer restore()
@@ -352,12 +491,12 @@ func TestAuthLoginCommandGetsOpenCodeProviderMethodsFromDaemon(t *testing.T) {
 	}
 	var ranProvider bool
 	var capturedMethod string
-	authRunProviderLogin = func(ctx context.Context, harness, method, provider string) error {
+	authRunProviderLogin = func(ctx context.Context, harness, method, provider, authSlotID string) error {
 		_ = ctx
 		ranProvider = true
 		capturedMethod = method
-		if harness != daemon.HarnessNameOpenCode || provider != "openai" {
-			t.Fatalf("provider login harness=%q provider=%q, want opencode/openai", harness, provider)
+		if harness != daemon.HarnessNameOpenCode || provider != "openai" || authSlotID != "opencode-default" {
+			t.Fatalf("provider login harness=%q provider=%q slot=%q, want opencode/openai/opencode-default", harness, provider, authSlotID)
 		}
 		return nil
 	}
@@ -429,6 +568,8 @@ func replaceAuthCommandDeps(t *testing.T) func() {
 	originalDiagnose := authDiagnoseRPC
 	originalProviderMethods := authProviderMethodsRPC
 	originalSlotSave := authSlotSaveRPC
+	originalSlotList := authSlotListRPC
+	originalSlotRemove := authSlotRemoveRPC
 	originalProviderLogin := authRunProviderLogin
 	authEnsureDaemonRunning = func(ctx context.Context, cfg *config.Config) error {
 		_ = ctx
@@ -471,11 +612,24 @@ func replaceAuthCommandDeps(t *testing.T) func() {
 		_ = req
 		return daemon.AuthSlotResponse{}, nil
 	}
-	authRunProviderLogin = func(ctx context.Context, harness, method, provider string) error {
+	authSlotListRPC = func(ctx context.Context, socketPath string, req daemon.AuthSlotListRequest) (daemon.AuthSlotListResponse, error) {
+		_ = ctx
+		_ = socketPath
+		_ = req
+		return daemon.AuthSlotListResponse{}, nil
+	}
+	authSlotRemoveRPC = func(ctx context.Context, socketPath string, req daemon.AuthSlotRemoveRequest) (daemon.AuthSlotRemoveResponse, error) {
+		_ = ctx
+		_ = socketPath
+		_ = req
+		return daemon.AuthSlotRemoveResponse{}, nil
+	}
+	authRunProviderLogin = func(ctx context.Context, harness, method, provider, authSlotID string) error {
 		_ = ctx
 		_ = harness
 		_ = method
 		_ = provider
+		_ = authSlotID
 		return nil
 	}
 	return func() {
@@ -486,6 +640,8 @@ func replaceAuthCommandDeps(t *testing.T) func() {
 		authDiagnoseRPC = originalDiagnose
 		authProviderMethodsRPC = originalProviderMethods
 		authSlotSaveRPC = originalSlotSave
+		authSlotListRPC = originalSlotList
+		authSlotRemoveRPC = originalSlotRemove
 		authRunProviderLogin = originalProviderLogin
 	}
 }
@@ -501,6 +657,15 @@ func TestAuthProviderLoginArgsUseOpenCodeInteractiveLoginByDefault(t *testing.T)
 			t.Fatalf("args = %#v, want %#v", args, want)
 		}
 	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestAuthProviderLoginArgsCanPassExplicitOpenCodeProviderOnly(t *testing.T) {

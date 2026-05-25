@@ -242,6 +242,11 @@ func (d *Daemon) runEphemeralHarness(ctx context.Context, store *globaldb.Store,
 	profile.Model = setup.TargetAgent.Model
 	profile.Prompt = setup.TargetAgent.Prompt
 	profile.InvocationClass = HarnessInvocationEphemeral
+	selected, err := resolveProfileAuthSlot(ctx, store, executor, setup.TargetAgent.Harness, profile)
+	if err != nil {
+		return ephemeralHarnessResult{}, mapHarnessRunError(err)
+	}
+	profile.AuthSlotID = selected
 	packet := ContextPacket{ID: request.ContextPacketID, WorkspaceID: setup.SourceRun.WorkspaceID, TaskID: request.TaskID, Sections: []ContextSection{{Name: "message", Content: request.Body}}}
 	runCtx := ctx
 	cancel := func() {}
@@ -249,7 +254,11 @@ func (d *Daemon) runEphemeralHarness(ctx context.Context, store *globaldb.Store,
 		runCtx, cancel = context.WithTimeout(ctx, request.Timeout)
 	}
 	defer cancel()
-	result, err := StartExecutorRunResult(runCtx, executor, packet, setup.SessionID, profile)
+	projection, err := d.authProjectionForStart(runCtx, store, setup.TargetAgent.Harness, packet.WorkspaceID, profile.AuthSlotID)
+	if err != nil {
+		return ephemeralHarnessResult{}, mapHarnessRunError(err)
+	}
+	result, err := StartExecutorRunResultWithProjection(runCtx, executor, packet, setup.SessionID, projection, profile)
 	if err != nil {
 		return ephemeralHarnessResult{}, mapHarnessRunError(err)
 	}

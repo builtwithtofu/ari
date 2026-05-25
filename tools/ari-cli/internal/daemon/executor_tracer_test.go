@@ -442,13 +442,19 @@ func TestAuthStatusReportsMissingHarnessAsNotInstalled(t *testing.T) {
 	}
 }
 
-func TestAuthStatusDoesNotPersistSelectionUnsupportedAsNotInstalled(t *testing.T) {
+func TestAuthStatusPersistsCodexNamedSlotReadiness(t *testing.T) {
+	exitCode := 0
 	registry := NewHarnessRegistry()
 	if err := registry.Register("codex", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
-		return NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo"}), nil
+		return NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo", AuthHomeRoot: t.TempDir(), RunAuthCommand: func(ctx context.Context, opts codexExecutorOptions, args []string) (commandRunResult, error) {
+			_ = ctx
+			_ = opts
+			_ = args
+			return commandRunResult{ExitCode: &exitCode}, nil
+		}}), nil
 	}); err != nil {
 		t.Fatalf("register harness: %v", err)
 	}
@@ -458,16 +464,25 @@ func TestAuthStatusDoesNotPersistSelectionUnsupportedAsNotInstalled(t *testing.T
 		t.Fatalf("UpsertAuthSlot returned error: %v", err)
 	}
 
-	_, err := daemon.harnessAuthStatus(context.Background(), store, HarnessAuthStatusRequest{})
-	if err == nil {
-		t.Fatal("harnessAuthStatus returned nil error, want slot selection unsupported")
+	resp, err := daemon.harnessAuthStatus(context.Background(), store, HarnessAuthStatusRequest{})
+	if err != nil {
+		t.Fatalf("harnessAuthStatus returned error: %v", err)
+	}
+	found := false
+	for _, status := range resp.Statuses {
+		if status.AuthSlotID == "codex-work" && status.Status == HarnessAuthAuthenticated {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("statuses = %#v, want authenticated codex-work", resp.Statuses)
 	}
 	stored, getErr := store.GetAuthSlot(context.Background(), "codex-work")
 	if getErr != nil {
 		t.Fatalf("GetAuthSlot returned error: %v", getErr)
 	}
-	if stored.Status == string(HarnessAuthNotInstalled) {
-		t.Fatalf("stored status = %q, want unsupported selection not persisted as not_installed", stored.Status)
+	if stored.Status != string(HarnessAuthAuthenticated) {
+		t.Fatalf("stored status = %q, want authenticated", stored.Status)
 	}
 }
 
@@ -1140,6 +1155,149 @@ func TestProfileRunUsesStoredProfile(t *testing.T) {
 	}
 }
 
+func TestOpenCodeProfileRunBuildsAuthContentProjectionFromGrantedSecret(t *testing.T) {
+	ctx := context.Background()
+	store := newCommandMethodTestStore(t)
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	backend := globaldb.NewMemorySecretBackend()
+	d.secretBackend = backend
+	var captured ExecutorStartRequest
+	d.setHarnessFactoryForTest(HarnessNameOpenCode, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = primaryFolder
+		_ = sink
+		return &capturingHarness{name: req.Executor, captured: &captured, authStatuses: map[string]HarnessAuthState{"opencode-work": HarnessAuthAuthenticated}, auth: HarnessAuthDescriptor{StatusCheck: HarnessAuthSupportSupported, NamedSlotExecution: HarnessAuthSupportSupported, CredentialOwner: HarnessCredentialOwnerProvider}}, nil
+	})
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	value := []byte(`{"provider":"anthropic","apiKey":"ari-opencode-secret-sentinel"}`)
+	metadata, err := store.UpsertSecretMetadata(ctx, globaldb.SecretMetadata{Name: "opencode-work-auth", Purpose: globaldb.SecretPurposeHarnessAuth, Scope: globaldb.SecretScopeHarness, BackendKind: globaldb.SecretBackendKindMemory, Fingerprint: globaldb.SecretFingerprint(value), RedactedDescription: "opencode work auth content", MetadataJSON: `{}`})
+	if err != nil {
+		t.Fatalf("UpsertSecretMetadata returned error: %v", err)
+	}
+	if err := backend.PutSecret(ctx, metadata.SecretID, value); err != nil {
+		t.Fatalf("PutSecret returned error: %v", err)
+	}
+	if _, err := store.GrantSecretAccess(ctx, globaldb.SecretGrant{SecretID: metadata.SecretID, SubjectType: globaldb.SecretGrantSubjectWorkspace, SubjectID: "ws-1", Purpose: globaldb.SecretGrantPurposeProject}); err != nil {
+		t.Fatalf("GrantSecretAccess returned error: %v", err)
+	}
+	if err := store.UpsertAuthSlot(ctx, globaldb.AuthSlot{AuthSlotID: "opencode-work", Harness: HarnessNameOpenCode, Label: "Work", CredentialOwner: "provider", Status: "authenticated", MetadataJSON: fmt.Sprintf(`{"projection_ref":%q}`, metadata.SecretID)}); err != nil {
+		t.Fatalf("UpsertAuthSlot returned error: %v", err)
+	}
+	profile := Profile{Name: "opencode-worker", Harness: HarnessNameOpenCode, AuthSlotID: "opencode-work", InvocationClass: HarnessInvocationSticky}
+
+	_, err = d.startHarnessSession(ctx, store, HarnessSessionStartRequest{Executor: HarnessNameOpenCode, Packet: ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}}, profile)
+	if err != nil {
+		t.Fatalf("startHarnessSession returned error: %v", err)
+	}
+	if captured.AuthProjection.Kind != HarnessAuthProjectionAuthContent || captured.AuthProjection.Owner != HarnessAuthProjectionOwnerAri || captured.AuthProjection.Env["OPENCODE_AUTH_CONTENT"] != string(value) {
+		t.Fatalf("captured projection = %#v, want granted OpenCode auth-content projection", captured.AuthProjection)
+	}
+	events, err := store.ListDaemonEventsAfter(ctx, "", 20)
+	if err != nil {
+		t.Fatalf("ListDaemonEventsAfter returned error: %v", err)
+	}
+	encodedEvents, _ := json.Marshal(events)
+	if strings.Contains(string(encodedEvents), "ari-opencode-secret-sentinel") || strings.Contains(string(encodedEvents), "apiKey") {
+		t.Fatalf("daemon events leaked OpenCode auth content: %s", encodedEvents)
+	}
+}
+
+func TestOpenCodeProjectionDeniedOutsideGrantedWorkspace(t *testing.T) {
+	ctx := context.Background()
+	store := newCommandMethodTestStore(t)
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	backend := globaldb.NewMemorySecretBackend()
+	d.secretBackend = backend
+	seedSessionWithPrimaryFolder(t, store, "ws-a", t.TempDir())
+	seedSessionWithPrimaryFolder(t, store, "ws-b", t.TempDir())
+	seedOpenCodeProjectionSecret(t, ctx, store, backend, "opencode-work", "ws-a", []byte(`{"apiKey":"ari-cross-workspace-sentinel"}`))
+
+	_, err := d.authProjectionForStart(ctx, store, HarnessNameOpenCode, "ws-b", "opencode-work")
+	if !errors.Is(err, globaldb.ErrPermissionDenied) {
+		t.Fatalf("authProjectionForStart error = %v, want permission denied across workspaces", err)
+	}
+}
+
+func TestOpenCodeAuthSlotRemoveDeletesAriOwnedSecret(t *testing.T) {
+	ctx := context.Background()
+	store := newCommandMethodTestStore(t)
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	backend := globaldb.NewMemorySecretBackend()
+	d.secretBackend = backend
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	seedOpenCodeProjectionSecret(t, ctx, store, backend, "opencode-work", "ws-1", []byte(`{"apiKey":"ari-remove-sentinel"}`))
+	stored, err := store.GetAuthSlot(ctx, "opencode-work")
+	if err != nil {
+		t.Fatalf("GetAuthSlot returned error: %v", err)
+	}
+	secretID, err := opencodeProjectionSecretID(stored.MetadataJSON)
+	if err != nil {
+		t.Fatalf("projection ref missing: %v", err)
+	}
+
+	if _, err := d.removeAuthSlot(ctx, store, AuthSlotRemoveRequest{AuthSlotID: "opencode-work"}); err != nil {
+		t.Fatalf("removeAuthSlot returned error: %v", err)
+	}
+	if _, err := store.GetAuthSlot(ctx, "opencode-work"); !errors.Is(err, globaldb.ErrNotFound) {
+		t.Fatalf("GetAuthSlot after remove error = %v, want ErrNotFound", err)
+	}
+	if _, err := store.GetSecretMetadata(ctx, secretID); !errors.Is(err, globaldb.ErrNotFound) {
+		t.Fatalf("GetSecretMetadata after remove error = %v, want ErrNotFound", err)
+	}
+	if _, err := backend.GetSecret(ctx, secretID); !errors.Is(err, globaldb.ErrNotFound) {
+		t.Fatalf("GetSecret after remove error = %v, want ErrNotFound", err)
+	}
+}
+
+func seedOpenCodeProjectionSecret(t *testing.T, ctx context.Context, store *globaldb.Store, backend globaldb.SecretBackend, authSlotID, workspaceID string, value []byte) {
+	t.Helper()
+	metadata, err := store.UpsertSecretMetadata(ctx, globaldb.SecretMetadata{Name: authSlotID + " auth content", Purpose: globaldb.SecretPurposeHarnessAuth, Scope: globaldb.SecretScopeWorkspace, BackendKind: globaldb.SecretBackendKindMemory, Fingerprint: globaldb.SecretFingerprint(value), RedactedDescription: "OpenCode auth content", MetadataJSON: `{}`})
+	if err != nil {
+		t.Fatalf("UpsertSecretMetadata returned error: %v", err)
+	}
+	if err := backend.PutSecret(ctx, metadata.SecretID, value); err != nil {
+		t.Fatalf("PutSecret returned error: %v", err)
+	}
+	if _, err := store.GrantSecretAccess(ctx, globaldb.SecretGrant{SecretID: metadata.SecretID, SubjectType: globaldb.SecretGrantSubjectWorkspace, SubjectID: workspaceID, Purpose: globaldb.SecretGrantPurposeProject}); err != nil {
+		t.Fatalf("GrantSecretAccess returned error: %v", err)
+	}
+	if err := store.UpsertAuthSlot(ctx, globaldb.AuthSlot{AuthSlotID: authSlotID, Harness: HarnessNameOpenCode, Label: "Work", CredentialOwner: "provider", Status: "authenticated", MetadataJSON: fmt.Sprintf(`{"projection_ref":%q}`, metadata.SecretID)}); err != nil {
+		t.Fatalf("UpsertAuthSlot returned error: %v", err)
+	}
+}
+
+func TestOpenCodeProfileRunDeniesProjectionWithoutGrant(t *testing.T) {
+	ctx := context.Background()
+	store := newCommandMethodTestStore(t)
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.secretBackend = globaldb.NewMemorySecretBackend()
+	var captured ExecutorStartRequest
+	d.setHarnessFactoryForTest(HarnessNameOpenCode, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = primaryFolder
+		_ = sink
+		return &capturingHarness{name: req.Executor, captured: &captured, authStatuses: map[string]HarnessAuthState{"opencode-work": HarnessAuthAuthenticated}, auth: HarnessAuthDescriptor{StatusCheck: HarnessAuthSupportSupported, NamedSlotExecution: HarnessAuthSupportSupported, CredentialOwner: HarnessCredentialOwnerProvider}}, nil
+	})
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	value := []byte(`{"provider":"anthropic","apiKey":"ari-denied-secret-sentinel"}`)
+	metadata, err := store.UpsertSecretMetadata(ctx, globaldb.SecretMetadata{Name: "opencode-work-auth", Purpose: globaldb.SecretPurposeHarnessAuth, Scope: globaldb.SecretScopeHarness, BackendKind: globaldb.SecretBackendKindMemory, Fingerprint: globaldb.SecretFingerprint(value), RedactedDescription: "opencode work auth content", MetadataJSON: `{}`})
+	if err != nil {
+		t.Fatalf("UpsertSecretMetadata returned error: %v", err)
+	}
+	if err := d.secretBackend.PutSecret(ctx, metadata.SecretID, value); err != nil {
+		t.Fatalf("PutSecret returned error: %v", err)
+	}
+	if err := store.UpsertAuthSlot(ctx, globaldb.AuthSlot{AuthSlotID: "opencode-work", Harness: HarnessNameOpenCode, Label: "Work", CredentialOwner: "provider", Status: "authenticated", MetadataJSON: fmt.Sprintf(`{"projection_ref":%q}`, metadata.SecretID)}); err != nil {
+		t.Fatalf("UpsertAuthSlot returned error: %v", err)
+	}
+
+	_, err = d.startHarnessSession(ctx, store, HarnessSessionStartRequest{Executor: HarnessNameOpenCode, Packet: ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}}, Profile{Name: "opencode-worker", Harness: HarnessNameOpenCode, AuthSlotID: "opencode-work", InvocationClass: HarnessInvocationSticky})
+	if err == nil {
+		t.Fatalf("startHarnessSession returned nil error, want grant denial")
+	}
+	if captured.WorkspaceID != "" {
+		t.Fatalf("captured request = %#v, want denial before executor start", captured)
+	}
+}
+
 func TestProfileRunPersistsFinalResponseArtifact(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
@@ -1403,6 +1561,23 @@ func TestProfileCreateRejectsMissingName(t *testing.T) {
 	data := requireHandlerErrorData(t, err)
 	if data["reason"] != "missing_profile_name" {
 		t.Fatalf("error data = %#v, want missing profile name", data)
+	}
+}
+
+func TestProfileCreateRejectsSecretLikeDefaults(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "profile.create", ProfileCreateRequest{Name: "executor", Harness: "codex", Defaults: map[string]any{"api_key": "sk-test-secret"}})
+	if err == nil {
+		t.Fatal("profile.create returned nil error for secret-like defaults")
+	}
+	if strings.Contains(err.Error(), "sk-test-secret") {
+		t.Fatalf("profile.create error leaked secret value: %v", err)
 	}
 }
 

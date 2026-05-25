@@ -71,6 +71,42 @@ CREATE TABLE IF NOT EXISTS auth_slots (
 CREATE UNIQUE INDEX IF NOT EXISTS auth_slots_harness_label_uq
   ON auth_slots(harness, label);
 
+CREATE TABLE IF NOT EXISTS ari_secrets (
+  secret_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  purpose TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  backend_kind TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  redacted_description TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ari_secrets_name_scope_uq
+  ON ari_secrets(name, scope);
+
+CREATE INDEX IF NOT EXISTS ari_secrets_purpose_idx
+  ON ari_secrets(purpose, scope);
+
+CREATE TABLE IF NOT EXISTS ari_secret_grants (
+  grant_id TEXT PRIMARY KEY,
+  secret_id TEXT NOT NULL,
+  subject_type TEXT NOT NULL,
+  subject_id TEXT NOT NULL,
+  purpose TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT,
+  FOREIGN KEY(secret_id) REFERENCES ari_secrets(secret_id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ari_secret_grants_subject_uq
+  ON ari_secret_grants(secret_id, subject_type, subject_id, purpose);
+
+CREATE INDEX IF NOT EXISTS ari_secret_grants_subject_idx
+  ON ari_secret_grants(subject_type, subject_id, purpose);
+
 INSERT INTO auth_slots (auth_slot_id, harness, label, provider_label, credential_owner, status, metadata_json, created_at, updated_at)
 VALUES
   ('codex-default', 'codex', 'Default', NULL, 'provider', 'unknown', '{}', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),

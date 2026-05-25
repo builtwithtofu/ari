@@ -53,12 +53,19 @@ func TestAuthSlotListFiltersByHarness(t *testing.T) {
 
 func TestAuthSlotRejectsSourceFieldsInMetadata(t *testing.T) {
 	store := newGlobalDBTestStore(t, "auth-slot-invalid")
-	err := store.UpsertAuthSlot(context.Background(), AuthSlot{AuthSlotID: "codex-work", Harness: "codex", Label: "Work", Status: "authenticated", MetadataJSON: `{"provider":{"source_ref":"/secret"}}`})
-	if err == nil {
-		t.Fatal("UpsertAuthSlot returned nil error for source_ref metadata")
-	}
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("UpsertAuthSlot error = %v, want ErrInvalidInput", err)
+	ctx := context.Background()
+
+	for _, metadata := range []string{
+		`{"provider":{"source_ref":"/secret"}}`,
+		`{"api_key":"sk-test"}`,
+		`{"client_secret":"shh"}`,
+		`{"nested":{"bearer_token":"tok"}}`,
+		`{"items":[{"refresh_token":"secret"}]}`,
+	} {
+		err := store.UpsertAuthSlot(ctx, AuthSlot{AuthSlotID: "codex-work", Harness: "codex", Label: "Work", Status: "authenticated", MetadataJSON: metadata})
+		if !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("UpsertAuthSlot metadata %s error = %v, want ErrInvalidInput", metadata, err)
+		}
 	}
 }
 

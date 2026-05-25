@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -19,6 +21,7 @@ type claudeExecutorOptions struct {
 	Model          string
 	SystemPrompt   string
 	InvocationMode HarnessInvocationMode
+	AuthProjection HarnessAuthProjectionPlan
 	RunCommand     claudeCommandRunner
 	RunAuthCommand claudeAuthCommandRunner
 }
@@ -87,6 +90,38 @@ func newClaudeExecutor(options claudeExecutorOptions) *ClaudeExecutor {
 	return &ClaudeExecutor{options: options, runs: map[string][]TimelineItem{}}
 }
 
+func (options claudeExecutorOptions) withClaudeAuthSlotProjection(authSlotID string) (claudeExecutorOptions, error) {
+	authSlotID = strings.TrimSpace(authSlotID)
+	if authSlotIsDefaultForHarness(HarnessNameClaude, authSlotID) {
+		return options, nil
+	}
+	if options.AuthProjection.Kind == HarnessAuthProjectionConfigRoot && strings.TrimSpace(options.AuthProjection.Env["CLAUDE_CONFIG_DIR"]) != "" {
+		return options, nil
+	}
+	home, err := claudeAuthSlotHome(authSlotID)
+	if err != nil {
+		return claudeExecutorOptions{}, err
+	}
+	options.AuthProjection = HarnessAuthProjectionPlan{Owner: HarnessAuthProjectionOwnerNative, Kind: HarnessAuthProjectionConfigRoot, Env: map[string]string{"CLAUDE_CONFIG_DIR": home}, RiskLabels: []string{"provider_owned", "native_config_root_isolation", "keychain_slot_isolation_risk"}}
+	return options, nil
+}
+
+func claudeAuthSlotHome(authSlotID string) (string, error) {
+	configRoot, err := os.UserConfigDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve claude auth slot home root: %w", err)
+	}
+	safeSlotID := safeAuthSlotPathComponent(authSlotID)
+	if safeSlotID == "" {
+		return "", fmt.Errorf("claude auth slot id is required")
+	}
+	home := filepath.Join(configRoot, "ari", "auth-slots", HarnessNameClaude, safeSlotID)
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		return "", fmt.Errorf("create claude auth slot home: %w", err)
+	}
+	return home, nil
+}
+
 func (e *ClaudeExecutor) AuthStatus(ctx context.Context, slot HarnessAuthSlot) (HarnessAuthStatus, error) {
 	if ctx == nil {
 		return HarnessAuthStatus{}, fmt.Errorf("context is required")
@@ -94,10 +129,11 @@ func (e *ClaudeExecutor) AuthStatus(ctx context.Context, slot HarnessAuthSlot) (
 	if e == nil {
 		return HarnessAuthStatus{}, fmt.Errorf("executor is required")
 	}
-	if !authSlotIsDefaultForHarness(HarnessNameClaude, slot.AuthSlotID) {
-		return NewHarnessAuthRequired(HarnessNameClaude, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, Method: "provider_owned_slot_binding", SecretOwnedBy: HarnessNameClaude}), nil
+	options, err := e.options.withClaudeAuthSlotProjection(slot.AuthSlotID)
+	if err != nil {
+		return HarnessAuthStatus{}, err
 	}
-	result, err := e.options.RunAuthCommand(ctx, e.options, []string{"auth", "status", "--json"})
+	result, err := options.RunAuthCommand(ctx, options, []string{"auth", "status", "--json"})
 	if err != nil {
 		var unavailable *HarnessUnavailableError
 		if errors.As(err, &unavailable) {
@@ -117,21 +153,22 @@ func (e *ClaudeExecutor) AuthLogout(ctx context.Context, slot HarnessAuthSlot) (
 	if e == nil {
 		return HarnessAuthStatus{}, fmt.Errorf("executor is required")
 	}
-	if !authSlotIsDefaultForHarness(HarnessNameClaude, slot.AuthSlotID) {
-		return HarnessAuthStatus{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "auth_slot_selection_unsupported", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+	options, err := e.options.withClaudeAuthSlotProjection(slot.AuthSlotID)
+	if err != nil {
+		return HarnessAuthStatus{}, err
 	}
-	result, err := e.options.RunAuthCommand(ctx, e.options, []string{"auth", "logout"})
+	result, err := options.RunAuthCommand(ctx, options, []string{"auth", "logout"})
 	if err != nil {
 		return HarnessAuthStatus{}, err
 	}
 	if result.ExitCode != nil && *result.ExitCode != 0 {
-		return HarnessAuthStatus{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "auth_logout_failed", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: true}
+		return HarnessAuthStatus{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "auth_logout_failed", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
 	}
 	return NewHarnessAuthRequired(HarnessNameClaude, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, Method: "provider_config", SecretOwnedBy: HarnessNameClaude}), nil
 }
 
 func (e *ClaudeExecutor) Descriptor() HarnessAdapterDescriptor {
-	return HarnessAdapterDescriptor{Name: HarnessNameClaude, Capabilities: []HarnessCapability{HarnessCapabilityHarnessSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems, HarnessCapabilityFinalResponse, HarnessCapabilityMeasuredTokenTelemetry}, Auth: HarnessAuthDescriptor{StatusCheck: HarnessAuthSupportSupported, Login: HarnessAuthSupportPartial, LoginMethods: []string{"browser", "console", "api_key"}, Logout: HarnessAuthSupportSupported, NamedSlotStatus: HarnessAuthSupportPartial, NamedSlotExecution: HarnessAuthSupportUnsupported, SlotScope: "global", CredentialOwner: HarnessCredentialOwnerProvider, RiskLabels: []string{"provider_owned", "client_side_login", "keychain_slot_isolation_risk"}, Caveats: []string{"client_side_login", "macos_keychain_limits_named_slot_isolation"}}}
+	return HarnessAdapterDescriptor{Name: HarnessNameClaude, Capabilities: []HarnessCapability{HarnessCapabilityHarnessSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems, HarnessCapabilityFinalResponse, HarnessCapabilityMeasuredTokenTelemetry}, Auth: HarnessAuthDescriptor{StatusCheck: HarnessAuthSupportSupported, Login: HarnessAuthSupportPartial, LoginMethods: []string{"browser", "console", "api_key"}, Logout: HarnessAuthSupportSupported, NamedSlotStatus: HarnessAuthSupportPartial, NamedSlotExecution: HarnessAuthSupportPartial, SlotScope: "claude_config_dir", CredentialOwner: HarnessCredentialOwnerProvider, RiskLabels: []string{"provider_owned", "client_side_login", "native_config_root_isolation", "keychain_slot_isolation_risk"}, Caveats: []string{"client_side_login", "claude_named_slots_use_per_slot_config_dir", "macos_keychain_limits_named_slot_isolation"}}}
 }
 
 func (e *ClaudeExecutor) Start(ctx context.Context, req ExecutorStartRequest) (ExecutorRun, error) {
@@ -140,9 +177,6 @@ func (e *ClaudeExecutor) Start(ctx context.Context, req ExecutorStartRequest) (E
 	}
 	if e == nil {
 		return ExecutorRun{}, fmt.Errorf("executor is required")
-	}
-	if !authSlotIsDefaultForHarness(HarnessNameClaude, req.AuthSlotID) {
-		return ExecutorRun{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "auth_slot_selection_unsupported", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
 	}
 	workspaceID := strings.TrimSpace(req.WorkspaceID)
 	if workspaceID == "" {
@@ -160,6 +194,11 @@ func (e *ClaudeExecutor) Start(ctx context.Context, req ExecutorStartRequest) (E
 		options.Model = strings.TrimSpace(req.Model)
 	}
 	options.SystemPrompt = strings.TrimSpace(req.Prompt)
+	options.AuthProjection = req.AuthProjection
+	options, err := options.withClaudeAuthSlotProjection(req.AuthSlotID)
+	if err != nil {
+		return ExecutorRun{}, err
+	}
 	commandResult, err := options.RunCommand(ctx, options, claudePromptFromRequest(req))
 	if err != nil {
 		return ExecutorRun{}, err
@@ -316,6 +355,7 @@ func runClaudeCommand(ctx context.Context, options claudeExecutorOptions, prompt
 	}
 	cmd := exec.CommandContext(ctx, path, args...)
 	cmd.Dir = strings.TrimSpace(options.Cwd)
+	cmd.Env = commandEnvWithProjection(options.AuthProjection)
 	var stdin io.WriteCloser
 	if options.InvocationMode != HarnessInvocationModeBackground {
 		var err error
@@ -338,7 +378,7 @@ func runClaudeCommand(ctx context.Context, options claudeExecutorOptions, prompt
 	err = cmd.Wait()
 	exitCode := cmd.ProcessState.ExitCode()
 	if err != nil {
-		return commandRunResult{}, fmt.Errorf("run claude: %w: %s", err, strings.TrimSpace(output.String()))
+		return commandRunResult{}, fmt.Errorf("run claude: %w", err)
 	}
 	return commandRunResult{Output: []byte(output.String()), ProcessSample: &sample, ExitCode: &exitCode}, nil
 }
@@ -354,6 +394,7 @@ func runClaudeAuthCommand(ctx context.Context, options claudeExecutorOptions, ar
 	}
 	cmd := exec.CommandContext(ctx, path, args...)
 	cmd.Dir = strings.TrimSpace(options.Cwd)
+	cmd.Env = commandEnvWithProjection(options.AuthProjection)
 	var output strings.Builder
 	cmd.Stdout = &output
 	cmd.Stderr = &output

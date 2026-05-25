@@ -1,6 +1,6 @@
 # ADR 0007: Ari secrets store boundary
 
-Status: proposed
+Status: accepted
 
 Date: 2026-05-24
 
@@ -18,6 +18,7 @@ Ari secrets will be a general daemon-owned capability, not a harness-specific cr
 - Secret values at rest may live only in the Ari secrets store backend.
 - Auth slot metadata, profile defaults, logs, operation records, command history, and harness config must not contain secret values or credential-source fields. Harness config may receive a secret only as a short-lived per-run projection selected by an adapter.
 - Storage backend policy is platform secure storage first, with encrypted file fallback for headless or minimal environments.
+- Encrypted-file fallback must be explicit at initialization time. The fallback key is supplied out-of-band through local operator configuration or a process environment value, is never generated into or stored in the Ari database, and must fail closed when no key is available. Automatic plaintext fallback is not allowed.
 - The provisional Go storage libraries are `zalando/go-keyring` for OS keychain access and `filippo.io/age` for encrypted file fallback, behind small Ari interfaces.
 - Projection/delivery is adapter-selected. Prefer helper, file descriptor, stdin, or projected file mechanisms over environment variables. Environment variables are a compatibility fallback and must be labelled as a downgrade risk.
 - Projection must be scoped to a specific operation/run and must not mutate the daemon process environment or global harness config.
@@ -27,7 +28,7 @@ Ari secrets will be a general daemon-owned capability, not a harness-specific cr
 Before any implementation stores a secret value, the implementation ticket must define and test:
 
 1. the backend selection and fallback path for the target platform;
-2. encrypted-file fallback key management;
+2. encrypted-file fallback key management consistent with this ADR's explicit out-of-band key rule;
 3. grant model for workspace, session, harness, and tool access;
 4. audit events for secret reads/projections;
 5. redaction for logs, operation records, RPC responses, and errors;

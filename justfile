@@ -24,7 +24,16 @@ build:
 test:
 	cd tools/ari-cli && go test ./...
 
-verify: nix-fmt-check fmt-check lint build test flake-check
+sqlc-generate:
+	cd tools/ari-cli && sqlc generate
+
+sqlc-check:
+	cd tools/ari-cli && sqlc compile
+
+atlas-validate:
+	cd tools/ari-cli && atlas migrate validate --dir file://migrations
+
+verify: nix-fmt-check fmt-check sqlc-check atlas-validate lint build test flake-check
 	@echo "All checks passed"
 
 ci: verify

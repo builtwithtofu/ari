@@ -272,6 +272,7 @@ type ExecutorStartRequest struct {
 	Model           string
 	Prompt          string
 	AuthSlotID      string
+	AuthProjection  HarnessAuthProjectionPlan
 	InvocationClass HarnessInvocationClass
 	Options         []HarnessOption
 }
