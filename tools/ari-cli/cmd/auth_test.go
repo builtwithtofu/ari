@@ -169,9 +169,9 @@ func TestAuthDoctorCommandUsesDaemonDiagnosis(t *testing.T) {
 		}
 		diagnoseReq = req
 		return daemon.HarnessAuthDiagnoseResponse{Harnesses: []daemon.HarnessAuthDiagnostic{
-			{Harness: daemon.HarnessNameClaude, Installed: true, Status: daemon.HarnessAuthAuthenticated, DefaultSlot: daemon.HarnessAuthStatus{Harness: daemon.HarnessNameClaude, Name: "default", AuthSlotID: "claude-default", Status: daemon.HarnessAuthAuthenticated, AriSecretStorage: daemon.HarnessAriSecretStorageNone}, Auth: daemon.HarnessAuthDescriptor{NamedSlotStatus: daemon.HarnessAuthSupportPartial, NamedSlotExecution: daemon.HarnessAuthSupportUnsupported, SlotScope: "global", RiskLabels: []string{"provider_owned", "client_side_login"}, Caveats: []string{"macos_keychain_limits_named_slot_isolation"}}, ProviderMethods: daemon.HarnessAuthProviderMethodDiagnostic{Status: "skipped"}, Remediation: "none"},
-			{Harness: daemon.HarnessNameCodex, Installed: true, Status: daemon.HarnessAuthRequired, DefaultSlot: daemon.HarnessAuthStatus{Harness: daemon.HarnessNameCodex, Name: "default", AuthSlotID: "codex-default", Status: daemon.HarnessAuthRequired, AriSecretStorage: daemon.HarnessAriSecretStorageNone}, NamedSlots: []daemon.AuthSlotResponse{{AuthSlotID: "codex-work", Harness: daemon.HarnessNameCodex, Label: "work", ProviderLabel: "chatgpt", CredentialOwner: string(daemon.HarnessCredentialOwnerProvider), Status: string(daemon.HarnessAuthRequired)}}, Auth: daemon.HarnessAuthDescriptor{NamedSlotStatus: daemon.HarnessAuthSupportUnsupported, NamedSlotExecution: daemon.HarnessAuthSupportUnsupported, SlotScope: "global", RiskLabels: []string{"named_slot_projection_required", "provider_owned"}, Caveats: []string{"named_slot_execution_blocked_until_codex_home_projection"}}, ProviderMethods: daemon.HarnessAuthProviderMethodDiagnostic{Status: "skipped"}, Remediation: "device_code"},
-			{Harness: daemon.HarnessNameOpenCode, Installed: false, Status: daemon.HarnessAuthNotInstalled, DefaultSlot: daemon.HarnessAuthStatus{Harness: daemon.HarnessNameOpenCode, Name: "default", AuthSlotID: "opencode-default", Status: daemon.HarnessAuthNotInstalled, AriSecretStorage: daemon.HarnessAriSecretStorageNone}, Auth: daemon.HarnessAuthDescriptor{NamedSlotStatus: daemon.HarnessAuthSupportPartial, NamedSlotExecution: daemon.HarnessAuthSupportUnsupported, SlotScope: "global", RiskLabels: []string{"ari_secrets_required_for_isolated_named_execution", "provider_owned"}, Caveats: []string{"provider_methods_discovery_is_optional"}}, ProviderMethods: daemon.HarnessAuthProviderMethodDiagnostic{Status: "skipped"}, Remediation: "install_opencode"},
+			{Harness: daemon.HarnessNameClaude, Installed: true, Status: daemon.HarnessAuthAuthenticated, DefaultSlot: daemon.HarnessAuthStatus{Harness: daemon.HarnessNameClaude, Name: "default", AuthSlotID: "claude-default", Status: daemon.HarnessAuthAuthenticated, AriSecretStorage: daemon.HarnessAriSecretStorageNone}, Auth: daemon.HarnessAuthDescriptor{NamedSlotStatus: daemon.HarnessAuthSupportPartial, NamedSlotExecution: daemon.HarnessAuthSupportUnsupported, SlotScope: "global", RiskLabels: []string{"provider_owned", "client_side_login"}, Caveats: []string{"macos_keychain_limits_named_slot_isolation"}}, ProviderMethods: daemon.HarnessAuthProviderMethodDiagnostic{Status: "skipped"}},
+			{Harness: daemon.HarnessNameCodex, Installed: true, Status: daemon.HarnessAuthRequired, DefaultSlot: daemon.HarnessAuthStatus{Harness: daemon.HarnessNameCodex, Name: "default", AuthSlotID: "codex-default", Status: daemon.HarnessAuthRequired, AriSecretStorage: daemon.HarnessAriSecretStorageNone}, NamedSlots: []daemon.AuthSlotResponse{{AuthSlotID: "codex-work", Harness: daemon.HarnessNameCodex, Label: "work", ProviderLabel: "chatgpt", CredentialOwner: string(daemon.HarnessCredentialOwnerProvider), Status: string(daemon.HarnessAuthRequired)}}, Auth: daemon.HarnessAuthDescriptor{NamedSlotStatus: daemon.HarnessAuthSupportUnsupported, NamedSlotExecution: daemon.HarnessAuthSupportUnsupported, SlotScope: "global", RiskLabels: []string{"named_slot_projection_required", "provider_owned"}, Caveats: []string{"named_slot_execution_blocked_until_codex_home_projection"}}, ProviderMethods: daemon.HarnessAuthProviderMethodDiagnostic{Status: "skipped"}, NextStep: "Run `ari auth login --harness codex` and complete the provider's device-code login."},
+			{Harness: daemon.HarnessNameOpenCode, Installed: false, Status: daemon.HarnessAuthNotInstalled, DefaultSlot: daemon.HarnessAuthStatus{Harness: daemon.HarnessNameOpenCode, Name: "default", AuthSlotID: "opencode-default", Status: daemon.HarnessAuthNotInstalled, AriSecretStorage: daemon.HarnessAriSecretStorageNone}, Auth: daemon.HarnessAuthDescriptor{NamedSlotStatus: daemon.HarnessAuthSupportPartial, NamedSlotExecution: daemon.HarnessAuthSupportUnsupported, SlotScope: "global", RiskLabels: []string{"ari_secrets_required_for_isolated_named_execution", "provider_owned"}, Caveats: []string{"provider_methods_discovery_is_optional"}}, ProviderMethods: daemon.HarnessAuthProviderMethodDiagnostic{Status: "skipped"}, NextStep: "Install OpenCode, then run `ari auth login --harness opencode`."},
 		}}, nil
 	}
 	cmd := newAuthDoctorCmd()
@@ -196,7 +196,7 @@ func TestAuthDoctorCommandUsesDaemonDiagnosis(t *testing.T) {
 		"claude\n  installed:       installed\n  status:          authenticated",
 		"codex\n  installed:       installed\n  status:          auth_required",
 		"  named slots:     work(chatgpt):auth_required",
-		"  next step:       Run `ari auth login --harness codex` and complete Codex's device-code login.",
+		"  next step:       Run `ari auth login --harness codex` and complete the provider's device-code login.",
 		"opencode\n  installed:       not_installed\n  status:          not_installed",
 		"  next step:       Install OpenCode, then run `ari auth login --harness opencode`.",
 	} {
@@ -226,7 +226,7 @@ func TestAuthDoctorRequestsDaemonProviderMethodDiscovery(t *testing.T) {
 		if !req.DiscoverProviderMethods {
 			t.Fatalf("diagnose request = %#v, want provider method discovery", req)
 		}
-		return daemon.HarnessAuthDiagnoseResponse{Harnesses: []daemon.HarnessAuthDiagnostic{{Harness: daemon.HarnessNameOpenCode, Installed: true, Status: daemon.HarnessAuthAuthenticated, DefaultSlot: daemon.HarnessAuthStatus{Harness: daemon.HarnessNameOpenCode, Name: "default", AuthSlotID: "opencode-default", Status: daemon.HarnessAuthAuthenticated, AriSecretStorage: daemon.HarnessAriSecretStorageNone}, Auth: daemon.HarnessAuthDescriptor{NamedSlotStatus: daemon.HarnessAuthSupportPartial, NamedSlotExecution: daemon.HarnessAuthSupportUnsupported, SlotScope: "global", RiskLabels: []string{"provider_owned"}, Caveats: []string{"provider_methods_discovery_is_optional"}}, ProviderMethods: daemon.HarnessAuthProviderMethodDiagnostic{Status: "ok", Providers: map[string][]daemon.HarnessAuthMethodInfo{"anthropic": {{Type: "api", Label: "Anthropic API key"}}, "openai": {{Type: "oauth", Label: "ChatGPT browser"}, {Type: "api", Label: "OpenAI API key"}}}}, Remediation: "none"}}}, nil
+		return daemon.HarnessAuthDiagnoseResponse{Harnesses: []daemon.HarnessAuthDiagnostic{{Harness: daemon.HarnessNameOpenCode, Installed: true, Status: daemon.HarnessAuthAuthenticated, DefaultSlot: daemon.HarnessAuthStatus{Harness: daemon.HarnessNameOpenCode, Name: "default", AuthSlotID: "opencode-default", Status: daemon.HarnessAuthAuthenticated, AriSecretStorage: daemon.HarnessAriSecretStorageNone}, Auth: daemon.HarnessAuthDescriptor{NamedSlotStatus: daemon.HarnessAuthSupportPartial, NamedSlotExecution: daemon.HarnessAuthSupportUnsupported, SlotScope: "global", RiskLabels: []string{"provider_owned"}, Caveats: []string{"provider_methods_discovery_is_optional"}}, ProviderMethods: daemon.HarnessAuthProviderMethodDiagnostic{Status: "ok", Providers: map[string][]daemon.HarnessAuthMethodInfo{"anthropic": {{Type: "api", Label: "Anthropic API key"}}, "openai": {{Type: "oauth", Label: "ChatGPT browser"}, {Type: "api", Label: "OpenAI API key"}}}}}}}, nil
 	}
 	cmd := newAuthDoctorCmd()
 	var out bytes.Buffer
@@ -248,7 +248,7 @@ func TestAuthDoctorRequestsDaemonProviderMethodDiscovery(t *testing.T) {
 func TestAuthDoctorRendererOmitsCredentialSourceAndRawMetadataFields(t *testing.T) {
 	var out bytes.Buffer
 	err := writeAuthDoctorResponse(&out, []daemon.HarnessAuthDiagnostic{
-		{Harness: daemon.HarnessNameOpenCode, Installed: true, Status: daemon.HarnessAuthAuthenticated, DefaultSlot: daemon.HarnessAuthStatus{Harness: daemon.HarnessNameOpenCode, AuthSlotID: "opencode-default", Name: "default", Status: daemon.HarnessAuthAuthenticated, AriSecretStorage: daemon.HarnessAriSecretStorageNone}, NamedSlots: []daemon.AuthSlotResponse{{AuthSlotID: "opencode-work", Harness: daemon.HarnessNameOpenCode, Label: "work\trow", ProviderLabel: "openai\nprovider", CredentialOwner: string(daemon.HarnessCredentialOwnerProvider), Status: string(daemon.HarnessAuthAuthenticated)}}, Auth: daemon.HarnessAuthDescriptor{StatusCheck: daemon.HarnessAuthSupportSupported, Login: daemon.HarnessAuthSupportPartial, LoginMethods: []string{"opencode_interactive"}, Logout: daemon.HarnessAuthSupportSupported, NamedSlotStatus: daemon.HarnessAuthSupportPartial, NamedSlotExecution: daemon.HarnessAuthSupportUnsupported, SlotScope: "global", CredentialOwner: daemon.HarnessCredentialOwnerProvider, RiskLabels: []string{"provider_owned", "ari_secrets_required_for_isolated_named_execution"}, Caveats: []string{"provider hints are labels, not credentials"}}, ProviderMethods: daemon.HarnessAuthProviderMethodDiagnostic{Status: "ok", Providers: map[string][]daemon.HarnessAuthMethodInfo{"openai": {{Type: "oauth", Label: "Browser"}}}}, Remediation: "none"},
+		{Harness: daemon.HarnessNameOpenCode, Installed: true, Status: daemon.HarnessAuthAuthenticated, DefaultSlot: daemon.HarnessAuthStatus{Harness: daemon.HarnessNameOpenCode, AuthSlotID: "opencode-default", Name: "default", Status: daemon.HarnessAuthAuthenticated, AriSecretStorage: daemon.HarnessAriSecretStorageNone}, NamedSlots: []daemon.AuthSlotResponse{{AuthSlotID: "opencode-work", Harness: daemon.HarnessNameOpenCode, Label: "work\trow", ProviderLabel: "openai\nprovider", CredentialOwner: string(daemon.HarnessCredentialOwnerProvider), Status: string(daemon.HarnessAuthAuthenticated)}}, Auth: daemon.HarnessAuthDescriptor{StatusCheck: daemon.HarnessAuthSupportSupported, Login: daemon.HarnessAuthSupportPartial, LoginMethods: []string{"opencode_interactive"}, Logout: daemon.HarnessAuthSupportSupported, NamedSlotStatus: daemon.HarnessAuthSupportPartial, NamedSlotExecution: daemon.HarnessAuthSupportUnsupported, SlotScope: "global", CredentialOwner: daemon.HarnessCredentialOwnerProvider, RiskLabels: []string{"provider_owned", "ari_secrets_required_for_isolated_named_execution"}, Caveats: []string{"provider hints are labels, not credentials"}}, ProviderMethods: daemon.HarnessAuthProviderMethodDiagnostic{Status: "ok", Providers: map[string][]daemon.HarnessAuthMethodInfo{"openai": {{Type: "oauth", Label: "Browser"}}}}},
 	}, true)
 	if err != nil {
 		t.Fatalf("writeAuthDoctorResponse returned error: %v", err)
@@ -273,7 +273,7 @@ func assertAuthDoctorOutputHasNoSecretFields(t *testing.T, output string) {
 
 func TestAuthDoctorRendersDaemonDiagnostics(t *testing.T) {
 	var out bytes.Buffer
-	if err := writeAuthDoctorResponse(&out, []daemon.HarnessAuthDiagnostic{{Harness: daemon.HarnessNameClaude, Installed: true, Status: daemon.HarnessAuthUnknown, DefaultSlot: daemon.HarnessAuthStatus{Harness: daemon.HarnessNameClaude, AuthSlotID: "claude-default", Status: daemon.HarnessAuthUnknown}, Auth: daemon.HarnessAuthDescriptor{NamedSlotExecution: daemon.HarnessAuthSupportUnsupported, RiskLabels: []string{"provider_owned"}}, Remediation: "check_provider_auth"}}, true); err != nil {
+	if err := writeAuthDoctorResponse(&out, []daemon.HarnessAuthDiagnostic{{Harness: daemon.HarnessNameClaude, Installed: true, Status: daemon.HarnessAuthUnknown, DefaultSlot: daemon.HarnessAuthStatus{Harness: daemon.HarnessNameClaude, AuthSlotID: "claude-default", Status: daemon.HarnessAuthUnknown}, Auth: daemon.HarnessAuthDescriptor{NamedSlotExecution: daemon.HarnessAuthSupportUnsupported, RiskLabels: []string{"provider_owned"}}, NextStep: "Run `ari auth login --harness claude` or check the provider's native auth setup."}}, true); err != nil {
 		t.Fatalf("writeAuthDoctorResponse returned error: %v", err)
 	}
 	if got := out.String(); !bytes.Contains([]byte(got), []byte("claude\n  installed:       installed\n  status:          unknown")) || !bytes.Contains([]byte(got), []byte("named execution: unsupported")) || !bytes.Contains([]byte(got), []byte("risks:           provider_owned")) {
@@ -332,12 +332,16 @@ func TestAuthLogoutCommandScopesTimeoutToFinalRPC(t *testing.T) {
 	}
 }
 
-func TestAuthLoginCommandRunsOpenCodeProviderMethodsClientSide(t *testing.T) {
+func TestAuthLoginCommandGetsOpenCodeProviderMethodsFromDaemon(t *testing.T) {
 	restore := replaceAuthCommandDeps(t)
 	defer restore()
-	authOpenCodeMethods = func(ctx context.Context) (map[string][]openCodeAuthMethod, error) {
+	authProviderMethodsRPC = func(ctx context.Context, socketPath string, req daemon.HarnessAuthProviderMethodsRequest) (daemon.HarnessAuthProviderMethodsResponse, error) {
 		_ = ctx
-		return map[string][]openCodeAuthMethod{"openai": {{Type: "oauth", Label: "ChatGPT Pro/Plus (browser)"}}}, nil
+		_ = socketPath
+		if req.Harness != daemon.HarnessNameOpenCode {
+			t.Fatalf("provider methods req = %#v, want OpenCode", req)
+		}
+		return daemon.HarnessAuthProviderMethodsResponse{Status: "ok", Providers: map[string][]daemon.HarnessAuthMethodInfo{"openai": {{Type: "oauth", Label: "ChatGPT Pro/Plus (browser)"}}}}, nil
 	}
 	var saved daemon.AuthSlotSaveRequest
 	authSlotSaveRPC = func(ctx context.Context, socketPath string, req daemon.AuthSlotSaveRequest) (daemon.AuthSlotResponse, error) {
@@ -423,9 +427,9 @@ func replaceAuthCommandDeps(t *testing.T) func() {
 	originalStart := authStartRPC
 	originalLogout := authLogoutRPC
 	originalDiagnose := authDiagnoseRPC
+	originalProviderMethods := authProviderMethodsRPC
 	originalSlotSave := authSlotSaveRPC
 	originalProviderLogin := authRunProviderLogin
-	originalOpenCodeMethods := authOpenCodeMethods
 	authEnsureDaemonRunning = func(ctx context.Context, cfg *config.Config) error {
 		_ = ctx
 		_ = cfg
@@ -455,6 +459,12 @@ func replaceAuthCommandDeps(t *testing.T) func() {
 		_ = req
 		return daemon.HarnessAuthDiagnoseResponse{}, nil
 	}
+	authProviderMethodsRPC = func(ctx context.Context, socketPath string, req daemon.HarnessAuthProviderMethodsRequest) (daemon.HarnessAuthProviderMethodsResponse, error) {
+		_ = ctx
+		_ = socketPath
+		_ = req
+		return daemon.HarnessAuthProviderMethodsResponse{}, nil
+	}
 	authSlotSaveRPC = func(ctx context.Context, socketPath string, req daemon.AuthSlotSaveRequest) (daemon.AuthSlotResponse, error) {
 		_ = ctx
 		_ = socketPath
@@ -468,19 +478,15 @@ func replaceAuthCommandDeps(t *testing.T) func() {
 		_ = provider
 		return nil
 	}
-	authOpenCodeMethods = func(ctx context.Context) (map[string][]openCodeAuthMethod, error) {
-		_ = ctx
-		return nil, nil
-	}
 	return func() {
 		authEnsureDaemonRunning = originalEnsure
 		authStatusRPC = originalStatus
 		authStartRPC = originalStart
 		authLogoutRPC = originalLogout
 		authDiagnoseRPC = originalDiagnose
+		authProviderMethodsRPC = originalProviderMethods
 		authSlotSaveRPC = originalSlotSave
 		authRunProviderLogin = originalProviderLogin
-		authOpenCodeMethods = originalOpenCodeMethods
 	}
 }
 
@@ -511,7 +517,7 @@ func TestAuthProviderLoginArgsCanPassExplicitOpenCodeProviderOnly(t *testing.T) 
 }
 
 func TestOpenCodeLoginMethodsUseRealMethodLabels(t *testing.T) {
-	options := openCodeLoginMethods([]openCodeAuthMethod{{Type: "oauth", Label: "ChatGPT Pro/Plus (browser)"}, {Type: "api", Label: "Manually enter API Key"}})
+	options := openCodeLoginMethods([]daemon.HarnessAuthMethodInfo{{Type: "oauth", Label: "ChatGPT Pro/Plus (browser)"}, {Type: "api", Label: "Manually enter API Key"}})
 	if len(options) != 2 || options[0].Method != "oauth" || options[0].Label != "ChatGPT Pro/Plus (browser)" || options[1].Method != "api" || options[1].Label != "Manually enter API Key" {
 		t.Fatalf("options = %#v, want provider method types with display labels", options)
 	}

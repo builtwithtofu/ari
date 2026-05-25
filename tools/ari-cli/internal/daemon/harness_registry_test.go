@@ -47,6 +47,32 @@ func TestHarnessRegistryReplaceForTestAllowsInjection(t *testing.T) {
 	}
 }
 
+func TestHarnessRegistryResolvesDescriptorWithoutConstructingExecutor(t *testing.T) {
+	registry := NewHarnessRegistry()
+	factory := func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		return nil, nil
+	}
+	descriptor := HarnessAdapterDescriptor{Name: "test", Auth: HarnessAuthDescriptor{StatusCheck: HarnessAuthSupportSupported, CredentialOwner: HarnessCredentialOwnerProvider, NamedSlotExecution: HarnessAuthSupportUnsupported}}
+	if err := registry.RegisterWithDescriptor("test", factory, descriptor); err != nil {
+		t.Fatalf("RegisterWithDescriptor returned error: %v", err)
+	}
+
+	got, ok := registry.ResolveDescriptor("test")
+	if !ok || got.Name != "test" || got.Auth.StatusCheck != HarnessAuthSupportSupported || got.Auth.CredentialOwner != HarnessCredentialOwnerProvider {
+		t.Fatalf("ResolveDescriptor returned %#v ok=%v, want registered auth descriptor", got, ok)
+	}
+}
+
+func TestDefaultHarnessRegistryProvidesProviderAuthDescriptors(t *testing.T) {
+	registry := NewDefaultHarnessRegistry()
+	for _, harness := range []string{HarnessNameClaude, HarnessNameCodex, HarnessNameOpenCode} {
+		descriptor, ok := registry.ResolveDescriptor(harness)
+		if !ok || descriptor.Auth.StatusCheck != HarnessAuthSupportSupported || descriptor.Auth.CredentialOwner != HarnessCredentialOwnerProvider {
+			t.Fatalf("%s descriptor = %#v ok=%v, want provider auth descriptor", harness, descriptor, ok)
+		}
+	}
+}
+
 func TestHarnessExecutorsUseExplicitExecutableOverrides(t *testing.T) {
 	t.Setenv(EnvCodexExecutable, "/opt/agents/codex")
 	t.Setenv(EnvClaudeExecutable, "/opt/agents/claude")

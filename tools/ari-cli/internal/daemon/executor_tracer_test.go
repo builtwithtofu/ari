@@ -1498,16 +1498,18 @@ func TestAuthDiagnoseComposesStatusSlotsAndCapabilities(t *testing.T) {
 	}
 }
 
-func TestAuthDiagnoseDoesNotReadDescriptorWhenFactoryFails(t *testing.T) {
+func TestAuthDiagnoseUsesRegistryDescriptorWhenFactoryFails(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest(HarnessNameCodex, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	if err := d.harnessRegistry.ReplaceForTestWithDescriptor(HarnessNameCodex, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
 		return nil, fmt.Errorf("factory failed")
-	})
+	}, HarnessAdapterDescriptor{Name: HarnessNameCodex, Auth: HarnessAuthDescriptor{StatusCheck: HarnessAuthSupportSupported, NamedSlotExecution: HarnessAuthSupportUnsupported, CredentialOwner: HarnessCredentialOwnerProvider, RiskLabels: []string{"provider_owned"}}}); err != nil {
+		t.Fatalf("ReplaceForTestWithDescriptor returned error: %v", err)
+	}
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
@@ -1519,8 +1521,11 @@ func TestAuthDiagnoseDoesNotReadDescriptorWhenFactoryFails(t *testing.T) {
 			codex = diagnostic
 		}
 	}
-	if codex.Status != HarnessAuthRequired || codex.Remediation != "check_provider_auth" {
-		t.Fatalf("codex diagnostic = %#v, want auth-required fallback without descriptor access", codex)
+	if codex.Status != HarnessAuthRequired || codex.NextStep == "" {
+		t.Fatalf("codex diagnostic = %#v, want auth-required fallback", codex)
+	}
+	if codex.Auth.NamedSlotExecution != HarnessAuthSupportUnsupported || !stringsContain(codex.Auth.RiskLabels, "provider_owned") {
+		t.Fatalf("codex auth = %#v, want registry descriptor without constructing executor", codex.Auth)
 	}
 }
 

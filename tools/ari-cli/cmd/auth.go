@@ -3,13 +3,10 @@ package cmd
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -33,11 +30,13 @@ var (
 	authDiagnoseRPC = func(ctx context.Context, socketPath string, req daemon.HarnessAuthDiagnoseRequest) (daemon.HarnessAuthDiagnoseResponse, error) {
 		return callDaemonRPC[daemon.HarnessAuthDiagnoseResponse](ctx, socketPath, "auth.diagnose", req)
 	}
+	authProviderMethodsRPC = func(ctx context.Context, socketPath string, req daemon.HarnessAuthProviderMethodsRequest) (daemon.HarnessAuthProviderMethodsResponse, error) {
+		return callDaemonRPC[daemon.HarnessAuthProviderMethodsResponse](ctx, socketPath, "auth.provider_methods", req)
+	}
 	authSlotSaveRPC = func(ctx context.Context, socketPath string, req daemon.AuthSlotSaveRequest) (daemon.AuthSlotResponse, error) {
 		return callDaemonRPC[daemon.AuthSlotResponse](ctx, socketPath, "auth.slot.save", req)
 	}
 	authRunProviderLogin = runProviderLoginCommand
-	authOpenCodeMethods  = fetchOpenCodeAuthMethods
 )
 
 func NewAuthCmd() *cobra.Command {
@@ -165,10 +164,13 @@ func newAuthLoginCmd() *cobra.Command {
 			providerID := strings.TrimSpace(provider)
 			methodOptions := authLoginMethods(selectedHarness)
 			if selectedHarness == daemon.HarnessNameOpenCode {
-				methodsByProvider, err := authOpenCodeMethods(cmd.Context())
+				methodsCtx, methodsCancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+				methodsResp, err := authProviderMethodsRPC(methodsCtx, cfg.Daemon.SocketPath, daemon.HarnessAuthProviderMethodsRequest{Harness: selectedHarness, WorkspaceID: workspaceID})
+				methodsCancel()
 				if err != nil {
 					return err
 				}
+				methodsByProvider := methodsResp.Providers
 				if providerID == "" {
 					providerID, err = promptAuthString(cmd, "Choose OpenCode provider:", "Provider: ", sortedOpenCodeProviders(methodsByProvider))
 					if err != nil {
@@ -301,11 +303,6 @@ type authLoginMethod struct {
 	Label  string
 }
 
-type openCodeAuthMethod struct {
-	Type  string `json:"type"`
-	Label string `json:"label"`
-}
-
 func authLoginMethods(harness string) []authLoginMethod {
 	switch strings.TrimSpace(harness) {
 	case daemon.HarnessNameCodex:
@@ -319,7 +316,7 @@ func authLoginMethods(harness string) []authLoginMethod {
 	}
 }
 
-func openCodeLoginMethods(methods []openCodeAuthMethod) []authLoginMethod {
+func openCodeLoginMethods(methods []daemon.HarnessAuthMethodInfo) []authLoginMethod {
 	options := make([]authLoginMethod, 0, len(methods))
 	for _, method := range methods {
 		methodType := strings.TrimSpace(method.Type)
@@ -332,81 +329,13 @@ func openCodeLoginMethods(methods []openCodeAuthMethod) []authLoginMethod {
 	return options
 }
 
-func sortedOpenCodeProviders(methods map[string][]openCodeAuthMethod) []string {
+func sortedOpenCodeProviders(methods map[string][]daemon.HarnessAuthMethodInfo) []string {
 	providers := make([]string, 0, len(methods))
 	for provider := range methods {
 		providers = append(providers, provider)
 	}
 	slices.Sort(providers)
 	return providers
-}
-
-func fetchOpenCodeAuthMethods(ctx context.Context) (map[string][]openCodeAuthMethod, error) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	command := exec.CommandContext(ctx, daemon.HarnessExecutable("opencode", daemon.EnvOpenCodeExecutable), "serve", "--port", "0", "--hostname", "127.0.0.1")
-	pipeReader, pipeWriter := io.Pipe()
-	command.Stdout = pipeWriter
-	command.Stderr = pipeWriter
-	if err := command.Start(); err != nil {
-		_ = pipeWriter.Close()
-		_ = pipeReader.Close()
-		return nil, err
-	}
-	defer func() {
-		_ = command.Process.Kill()
-		_ = command.Wait()
-		_ = pipeWriter.Close()
-		_ = pipeReader.Close()
-	}()
-	serverURL, err := readOpenCodeServerURL(ctx, pipeReader)
-	if err != nil {
-		return nil, err
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, serverURL+"/provider/auth", nil)
-	if err != nil {
-		return nil, err
-	}
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		_ = response.Body.Close()
-	}()
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("opencode provider auth returned HTTP %d", response.StatusCode)
-	}
-	var methods map[string][]openCodeAuthMethod
-	if err := json.NewDecoder(response.Body).Decode(&methods); err != nil {
-		return nil, err
-	}
-	return methods, nil
-}
-
-func readOpenCodeServerURL(ctx context.Context, reader io.Reader) (string, error) {
-	lines := make(chan string, 1)
-	go func() {
-		scanner := bufio.NewScanner(reader)
-		for scanner.Scan() {
-			lines <- scanner.Text()
-		}
-		close(lines)
-	}()
-	urlPattern := regexp.MustCompile(`http://127\.0\.0\.1:[0-9]+`)
-	for {
-		select {
-		case line, ok := <-lines:
-			if !ok {
-				return "", fmt.Errorf("opencode server exited before printing URL")
-			}
-			if match := urlPattern.FindString(line); match != "" {
-				return match, nil
-			}
-		case <-ctx.Done():
-			return "", ctx.Err()
-		}
-	}
 }
 
 func promptAuthLoginMethod(cmd *cobra.Command, options []authLoginMethod) (string, error) {
@@ -562,7 +491,7 @@ func writeAuthDoctorResponse(w io.Writer, diagnostics []daemon.HarnessAuthDiagno
 				)
 			}
 		}
-		if nextStep := authDoctorNextStep(diagnostic.Remediation); nextStep != "" {
+		if nextStep := authDoctorSafeField(diagnostic.NextStep); nextStep != "none" {
 			fields = append(fields, [2]string{"next step", nextStep})
 		}
 		for _, field := range fields {
@@ -575,32 +504,6 @@ func writeAuthDoctorResponse(w io.Writer, diagnostics []daemon.HarnessAuthDiagno
 		}
 	}
 	return nil
-}
-
-func authDoctorNextStep(remediation string) string {
-	remediation = strings.TrimSpace(remediation)
-	switch remediation {
-	case "", "none":
-		return ""
-	case "install_claude":
-		return "Install Claude Code, then run `ari auth login --harness claude`."
-	case "install_codex":
-		return "Install Codex, then run `ari auth login --harness codex`."
-	case "install_opencode":
-		return "Install OpenCode, then run `ari auth login --harness opencode`."
-	case "device_code":
-		return "Run `ari auth login --harness codex` and complete Codex's device-code login."
-	case "browser":
-		return "Run the provider browser login flow."
-	case "api_key":
-		return "Run the provider API-key login flow; Ari will not store the key."
-	case "opencode_interactive":
-		return "Run `ari auth login --harness opencode` and complete OpenCode's provider login."
-	case "provider_config", "provider_login", "check_provider_auth":
-		return "Run `ari auth login` for this harness or check the provider's native auth setup."
-	default:
-		return "Resolve provider auth: " + authDoctorSafeField(remediation) + "."
-	}
 }
 
 func authDoctorMethodDiscoveryStatus(status string) string {
