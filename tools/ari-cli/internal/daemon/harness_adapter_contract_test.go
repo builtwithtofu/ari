@@ -24,8 +24,14 @@ func TestHarnessAdapterDescriptorsAdvertiseSharedRuntimeContract(t *testing.T) {
 		if descriptor.Auth.StatusCheck == "" || descriptor.Auth.CredentialOwner != HarnessCredentialOwnerProvider {
 			t.Fatalf("%s auth descriptor = %#v, want provider-owned auth capability metadata", descriptor.Name, descriptor.Auth)
 		}
-		if descriptor.Auth.NamedSlotExecution != HarnessAuthSupportUnsupported {
+		if descriptor.Name != HarnessNameCodex && descriptor.Name != HarnessNameOpenCode && descriptor.Name != HarnessNameClaude && descriptor.Auth.NamedSlotExecution != HarnessAuthSupportUnsupported {
 			t.Fatalf("%s named slot execution = %q, want current unsupported capability", descriptor.Name, descriptor.Auth.NamedSlotExecution)
+		}
+		if descriptor.Name == HarnessNameClaude && descriptor.Auth.NamedSlotExecution != HarnessAuthSupportPartial {
+			t.Fatalf("%s named slot execution = %q, want partial CLAUDE_CONFIG_DIR capability", descriptor.Name, descriptor.Auth.NamedSlotExecution)
+		}
+		if (descriptor.Name == HarnessNameCodex || descriptor.Name == HarnessNameOpenCode) && descriptor.Auth.NamedSlotExecution != HarnessAuthSupportSupported {
+			t.Fatalf("%s named slot execution = %q, want supported named-slot capability", descriptor.Name, descriptor.Auth.NamedSlotExecution)
 		}
 		if len(descriptor.Auth.RiskLabels) == 0 || len(descriptor.Auth.Caveats) == 0 {
 			t.Fatalf("%s auth descriptor = %#v, want risk labels and caveats", descriptor.Name, descriptor.Auth)
@@ -51,9 +57,9 @@ func TestProviderAuthDescriptorsMatchCurrentHarnessBehavior(t *testing.T) {
 		riskLabels         []string
 		caveats            []string
 	}{
-		{name: HarnessNameClaude, descriptor: NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo"}).Descriptor().Auth, login: HarnessAuthSupportPartial, loginMethods: []string{"browser", "console", "api_key"}, logout: HarnessAuthSupportSupported, namedSlotStatus: HarnessAuthSupportPartial, namedSlotExecution: HarnessAuthSupportUnsupported, slotScope: "global", riskLabels: []string{"provider_owned", "client_side_login", "keychain_slot_isolation_risk"}, caveats: []string{"client_side_login", "macos_keychain_limits_named_slot_isolation"}},
-		{name: HarnessNameCodex, descriptor: NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo"}).Descriptor().Auth, login: HarnessAuthSupportSupported, loginMethods: []string{"browser", "device_code", "api_key"}, logout: HarnessAuthSupportSupported, namedSlotStatus: HarnessAuthSupportUnsupported, namedSlotExecution: HarnessAuthSupportUnsupported, slotScope: "global", riskLabels: []string{"provider_owned", "named_slot_projection_required"}, caveats: []string{"named_slot_execution_blocked_until_codex_home_projection"}},
-		{name: HarnessNameOpenCode, descriptor: NewOpenCodeExecutorForTest(opencodeExecutorOptions{Executable: "opencode", Cwd: "/repo"}).Descriptor().Auth, login: HarnessAuthSupportPartial, loginMethods: []string{"opencode_interactive"}, logout: HarnessAuthSupportSupported, namedSlotStatus: HarnessAuthSupportPartial, namedSlotExecution: HarnessAuthSupportUnsupported, slotScope: "global", riskLabels: []string{"provider_owned", "provider_hint_matching", "ari_secrets_required_for_isolated_named_execution"}, caveats: []string{"provider_hint_status", "provider_methods_discovery_is_optional", "named_execution_blocked_without_storage_isolation_or_ari_secrets"}},
+		{name: HarnessNameClaude, descriptor: NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo"}).Descriptor().Auth, login: HarnessAuthSupportPartial, loginMethods: []string{"browser", "console", "api_key"}, logout: HarnessAuthSupportSupported, namedSlotStatus: HarnessAuthSupportPartial, namedSlotExecution: HarnessAuthSupportPartial, slotScope: "claude_config_dir", riskLabels: []string{"provider_owned", "client_side_login", "native_config_root_isolation", "keychain_slot_isolation_risk"}, caveats: []string{"client_side_login", "claude_named_slots_use_per_slot_config_dir", "macos_keychain_limits_named_slot_isolation"}},
+		{name: HarnessNameCodex, descriptor: NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo"}).Descriptor().Auth, login: HarnessAuthSupportSupported, loginMethods: []string{"browser", "device_code", "api_key"}, logout: HarnessAuthSupportSupported, namedSlotStatus: HarnessAuthSupportSupported, namedSlotExecution: HarnessAuthSupportSupported, slotScope: "codex_home", riskLabels: []string{"provider_owned", "native_config_root_isolation"}, caveats: []string{"codex_named_slots_use_per_slot_codex_home"}},
+		{name: HarnessNameOpenCode, descriptor: NewOpenCodeExecutorForTest(opencodeExecutorOptions{Executable: "opencode", Cwd: "/repo"}).Descriptor().Auth, login: HarnessAuthSupportPartial, loginMethods: []string{"opencode_interactive"}, logout: HarnessAuthSupportSupported, namedSlotStatus: HarnessAuthSupportPartial, namedSlotExecution: HarnessAuthSupportSupported, slotScope: "ari_auth_content", riskLabels: []string{"provider_owned", "provider_hint_matching", "ari_projected_auth_content", "env_projection_downgrade_risk"}, caveats: []string{"provider_hint_status", "provider_methods_discovery_is_optional", "named_execution_requires_ari_secret_grant"}},
 	}
 
 	for _, tt := range tests {

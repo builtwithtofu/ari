@@ -195,3 +195,28 @@ func TestProfileRejectsInvalidInput(t *testing.T) {
 		t.Fatalf("UpsertProfile error = %v, want ErrInvalidInput", err)
 	}
 }
+
+func TestProfileRejectsSecretLikeDefaults(t *testing.T) {
+	store := newGlobalDBTestStore(t, "agent-profile-secret-defaults")
+	ctx := context.Background()
+
+	for _, defaults := range []string{
+		`{"api_key":"sk-test"}`,
+		`{"nested":{"access_token":"secret"}}`,
+		`{"items":[{"refresh_token":"secret"}]}`,
+		`{"credential_source_ref":"secret://profile"}`,
+	} {
+		err := store.UpsertProfile(ctx, Profile{ProfileID: "ap_secret", Name: "secret-default", DefaultsJSON: defaults})
+		if !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("UpsertProfile defaults %s error = %v, want ErrInvalidInput", defaults, err)
+		}
+	}
+}
+
+func TestProfileAllowsNonSecretSourceDefaults(t *testing.T) {
+	store := newGlobalDBTestStore(t, "agent-profile-source-defaults")
+	err := store.UpsertProfile(context.Background(), Profile{ProfileID: "ap_source", Name: "source-default", DefaultsJSON: `{"source":"harness","source_ref":"provider-documentation"}`})
+	if err != nil {
+		t.Fatalf("UpsertProfile returned error for non-secret source defaults: %v", err)
+	}
+}

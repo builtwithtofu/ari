@@ -21,6 +21,7 @@ type opencodeExecutorOptions struct {
 	Executable     string
 	Cwd            string
 	Model          string
+	AuthProjection HarnessAuthProjectionPlan
 	RunCommand     opencodeCommandRunner
 	RunAuthCommand opencodeAuthCommandRunner
 }
@@ -99,7 +100,7 @@ func (e *OpenCodeExecutor) AuthLogout(ctx context.Context, slot HarnessAuthSlot)
 }
 
 func (e *OpenCodeExecutor) Descriptor() HarnessAdapterDescriptor {
-	return HarnessAdapterDescriptor{Name: HarnessNameOpenCode, Capabilities: []HarnessCapability{HarnessCapabilityHarnessSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems, HarnessCapabilityFinalResponse, HarnessCapabilityMeasuredTokenTelemetry}, Auth: HarnessAuthDescriptor{StatusCheck: HarnessAuthSupportSupported, Login: HarnessAuthSupportPartial, LoginMethods: []string{"opencode_interactive"}, Logout: HarnessAuthSupportSupported, NamedSlotStatus: HarnessAuthSupportPartial, NamedSlotExecution: HarnessAuthSupportUnsupported, SlotScope: "global", CredentialOwner: HarnessCredentialOwnerProvider, RiskLabels: []string{"provider_owned", "provider_hint_matching", "ari_secrets_required_for_isolated_named_execution"}, Caveats: []string{"provider_hint_status", "provider_methods_discovery_is_optional", "named_execution_blocked_without_storage_isolation_or_ari_secrets"}}}
+	return HarnessAdapterDescriptor{Name: HarnessNameOpenCode, Capabilities: []HarnessCapability{HarnessCapabilityHarnessSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems, HarnessCapabilityFinalResponse, HarnessCapabilityMeasuredTokenTelemetry}, Auth: HarnessAuthDescriptor{StatusCheck: HarnessAuthSupportSupported, Login: HarnessAuthSupportPartial, LoginMethods: []string{"opencode_interactive"}, Logout: HarnessAuthSupportSupported, NamedSlotStatus: HarnessAuthSupportPartial, NamedSlotExecution: HarnessAuthSupportSupported, SlotScope: "ari_auth_content", CredentialOwner: HarnessCredentialOwnerProvider, RiskLabels: []string{"provider_owned", "provider_hint_matching", "ari_projected_auth_content", "env_projection_downgrade_risk"}, Caveats: []string{"provider_hint_status", "provider_methods_discovery_is_optional", "named_execution_requires_ari_secret_grant"}}}
 }
 
 func (e *OpenCodeExecutor) AuthProviderMethods(ctx context.Context) (HarnessAuthProviderMethodsResponse, error) {
@@ -119,8 +120,8 @@ func (e *OpenCodeExecutor) Start(ctx context.Context, req ExecutorStartRequest) 
 	if e == nil {
 		return ExecutorRun{}, fmt.Errorf("executor is required")
 	}
-	if !authSlotIsDefaultForHarness(HarnessNameOpenCode, req.AuthSlotID) {
-		return ExecutorRun{}, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "auth_slot_selection_unsupported", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+	if !authSlotIsDefaultForHarness(HarnessNameOpenCode, req.AuthSlotID) && !openCodeAuthContentProjectionReady(req.AuthProjection) {
+		return ExecutorRun{}, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "auth_slot_projection_required", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
 	}
 	workspaceID := strings.TrimSpace(req.WorkspaceID)
 	if workspaceID == "" {
@@ -130,6 +131,7 @@ func (e *OpenCodeExecutor) Start(ctx context.Context, req ExecutorStartRequest) 
 	if strings.TrimSpace(req.Model) != "" {
 		options.Model = strings.TrimSpace(req.Model)
 	}
+	options.AuthProjection = req.AuthProjection
 	prompt := opencodePromptFromRequest(req)
 	commandResult, err := options.RunCommand(ctx, options, prompt)
 	if err != nil {
@@ -147,6 +149,10 @@ func (e *OpenCodeExecutor) Start(ctx context.Context, req ExecutorStartRequest) 
 	e.runs[parsed.SessionID] = items
 	e.mu.Unlock()
 	return ExecutorRun{RunID: parsed.SessionID, SessionID: parsed.SessionID, Executor: HarnessNameOpenCode, ProviderSessionID: parsed.SessionID, ProviderRunID: parsed.SessionID, ExitCode: commandResult.ExitCode, ProcessSample: commandResult.ProcessSample, CapabilityNames: harnessCapabilitiesToStrings(e.Descriptor().Capabilities)}, nil
+}
+
+func openCodeAuthContentProjectionReady(projection HarnessAuthProjectionPlan) bool {
+	return projection.Owner == HarnessAuthProjectionOwnerAri && projection.Kind == HarnessAuthProjectionAuthContent && strings.TrimSpace(projection.Env["OPENCODE_AUTH_CONTENT"]) != ""
 }
 
 func (e *OpenCodeExecutor) Items(ctx context.Context, runID string) ([]TimelineItem, error) {
@@ -294,6 +300,7 @@ func runOpenCodeCommand(ctx context.Context, options opencodeExecutorOptions, pr
 	}
 	cmd := exec.CommandContext(ctx, path, opencodeArgs(options, prompt)...)
 	cmd.Dir = strings.TrimSpace(options.Cwd)
+	cmd.Env = commandEnvWithProjection(options.AuthProjection)
 	var output strings.Builder
 	cmd.Stdout = &output
 	cmd.Stderr = &output
@@ -304,7 +311,7 @@ func runOpenCodeCommand(ctx context.Context, options opencodeExecutorOptions, pr
 	err = cmd.Wait()
 	exitCode := cmd.ProcessState.ExitCode()
 	if err != nil {
-		return commandRunResult{}, fmt.Errorf("run opencode json: %w: %s", err, strings.TrimSpace(output.String()))
+		return commandRunResult{}, fmt.Errorf("run opencode json: %w", err)
 	}
 	return commandRunResult{Output: []byte(output.String()), ProcessSample: &sample, ExitCode: &exitCode}, nil
 }
@@ -320,6 +327,7 @@ func runOpenCodeAuthCommand(ctx context.Context, options opencodeExecutorOptions
 	}
 	cmd := exec.CommandContext(ctx, path, args...)
 	cmd.Dir = strings.TrimSpace(options.Cwd)
+	cmd.Env = commandEnvWithProjection(options.AuthProjection)
 	var output strings.Builder
 	cmd.Stdout = &output
 	cmd.Stderr = &output
@@ -345,6 +353,7 @@ func fetchOpenCodeAuthProviderMethods(ctx context.Context, options opencodeExecu
 	}
 	command := exec.CommandContext(ctx, path, "serve", "--port", "0", "--hostname", "127.0.0.1")
 	command.Dir = strings.TrimSpace(options.Cwd)
+	command.Env = commandEnvWithProjection(options.AuthProjection)
 	pipeReader, pipeWriter := io.Pipe()
 	command.Stdout = pipeWriter
 	command.Stderr = pipeWriter

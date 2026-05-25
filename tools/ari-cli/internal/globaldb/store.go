@@ -16,8 +16,9 @@ import (
 )
 
 var (
-	ErrInvalidInput = errors.New("invalid globaldb input")
-	ErrNotFound     = errors.New("globaldb record not found")
+	ErrInvalidInput     = errors.New("invalid globaldb input")
+	ErrNotFound         = errors.New("globaldb record not found")
+	ErrPermissionDenied = errors.New("globaldb permission denied")
 )
 
 const (
@@ -295,6 +296,9 @@ func (s *Store) UpsertProfile(ctx context.Context, profile Profile) error {
 	if !json.Valid([]byte(profile.DefaultsJSON)) {
 		return fmt.Errorf("%w: profile defaults json is invalid", ErrInvalidInput)
 	}
+	if jsonContainsSecretLikeFields(profile.DefaultsJSON) {
+		return fmt.Errorf("%w: profile defaults json must not include secret-like fields", ErrInvalidInput)
+	}
 	if !json.Valid([]byte(profile.AuthPoolJSON)) {
 		return fmt.Errorf("%w: profile auth pool json is invalid", ErrInvalidInput)
 	}
@@ -454,8 +458,8 @@ func (s *Store) UpsertAuthSlot(ctx context.Context, slot AuthSlot) error {
 	if !json.Valid([]byte(slot.MetadataJSON)) {
 		return fmt.Errorf("%w: auth slot metadata json is invalid", ErrInvalidInput)
 	}
-	if authSlotMetadataContainsSourceFields(slot.MetadataJSON) {
-		return fmt.Errorf("%w: auth slot metadata must not include credential source fields", ErrInvalidInput)
+	if jsonContainsSecretLikeFields(slot.MetadataJSON) {
+		return fmt.Errorf("%w: auth slot metadata must not include secret-like fields", ErrInvalidInput)
 	}
 	now := time.Now().UTC()
 	if existing, err := s.GetAuthSlot(ctx, slot.AuthSlotID); err == nil && !existing.CreatedAt.IsZero() {
@@ -507,6 +511,21 @@ func (s *Store) ListAuthSlots(ctx context.Context, harness string) ([]AuthSlot, 
 	return slots, nil
 }
 
+func (s *Store) DeleteAuthSlot(ctx context.Context, authSlotID string) error {
+	authSlotID = strings.TrimSpace(authSlotID)
+	if authSlotID == "" {
+		return fmt.Errorf("%w: auth slot id is required", ErrInvalidInput)
+	}
+	rows, err := s.sqlcQueries().DeleteAuthSlot(ctx, dbsqlc.DeleteAuthSlotParams{AuthSlotID: authSlotID})
+	if err != nil {
+		return fmt.Errorf("delete auth slot %q: %w", authSlotID, err)
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func validAuthSlotStatus(status string) bool {
 	switch status {
 	case "authenticated", "auth_required", "auth_in_progress", "auth_failed", "cancelled", "unknown", "not_installed":
@@ -514,36 +533,6 @@ func validAuthSlotStatus(status string) bool {
 	default:
 		return false
 	}
-}
-
-func authSlotMetadataContainsSourceFields(raw string) bool {
-	var metadata any
-	if err := json.Unmarshal([]byte(raw), &metadata); err != nil {
-		return true
-	}
-	return authSlotMetadataValueContainsSourceFields(metadata)
-}
-
-func authSlotMetadataValueContainsSourceFields(value any) bool {
-	switch typed := value.(type) {
-	case map[string]any:
-		for key, child := range typed {
-			normalized := strings.ToLower(strings.TrimSpace(key))
-			if normalized == "source" || normalized == "source_ref" || normalized == "credential_source" || normalized == "credential_source_ref" {
-				return true
-			}
-			if authSlotMetadataValueContainsSourceFields(child) {
-				return true
-			}
-		}
-	case []any:
-		for _, child := range typed {
-			if authSlotMetadataValueContainsSourceFields(child) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func (s *Store) UpsertFinalResponse(ctx context.Context, response FinalResponse) error {

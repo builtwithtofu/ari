@@ -16,23 +16,24 @@ import (
 var ariRandomReader io.Reader = rand.Reader
 
 type HarnessCall struct {
-	CallID              string                 `json:"call_id"`
-	AriSessionID        string                 `json:"ari_session_id,omitempty"`
-	WorkspaceID         string                 `json:"workspace_id"`
-	TaskID              string                 `json:"task_id"`
-	SourceProfileID     string                 `json:"source_profile_id,omitempty"`
-	Model               string                 `json:"model,omitempty"`
-	Prompt              string                 `json:"prompt,omitempty"`
-	AuthSlotID          string                 `json:"auth_slot_id,omitempty"`
-	InvocationClass     HarnessInvocationClass `json:"invocation_class"`
-	Capability          HarnessCapability      `json:"capability"`
-	ContextPacketID     string                 `json:"context_packet_id"`
-	InputSchemaVersion  string                 `json:"input_schema_version"`
-	Input               json.RawMessage        `json:"input,omitempty"`
-	ResultSchemaVersion string                 `json:"result_schema_version"`
-	Required            []HarnessCapability    `json:"required,omitempty"`
-	Timeout             time.Duration          `json:"-"`
-	Options             []HarnessOption        `json:"-"`
+	CallID              string                    `json:"call_id"`
+	AriSessionID        string                    `json:"ari_session_id,omitempty"`
+	WorkspaceID         string                    `json:"workspace_id"`
+	TaskID              string                    `json:"task_id"`
+	SourceProfileID     string                    `json:"source_profile_id,omitempty"`
+	Model               string                    `json:"model,omitempty"`
+	Prompt              string                    `json:"prompt,omitempty"`
+	AuthSlotID          string                    `json:"auth_slot_id,omitempty"`
+	AuthProjection      HarnessAuthProjectionPlan `json:"auth_projection,omitempty"`
+	InvocationClass     HarnessInvocationClass    `json:"invocation_class"`
+	Capability          HarnessCapability         `json:"capability"`
+	ContextPacketID     string                    `json:"context_packet_id"`
+	InputSchemaVersion  string                    `json:"input_schema_version"`
+	Input               json.RawMessage           `json:"input,omitempty"`
+	ResultSchemaVersion string                    `json:"result_schema_version"`
+	Required            []HarnessCapability       `json:"required,omitempty"`
+	Timeout             time.Duration             `json:"-"`
+	Options             []HarnessOption           `json:"-"`
 }
 
 type HarnessCapability string
@@ -773,7 +774,7 @@ func startHarnessCallAfterCapabilityCheck(ctx context.Context, executor Executor
 			return HarnessSession{}, nil, err
 		}
 	}
-	providerRun, err := executor.Start(ctx, ExecutorStartRequest{WorkspaceID: call.WorkspaceID, RunID: ariRunID, SessionID: ariRunID, ContextPacket: string(call.Input), SourceProfileID: call.SourceProfileID, Model: call.Model, Prompt: call.Prompt, AuthSlotID: call.AuthSlotID, InvocationClass: call.InvocationClass, Options: call.Options})
+	providerRun, err := executor.Start(ctx, ExecutorStartRequest{WorkspaceID: call.WorkspaceID, RunID: ariRunID, SessionID: ariRunID, ContextPacket: string(call.Input), SourceProfileID: call.SourceProfileID, Model: call.Model, Prompt: call.Prompt, AuthSlotID: call.AuthSlotID, AuthProjection: call.AuthProjection, InvocationClass: call.InvocationClass, Options: call.Options})
 	if err != nil {
 		return HarnessSession{}, nil, err
 	}

@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -252,6 +253,48 @@ func TestOpenCodeExecutorRejectsMissingSessionID(t *testing.T) {
 	}
 }
 
+func TestOpenCodeStartRejectsNamedSlotWithoutAuthContentProjection(t *testing.T) {
+	runner := &fakeOpenCodeRunner{output: []byte(`{"type":"session.status","properties":{"sessionID":"sess_123","status":{"type":"idle"}}}`)}
+	executor := NewOpenCodeExecutorForTest(opencodeExecutorOptions{Executable: "opencode", Cwd: "/repo", RunCommand: runner.Run})
+
+	_, err := executor.Start(context.Background(), ExecutorStartRequest{WorkspaceID: "ws-1", AuthSlotID: "opencode-work", ContextPacket: `{"context_packet_id":"ctx_123"}`})
+	unavailable := &HarnessUnavailableError{}
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("Start error = %T %[1]v, want HarnessUnavailableError", err)
+	}
+	if unavailable.Reason != "auth_slot_projection_required" || unavailable.StartInvoked {
+		t.Fatalf("unavailable = %#v, want fail-closed before provider launch", unavailable)
+	}
+	if runner.args != nil {
+		t.Fatalf("runner args = %#v, want provider not launched", runner.args)
+	}
+}
+
+func TestOpenCodeStartAcceptsNamedSlotWithAuthContentProjection(t *testing.T) {
+	runner := &fakeOpenCodeRunner{output: []byte(strings.Join([]string{`{"type":"session.status","properties":{"sessionID":"sess_123","status":{"type":"busy"}}}`, `{"type":"session.status","properties":{"sessionID":"sess_123","status":{"type":"idle"}}}`}, "\n"))}
+	executor := NewOpenCodeExecutorForTest(opencodeExecutorOptions{Executable: "opencode", Cwd: "/repo", RunCommand: runner.Run})
+	projection := HarnessAuthProjectionPlan{Owner: HarnessAuthProjectionOwnerAri, Kind: HarnessAuthProjectionAuthContent, Env: map[string]string{"OPENCODE_AUTH_CONTENT": `{"provider":"anthropic","type":"api"}`}, RiskLabels: []string{"env_projection_downgrade_risk"}}
+
+	_, err := executor.Start(context.Background(), ExecutorStartRequest{WorkspaceID: "ws-1", AuthSlotID: "opencode-work", ContextPacket: `{"context_packet_id":"ctx_123"}`, AuthProjection: projection})
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	if runner.authProjection.Kind != HarnessAuthProjectionAuthContent || runner.authProjection.Env["OPENCODE_AUTH_CONTENT"] == "" {
+		t.Fatalf("projection = %#v, want auth content projected to child command", runner.authProjection)
+	}
+}
+
+func TestOpenCodeAuthProjectionPlanDoesNotSerializeEnvPayload(t *testing.T) {
+	projection := HarnessAuthProjectionPlan{Owner: HarnessAuthProjectionOwnerAri, Kind: HarnessAuthProjectionAuthContent, Env: map[string]string{"OPENCODE_AUTH_CONTENT": `{"provider":"anthropic","access_token":"ari-secret-sentinel"}`}}
+	encoded, err := json.Marshal(projection)
+	if err != nil {
+		t.Fatalf("Marshal returned error: %v", err)
+	}
+	if bytes.Contains(encoded, []byte("OPENCODE_AUTH_CONTENT")) || bytes.Contains(encoded, []byte("ari-secret-sentinel")) || bytes.Contains(encoded, []byte("access_token")) {
+		t.Fatalf("projection JSON leaked env payload: %s", encoded)
+	}
+}
+
 func TestOpenCodeExecutorAdvertisesCapabilityProofSurface(t *testing.T) {
 	executor := NewOpenCodeExecutorForTest(opencodeExecutorOptions{Executable: "opencode", Cwd: "/repo"})
 	capabilities := executor.Descriptor().Capabilities
@@ -288,14 +331,16 @@ func TestReadOpenCodeServerURLStopsConsumingAfterMatch(t *testing.T) {
 }
 
 type fakeOpenCodeRunner struct {
-	output []byte
-	args   []string
-	prompt string
+	output         []byte
+	args           []string
+	prompt         string
+	authProjection HarnessAuthProjectionPlan
 }
 
 func (r *fakeOpenCodeRunner) Run(ctx context.Context, opts opencodeExecutorOptions, prompt string) (commandRunResult, error) {
 	_ = ctx
 	r.args = opencodeArgs(opts, prompt)
 	r.prompt = prompt
+	r.authProjection = opts.AuthProjection
 	return commandRunResult{Output: append([]byte(nil), r.output...)}, nil
 }

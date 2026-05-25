@@ -177,82 +177,81 @@ func TestCodexAuthStartRelaysDeviceCodeWithoutSecrets(t *testing.T) {
 	}
 }
 
-func TestCodexAuthStartRejectsUnsupportedNamedSlotBeforeProviderCommand(t *testing.T) {
-	called := false
-	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo", RunAuthCommand: func(ctx context.Context, opts codexExecutorOptions, args []string) (commandRunResult, error) {
+func TestCodexAuthStartProjectsNamedSlotCodeHome(t *testing.T) {
+	exitCode := 0
+	var captured codexExecutorOptions
+	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo", AuthHomeRoot: t.TempDir(), RunAuthCommand: func(ctx context.Context, opts codexExecutorOptions, args []string) (commandRunResult, error) {
 		_ = ctx
-		_ = opts
-		_ = args
-		called = true
-		return commandRunResult{}, nil
+		captured = opts
+		if strings.Join(args, " ") != "login --device-auth" {
+			t.Fatalf("args = %q, want login --device-auth", strings.Join(args, " "))
+		}
+		return commandRunResult{Output: []byte("Open https://codex.example/device and enter code ABCD-EFGH\n"), ExitCode: &exitCode}, nil
 	}})
 
-	_, err := executor.AuthStart(context.Background(), HarnessAuthSlot{AuthSlotID: "codex-work", Harness: HarnessNameCodex}, "device_code")
-	unavailable := &HarnessUnavailableError{}
-	if !errors.As(err, &unavailable) {
-		t.Fatalf("AuthStart error = %T %[1]v, want HarnessUnavailableError", err)
+	status, err := executor.AuthStart(context.Background(), HarnessAuthSlot{AuthSlotID: "codex-work", Harness: HarnessNameCodex}, "device_code")
+	if err != nil {
+		t.Fatalf("AuthStart returned error: %v", err)
 	}
-	if unavailable.Reason != "auth_slot_selection_unsupported" || unavailable.StartInvoked || called {
-		t.Fatalf("unavailable = %#v called = %v, want unsupported before provider command", unavailable, called)
+	if status.Status != HarnessAuthInProgress || captured.AuthProjection.Env["CODEX_HOME"] == "" || !strings.HasSuffix(captured.AuthProjection.Env["CODEX_HOME"], "codex-work") {
+		t.Fatalf("status = %#v projection = %#v, want named CODEX_HOME auth start", status, captured.AuthProjection)
 	}
 }
 
-func TestCodexAuthStatusRejectsUnsupportedNamedSlotBeforeProviderCommand(t *testing.T) {
-	called := false
-	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo", RunAuthCommand: func(ctx context.Context, opts codexExecutorOptions, args []string) (commandRunResult, error) {
+func TestCodexAuthStatusProjectsNamedSlotCodeHome(t *testing.T) {
+	exitCode := 0
+	var captured codexExecutorOptions
+	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo", AuthHomeRoot: t.TempDir(), RunAuthCommand: func(ctx context.Context, opts codexExecutorOptions, args []string) (commandRunResult, error) {
 		_ = ctx
-		_ = opts
-		_ = args
-		called = true
-		return commandRunResult{}, nil
+		captured = opts
+		if strings.Join(args, " ") != "login status" {
+			t.Fatalf("args = %q, want login status", strings.Join(args, " "))
+		}
+		return commandRunResult{ExitCode: &exitCode}, nil
 	}})
 
-	_, err := executor.AuthStatus(context.Background(), HarnessAuthSlot{AuthSlotID: "codex-work", Harness: HarnessNameCodex})
-	unavailable := &HarnessUnavailableError{}
-	if !errors.As(err, &unavailable) {
-		t.Fatalf("AuthStatus error = %T %[1]v, want HarnessUnavailableError", err)
+	status, err := executor.AuthStatus(context.Background(), HarnessAuthSlot{AuthSlotID: "codex-work", Harness: HarnessNameCodex})
+	if err != nil {
+		t.Fatalf("AuthStatus returned error: %v", err)
 	}
-	if unavailable.Reason != "auth_slot_selection_unsupported" || unavailable.StartInvoked || called {
-		t.Fatalf("unavailable = %#v called = %v, want unsupported before provider command", unavailable, called)
+	if status.Status != HarnessAuthAuthenticated || captured.AuthProjection.Env["CODEX_HOME"] == "" || !strings.HasSuffix(captured.AuthProjection.Env["CODEX_HOME"], "codex-work") {
+		t.Fatalf("status = %#v projection = %#v, want named CODEX_HOME auth status", status, captured.AuthProjection)
 	}
 }
 
-func TestCodexStartRejectsUnsupportedNamedSlotBeforeProviderCommand(t *testing.T) {
-	called := false
-	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo", StartTransport: func(ctx context.Context, opts codexExecutorOptions) (codexTransport, error) {
+func TestCodexStartProjectsNamedSlotCodeHome(t *testing.T) {
+	transport := newFakeCodexTransport([]codexNotification{{Method: "turn/completed", Params: mustRawJSON(t, `{"threadId":"thr_123","turn":{"id":"turn_456","status":"completed"}}`)}})
+	var captured codexExecutorOptions
+	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo", AuthHomeRoot: t.TempDir(), StartTransport: func(ctx context.Context, opts codexExecutorOptions) (codexTransport, error) {
 		_ = ctx
-		_ = opts
-		called = true
-		return newFakeCodexTransport(nil), nil
+		captured = opts
+		return transport, nil
 	}})
 
 	_, err := executor.Start(context.Background(), ExecutorStartRequest{WorkspaceID: "ws-1", AuthSlotID: "codex-work", Prompt: "hello"})
-	unavailable := &HarnessUnavailableError{}
-	if !errors.As(err, &unavailable) {
-		t.Fatalf("Start error = %T %[1]v, want HarnessUnavailableError", err)
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
 	}
-	if unavailable.Reason != "auth_slot_selection_unsupported" || unavailable.StartInvoked || called {
-		t.Fatalf("unavailable = %#v called = %v, want unsupported before provider command", unavailable, called)
+	if captured.AuthProjection.Env["CODEX_HOME"] == "" || !strings.HasSuffix(captured.AuthProjection.Env["CODEX_HOME"], "codex-work") {
+		t.Fatalf("projection = %#v, want named CODEX_HOME start", captured.AuthProjection)
 	}
 }
 
-func TestCodexAuthLogoutRejectsUnsupportedNamedSlotBeforeProviderCommand(t *testing.T) {
-	called := false
-	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo", RunAuthCommand: func(ctx context.Context, opts codexExecutorOptions, args []string) (commandRunResult, error) {
+func TestCodexAuthLogoutProjectsNamedSlotCodeHome(t *testing.T) {
+	exitCode := 0
+	var homes []string
+	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo", AuthHomeRoot: t.TempDir(), RunAuthCommand: func(ctx context.Context, opts codexExecutorOptions, args []string) (commandRunResult, error) {
 		_ = ctx
-		_ = opts
-		_ = args
-		called = true
-		return commandRunResult{}, nil
+		homes = append(homes, opts.AuthProjection.Env["CODEX_HOME"])
+		return commandRunResult{ExitCode: &exitCode}, nil
 	}})
 
-	_, err := executor.AuthLogout(context.Background(), HarnessAuthSlot{AuthSlotID: "codex-work", Harness: HarnessNameCodex})
-	unavailable := &HarnessUnavailableError{}
-	if !errors.As(err, &unavailable) {
-		t.Fatalf("AuthLogout error = %T %[1]v, want HarnessUnavailableError", err)
+	status, err := executor.AuthLogout(context.Background(), HarnessAuthSlot{AuthSlotID: "codex-work", Harness: HarnessNameCodex})
+	if err != nil {
+		t.Fatalf("AuthLogout returned error: %v", err)
 	}
-	if unavailable.Reason != "auth_slot_selection_unsupported" || unavailable.StartInvoked || called {
-		t.Fatalf("unavailable = %#v called = %v, want unsupported before provider command", unavailable, called)
+	if status.Status != HarnessAuthRequired || len(homes) != 2 || homes[0] == "" || homes[0] != homes[1] || !strings.HasSuffix(homes[0], "codex-work") {
+		t.Fatalf("status = %#v homes = %#v, want status/logout using same named CODEX_HOME", status, homes)
 	}
 }
 

@@ -47,6 +47,7 @@ type Daemon struct {
 	executorItems   map[string][]TimelineItem
 	harnessRegistry *HarnessRegistry
 	agentProfiles   map[string]Profile
+	secretBackend   globaldb.SecretBackend
 }
 
 var bootstrapDatabase = globaldb.Bootstrap
@@ -99,6 +100,7 @@ func NewWithSignalChannel(socketPath, dbPath, pidPath, configPath, configSource,
 		executorItems:   make(map[string][]TimelineItem),
 		harnessRegistry: NewDefaultHarnessRegistry(),
 		agentProfiles:   defaultProfiles(),
+		secretBackend:   globaldb.NewMemorySecretBackend(),
 	}
 }
 

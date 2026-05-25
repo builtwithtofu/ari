@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -254,6 +255,65 @@ func TestClaudeExecutorRejectsForeignTypedOptions(t *testing.T) {
 	}
 	if len(runner.args) > 0 {
 		t.Fatalf("runner args = %#v, want no command invocation", runner.args)
+	}
+}
+
+func TestClaudeStartProjectsNamedSlotConfigDir(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	runner := &fakeClaudeRunner{output: []byte(`{"result":"Done","session_id":"550e8400-e29b-41d4-a716-446655440000"}`)}
+	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunCommand: runner.Run})
+
+	_, err := executor.Start(context.Background(), ExecutorStartRequest{WorkspaceID: "ws-1", AuthSlotID: "claude-work", ContextPacket: `{"context_packet_id":"ctx_123"}`, Options: []HarnessOption{ClaudeWithInvocationMode(HarnessInvocationModeHeadless)}})
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	configDir := runner.authProjection.Env["CLAUDE_CONFIG_DIR"]
+	if runner.authProjection.Kind != HarnessAuthProjectionConfigRoot || !strings.Contains(configDir, "claude-work") {
+		t.Fatalf("projection = %#v, want per-slot CLAUDE_CONFIG_DIR", runner.authProjection)
+	}
+	childEnv := commandEnvWithProjection(runner.authProjection)
+	if !slices.Contains(childEnv, "CLAUDE_CONFIG_DIR="+configDir) {
+		t.Fatalf("child env = %#v, want CLAUDE_CONFIG_DIR projected", childEnv)
+	}
+}
+
+func TestClaudeDefaultStartKeepsImplicitEnvInheritance(t *testing.T) {
+	runner := &fakeClaudeRunner{output: []byte(`{"result":"Done","session_id":"550e8400-e29b-41d4-a716-446655440000"}`)}
+	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunCommand: runner.Run})
+
+	_, err := executor.Start(context.Background(), ExecutorStartRequest{WorkspaceID: "ws-1", ContextPacket: `{"context_packet_id":"ctx_123"}`, Options: []HarnessOption{ClaudeWithInvocationMode(HarnessInvocationModeHeadless)}})
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	if runner.authProjection.Kind != "" || commandEnvWithProjection(runner.authProjection) != nil {
+		t.Fatalf("projection = %#v, want default run without explicit child env", runner.authProjection)
+	}
+}
+
+func TestClaudeNamedAuthStatusAndLogoutUseConfigDirProjection(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	exitCode := 0
+	var captured []claudeExecutorOptions
+	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunAuthCommand: func(ctx context.Context, opts claudeExecutorOptions, args []string) (commandRunResult, error) {
+		_ = ctx
+		_ = args
+		captured = append(captured, opts)
+		return commandRunResult{Output: []byte(`{"authenticated":true}`), ExitCode: &exitCode}, nil
+	}})
+
+	if _, err := executor.AuthStatus(context.Background(), HarnessAuthSlot{AuthSlotID: "claude-work", Harness: HarnessNameClaude}); err != nil {
+		t.Fatalf("AuthStatus returned error: %v", err)
+	}
+	if _, err := executor.AuthLogout(context.Background(), HarnessAuthSlot{AuthSlotID: "claude-work", Harness: HarnessNameClaude}); err != nil {
+		t.Fatalf("AuthLogout returned error: %v", err)
+	}
+	if len(captured) != 2 {
+		t.Fatalf("captured len = %d, want status and logout", len(captured))
+	}
+	for _, opts := range captured {
+		if opts.AuthProjection.Kind != HarnessAuthProjectionConfigRoot || !strings.Contains(opts.AuthProjection.Env["CLAUDE_CONFIG_DIR"], "claude-work") {
+			t.Fatalf("projection = %#v, want named auth command config dir", opts.AuthProjection)
+		}
 	}
 }
 
@@ -535,9 +595,10 @@ func TestClaudeExecutorRejectsMissingSessionID(t *testing.T) {
 }
 
 type fakeClaudeRunner struct {
-	output []byte
-	args   []string
-	prompt string
+	output         []byte
+	args           []string
+	prompt         string
+	authProjection HarnessAuthProjectionPlan
 }
 
 type foreignHarnessOption struct{}
@@ -553,5 +614,6 @@ func (r *fakeClaudeRunner) Run(ctx context.Context, opts claudeExecutorOptions, 
 		}
 	}
 	r.prompt = prompt
+	r.authProjection = opts.AuthProjection
 	return commandRunResult{Output: append([]byte(nil), r.output...)}, nil
 }

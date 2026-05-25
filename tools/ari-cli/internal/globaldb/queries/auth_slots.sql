@@ -26,3 +26,7 @@ SELECT auth_slot_id, harness, label, provider_label, credential_owner, status, m
 FROM auth_slots
 WHERE harness = ?
 ORDER BY label ASC, auth_slot_id ASC;
+
+-- name: DeleteAuthSlot :execrows
+DELETE FROM auth_slots
+WHERE auth_slot_id = ?;

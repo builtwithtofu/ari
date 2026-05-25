@@ -441,6 +441,79 @@ func TestEphemeralCallRunsTargetAndRoutesReplyToCaller(t *testing.T) {
 	}
 }
 
+func TestEphemeralCallFailsBeforeProviderLaunchWhenProfileAuthSlotNotReady(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.UpsertAuthSlot(ctx, globaldb.AuthSlot{AuthSlotID: "slot-work", Harness: "test-harness", Label: "Work", Status: "auth_required"}); err != nil {
+		t.Fatalf("UpsertAuthSlot returned error: %v", err)
+	}
+	if err := store.UpsertProfile(ctx, globaldb.Profile{ProfileID: "ap_librarian", WorkspaceID: "ws-1", Name: "librarian", Harness: "test-harness", Model: "model-1", Prompt: "research", AuthSlotID: "slot-work", InvocationClass: string(HarnessInvocationEphemeral)}); err != nil {
+		t.Fatalf("UpsertProfile returned error: %v", err)
+	}
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "librarian", Harness: "test-harness", Model: "model-1", Prompt: "research"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
+	}
+	setup, err := createEphemeralSession(ctx, store, ephemeralCall{CallID: "call-auth", WorkspaceID: "ws-1", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research", SessionID: "call-auth-run", TaskID: "call-auth", ContextPacketID: "call-auth-context", RequestAgentMessageID: "call-auth-request"}, nil)
+	if err != nil {
+		t.Fatalf("createEphemeralSession returned error: %v", err)
+	}
+
+	var captured ExecutorStartRequest
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return &capturingHarness{name: "test-harness", captured: &captured, authStatuses: map[string]HarnessAuthState{"slot-work": HarnessAuthRequired}}, nil
+	})
+
+	_, err = d.runEphemeralHarness(ctx, store, setup, ephemeralCall{CallID: "call-auth", WorkspaceID: "ws-1", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research", SessionID: "call-auth-run", TaskID: "call-auth", ContextPacketID: "call-auth-context", RequestAgentMessageID: "call-auth-request"})
+	if err == nil || !strings.Contains(err.Error(), "auth_slot_not_ready") {
+		t.Fatalf("runEphemeralHarness error = %v, want auth_slot_not_ready", err)
+	}
+	if captured.WorkspaceID != "" {
+		t.Fatalf("captured start request = %#v, want provider start not invoked", captured)
+	}
+}
+
+func TestEphemeralCallPassesResolvedAuthSlotToProvider(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.UpsertAuthSlot(ctx, globaldb.AuthSlot{AuthSlotID: "slot-work", Harness: "test-harness", Label: "Work", Status: "authenticated"}); err != nil {
+		t.Fatalf("UpsertAuthSlot returned error: %v", err)
+	}
+	if err := store.UpsertProfile(ctx, globaldb.Profile{ProfileID: "ap_librarian", WorkspaceID: "ws-1", Name: "librarian", Harness: "test-harness", Model: "model-1", Prompt: "research", AuthSlotID: "slot-work", InvocationClass: string(HarnessInvocationEphemeral)}); err != nil {
+		t.Fatalf("UpsertProfile returned error: %v", err)
+	}
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "librarian", Harness: "test-harness", Model: "model-1", Prompt: "research"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
+	}
+	request := ephemeralCall{CallID: "call-auth", WorkspaceID: "ws-1", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research", SessionID: "call-auth-run", TaskID: "call-auth", ContextPacketID: "call-auth-context", RequestAgentMessageID: "call-auth-request"}
+	setup, err := createEphemeralSession(ctx, store, request, nil)
+	if err != nil {
+		t.Fatalf("createEphemeralSession returned error: %v", err)
+	}
+
+	var captured ExecutorStartRequest
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return &capturingHarness{name: "test-harness", captured: &captured, authStatuses: map[string]HarnessAuthState{"slot-work": HarnessAuthAuthenticated}}, nil
+	})
+
+	_, err = d.runEphemeralHarness(ctx, store, setup, request)
+	if err != nil {
+		t.Fatalf("runEphemeralHarness returned error: %v", err)
+	}
+	if captured.AuthSlotID != "slot-work" {
+		t.Fatalf("captured AuthSlotID = %q, want slot-work", captured.AuthSlotID)
+	}
+}
+
 func TestEphemeralCallGeneratesCallIDWhenOmitted(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()

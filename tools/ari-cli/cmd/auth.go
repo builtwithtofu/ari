@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -36,12 +37,76 @@ var (
 	authSlotSaveRPC = func(ctx context.Context, socketPath string, req daemon.AuthSlotSaveRequest) (daemon.AuthSlotResponse, error) {
 		return callDaemonRPC[daemon.AuthSlotResponse](ctx, socketPath, "auth.slot.save", req)
 	}
+	authSlotListRPC = func(ctx context.Context, socketPath string, req daemon.AuthSlotListRequest) (daemon.AuthSlotListResponse, error) {
+		return callDaemonRPC[daemon.AuthSlotListResponse](ctx, socketPath, "auth.slot.list", req)
+	}
+	authSlotRemoveRPC = func(ctx context.Context, socketPath string, req daemon.AuthSlotRemoveRequest) (daemon.AuthSlotRemoveResponse, error) {
+		return callDaemonRPC[daemon.AuthSlotRemoveResponse](ctx, socketPath, "auth.slot.remove", req)
+	}
 	authRunProviderLogin = runProviderLoginCommand
 )
 
 func NewAuthCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "auth", Short: "Inspect provider-owned harness auth"}
-	cmd.AddCommand(newAuthStatusCmd(), newAuthLoginCmd(), newAuthLogoutCmd(), newAuthDoctorCmd())
+	cmd.AddCommand(newAuthStatusCmd(), newAuthLoginCmd(), newAuthLogoutCmd(), newAuthDoctorCmd(), newAuthListCmd(), newAuthRemoveCmd())
+	return cmd
+}
+
+func newAuthListCmd() *cobra.Command {
+	var harness string
+	cmd := &cobra.Command{Use: "list", Short: "List Ari auth slots", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+		_ = args
+		cfg, err := configuredDaemonConfig()
+		if err != nil {
+			return err
+		}
+		if err := authEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+		defer cancel()
+		resp, err := authSlotListRPC(ctx, cfg.Daemon.SocketPath, daemon.AuthSlotListRequest{Harness: harness})
+		if err != nil {
+			return err
+		}
+		return writeAuthSlotList(cmd.OutOrStdout(), resp.Slots)
+	}}
+	cmd.Flags().StringVar(&harness, "harness", "", "Filter auth slots by harness")
+	return cmd
+}
+
+func newAuthRemoveCmd() *cobra.Command {
+	var harness string
+	var name string
+	var yes bool
+	cmd := &cobra.Command{Use: "remove", Short: "Remove Ari auth slot metadata", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+		_ = args
+		if strings.TrimSpace(harness) == "" || strings.TrimSpace(name) == "" {
+			return fmt.Errorf("--harness and --name are required for non-interactive auth remove")
+		}
+		if !yes {
+			return fmt.Errorf("refusing to remove auth slot without --yes")
+		}
+		cfg, err := configuredDaemonConfig()
+		if err != nil {
+			return err
+		}
+		if err := authEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+		defer cancel()
+		authSlotID := authSlotIDForName(harness, name)
+		resp, err := authSlotRemoveRPC(ctx, cfg.Daemon.SocketPath, daemon.AuthSlotRemoveRequest{AuthSlotID: authSlotID})
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(cmd.OutOrStdout(), "removed auth slot %s\n", resp.AuthSlotID)
+		return err
+	}}
+	cmd.Flags().StringVar(&harness, "harness", "", "Provider harness for the auth slot")
+	cmd.Flags().StringVar(&name, "name", "", "Auth account name")
+	cmd.Flags().BoolVar(&yes, "yes", false, "Confirm auth slot metadata removal")
 	return cmd
 }
 
@@ -193,13 +258,14 @@ func newAuthLoginCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			authSlotID := authSlotIDForName(selectedHarness, accountName)
 			if authMethodRunsClientSide(selectedHarness, method) {
-				if err := authRunProviderLogin(cmd.Context(), selectedHarness, method, providerID); err != nil {
+				if err := authRunProviderLogin(cmd.Context(), selectedHarness, method, providerID, authSlotID); err != nil {
 					return err
 				}
 				refreshCtx, refreshCancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 				defer refreshCancel()
-				status, err := authStatusRPC(refreshCtx, cfg.Daemon.SocketPath, daemon.HarnessAuthStatusRequest{WorkspaceID: workspaceID, Slots: []daemon.HarnessAuthSlot{{AuthSlotID: authSlotIDForName(selectedHarness, accountName)}}})
+				status, err := authStatusRPC(refreshCtx, cfg.Daemon.SocketPath, daemon.HarnessAuthStatusRequest{WorkspaceID: workspaceID, Slots: []daemon.HarnessAuthSlot{{AuthSlotID: authSlotID}}})
 				if err != nil {
 					return err
 				}
@@ -225,7 +291,7 @@ func newAuthLoginCmd() *cobra.Command {
 	return cmd
 }
 
-func runProviderLoginCommand(ctx context.Context, harness, method, provider string) error {
+func runProviderLoginCommand(ctx context.Context, harness, method, provider, authSlotID string) error {
 	var command *exec.Cmd
 	switch strings.TrimSpace(harness) {
 	case daemon.HarnessNameCodex:
@@ -240,7 +306,68 @@ func runProviderLoginCommand(ctx context.Context, harness, method, provider stri
 	command.Stdin = os.Stdin
 	command.Stdout = os.Stdout
 	command.Stderr = os.Stderr
+	if env, err := providerLoginEnv(harness, authSlotID); err != nil {
+		return err
+	} else if len(env) > 0 {
+		command.Env = env
+	}
 	return command.Run()
+}
+
+func providerLoginEnv(harness, authSlotID string) ([]string, error) {
+	harness = strings.TrimSpace(harness)
+	authSlotID = strings.TrimSpace(authSlotID)
+	if authSlotID == "" || authSlotID == harness+"-default" {
+		return nil, nil
+	}
+	configRoot, err := os.UserConfigDir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve auth slot config root: %w", err)
+	}
+	safeSlotID := safeAuthSlotPathComponent(authSlotID)
+	if safeSlotID == "" {
+		return nil, fmt.Errorf("auth slot id %q cannot be used as a config path", authSlotID)
+	}
+	var key string
+	switch harness {
+	case daemon.HarnessNameCodex:
+		key = "CODEX_HOME"
+	case daemon.HarnessNameClaude:
+		key = "CLAUDE_CONFIG_DIR"
+	default:
+		return nil, nil
+	}
+	home := filepath.Join(configRoot, "ari", "auth-slots", harness, safeSlotID)
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		return nil, fmt.Errorf("create auth slot config dir: %w", err)
+	}
+	return environmentWithOverride(os.Environ(), key, home), nil
+}
+
+func safeAuthSlotPathComponent(value string) string {
+	value = strings.TrimSpace(value)
+	var out strings.Builder
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+			out.WriteRune(r)
+		default:
+			_, _ = fmt.Fprintf(&out, "-%x-", r)
+		}
+	}
+	return strings.Trim(strings.ToLower(out.String()), "-._")
+}
+
+func environmentWithOverride(env []string, key, value string) []string {
+	prefix := key + "="
+	out := make([]string, 0, len(env)+1)
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return append(out, prefix+value)
 }
 
 func authProviderLoginArgs(harness, method, provider string) []string {
@@ -424,7 +551,7 @@ func newAuthStatusCmd() *cobra.Command {
 				return err
 			}
 			for _, status := range resp.Statuses {
-				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\tname=%s\tsecrets=provider-owned\n", status.Harness, status.Status, authDisplayName(status)); err != nil {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\tname=%s\tsecrets=%s\n", authDoctorSafeField(status.Harness), authDoctorSafeField(string(status.Status)), authDoctorSafeField(authDisplayName(status)), authDoctorSafeField(authStatusSecretOwner(status))); err != nil {
 					return err
 				}
 			}
@@ -433,6 +560,27 @@ func newAuthStatusCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&workspaceID, "workspace-id", "", "Workspace id for provider-home context")
 	return cmd
+}
+
+func authStatusSecretOwner(status daemon.HarnessAuthStatus) string {
+	if status.AriSecretStorage != "" && status.AriSecretStorage != daemon.HarnessAriSecretStorageNone {
+		return string(status.AriSecretStorage)
+	}
+	return "provider-owned"
+}
+
+func writeAuthSlotList(w io.Writer, slots []daemon.AuthSlotResponse) error {
+	for _, slot := range slots {
+		label := authDoctorSafeField(slot.Label)
+		provider := authDoctorSafeField(slot.ProviderLabel)
+		if provider == "" {
+			provider = "-"
+		}
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\tprovider=%s\tstatus=%s\n", authDoctorSafeField(slot.Harness), label, authDoctorSafeField(slot.AuthSlotID), provider, authDoctorSafeField(slot.Status)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func authDisplayName(status daemon.HarnessAuthStatus) string {
