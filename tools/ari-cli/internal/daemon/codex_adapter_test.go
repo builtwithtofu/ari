@@ -197,6 +197,45 @@ func TestCodexAuthStartRejectsUnsupportedNamedSlotBeforeProviderCommand(t *testi
 	}
 }
 
+func TestCodexAuthStatusRejectsUnsupportedNamedSlotBeforeProviderCommand(t *testing.T) {
+	called := false
+	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo", RunAuthCommand: func(ctx context.Context, opts codexExecutorOptions, args []string) (commandRunResult, error) {
+		_ = ctx
+		_ = opts
+		_ = args
+		called = true
+		return commandRunResult{}, nil
+	}})
+
+	_, err := executor.AuthStatus(context.Background(), HarnessAuthSlot{AuthSlotID: "codex-work", Harness: HarnessNameCodex})
+	unavailable := &HarnessUnavailableError{}
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("AuthStatus error = %T %[1]v, want HarnessUnavailableError", err)
+	}
+	if unavailable.Reason != "auth_slot_selection_unsupported" || unavailable.StartInvoked || called {
+		t.Fatalf("unavailable = %#v called = %v, want unsupported before provider command", unavailable, called)
+	}
+}
+
+func TestCodexStartRejectsUnsupportedNamedSlotBeforeProviderCommand(t *testing.T) {
+	called := false
+	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo", StartTransport: func(ctx context.Context, opts codexExecutorOptions) (codexTransport, error) {
+		_ = ctx
+		_ = opts
+		called = true
+		return newFakeCodexTransport(nil), nil
+	}})
+
+	_, err := executor.Start(context.Background(), ExecutorStartRequest{WorkspaceID: "ws-1", AuthSlotID: "codex-work", Prompt: "hello"})
+	unavailable := &HarnessUnavailableError{}
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("Start error = %T %[1]v, want HarnessUnavailableError", err)
+	}
+	if unavailable.Reason != "auth_slot_selection_unsupported" || unavailable.StartInvoked || called {
+		t.Fatalf("unavailable = %#v called = %v, want unsupported before provider command", unavailable, called)
+	}
+}
+
 func TestCodexAuthLogoutRejectsUnsupportedNamedSlotBeforeProviderCommand(t *testing.T) {
 	called := false
 	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo", RunAuthCommand: func(ctx context.Context, opts codexExecutorOptions, args []string) (commandRunResult, error) {

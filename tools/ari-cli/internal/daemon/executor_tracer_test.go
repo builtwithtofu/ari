@@ -872,10 +872,12 @@ type capturingHarness struct {
 	authStart    func(context.Context, HarnessAuthSlot, string) (HarnessAuthStatus, error)
 	authCancel   func(context.Context, HarnessAuthSlot, string) (HarnessAuthStatus, error)
 	authLogout   func(context.Context, HarnessAuthSlot) (HarnessAuthStatus, error)
+	authMethods  func(context.Context) (HarnessAuthProviderMethodsResponse, error)
+	auth         HarnessAuthDescriptor
 }
 
 func (e *capturingHarness) Descriptor() HarnessAdapterDescriptor {
-	return HarnessAdapterDescriptor{Name: e.name, Capabilities: []HarnessCapability{HarnessCapabilityHarnessSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems}}
+	return HarnessAdapterDescriptor{Name: e.name, Capabilities: []HarnessCapability{HarnessCapabilityHarnessSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems}, Auth: e.auth}
 }
 
 func (e *capturingHarness) Start(ctx context.Context, req ExecutorStartRequest) (ExecutorRun, error) {
@@ -918,6 +920,13 @@ func (e *capturingHarness) AuthLogout(ctx context.Context, slot HarnessAuthSlot)
 		return e.authLogout(ctx, slot)
 	}
 	return HarnessAuthStatus{}, fmt.Errorf("auth logout not configured")
+}
+
+func (e *capturingHarness) AuthProviderMethods(ctx context.Context) (HarnessAuthProviderMethodsResponse, error) {
+	if e.authMethods != nil {
+		return e.authMethods(ctx)
+	}
+	return HarnessAuthProviderMethodsResponse{}, fmt.Errorf("auth provider methods not configured")
 }
 
 func (e *capturingHarness) Stop(ctx context.Context, sessionID string) error {
@@ -1445,6 +1454,136 @@ func TestAuthStatusUsesStoredSlotsWhenNoSlotsRequested(t *testing.T) {
 	}
 	if slotStatus.Status != HarnessAuthAuthenticated {
 		t.Fatalf("statuses = %#v, want stored slot status", resp.Statuses)
+	}
+}
+
+func TestAuthDiagnoseComposesStatusSlotsAndCapabilities(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest(HarnessNameCodex, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = primaryFolder
+		_ = sink
+		return &capturingHarness{name: req.Executor, authStatuses: map[string]HarnessAuthState{"codex-default": HarnessAuthRequired}, auth: HarnessAuthDescriptor{StatusCheck: HarnessAuthSupportSupported, CredentialOwner: HarnessCredentialOwnerProvider, NamedSlotExecution: HarnessAuthSupportUnsupported, RiskLabels: []string{"provider_owned"}}}, nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	if err := store.UpsertAuthSlot(context.Background(), globaldb.AuthSlot{AuthSlotID: "codex-work", Harness: HarnessNameCodex, Label: "work", ProviderLabel: "chatgpt", CredentialOwner: "provider", Status: "auth_required"}); err != nil {
+		t.Fatalf("UpsertAuthSlot returned error: %v", err)
+	}
+
+	resp := callMethod[HarnessAuthDiagnoseResponse](t, registry, "auth.diagnose", HarnessAuthDiagnoseRequest{})
+	var codex HarnessAuthDiagnostic
+	for _, diagnostic := range resp.Harnesses {
+		if diagnostic.Harness == HarnessNameCodex {
+			codex = diagnostic
+		}
+	}
+	if codex.Status != HarnessAuthRequired || !codex.Installed || codex.DefaultSlot.Name != "default" {
+		t.Fatalf("codex diagnostic = %#v, want default readiness", codex)
+	}
+	if codex.Auth.NamedSlotExecution != HarnessAuthSupportUnsupported {
+		t.Fatalf("codex auth descriptor = %#v, want unsupported named execution", codex.Auth)
+	}
+	if len(codex.Auth.RiskLabels) != 1 || codex.Auth.RiskLabels[0] != "provider_owned" {
+		t.Fatalf("codex auth descriptor = %#v, want risk metadata", codex.Auth)
+	}
+	if len(codex.NamedSlots) != 1 || codex.NamedSlots[0].Label != "work" || codex.NamedSlots[0].ProviderLabel != "chatgpt" {
+		t.Fatalf("codex named slots = %#v, want redacted slot metadata", codex.NamedSlots)
+	}
+	stored, err := store.GetAuthSlot(context.Background(), "codex-default")
+	if err == nil && stored.Status != "unknown" {
+		t.Fatalf("auth.diagnose persisted default slot = %#v, want read-only diagnostic", stored)
+	}
+}
+
+func TestAuthDiagnoseUsesRegistryDescriptorWhenFactoryFails(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.harnessRegistry.ReplaceForTestWithDescriptor(HarnessNameCodex, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return nil, fmt.Errorf("factory failed")
+	}, HarnessAdapterDescriptor{Name: HarnessNameCodex, Auth: HarnessAuthDescriptor{StatusCheck: HarnessAuthSupportSupported, NamedSlotExecution: HarnessAuthSupportUnsupported, CredentialOwner: HarnessCredentialOwnerProvider, RiskLabels: []string{"provider_owned"}}}); err != nil {
+		t.Fatalf("ReplaceForTestWithDescriptor returned error: %v", err)
+	}
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	resp := callMethod[HarnessAuthDiagnoseResponse](t, registry, "auth.diagnose", HarnessAuthDiagnoseRequest{})
+	var codex HarnessAuthDiagnostic
+	for _, diagnostic := range resp.Harnesses {
+		if diagnostic.Harness == HarnessNameCodex {
+			codex = diagnostic
+		}
+	}
+	if codex.Status != HarnessAuthRequired || codex.NextStep == "" {
+		t.Fatalf("codex diagnostic = %#v, want auth-required fallback", codex)
+	}
+	if codex.Auth.NamedSlotExecution != HarnessAuthSupportUnsupported || !stringsContain(codex.Auth.RiskLabels, "provider_owned") {
+		t.Fatalf("codex auth = %#v, want registry descriptor without constructing executor", codex.Auth)
+	}
+}
+
+func TestAuthDiagnoseComposesProviderMethodsInDaemon(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest(HarnessNameOpenCode, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = primaryFolder
+		_ = sink
+		return &capturingHarness{name: req.Executor, authStatuses: map[string]HarnessAuthState{"opencode-default": HarnessAuthAuthenticated}, auth: HarnessAuthDescriptor{StatusCheck: HarnessAuthSupportSupported, CredentialOwner: HarnessCredentialOwnerProvider, NamedSlotExecution: HarnessAuthSupportUnsupported, RiskLabels: []string{"provider_owned"}, Caveats: []string{"provider_methods_discovery_is_optional"}}, authMethods: func(ctx context.Context) (HarnessAuthProviderMethodsResponse, error) {
+			_ = ctx
+			return HarnessAuthProviderMethodsResponse{Status: "ok", Connected: []string{"openai"}, Providers: map[string][]HarnessAuthMethodInfo{"openai": {{Type: "oauth", Label: "ChatGPT browser"}}}}, nil
+		}}, nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	resp := callMethod[HarnessAuthDiagnoseResponse](t, registry, "auth.diagnose", HarnessAuthDiagnoseRequest{DiscoverProviderMethods: true})
+	var openCode HarnessAuthDiagnostic
+	for _, diagnostic := range resp.Harnesses {
+		if diagnostic.Harness == HarnessNameOpenCode {
+			openCode = diagnostic
+		}
+	}
+	if openCode.ProviderMethods.Status != "ok" || len(openCode.ProviderMethods.Providers["openai"]) != 1 || openCode.ProviderMethods.Providers["openai"][0].Type != "oauth" {
+		t.Fatalf("opencode provider methods = %#v, want daemon-composed provider methods", openCode.ProviderMethods)
+	}
+	if len(openCode.ProviderMethods.Connected) != 1 || openCode.ProviderMethods.Connected[0] != "openai" {
+		t.Fatalf("opencode connected providers = %#v, want authenticated provider ids", openCode.ProviderMethods.Connected)
+	}
+	if openCode.Auth.NamedSlotExecution != HarnessAuthSupportUnsupported || !stringsContain(openCode.Auth.Caveats, "provider_methods_discovery_is_optional") {
+		t.Fatalf("opencode auth = %#v, want descriptor metadata preserved", openCode.Auth)
+	}
+}
+
+func TestAuthProviderMethodsPropagatesDiscoveryError(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest(HarnessNameOpenCode, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return &capturingHarness{name: HarnessNameOpenCode, authMethods: func(ctx context.Context) (HarnessAuthProviderMethodsResponse, error) {
+			_ = ctx
+			return HarnessAuthProviderMethodsResponse{}, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "missing_executable", Executable: "opencode", Probe: "opencode --version", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+		}}, nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "auth.provider_methods", HarnessAuthProviderMethodsRequest{Harness: HarnessNameOpenCode})
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "missing_executable" || data["executable"] != "opencode" || data["start_invoked"] != false {
+		t.Fatalf("error data = %#v, want missing executable discovery failure", data)
 	}
 }
 

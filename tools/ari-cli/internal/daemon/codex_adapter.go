@@ -257,7 +257,7 @@ func (e *CodexExecutor) AuthLogout(ctx context.Context, slot HarnessAuthSlot) (H
 }
 
 func (e *CodexExecutor) Descriptor() HarnessAdapterDescriptor {
-	return HarnessAdapterDescriptor{Name: HarnessNameCodex, Capabilities: []HarnessCapability{HarnessCapabilityHarnessSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems, HarnessCapabilityFinalResponse, HarnessCapabilityMeasuredTokenTelemetry}}
+	return HarnessAdapterDescriptor{Name: HarnessNameCodex, Capabilities: []HarnessCapability{HarnessCapabilityHarnessSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems, HarnessCapabilityFinalResponse, HarnessCapabilityMeasuredTokenTelemetry}, Auth: HarnessAuthDescriptor{StatusCheck: HarnessAuthSupportSupported, Login: HarnessAuthSupportSupported, LoginMethods: []string{"browser", "device_code", "api_key"}, Logout: HarnessAuthSupportSupported, NamedSlotStatus: HarnessAuthSupportUnsupported, NamedSlotExecution: HarnessAuthSupportUnsupported, SlotScope: "global", CredentialOwner: HarnessCredentialOwnerProvider, RiskLabels: []string{"provider_owned", "named_slot_projection_required"}, Caveats: []string{"named_slot_execution_blocked_until_codex_home_projection"}}}
 }
 
 func (e *CodexExecutor) Start(ctx context.Context, req ExecutorStartRequest) (ExecutorRun, error) {

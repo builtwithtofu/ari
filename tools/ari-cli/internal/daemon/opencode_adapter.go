@@ -7,9 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os/exec"
+	"regexp"
+	"slices"
 	"strings"
 	"sync"
+	"time"
 )
 
 type opencodeExecutorOptions struct {
@@ -94,7 +99,17 @@ func (e *OpenCodeExecutor) AuthLogout(ctx context.Context, slot HarnessAuthSlot)
 }
 
 func (e *OpenCodeExecutor) Descriptor() HarnessAdapterDescriptor {
-	return HarnessAdapterDescriptor{Name: HarnessNameOpenCode, Capabilities: []HarnessCapability{HarnessCapabilityHarnessSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems, HarnessCapabilityFinalResponse, HarnessCapabilityMeasuredTokenTelemetry}}
+	return HarnessAdapterDescriptor{Name: HarnessNameOpenCode, Capabilities: []HarnessCapability{HarnessCapabilityHarnessSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems, HarnessCapabilityFinalResponse, HarnessCapabilityMeasuredTokenTelemetry}, Auth: HarnessAuthDescriptor{StatusCheck: HarnessAuthSupportSupported, Login: HarnessAuthSupportPartial, LoginMethods: []string{"opencode_interactive"}, Logout: HarnessAuthSupportSupported, NamedSlotStatus: HarnessAuthSupportPartial, NamedSlotExecution: HarnessAuthSupportUnsupported, SlotScope: "global", CredentialOwner: HarnessCredentialOwnerProvider, RiskLabels: []string{"provider_owned", "provider_hint_matching", "ari_secrets_required_for_isolated_named_execution"}, Caveats: []string{"provider_hint_status", "provider_methods_discovery_is_optional", "named_execution_blocked_without_storage_isolation_or_ari_secrets"}}}
+}
+
+func (e *OpenCodeExecutor) AuthProviderMethods(ctx context.Context) (HarnessAuthProviderMethodsResponse, error) {
+	if ctx == nil {
+		return HarnessAuthProviderMethodsResponse{}, fmt.Errorf("context is required")
+	}
+	if e == nil {
+		return HarnessAuthProviderMethodsResponse{}, fmt.Errorf("executor is required")
+	}
+	return fetchOpenCodeAuthProviderMethods(ctx, e.options)
 }
 
 func (e *OpenCodeExecutor) Start(ctx context.Context, req ExecutorStartRequest) (ExecutorRun, error) {
@@ -315,6 +330,122 @@ func runOpenCodeAuthCommand(ctx context.Context, options opencodeExecutorOptions
 	err = cmd.Wait()
 	exitCode := cmd.ProcessState.ExitCode()
 	return commandRunResult{Output: []byte(output.String()), ProcessSample: &sample, ExitCode: &exitCode}, err
+}
+
+func fetchOpenCodeAuthProviderMethods(ctx context.Context, options opencodeExecutorOptions) (HarnessAuthProviderMethodsResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	executable := strings.TrimSpace(options.Executable)
+	if executable == "" {
+		executable = "opencode"
+	}
+	path, err := exec.LookPath(executable)
+	if err != nil {
+		return HarnessAuthProviderMethodsResponse{}, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+	}
+	command := exec.CommandContext(ctx, path, "serve", "--port", "0", "--hostname", "127.0.0.1")
+	command.Dir = strings.TrimSpace(options.Cwd)
+	pipeReader, pipeWriter := io.Pipe()
+	command.Stdout = pipeWriter
+	command.Stderr = pipeWriter
+	if err := command.Start(); err != nil {
+		_ = pipeWriter.Close()
+		_ = pipeReader.Close()
+		return HarnessAuthProviderMethodsResponse{}, err
+	}
+	defer func() {
+		_ = command.Process.Kill()
+		_ = pipeReader.Close()
+		_ = pipeWriter.Close()
+		_ = command.Wait()
+	}()
+	serverURL, err := readOpenCodeServerURL(ctx, pipeReader)
+	if err != nil {
+		return HarnessAuthProviderMethodsResponse{}, err
+	}
+	connected, err := fetchOpenCodeConnectedProviders(ctx, serverURL)
+	if err != nil {
+		return HarnessAuthProviderMethodsResponse{}, err
+	}
+	methods, err := fetchOpenCodeAvailableAuthMethods(ctx, serverURL)
+	if err != nil {
+		return HarnessAuthProviderMethodsResponse{}, err
+	}
+	return HarnessAuthProviderMethodsResponse{Status: "ok", Connected: connected, Providers: methods}, nil
+}
+
+func fetchOpenCodeAvailableAuthMethods(ctx context.Context, serverURL string) (map[string][]HarnessAuthMethodInfo, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, serverURL+"/provider/auth", nil)
+	if err != nil {
+		return nil, err
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("opencode provider auth returned HTTP %d", response.StatusCode)
+	}
+	var methods map[string][]HarnessAuthMethodInfo
+	if err := json.NewDecoder(response.Body).Decode(&methods); err != nil {
+		return nil, err
+	}
+	return methods, nil
+}
+
+func fetchOpenCodeConnectedProviders(ctx context.Context, serverURL string) ([]string, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, serverURL+"/provider", nil)
+	if err != nil {
+		return nil, err
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("opencode provider list returned HTTP %d", response.StatusCode)
+	}
+	var result struct {
+		Connected []string `json:"connected"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	slices.Sort(result.Connected)
+	return result.Connected, nil
+}
+
+func readOpenCodeServerURL(ctx context.Context, reader io.Reader) (string, error) {
+	lines := make(chan string, 1)
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		scanner := bufio.NewScanner(reader)
+		for scanner.Scan() {
+			select {
+			case lines <- scanner.Text():
+			case <-done:
+				return
+			}
+		}
+		close(lines)
+	}()
+	urlPattern := regexp.MustCompile(`http://127\.0\.0\.1:[0-9]+`)
+	for {
+		select {
+		case line, ok := <-lines:
+			if !ok {
+				return "", fmt.Errorf("opencode server exited before printing URL")
+			}
+			if match := urlPattern.FindString(line); match != "" {
+				return match, nil
+			}
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
 }
 
 func opencodeAuthOutputReady(output []byte, slot HarnessAuthSlot) bool {

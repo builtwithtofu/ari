@@ -40,6 +40,22 @@ An external LLM interaction runtime that Ari launches, observes, or coordinates,
 
 A harness invocation in a workspace with persisted Ari identity, provider resume metadata, normalized messages, and run log. Supported harnesses are peers.
 
+## Auth slot
+
+A named Ari reference to a harness authentication context. Auth slots prefer provider-owned credentials and may have harness-specific capabilities or limits.
+
+## Auth diagnostic
+
+A daemon-owned read-only summary of harness authentication readiness. An auth diagnostic combines live provider readiness, configured auth slot metadata, declared harness auth capability limits, and remediation guidance without reading or exposing credentials.
+
+## Harness auth capability
+
+A read-only adapter declaration of what Ari can safely do with a harness's provider-owned authentication, such as status checks, login methods, logout, named slot status, and named slot execution. Capability declarations describe limits before Ari attempts a harness run or auth flow.
+
+## Ari secrets store
+
+A general daemon-owned capability for storing and injecting secrets Ari must provide to external tools or LLM-run commands. The Ari secrets store is not the default owner of harness credentials.
+
 ## Profile
 
 A reusable behavior contract passed to a harness, usually as system/developer prompt plus related harness defaults. Planner, orchestrator, reviewer, worker, helper, and researcher are examples users may create; they are not built-in Ari roles.

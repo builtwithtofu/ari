@@ -424,6 +424,48 @@ type HarnessAuthStatusResponse struct {
 	Statuses []HarnessAuthStatus `json:"statuses"`
 }
 
+type HarnessAuthDiagnoseRequest struct {
+	WorkspaceID             string `json:"workspace_id,omitempty"`
+	DiscoverProviderMethods bool   `json:"discover_provider_methods,omitempty"`
+}
+
+type HarnessAuthDiagnoseResponse struct {
+	Harnesses []HarnessAuthDiagnostic `json:"harnesses"`
+}
+
+type HarnessAuthDiagnostic struct {
+	Harness         string                              `json:"harness"`
+	Installed       bool                                `json:"installed"`
+	Status          HarnessAuthState                    `json:"status"`
+	DefaultSlot     HarnessAuthStatus                   `json:"default_slot"`
+	NamedSlots      []AuthSlotResponse                  `json:"named_slots,omitempty"`
+	Auth            HarnessAuthDescriptor               `json:"auth"`
+	ProviderMethods HarnessAuthProviderMethodDiagnostic `json:"provider_methods"`
+	NextStep        string                              `json:"next_step,omitempty"`
+}
+
+type HarnessAuthProviderMethodDiagnostic struct {
+	Status    string                             `json:"status"`
+	Connected []string                           `json:"connected,omitempty"`
+	Providers map[string][]HarnessAuthMethodInfo `json:"providers,omitempty"`
+}
+
+type HarnessAuthProviderMethodsRequest struct {
+	Harness     string `json:"harness"`
+	WorkspaceID string `json:"workspace_id,omitempty"`
+}
+
+type HarnessAuthProviderMethodsResponse struct {
+	Status    string                             `json:"status"`
+	Connected []string                           `json:"connected,omitempty"`
+	Providers map[string][]HarnessAuthMethodInfo `json:"providers,omitempty"`
+}
+
+type HarnessAuthMethodInfo struct {
+	Type  string `json:"type"`
+	Label string `json:"label,omitempty"`
+}
+
 type HarnessAuthStartRequest struct {
 	AuthSlotID  string `json:"auth_slot_id"`
 	WorkspaceID string `json:"workspace_id,omitempty"`
@@ -664,6 +706,15 @@ func (d *Daemon) registerExecutorMethods(registry *rpc.MethodRegistry, store *gl
 	}); err != nil {
 		return fmt.Errorf("register auth.status: %w", err)
 	}
+	if err := rpc.RegisterMethod(registry, rpc.Method[HarnessAuthDiagnoseRequest, HarnessAuthDiagnoseResponse]{
+		Name:        "auth.diagnose",
+		Description: "Diagnose harness auth readiness, slots, and capability limits without reading secrets",
+		Handler: func(ctx context.Context, req HarnessAuthDiagnoseRequest) (HarnessAuthDiagnoseResponse, error) {
+			return d.harnessAuthDiagnose(ctx, store, req)
+		},
+	}); err != nil {
+		return fmt.Errorf("register auth.diagnose: %w", err)
+	}
 	if err := rpc.RegisterMethod(registry, rpc.Method[HarnessAuthStartRequest, HarnessAuthStartResponse]{
 		Name:        "auth.start",
 		Description: "Start a provider-owned auth flow for a configured auth slot without handling secrets",
@@ -672,6 +723,15 @@ func (d *Daemon) registerExecutorMethods(registry *rpc.MethodRegistry, store *gl
 		},
 	}); err != nil {
 		return fmt.Errorf("register auth.start: %w", err)
+	}
+	if err := rpc.RegisterMethod(registry, rpc.Method[HarnessAuthProviderMethodsRequest, HarnessAuthProviderMethodsResponse]{
+		Name:        "auth.provider_methods",
+		Description: "Discover provider auth methods through the harness adapter without exposing secrets",
+		Handler: func(ctx context.Context, req HarnessAuthProviderMethodsRequest) (HarnessAuthProviderMethodsResponse, error) {
+			return d.harnessAuthProviderMethods(ctx, store, req)
+		},
+	}); err != nil {
+		return fmt.Errorf("register auth.provider_methods: %w", err)
 	}
 	if err := rpc.RegisterMethod(registry, rpc.Method[HarnessAuthCancelRequest, HarnessAuthCancelResponse]{
 		Name:        "auth.cancel",
@@ -743,6 +803,10 @@ type harnessAuthCanceller interface {
 
 type harnessAuthLoggerOuter interface {
 	AuthLogout(context.Context, HarnessAuthSlot) (HarnessAuthStatus, error)
+}
+
+type harnessAuthProviderMethodDiscoverer interface {
+	AuthProviderMethods(context.Context) (HarnessAuthProviderMethodsResponse, error)
 }
 
 func (d *Daemon) harnessAuthStart(ctx context.Context, store *globaldb.Store, req HarnessAuthStartRequest) (HarnessAuthStartResponse, error) {
@@ -870,6 +934,182 @@ func (d *Daemon) harnessAuthLogout(ctx context.Context, store *globaldb.Store, r
 		}
 	}
 	return HarnessAuthLogoutResponse{Status: status}, nil
+}
+
+func (d *Daemon) harnessAuthDiagnose(ctx context.Context, store *globaldb.Store, req HarnessAuthDiagnoseRequest) (HarnessAuthDiagnoseResponse, error) {
+	primaryFolder := ""
+	if strings.TrimSpace(req.WorkspaceID) != "" {
+		var err error
+		primaryFolder, err = lookupPrimaryFolder(ctx, store, req.WorkspaceID)
+		if err != nil {
+			return HarnessAuthDiagnoseResponse{}, mapWorkspaceStoreError(err, req.WorkspaceID)
+		}
+	}
+	storedSlots, err := store.ListAuthSlots(ctx, "")
+	if err != nil {
+		return HarnessAuthDiagnoseResponse{}, err
+	}
+	storedByID := make(map[string]globaldb.AuthSlot, len(storedSlots))
+	slotsByHarness := map[string][]globaldb.AuthSlot{}
+	for _, stored := range storedSlots {
+		storedByID[stored.AuthSlotID] = stored
+		slotsByHarness[stored.Harness] = append(slotsByHarness[stored.Harness], stored)
+	}
+	resp := HarnessAuthDiagnoseResponse{Harnesses: make([]HarnessAuthDiagnostic, 0, len(providerAuthHarnesses()))}
+	for _, harness := range providerAuthHarnesses() {
+		auth := HarnessAuthDescriptor{}
+		if descriptor, ok := d.harnessRegistry.ResolveDescriptor(harness); ok {
+			auth = descriptor.Auth
+		}
+		factory, ok := d.harnessRegistry.Resolve(harness)
+		if !ok {
+			status := HarnessAuthStatus{Harness: harness, AuthSlotID: authSlotIDForName(harness, "default"), Name: "default", Status: HarnessAuthUnknown, AriSecretStorage: HarnessAriSecretStorageNone}
+			resp.Harnesses = append(resp.Harnesses, HarnessAuthDiagnostic{Harness: harness, Installed: true, Status: HarnessAuthUnknown, DefaultSlot: status, Auth: auth, NextStep: authDiagnosticNextStep(status)})
+			continue
+		}
+		executor, err := factory(HarnessSessionStartRequest{Executor: harness}, primaryFolder, d.appendExecutorItems)
+		diagnostic := HarnessAuthDiagnostic{Harness: harness, Installed: true, Status: HarnessAuthUnknown, DefaultSlot: HarnessAuthStatus{Harness: harness, AuthSlotID: authSlotIDForName(harness, "default"), Name: "default", Status: HarnessAuthUnknown, AriSecretStorage: HarnessAriSecretStorageNone}, Auth: auth}
+		if err != nil {
+			diagnostic.DefaultSlot = NewHarnessAuthRequired(harness, diagnostic.DefaultSlot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, SecretOwnedBy: harness})
+			diagnostic.DefaultSlot.Name = "default"
+			diagnostic.Status = diagnostic.DefaultSlot.Status
+			diagnostic.NextStep = authDiagnosticNextStep(diagnostic.DefaultSlot)
+			resp.Harnesses = append(resp.Harnesses, diagnostic)
+			continue
+		}
+		if describer, ok := executor.(HarnessDescriber); ok {
+			diagnostic.Auth = describer.Descriptor().Auth
+		}
+		defaultSlot := harnessAuthSlotFromGlobal(globaldb.AuthSlot{AuthSlotID: authSlotIDForName(harness, "default"), Harness: harness, Label: "default", CredentialOwner: string(HarnessCredentialOwnerProvider), Status: string(HarnessAuthUnknown)})
+		if stored, ok := storedByID[defaultSlot.AuthSlotID]; ok {
+			defaultSlot = harnessAuthSlotFromGlobal(stored)
+		}
+		if statuser, ok := executor.(harnessAuthStatuser); ok {
+			status, err := statuser.AuthStatus(ctx, defaultSlot)
+			if err != nil {
+				var unavailable *HarnessUnavailableError
+				if errors.As(err, &unavailable) && unavailable.Reason == "missing_executable" {
+					status = HarnessAuthStatus{Harness: harness, AuthSlotID: defaultSlot.AuthSlotID, Status: HarnessAuthNotInstalled, AriSecretStorage: HarnessAriSecretStorageNone}
+					diagnostic.Installed = false
+				} else {
+					return HarnessAuthDiagnoseResponse{}, err
+				}
+			}
+			status.Name = authStatusName(defaultSlot, harness)
+			diagnostic.DefaultSlot = status
+			diagnostic.Status = status.Status
+			diagnostic.NextStep = authDiagnosticNextStep(status)
+		}
+		diagnostic.ProviderMethods = authProviderMethodDiagnostic(ctx, executor, req.DiscoverProviderMethods)
+		for _, stored := range slotsByHarness[harness] {
+			if stored.AuthSlotID == defaultSlot.AuthSlotID {
+				continue
+			}
+			diagnostic.NamedSlots = append(diagnostic.NamedSlots, authSlotResponseFromGlobal(stored))
+		}
+		resp.Harnesses = append(resp.Harnesses, diagnostic)
+	}
+	return resp, nil
+}
+
+func providerAuthHarnesses() []string {
+	return []string{HarnessNameClaude, HarnessNameCodex, HarnessNameOpenCode}
+}
+
+func authProviderMethodDiagnostic(ctx context.Context, executor Executor, discover bool) HarnessAuthProviderMethodDiagnostic {
+	if !discover {
+		return HarnessAuthProviderMethodDiagnostic{Status: "skipped"}
+	}
+	discoverer, ok := executor.(harnessAuthProviderMethodDiscoverer)
+	if !ok {
+		return HarnessAuthProviderMethodDiagnostic{Status: "unsupported"}
+	}
+	methods, err := discoverer.AuthProviderMethods(ctx)
+	if err != nil {
+		return HarnessAuthProviderMethodDiagnostic{Status: "error"}
+	}
+	return HarnessAuthProviderMethodDiagnostic(methods)
+}
+
+func (d *Daemon) harnessAuthProviderMethods(ctx context.Context, store *globaldb.Store, req HarnessAuthProviderMethodsRequest) (HarnessAuthProviderMethodsResponse, error) {
+	primaryFolder := ""
+	if strings.TrimSpace(req.WorkspaceID) != "" {
+		var err error
+		primaryFolder, err = lookupPrimaryFolder(ctx, store, req.WorkspaceID)
+		if err != nil {
+			return HarnessAuthProviderMethodsResponse{}, mapWorkspaceStoreError(err, req.WorkspaceID)
+		}
+	}
+	harness := strings.TrimSpace(req.Harness)
+	if harness == "" {
+		return HarnessAuthProviderMethodsResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "harness is required", map[string]any{"reason": "harness_required"})
+	}
+	factory, ok := d.harnessRegistry.Resolve(harness)
+	if !ok {
+		return HarnessAuthProviderMethodsResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "harness is not registered", map[string]any{"harness": harness, "reason": "harness_not_registered"})
+	}
+	executor, err := factory(HarnessSessionStartRequest{Executor: harness}, primaryFolder, d.appendExecutorItems)
+	if err != nil {
+		return HarnessAuthProviderMethodsResponse{}, mapHarnessRunError(err)
+	}
+	discoverer, ok := executor.(harnessAuthProviderMethodDiscoverer)
+	if !ok {
+		return HarnessAuthProviderMethodsResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "harness auth provider methods are not supported", map[string]any{"harness": harness, "reason": "auth_provider_methods_unsupported"})
+	}
+	methods, err := discoverer.AuthProviderMethods(ctx)
+	if err != nil {
+		return HarnessAuthProviderMethodsResponse{}, mapHarnessRunError(err)
+	}
+	return methods, nil
+}
+
+func authSlotIDForName(harness, name string) string {
+	harness = strings.TrimSpace(harness)
+	name = strings.TrimSpace(name)
+	if name == "" || name == "default" {
+		return harness + "-default"
+	}
+	return harness + "-" + name
+}
+
+func authDiagnosticNextStep(status HarnessAuthStatus) string {
+	if status.Status == HarnessAuthAuthenticated {
+		return ""
+	}
+	if status.Status == HarnessAuthNotInstalled {
+		return "Install " + authDiagnosticHarnessDisplayName(status.Harness) + ", then run `ari auth login --harness " + status.Harness + "`."
+	}
+	method := ""
+	if status.Remediation != nil && strings.TrimSpace(status.Remediation.Method) != "" {
+		method = strings.TrimSpace(status.Remediation.Method)
+	}
+	switch method {
+	case "device_code":
+		return "Run `ari auth login --harness " + status.Harness + "` and complete the provider's device-code login."
+	case "opencode_interactive":
+		return "Run `ari auth login --harness opencode` and complete OpenCode's provider login."
+	case "browser":
+		return "Run `ari auth login --harness " + status.Harness + "` and complete the provider browser login."
+	case "api_key", "api_key_provider_setup":
+		return "Run `ari auth login --harness " + status.Harness + "`; Ari will not store the provider API key."
+	case "provider_config", "provider_login", "":
+		return "Run `ari auth login --harness " + status.Harness + "` or check the provider's native auth setup."
+	default:
+		return "Resolve provider auth for " + status.Harness + ": " + method + "."
+	}
+}
+
+func authDiagnosticHarnessDisplayName(harness string) string {
+	switch harness {
+	case HarnessNameClaude:
+		return "Claude Code"
+	case HarnessNameCodex:
+		return "Codex"
+	case HarnessNameOpenCode:
+		return "OpenCode"
+	default:
+		return harness
+	}
 }
 
 func (d *Daemon) harnessAuthStatus(ctx context.Context, store *globaldb.Store, req HarnessAuthStatusRequest) (HarnessAuthStatusResponse, error) {
