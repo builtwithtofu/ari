@@ -872,7 +872,7 @@ type capturingHarness struct {
 	authStart    func(context.Context, HarnessAuthSlot, string) (HarnessAuthStatus, error)
 	authCancel   func(context.Context, HarnessAuthSlot, string) (HarnessAuthStatus, error)
 	authLogout   func(context.Context, HarnessAuthSlot) (HarnessAuthStatus, error)
-	authMethods  func(context.Context) (map[string][]HarnessAuthMethodInfo, error)
+	authMethods  func(context.Context) (HarnessAuthProviderMethodsResponse, error)
 	auth         HarnessAuthDescriptor
 }
 
@@ -922,11 +922,11 @@ func (e *capturingHarness) AuthLogout(ctx context.Context, slot HarnessAuthSlot)
 	return HarnessAuthStatus{}, fmt.Errorf("auth logout not configured")
 }
 
-func (e *capturingHarness) AuthProviderMethods(ctx context.Context) (map[string][]HarnessAuthMethodInfo, error) {
+func (e *capturingHarness) AuthProviderMethods(ctx context.Context) (HarnessAuthProviderMethodsResponse, error) {
 	if e.authMethods != nil {
 		return e.authMethods(ctx)
 	}
-	return nil, fmt.Errorf("auth provider methods not configured")
+	return HarnessAuthProviderMethodsResponse{}, fmt.Errorf("auth provider methods not configured")
 }
 
 func (e *capturingHarness) Stop(ctx context.Context, sessionID string) error {
@@ -1536,9 +1536,9 @@ func TestAuthDiagnoseComposesProviderMethodsInDaemon(t *testing.T) {
 	d.setHarnessFactoryForTest(HarnessNameOpenCode, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = primaryFolder
 		_ = sink
-		return &capturingHarness{name: req.Executor, authStatuses: map[string]HarnessAuthState{"opencode-default": HarnessAuthAuthenticated}, auth: HarnessAuthDescriptor{StatusCheck: HarnessAuthSupportSupported, CredentialOwner: HarnessCredentialOwnerProvider, NamedSlotExecution: HarnessAuthSupportUnsupported, RiskLabels: []string{"provider_owned"}, Caveats: []string{"provider_methods_discovery_is_optional"}}, authMethods: func(ctx context.Context) (map[string][]HarnessAuthMethodInfo, error) {
+		return &capturingHarness{name: req.Executor, authStatuses: map[string]HarnessAuthState{"opencode-default": HarnessAuthAuthenticated}, auth: HarnessAuthDescriptor{StatusCheck: HarnessAuthSupportSupported, CredentialOwner: HarnessCredentialOwnerProvider, NamedSlotExecution: HarnessAuthSupportUnsupported, RiskLabels: []string{"provider_owned"}, Caveats: []string{"provider_methods_discovery_is_optional"}}, authMethods: func(ctx context.Context) (HarnessAuthProviderMethodsResponse, error) {
 			_ = ctx
-			return map[string][]HarnessAuthMethodInfo{"openai": {{Type: "oauth", Label: "ChatGPT browser"}}}, nil
+			return HarnessAuthProviderMethodsResponse{Status: "ok", Connected: []string{"openai"}, Providers: map[string][]HarnessAuthMethodInfo{"openai": {{Type: "oauth", Label: "ChatGPT browser"}}}}, nil
 		}}, nil
 	})
 	if err := d.registerMethods(registry, store); err != nil {
@@ -1554,6 +1554,9 @@ func TestAuthDiagnoseComposesProviderMethodsInDaemon(t *testing.T) {
 	}
 	if openCode.ProviderMethods.Status != "ok" || len(openCode.ProviderMethods.Providers["openai"]) != 1 || openCode.ProviderMethods.Providers["openai"][0].Type != "oauth" {
 		t.Fatalf("opencode provider methods = %#v, want daemon-composed provider methods", openCode.ProviderMethods)
+	}
+	if len(openCode.ProviderMethods.Connected) != 1 || openCode.ProviderMethods.Connected[0] != "openai" {
+		t.Fatalf("opencode connected providers = %#v, want authenticated provider ids", openCode.ProviderMethods.Connected)
 	}
 	if openCode.Auth.NamedSlotExecution != HarnessAuthSupportUnsupported || !stringsContain(openCode.Auth.Caveats, "provider_methods_discovery_is_optional") {
 		t.Fatalf("opencode auth = %#v, want descriptor metadata preserved", openCode.Auth)

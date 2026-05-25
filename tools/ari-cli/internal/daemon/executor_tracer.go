@@ -446,6 +446,7 @@ type HarnessAuthDiagnostic struct {
 
 type HarnessAuthProviderMethodDiagnostic struct {
 	Status    string                             `json:"status"`
+	Connected []string                           `json:"connected,omitempty"`
 	Providers map[string][]HarnessAuthMethodInfo `json:"providers,omitempty"`
 }
 
@@ -456,6 +457,7 @@ type HarnessAuthProviderMethodsRequest struct {
 
 type HarnessAuthProviderMethodsResponse struct {
 	Status    string                             `json:"status"`
+	Connected []string                           `json:"connected,omitempty"`
 	Providers map[string][]HarnessAuthMethodInfo `json:"providers,omitempty"`
 }
 
@@ -804,7 +806,7 @@ type harnessAuthLoggerOuter interface {
 }
 
 type harnessAuthProviderMethodDiscoverer interface {
-	AuthProviderMethods(context.Context) (map[string][]HarnessAuthMethodInfo, error)
+	AuthProviderMethods(context.Context) (HarnessAuthProviderMethodsResponse, error)
 }
 
 func (d *Daemon) harnessAuthStart(ctx context.Context, store *globaldb.Store, req HarnessAuthStartRequest) (HarnessAuthStartResponse, error) {
@@ -1022,11 +1024,11 @@ func authProviderMethodDiagnostic(ctx context.Context, executor Executor, discov
 	if !ok {
 		return HarnessAuthProviderMethodDiagnostic{Status: "unsupported"}
 	}
-	providers, err := discoverer.AuthProviderMethods(ctx)
+	methods, err := discoverer.AuthProviderMethods(ctx)
 	if err != nil {
 		return HarnessAuthProviderMethodDiagnostic{Status: "error"}
 	}
-	return HarnessAuthProviderMethodDiagnostic{Status: "ok", Providers: providers}
+	return HarnessAuthProviderMethodDiagnostic(methods)
 }
 
 func (d *Daemon) harnessAuthProviderMethods(ctx context.Context, store *globaldb.Store, req HarnessAuthProviderMethodsRequest) (HarnessAuthProviderMethodsResponse, error) {

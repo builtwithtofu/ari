@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -101,12 +102,12 @@ func (e *OpenCodeExecutor) Descriptor() HarnessAdapterDescriptor {
 	return HarnessAdapterDescriptor{Name: HarnessNameOpenCode, Capabilities: []HarnessCapability{HarnessCapabilityHarnessSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems, HarnessCapabilityFinalResponse, HarnessCapabilityMeasuredTokenTelemetry}, Auth: HarnessAuthDescriptor{StatusCheck: HarnessAuthSupportSupported, Login: HarnessAuthSupportPartial, LoginMethods: []string{"opencode_interactive"}, Logout: HarnessAuthSupportSupported, NamedSlotStatus: HarnessAuthSupportPartial, NamedSlotExecution: HarnessAuthSupportUnsupported, SlotScope: "global", CredentialOwner: HarnessCredentialOwnerProvider, RiskLabels: []string{"provider_owned", "provider_hint_matching", "ari_secrets_required_for_isolated_named_execution"}, Caveats: []string{"provider_hint_status", "provider_methods_discovery_is_optional", "named_execution_blocked_without_storage_isolation_or_ari_secrets"}}}
 }
 
-func (e *OpenCodeExecutor) AuthProviderMethods(ctx context.Context) (map[string][]HarnessAuthMethodInfo, error) {
+func (e *OpenCodeExecutor) AuthProviderMethods(ctx context.Context) (HarnessAuthProviderMethodsResponse, error) {
 	if ctx == nil {
-		return nil, fmt.Errorf("context is required")
+		return HarnessAuthProviderMethodsResponse{}, fmt.Errorf("context is required")
 	}
 	if e == nil {
-		return nil, fmt.Errorf("executor is required")
+		return HarnessAuthProviderMethodsResponse{}, fmt.Errorf("executor is required")
 	}
 	return fetchOpenCodeAuthProviderMethods(ctx, e.options)
 }
@@ -331,7 +332,7 @@ func runOpenCodeAuthCommand(ctx context.Context, options opencodeExecutorOptions
 	return commandRunResult{Output: []byte(output.String()), ProcessSample: &sample, ExitCode: &exitCode}, err
 }
 
-func fetchOpenCodeAuthProviderMethods(ctx context.Context, options opencodeExecutorOptions) (map[string][]HarnessAuthMethodInfo, error) {
+func fetchOpenCodeAuthProviderMethods(ctx context.Context, options opencodeExecutorOptions) (HarnessAuthProviderMethodsResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	executable := strings.TrimSpace(options.Executable)
@@ -340,7 +341,7 @@ func fetchOpenCodeAuthProviderMethods(ctx context.Context, options opencodeExecu
 	}
 	path, err := exec.LookPath(executable)
 	if err != nil {
-		return nil, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+		return HarnessAuthProviderMethodsResponse{}, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
 	}
 	command := exec.CommandContext(ctx, path, "serve", "--port", "0", "--hostname", "127.0.0.1")
 	command.Dir = strings.TrimSpace(options.Cwd)
@@ -350,7 +351,7 @@ func fetchOpenCodeAuthProviderMethods(ctx context.Context, options opencodeExecu
 	if err := command.Start(); err != nil {
 		_ = pipeWriter.Close()
 		_ = pipeReader.Close()
-		return nil, err
+		return HarnessAuthProviderMethodsResponse{}, err
 	}
 	defer func() {
 		_ = command.Process.Kill()
@@ -360,8 +361,20 @@ func fetchOpenCodeAuthProviderMethods(ctx context.Context, options opencodeExecu
 	}()
 	serverURL, err := readOpenCodeServerURL(ctx, pipeReader)
 	if err != nil {
-		return nil, err
+		return HarnessAuthProviderMethodsResponse{}, err
 	}
+	connected, err := fetchOpenCodeConnectedProviders(ctx, serverURL)
+	if err != nil {
+		return HarnessAuthProviderMethodsResponse{}, err
+	}
+	methods, err := fetchOpenCodeAvailableAuthMethods(ctx, serverURL)
+	if err != nil {
+		return HarnessAuthProviderMethodsResponse{}, err
+	}
+	return HarnessAuthProviderMethodsResponse{Status: "ok", Connected: connected, Providers: methods}, nil
+}
+
+func fetchOpenCodeAvailableAuthMethods(ctx context.Context, serverURL string) (map[string][]HarnessAuthMethodInfo, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, serverURL+"/provider/auth", nil)
 	if err != nil {
 		return nil, err
@@ -379,6 +392,29 @@ func fetchOpenCodeAuthProviderMethods(ctx context.Context, options opencodeExecu
 		return nil, err
 	}
 	return methods, nil
+}
+
+func fetchOpenCodeConnectedProviders(ctx context.Context, serverURL string) ([]string, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, serverURL+"/provider", nil)
+	if err != nil {
+		return nil, err
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("opencode provider list returned HTTP %d", response.StatusCode)
+	}
+	var result struct {
+		Connected []string `json:"connected"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	slices.Sort(result.Connected)
+	return result.Connected, nil
 }
 
 func readOpenCodeServerURL(ctx context.Context, reader io.Reader) (string, error) {

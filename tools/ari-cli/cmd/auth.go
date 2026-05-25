@@ -487,6 +487,7 @@ func writeAuthDoctorResponse(w io.Writer, diagnostics []daemon.HarnessAuthDiagno
 				fields = append(
 					fields,
 					[2]string{"method discovery", authDoctorSafeField(authDoctorMethodDiscoveryStatus(diagnostic.ProviderMethods.Status))},
+					[2]string{"connected providers", authDoctorLabels(diagnostic.ProviderMethods.Connected)},
 					[2]string{"provider methods", authDoctorOpenCodeProviderMethods(diagnostic.ProviderMethods.Providers)},
 				)
 			}
