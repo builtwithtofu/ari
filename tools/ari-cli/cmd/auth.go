@@ -589,7 +589,7 @@ func authDoctorNextStep(remediation string) string {
 	case "install_opencode":
 		return "Install OpenCode, then run `ari auth login --harness opencode`."
 	case "device_code":
-		return "Run `ari auth login --harness codex --method device_code`."
+		return "Run `ari auth login --harness codex` and complete Codex's device-code login."
 	case "browser":
 		return "Run the provider browser login flow."
 	case "api_key":

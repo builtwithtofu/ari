@@ -196,7 +196,7 @@ func TestAuthDoctorCommandUsesDaemonDiagnosis(t *testing.T) {
 		"claude\n  installed:       installed\n  status:          authenticated",
 		"codex\n  installed:       installed\n  status:          auth_required",
 		"  named slots:     work(chatgpt):auth_required",
-		"  next step:       Run `ari auth login --harness codex --method device_code`.",
+		"  next step:       Run `ari auth login --harness codex` and complete Codex's device-code login.",
 		"opencode\n  installed:       not_installed\n  status:          not_installed",
 		"  next step:       Install OpenCode, then run `ari auth login --harness opencode`.",
 	} {

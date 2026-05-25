@@ -354,9 +354,9 @@ func fetchOpenCodeAuthProviderMethods(ctx context.Context, options opencodeExecu
 	}
 	defer func() {
 		_ = command.Process.Kill()
-		_ = command.Wait()
-		_ = pipeWriter.Close()
 		_ = pipeReader.Close()
+		_ = pipeWriter.Close()
+		_ = command.Wait()
 	}()
 	serverURL, err := readOpenCodeServerURL(ctx, pipeReader)
 	if err != nil {

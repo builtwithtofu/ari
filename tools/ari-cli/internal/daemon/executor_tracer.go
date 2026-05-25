@@ -943,9 +943,6 @@ func (d *Daemon) harnessAuthDiagnose(ctx context.Context, store *globaldb.Store,
 		}
 		executor, err := factory(HarnessSessionStartRequest{Executor: harness}, primaryFolder, d.appendExecutorItems)
 		diagnostic := HarnessAuthDiagnostic{Harness: harness, Installed: true, Status: HarnessAuthUnknown, DefaultSlot: HarnessAuthStatus{Harness: harness, AuthSlotID: authSlotIDForName(harness, "default"), Name: "default", Status: HarnessAuthUnknown, AriSecretStorage: HarnessAriSecretStorageNone}, Remediation: "check_provider_auth"}
-		if describer, ok := executor.(HarnessDescriber); ok {
-			diagnostic.Auth = describer.Descriptor().Auth
-		}
 		if err != nil {
 			diagnostic.DefaultSlot = NewHarnessAuthRequired(harness, diagnostic.DefaultSlot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, SecretOwnedBy: harness})
 			diagnostic.DefaultSlot.Name = "default"
@@ -953,6 +950,9 @@ func (d *Daemon) harnessAuthDiagnose(ctx context.Context, store *globaldb.Store,
 			diagnostic.Remediation = authDiagnosticRemediation(diagnostic.DefaultSlot)
 			resp.Harnesses = append(resp.Harnesses, diagnostic)
 			continue
+		}
+		if describer, ok := executor.(HarnessDescriber); ok {
+			diagnostic.Auth = describer.Descriptor().Auth
 		}
 		defaultSlot := harnessAuthSlotFromGlobal(globaldb.AuthSlot{AuthSlotID: authSlotIDForName(harness, "default"), Harness: harness, Label: "default", CredentialOwner: string(HarnessCredentialOwnerProvider), Status: string(HarnessAuthUnknown)})
 		if stored, ok := storedByID[defaultSlot.AuthSlotID]; ok {
