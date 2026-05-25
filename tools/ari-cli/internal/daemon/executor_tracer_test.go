@@ -1563,6 +1563,30 @@ func TestAuthDiagnoseComposesProviderMethodsInDaemon(t *testing.T) {
 	}
 }
 
+func TestAuthProviderMethodsPropagatesDiscoveryError(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest(HarnessNameOpenCode, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return &capturingHarness{name: HarnessNameOpenCode, authMethods: func(ctx context.Context) (HarnessAuthProviderMethodsResponse, error) {
+			_ = ctx
+			return HarnessAuthProviderMethodsResponse{}, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "missing_executable", Executable: "opencode", Probe: "opencode --version", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+		}}, nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "auth.provider_methods", HarnessAuthProviderMethodsRequest{Harness: HarnessNameOpenCode})
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "missing_executable" || data["executable"] != "opencode" || data["start_invoked"] != false {
+		t.Fatalf("error data = %#v, want missing executable discovery failure", data)
+	}
+}
+
 func TestDefaultHelperEnsureAndGetUseWorkspaceScopedHelper(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())

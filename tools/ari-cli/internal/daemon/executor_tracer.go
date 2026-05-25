@@ -1050,10 +1050,17 @@ func (d *Daemon) harnessAuthProviderMethods(ctx context.Context, store *globaldb
 	}
 	executor, err := factory(HarnessSessionStartRequest{Executor: harness}, primaryFolder, d.appendExecutorItems)
 	if err != nil {
-		return HarnessAuthProviderMethodsResponse{}, err
+		return HarnessAuthProviderMethodsResponse{}, mapHarnessRunError(err)
 	}
-	diagnostic := authProviderMethodDiagnostic(ctx, executor, true)
-	return HarnessAuthProviderMethodsResponse(diagnostic), nil
+	discoverer, ok := executor.(harnessAuthProviderMethodDiscoverer)
+	if !ok {
+		return HarnessAuthProviderMethodsResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "harness auth provider methods are not supported", map[string]any{"harness": harness, "reason": "auth_provider_methods_unsupported"})
+	}
+	methods, err := discoverer.AuthProviderMethods(ctx)
+	if err != nil {
+		return HarnessAuthProviderMethodsResponse{}, mapHarnessRunError(err)
+	}
+	return methods, nil
 }
 
 func authSlotIDForName(harness, name string) string {

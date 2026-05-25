@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestOpenCodeExecutorMapsJSONEvents(t *testing.T) {
@@ -257,6 +259,31 @@ func TestOpenCodeExecutorAdvertisesCapabilityProofSurface(t *testing.T) {
 		if !harnessCapabilitiesContain(capabilities, required) {
 			t.Fatalf("opencode capabilities = %#v, missing required %q", capabilities, required)
 		}
+	}
+}
+
+func TestReadOpenCodeServerURLStopsConsumingAfterMatch(t *testing.T) {
+	reader, writer := io.Pipe()
+	done := make(chan struct{})
+	go func() {
+		_, _ = writer.Write([]byte("server ready http://127.0.0.1:12345\n"))
+		<-done
+		_ = writer.Close()
+	}()
+
+	url, err := readOpenCodeServerURL(context.Background(), reader)
+	if err != nil {
+		t.Fatalf("readOpenCodeServerURL returned error: %v", err)
+	}
+	if url != "http://127.0.0.1:12345" {
+		t.Fatalf("url = %q, want OpenCode server URL", url)
+	}
+
+	close(done)
+	select {
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("readOpenCodeServerURL reader goroutine did not release pipe after match")
+	default:
 	}
 }
 

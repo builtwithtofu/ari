@@ -419,10 +419,16 @@ func fetchOpenCodeConnectedProviders(ctx context.Context, serverURL string) ([]s
 
 func readOpenCodeServerURL(ctx context.Context, reader io.Reader) (string, error) {
 	lines := make(chan string, 1)
+	done := make(chan struct{})
+	defer close(done)
 	go func() {
 		scanner := bufio.NewScanner(reader)
 		for scanner.Scan() {
-			lines <- scanner.Text()
+			select {
+			case lines <- scanner.Text():
+			case <-done:
+				return
+			}
 		}
 		close(lines)
 	}()
