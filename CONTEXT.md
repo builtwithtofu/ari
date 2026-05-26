@@ -36,6 +36,10 @@ The CLI escape hatch for fine-grained daemon operations, similar to `gh api`.
 
 An external LLM interaction runtime that Ari launches, observes, or coordinates, such as Claude Code, Codex, OpenCode, or a future adapter.
 
+## Fake harness
+
+A test double executable that impersonates a harness at Ari's process boundary. A fake harness is used to prove Ari's adapter, auth, projection, and runtime behavior without invoking a real provider CLI, network, or credentials.
+
 ## Harness session
 
 A harness invocation in a workspace with persisted Ari identity, provider resume metadata, normalized messages, and run log. Supported harnesses are peers.

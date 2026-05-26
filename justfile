@@ -43,3 +43,11 @@ ci: verify
 # ARI_CODEX_EXECUTABLE, ARI_CLAUDE_EXECUTABLE, or ARI_OPENCODE_EXECUTABLE.
 agent-smoke:
 	@bash -euo pipefail -c 'for spec in "codex:${ARI_CODEX_EXECUTABLE:-codex}" "claude:${ARI_CLAUDE_EXECUTABLE:-claude}" "opencode:${ARI_OPENCODE_EXECUTABLE:-opencode}"; do harness="${spec%%:*}"; command="${spec#*:}"; if ! command -v "${command}" >/dev/null 2>&1; then env_name=$(printf "%s" "${harness}" | tr "[:lower:]" "[:upper:]"); printf "Ari agent smoke: missing %s executable %q. Install it or set ARI_%s_EXECUTABLE to an absolute path. No auth or model call was attempted.\n" "${harness}" "${command}" "${env_name}" >&2; exit 127; fi; "${command}" --version; done'
+
+# Safe fake-harness auth proof. Hermetic and separate from verify.
+auth-proof-fake:
+	cd tools/ari-cli && go run ./cmd/auth-proof-fake
+
+# Opt-in real harness OAuth initiation smoke. Requires ARI_AUTH_LIVE_SMOKE=1.
+auth-live-smoke:
+	cd tools/ari-cli && go run ./cmd/auth-live-smoke
