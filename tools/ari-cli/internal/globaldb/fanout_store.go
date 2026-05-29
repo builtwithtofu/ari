@@ -2,6 +2,8 @@ package globaldb
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"strings"
 )
 
@@ -53,6 +55,18 @@ func (s *Store) CreateFanoutGroup(ctx context.Context, group FanoutGroup) error 
 	status := defaultString(strings.TrimSpace(group.Status), "running")
 	_, err := s.db.ExecContext(ctx, `INSERT INTO fanout_groups (fanout_group_id, workspace_id, source_session_id, source_agent_id, request_agent_message_id, status, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`, strings.TrimSpace(group.FanoutGroupID), strings.TrimSpace(group.WorkspaceID), strings.TrimSpace(group.SourceSessionID), strings.TrimSpace(group.SourceAgentID), strings.TrimSpace(group.RequestAgentMessageID), status, strings.TrimSpace(group.Body))
 	return err
+}
+
+func (s *Store) GetFanoutGroup(ctx context.Context, groupID string) (FanoutGroup, error) {
+	var group FanoutGroup
+	err := s.db.QueryRowContext(ctx, `SELECT fanout_group_id, workspace_id, source_session_id, source_agent_id, request_agent_message_id, status, body, created_at, updated_at FROM fanout_groups WHERE fanout_group_id = ?`, strings.TrimSpace(groupID)).Scan(&group.FanoutGroupID, &group.WorkspaceID, &group.SourceSessionID, &group.SourceAgentID, &group.RequestAgentMessageID, &group.Status, &group.Body, &group.CreatedAt, &group.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return FanoutGroup{}, ErrNotFound
+	}
+	if err != nil {
+		return FanoutGroup{}, err
+	}
+	return group, nil
 }
 
 func (s *Store) AddFanoutMember(ctx context.Context, member FanoutMember) error {

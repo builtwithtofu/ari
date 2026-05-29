@@ -39,7 +39,7 @@ func (d *Daemon) fanoutSession(ctx context.Context, store *globaldb.Store, req A
 		}
 		seenProfiles[profileID] = struct{}{}
 	}
-	groupID := strings.TrimSpace(req.AgentMessageID)
+	groupID := strings.TrimSpace(req.FanoutGroupID)
 	if groupID == "" {
 		generated, genErr := newAriULID()
 		if genErr != nil {
