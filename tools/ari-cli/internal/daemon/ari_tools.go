@@ -470,7 +470,7 @@ func (d *Daemon) ariSessionFanout(ctx context.Context, store *globaldb.Store, sc
 		return AriToolCallResponse{}, err
 	}
 	fanoutGroupID := stringValue(body, "fanout_group_id")
-	if err := validateAriFanoutCanStart(ctx, store, scope.WorkspaceID, sourceSessionID, fanoutGroupID, targetProfileIDs, contextExcerptIDs); err != nil {
+	if err := validateAriFanoutCanStart(ctx, store, scope, sourceSessionID, fanoutGroupID, targetProfileIDs, contextExcerptIDs); err != nil {
 		return AriToolCallResponse{}, err
 	}
 	wait, err := ariFanoutWaitFromInput(body)
@@ -504,8 +504,14 @@ func ariFanoutWaitFromInput(body map[string]any) (ariFanoutWait, error) {
 	if !ok {
 		return ariFanoutWait{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "invalid_wait", "start_invoked": false})
 	}
-	if mode := strings.TrimSpace(fmt.Sprint(waitMap["mode"])); mode != "" && mode != "<nil>" {
-		wait.Mode = mode
+	if modeRaw, ok := waitMap["mode"]; ok && modeRaw != nil {
+		modeText, ok := modeRaw.(string)
+		if !ok {
+			return ariFanoutWait{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "invalid_wait_mode", "wait_mode": fmt.Sprint(modeRaw), "start_invoked": false})
+		}
+		if mode := strings.TrimSpace(modeText); mode != "" {
+			wait.Mode = mode
+		}
 	}
 	if wait.Mode != "none" && wait.Mode != "any" && wait.Mode != "all" {
 		return ariFanoutWait{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "invalid_wait_mode", "wait_mode": wait.Mode, "start_invoked": false})
@@ -554,7 +560,7 @@ func waitForAriFanoutMembers(ctx context.Context, store *globaldb.Store, fanout 
 		select {
 		case <-ctx.Done():
 			return "", false, nil, ctx.Err()
-		case <-time.After(10 * time.Millisecond):
+		case <-time.After(100 * time.Millisecond):
 		}
 	}
 }
@@ -702,16 +708,19 @@ func validateFanoutReadScope(scope AriToolScope, group globaldb.FanoutGroup, inp
 	return nil
 }
 
-func validateAriFanoutCanStart(ctx context.Context, store *globaldb.Store, workspaceID, sourceSessionID, fanoutGroupID string, targetProfileIDs, contextExcerptIDs []string) error {
+func validateAriFanoutCanStart(ctx context.Context, store *globaldb.Store, scope AriToolScope, sourceSessionID, fanoutGroupID string, targetProfileIDs, contextExcerptIDs []string) error {
 	sourceRun, err := store.GetHarnessSession(ctx, sourceSessionID)
 	if err != nil {
 		if errors.Is(err, globaldb.ErrNotFound) {
-			return rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "unknown_source_session", "source_session_id": sourceSessionID, "workspace_id": workspaceID, "start_invoked": false})
+			return rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "unknown_source_session", "source_session_id": sourceSessionID, "workspace_id": scope.WorkspaceID, "start_invoked": false})
 		}
 		return err
 	}
-	if sourceRun.WorkspaceID != workspaceID {
-		return rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "source_workspace_mismatch", "source_session_id": sourceSessionID, "source_workspace_id": sourceRun.WorkspaceID, "workspace_id": workspaceID, "start_invoked": false})
+	if sourceRun.WorkspaceID != scope.WorkspaceID {
+		return rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "source_workspace_mismatch", "source_session_id": sourceSessionID, "source_workspace_id": sourceRun.WorkspaceID, "workspace_id": scope.WorkspaceID, "start_invoked": false})
+	}
+	if sourceRun.AgentID != strings.TrimSpace(scope.ProfileID) {
+		return rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "source_profile_mismatch", "source_session_id": sourceSessionID, "source_agent_id": sourceRun.AgentID, "scope_profile_id": strings.TrimSpace(scope.ProfileID), "start_invoked": false})
 	}
 	if err := requireWorkspaceCanStartRuntime(ctx, store, sourceRun.WorkspaceID); err != nil {
 		return err
@@ -722,6 +731,23 @@ func validateAriFanoutCanStart(ctx context.Context, store *globaldb.Store, works
 		} else if !errors.Is(err, globaldb.ErrNotFound) {
 			return err
 		}
+	}
+	excerpts := make([]globaldb.ContextExcerpt, 0, len(contextExcerptIDs))
+	for _, contextExcerptID := range contextExcerptIDs {
+		excerpt, excerptErr := store.GetContextExcerpt(ctx, contextExcerptID)
+		if errors.Is(excerptErr, globaldb.ErrNotFound) {
+			return rpc.NewHandlerError(rpc.InvalidParams, excerptErr.Error(), map[string]any{"reason": "unknown_context_excerpt", "context_excerpt_id": contextExcerptID, "start_invoked": false})
+		}
+		if excerptErr != nil {
+			return excerptErr
+		}
+		if excerpt.WorkspaceID != sourceRun.WorkspaceID {
+			return rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "context_excerpt_mismatch", "context_excerpt_id": contextExcerptID, "start_invoked": false})
+		}
+		if strings.TrimSpace(excerpt.TargetSessionID) != "" {
+			return rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "context_excerpt_target_session_mismatch", "context_excerpt_id": contextExcerptID, "target_session_id": excerpt.TargetSessionID, "start_invoked": false})
+		}
+		excerpts = append(excerpts, excerpt)
 	}
 	for _, profileID := range targetProfileIDs {
 		targetAgent, err := store.GetHarnessSessionConfig(ctx, profileID)
@@ -748,19 +774,9 @@ func validateAriFanoutCanStart(ctx context.Context, store *globaldb.Store, works
 				return err
 			}
 		}
-		for _, contextExcerptID := range contextExcerptIDs {
-			excerpt, excerptErr := store.GetContextExcerpt(ctx, contextExcerptID)
-			if errors.Is(excerptErr, globaldb.ErrNotFound) {
-				return rpc.NewHandlerError(rpc.InvalidParams, excerptErr.Error(), map[string]any{"reason": "unknown_context_excerpt", "context_excerpt_id": contextExcerptID, "start_invoked": false})
-			}
-			if excerptErr != nil {
-				return excerptErr
-			}
-			if excerpt.WorkspaceID != sourceRun.WorkspaceID || excerpt.TargetAgentID != "" && excerpt.TargetAgentID != targetAgent.AgentID {
-				return rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "context_excerpt_mismatch", "context_excerpt_id": contextExcerptID, "target_profile_id": profileID, "start_invoked": false})
-			}
-			if strings.TrimSpace(excerpt.TargetSessionID) != "" {
-				return rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "context_excerpt_target_session_mismatch", "context_excerpt_id": contextExcerptID, "target_profile_id": profileID, "target_session_id": excerpt.TargetSessionID, "start_invoked": false})
+		for _, excerpt := range excerpts {
+			if excerpt.TargetAgentID != "" && excerpt.TargetAgentID != targetAgent.AgentID {
+				return rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "context_excerpt_mismatch", "context_excerpt_id": excerpt.ContextExcerptID, "target_profile_id": profileID, "start_invoked": false})
 			}
 		}
 	}

@@ -3,6 +3,7 @@ package globaldb
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 )
 
@@ -59,7 +60,7 @@ func (s *Store) CreateFanoutGroup(ctx context.Context, group FanoutGroup) error 
 func (s *Store) GetFanoutGroup(ctx context.Context, groupID string) (FanoutGroup, error) {
 	var group FanoutGroup
 	err := s.db.QueryRowContext(ctx, `SELECT fanout_group_id, workspace_id, source_session_id, source_agent_id, request_agent_message_id, status, body, created_at, updated_at FROM fanout_groups WHERE fanout_group_id = ?`, strings.TrimSpace(groupID)).Scan(&group.FanoutGroupID, &group.WorkspaceID, &group.SourceSessionID, &group.SourceAgentID, &group.RequestAgentMessageID, &group.Status, &group.Body, &group.CreatedAt, &group.UpdatedAt)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return FanoutGroup{}, ErrNotFound
 	}
 	if err != nil {

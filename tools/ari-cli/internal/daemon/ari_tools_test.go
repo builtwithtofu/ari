@@ -329,6 +329,37 @@ func TestAriSessionFanoutToolRejectsUnboundedBlockingWaitBeforeStartingWorkers(t
 	}
 }
 
+func TestAriSessionFanoutToolRejectsNonStringWaitModeBeforeStartingWorkers(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "slow-worker", WorkspaceID: "ws-1", Name: "slow", Harness: "slow-fanout-harness", Model: "model-1", Prompt: "slow"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig slow returned error: %v", err)
+	}
+	starts := 0
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
+	d.setHarnessFactoryForTest("slow-fanout-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		starts++
+		return newFakeHarness("slow-fanout-harness", []TimelineItem{{Kind: "agent_text", Text: "answer"}}), nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "ari.tool.call", AriToolCallRequest{Name: "ari.session.fanout", Scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: "ws-1", ProfileID: "agent-1", ProfileName: "executor", ToolName: "ari.session.fanout", WithinDefaultScope: true}, Input: map[string]any{"target_profile_ids": []string{"slow-worker"}, "body": "fan out", "fanout_group_id": "fg-bad-wait", "wait": map[string]any{"mode": 1, "timeout_ms": 1000}}})
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "invalid_wait_mode" || data["start_invoked"] != false {
+		t.Fatalf("error data = %#v, want invalid_wait_mode before start", data)
+	}
+	if starts != 0 {
+		t.Fatalf("harness starts = %d, want invalid wait rejected before start", starts)
+	}
+}
+
 func TestAriSessionFanoutToolPrevalidatesDurableIDAndContextExcerptConflicts(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -543,6 +574,15 @@ func TestAriSessionFanoutToolRejectsInvalidInputsBeforeStartingWorkers(t *testin
 				t.Fatalf("CreateWorkspace ws-2 returned error: %v", err)
 			}
 		}, wantReason: "source_workspace_mismatch", wantGroupID: "fg-ws-mismatch"},
+		{name: "source profile mismatch", input: map[string]any{"target_profile_ids": []string{"fanout-worker"}, "body": "fan out", "fanout_group_id": "fg-source-profile-mismatch"}, scope: AriToolScope{SourceRunID: "other-run", WorkspaceID: "ws-1", ProfileID: "agent-1", ProfileName: "executor", ToolName: "ari.session.fanout", WithinDefaultScope: true}, seed: func(t *testing.T, store *globaldb.Store, ctx context.Context) {
+			t.Helper()
+			if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "other-agent", WorkspaceID: "ws-1", Name: "other", Harness: "fanout-harness"}); err != nil {
+				t.Fatalf("CreateHarnessSessionConfig other returned error: %v", err)
+			}
+			if err := store.CreateHarnessSession(ctx, globaldb.HarnessSession{SessionID: "other-run", WorkspaceID: "ws-1", AgentID: "other-agent", Harness: "fanout-harness", Status: "waiting", Usage: globaldb.HarnessSessionUsageSticky}); err != nil {
+				t.Fatalf("CreateHarnessSession other returned error: %v", err)
+			}
+		}, wantReason: "source_profile_mismatch", wantGroupID: "fg-source-profile-mismatch"},
 		{name: "duplicate targets", input: map[string]any{"target_profile_ids": []string{"fanout-worker", " fanout-worker "}, "body": "fan out", "fanout_group_id": "fg-duplicate"}, scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: "ws-1", ProfileID: "agent-1", ProfileName: "executor", ToolName: "ari.session.fanout", WithinDefaultScope: true}, wantReason: "duplicate_target_profile", wantGroupID: "fg-duplicate"},
 		{name: "missing body", input: map[string]any{"target_profile_ids": []string{"fanout-worker"}, "fanout_group_id": "fg-missing-body"}, scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: "ws-1", ProfileID: "agent-1", ProfileName: "executor", ToolName: "ari.session.fanout", WithinDefaultScope: true}, wantReason: "missing_required_fields", wantGroupID: "fg-missing-body"},
 		{name: "unknown profile", input: map[string]any{"target_profile_ids": []string{"missing-profile"}, "body": "fan out", "fanout_group_id": "fg-unknown-profile"}, scope: AriToolScope{SourceRunID: "run-1", WorkspaceID: "ws-1", ProfileID: "agent-1", ProfileName: "executor", ToolName: "ari.session.fanout", WithinDefaultScope: true}, wantReason: "unknown_profile", wantGroupID: "fg-unknown-profile"},
