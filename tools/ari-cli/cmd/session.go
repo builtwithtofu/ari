@@ -297,13 +297,6 @@ func newSessionFanoutCmd() *cobra.Command {
 	var fromSessionID, messageBody, workspaceID string
 	var targetSessionIDs, targetProfiles, excerptIDs []string
 	cmd := &cobra.Command{Use: "fanout", Short: "Fan out messages or calls from a session", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		cfg, err := configuredDaemonConfig()
-		if err != nil {
-			return err
-		}
-		if err := sessionEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
-			return err
-		}
 		fromSessionID = strings.TrimSpace(fromSessionID)
 		messageBody = strings.TrimSpace(messageBody)
 		if fromSessionID == "" || messageBody == "" {
@@ -330,6 +323,13 @@ func newSessionFanoutCmd() *cobra.Command {
 			if targetSessionID == "" {
 				return userFacingError{message: "--to-session must be non-empty"}
 			}
+		}
+		cfg, err := configuredDaemonConfig()
+		if err != nil {
+			return err
+		}
+		if err := sessionEnsureDaemonRunning(cmd.Context(), cfg); err != nil {
+			return err
 		}
 		ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 		defer cancel()
