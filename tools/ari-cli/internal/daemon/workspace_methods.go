@@ -251,6 +251,8 @@ func (d *Daemon) registerWorkspaceMethods(registry *rpc.MethodRegistry, store *g
 			if err := store.UpdateWorkspaceStatus(ctx, sessionID, "suspended"); err != nil {
 				return WorkspaceSuspendResponse{}, mapWorkspaceStoreError(err, sessionID)
 			}
+			d.stopActiveHarnessesForWorkspace(ctx, store, sessionID)
+			d.stopCommandsForWorkspace(ctx, store, sessionID)
 			return WorkspaceSuspendResponse{Status: "suspended"}, nil
 		},
 	}); err != nil {

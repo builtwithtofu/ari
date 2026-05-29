@@ -8,6 +8,14 @@ A durable, headless workspace runtime for LLM harnesses.
 
 A durable switchable unit of work, similar to an IDE project window. A workspace can exist before folders are attached, and may contain folders plus the harness sessions, commands, logs, context, messages, outputs, attention state, and coordination history for that work.
 
+## Active workspace
+
+A workspace whose runtime processes may continue while the user is focused on another client, terminal, or workspace.
+
+## Suspended workspace
+
+A workspace whose active runtime processes have been stopped while Ari preserves workspace state for an explicit later resume.
+
 ## Folder
 
 A filesystem root referenced by a workspace. A workspace may contain multiple folders, and a folder may belong to multiple workspaces.

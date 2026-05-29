@@ -96,6 +96,18 @@ func (l harnessLifecycle) markFailed(ctx context.Context, sessionID string) erro
 	return appendDaemonEvent(ctx, l.store, globaldb.DaemonEvent{WorkspaceID: run.WorkspaceID, SessionID: sessionID, EventType: daemonEventSessionFailed, SubjectType: "session", SubjectID: sessionID, PayloadJSON: daemonEventPayload(map[string]string{"status": "failed"}), AttentionRequired: true})
 }
 
+func (l harnessLifecycle) markStopped(ctx context.Context, sessionID string) error {
+	sessionID = strings.TrimSpace(sessionID)
+	if err := l.store.UpdateHarnessSessionStatus(ctx, sessionID, "stopped"); err != nil {
+		return err
+	}
+	run, err := l.store.GetHarnessSession(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	return appendDaemonEvent(ctx, l.store, globaldb.DaemonEvent{WorkspaceID: run.WorkspaceID, SessionID: sessionID, EventType: daemonEventSessionCompleted, SubjectType: "session", SubjectID: sessionID, PayloadJSON: daemonEventPayload(map[string]string{"status": "stopped"}), AttentionRequired: false})
+}
+
 func (l harnessLifecycle) markFailedWithFinalResponse(ctx context.Context, sessionID string, response globaldb.FinalResponse) {
 	sessionID = strings.TrimSpace(sessionID)
 	_ = l.markFailed(ctx, sessionID)

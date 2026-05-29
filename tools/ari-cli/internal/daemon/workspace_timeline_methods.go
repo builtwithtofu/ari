@@ -202,6 +202,34 @@ func (d *Daemon) workspaceTimeline(ctx context.Context, store *globaldb.Store, w
 	for _, excerptID := range excerptOrder {
 		appendExcerpt(excerptID)
 	}
+	fanoutMembers, err := store.ListFanoutMembersByWorkspace(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	for _, member := range fanoutMembers {
+		items = append(items, TimelineItem{
+			ID:          member.FanoutMemberID,
+			WorkspaceID: workspaceID,
+			RunID:       member.WorkerSessionID,
+			SessionID:   member.WorkerSessionID,
+			SourceKind:  "fanout_member",
+			SourceID:    member.FanoutMemberID,
+			Kind:        "fanout_member",
+			Status:      member.Status,
+			Sequence:    sequence,
+			CreatedAt:   member.UpdatedAt,
+			Text:        member.TargetProfileID,
+			Metadata: map[string]any{
+				"fanout_group_id":          member.FanoutGroupID,
+				"worker_session_id":        member.WorkerSessionID,
+				"target_profile_id":        member.TargetProfileID,
+				"request_agent_message_id": member.RequestAgentMessageID,
+				"reply_agent_message_id":   member.ReplyAgentMessageID,
+				"final_response_id":        member.FinalResponseID,
+			},
+		})
+		sequence++
+	}
 
 	for _, item := range d.executorTimelineItems(workspaceID) {
 		item = normalizeHarnessSessionTimelineItem(item)

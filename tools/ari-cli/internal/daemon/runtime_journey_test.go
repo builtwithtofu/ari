@@ -3,12 +3,235 @@ package daemon
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
 )
+
+func TestJourneyStickyFlowFanoutUsesFakeHarnessExecutableBoundary(t *testing.T) {
+	j := newJourneyRuntime(t)
+	primaryFolder := t.TempDir()
+	j.seedWorkspace("ws-1", primaryFolder)
+	j.createSessionConfig("planner", "ws-1", "planner", "claude")
+	j.createHarnessSession("planner-run", "ws-1", "planner", "claude", "waiting", globaldb.HarnessSessionUsageSticky)
+	j.createSessionConfig("researcher", "ws-1", "researcher", "claude")
+	j.createSessionConfig("reviewer", "ws-1", "reviewer", "claude")
+	fake := buildFakeHarnessExecutable(t)
+	recordPath := filepath.Join(t.TempDir(), "fake-harness-record.jsonl")
+	t.Setenv("ARI_FAKE_HARNESS", "claude")
+	t.Setenv("ARI_FAKE_HARNESS_RECORD", recordPath)
+	j.daemon.setHarnessFactoryForTest("claude", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = sink
+		return NewClaudeExecutorForTest(claudeExecutorOptions{Executable: fake, Cwd: primaryFolder, InvocationMode: HarnessInvocationModeHeadless}), nil
+	})
+
+	fanout := callMethod[AgentMessageSendResponse](t, j.registry, "session.fanout", AgentMessageSendRequest{AgentMessageID: "fg-fake-exec", SourceSessionID: "planner-run", TargetProfileIDs: []string{"researcher", "reviewer"}, Body: "fan out through executable"})
+	if fanout.FanoutGroupID != "fg-fake-exec" || len(fanout.FanoutMembers) != 2 {
+		t.Fatalf("fanout = %#v, want durable executable-backed group and workers", fanout)
+	}
+	waitForFinalResponseContains(t, j.ctx, j.store, "fg-fake-exec-c"+stableRuntimeAgentIDSegment("researcher")+"-run", "fake claude response")
+	waitForFinalResponseContains(t, j.ctx, j.store, "fg-fake-exec-c"+stableRuntimeAgentIDSegment("reviewer")+"-run", "fake claude response")
+	status := callMethod[WorkspaceStatusResponse](t, j.registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-1"})
+	assertProjectedFanoutMemberStatuses(t, status.FanoutMembers, map[string]string{"researcher": "completed", "reviewer": "completed"})
+	assertStickyInboxKinds(t, status.StickyInbox, map[string]string{"fg-fake-exec-mresearcher": "worker_completed", "fg-fake-exec-mreviewer": "worker_completed"})
+	record, err := os.ReadFile(recordPath)
+	if err != nil {
+		t.Fatalf("ReadFile fake-harness record returned error: %v", err)
+	}
+	if got := strings.Count(string(record), `"harness":"claude"`); got != 2 {
+		t.Fatalf("fake-harness record = %s, want two claude process invocations", record)
+	}
+}
+
+func buildFakeHarnessExecutable(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "fake-harness")
+	cmd := exec.Command("go", "build", "-o", path, "./cmd/fake-harness")
+	cmd.Dir = repoRootForTest(t)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build fake-harness executable: %v\n%s", err, out)
+	}
+	return path
+}
+
+func repoRootForTest(t *testing.T) string {
+	t.Helper()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd returned error: %v", err)
+	}
+	for dir := cwd; dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+	}
+	t.Fatalf("could not find go.mod from %s", cwd)
+	return ""
+}
+
+func TestJourneyStickyFlowFanoutSuspendResumeAndInbox(t *testing.T) {
+	j := newJourneyRuntime(t)
+	j.seedWorkspace("ws-1", t.TempDir())
+	j.seedWorkspace("ws-2", t.TempDir())
+	j.createSessionConfig("planner", "ws-1", "planner", "planner-harness")
+	j.createHarnessSession("planner-run", "ws-1", "planner", "planner-harness", "waiting", globaldb.HarnessSessionUsageSticky)
+	j.createSessionConfig("good-worker", "ws-1", "good", "good-harness")
+	j.createSessionConfig("bad-worker", "ws-1", "bad", "bad-harness")
+	j.createSessionConfig("slow-worker", "ws-1", "slow", "slow-harness")
+
+	slowStarted := make(chan struct{})
+	slowRelease := make(chan struct{})
+	stopped := make(chan string, 1)
+	j.daemon.setHarnessFactoryForTest("good-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return newFakeHarness("good-harness", []TimelineItem{{Kind: "agent_text", Text: "good result"}}), nil
+	})
+	j.daemon.setHarnessFactoryForTest("bad-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return itemsFailHarness{}, nil
+	})
+	j.daemon.setHarnessFactoryForTest("slow-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return &blockingItemsHarness{name: "slow-harness", providerSessionID: "provider-slow", started: slowStarted, release: slowRelease, stopped: stopped, items: []TimelineItem{{Kind: "agent_text", Text: "slow result"}}}, nil
+	})
+
+	fanout := callMethod[AgentMessageSendResponse](t, j.registry, "session.fanout", AgentMessageSendRequest{AgentMessageID: "fg-journey", SourceSessionID: "planner-run", TargetProfileIDs: []string{"good-worker", "bad-worker", "slow-worker"}, Body: "fan out"})
+	if fanout.FanoutGroupID != "fg-journey" || len(fanout.FanoutMembers) != 3 {
+		t.Fatalf("fanout = %#v, want durable group and three workers", fanout)
+	}
+	select {
+	case <-slowStarted:
+	case <-time.After(time.Second):
+		t.Fatal("slow worker did not start")
+	}
+	plannerMessages, err := j.store.ListRunLogMessages(j.ctx, "planner-run", 0, 100)
+	if err != nil {
+		t.Fatalf("ListRunLogMessages planner returned error: %v", err)
+	}
+	if len(plannerMessages) != 0 {
+		t.Fatalf("planner run log = %#v, want no active-turn worker injection", plannerMessages)
+	}
+	waitForFinalResponseText(t, j.ctx, j.store, "fg-journey-c"+stableRuntimeAgentIDSegment("good-worker")+"-run", "good result")
+	waitForFinalResponseContains(t, j.ctx, j.store, "fg-journey-c"+stableRuntimeAgentIDSegment("bad-worker")+"-run", "items failed")
+	status := callMethod[WorkspaceStatusResponse](t, j.registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-1"})
+	assertProjectedFanoutMemberStatuses(t, status.FanoutMembers, map[string]string{"good-worker": "completed", "bad-worker": "failed", "slow-worker": "running"})
+	assertStickyInboxKinds(t, status.StickyInbox, map[string]string{"fg-journey-mgood-worker": "worker_completed", "fg-journey-mbad-worker": "worker_failed"})
+
+	_ = callMethod[WorkspaceStatusResponse](t, j.registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-2"})
+	assertHarnessSessionStatusRemains(t, j.ctx, j.store, "fg-journey-c"+stableRuntimeAgentIDSegment("slow-worker")+"-run", "running", 75*time.Millisecond)
+	suspended := callMethod[WorkspaceSuspendResponse](t, j.registry, "workspace.suspend", WorkspaceSuspendRequest{WorkspaceID: "ws-1"})
+	if suspended.Status != "suspended" {
+		t.Fatalf("suspend = %#v, want suspended", suspended)
+	}
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("slow worker was not stopped on workspace suspend")
+	}
+	events, err := j.store.ListDaemonEventsAfter(j.ctx, "", 20)
+	if err != nil {
+		t.Fatalf("ListDaemonEventsAfter returned error: %v", err)
+	}
+	assertDaemonEvent(t, events, "fg-journey-c"+stableRuntimeAgentIDSegment("slow-worker")+"-run", daemonEventSessionCompleted, false)
+	status = callMethod[WorkspaceStatusResponse](t, j.registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-1"})
+	assertProjectedFanoutMemberStatuses(t, status.FanoutMembers, map[string]string{"slow-worker": "stopped"})
+	assertStickyInboxKinds(t, status.StickyInbox, map[string]string{"fg-journey-mslow-worker": "worker_stopped"})
+	resumed := callMethod[WorkspaceResumeResponse](t, j.registry, "workspace.resume", WorkspaceResumeRequest{WorkspaceID: "ws-1"})
+	if resumed.Status != "active" {
+		t.Fatalf("resume = %#v, want active", resumed)
+	}
+	assertHarnessSessionStatusRemains(t, j.ctx, j.store, "fg-journey-c"+stableRuntimeAgentIDSegment("slow-worker")+"-run", "stopped", 75*time.Millisecond)
+	close(slowRelease)
+}
+
+func TestJourneyWorkspaceSuspendDoesNotFailContextCancelledFanoutWorker(t *testing.T) {
+	j := newJourneyRuntime(t)
+	j.seedWorkspace("ws-1", t.TempDir())
+	j.createSessionConfig("planner", "ws-1", "planner", "planner-harness")
+	j.createHarnessSession("planner-run", "ws-1", "planner", "planner-harness", "waiting", globaldb.HarnessSessionUsageSticky)
+	j.createSessionConfig("slow-worker", "ws-1", "slow", "slow-harness")
+	started := make(chan struct{})
+	j.daemon.setHarnessFactoryForTest("slow-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return &contextCancelledItemsHarness{name: "slow-harness", providerSessionID: "provider-slow", started: started, store: j.store}, nil
+	})
+
+	_ = callMethod[AgentMessageSendResponse](t, j.registry, "session.fanout", AgentMessageSendRequest{AgentMessageID: "fg-context-cancel", SourceSessionID: "planner-run", TargetProfileIDs: []string{"slow-worker"}, Body: "fan out"})
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("context-cancelled worker did not start")
+	}
+	suspended := callMethod[WorkspaceSuspendResponse](t, j.registry, "workspace.suspend", WorkspaceSuspendRequest{WorkspaceID: "ws-1"})
+	if suspended.Status != "suspended" {
+		t.Fatalf("suspend = %#v, want suspended", suspended)
+	}
+	workerSessionID := "fg-context-cancel-c" + stableRuntimeAgentIDSegment("slow-worker") + "-run"
+	assertHarnessSessionStatusEventually(t, j.ctx, j.store, workerSessionID, "stopped", time.Second)
+	events, err := j.store.ListDaemonEventsAfter(j.ctx, "", 20)
+	if err != nil {
+		t.Fatalf("ListDaemonEventsAfter returned error: %v", err)
+	}
+	if hasDaemonEvent(t, events, workerSessionID, daemonEventSessionFailed) {
+		t.Fatalf("daemon events = %#v, want no failed event for intentionally stopped worker", events)
+	}
+	assertDaemonEvent(t, events, workerSessionID, daemonEventSessionCompleted, false)
+}
+
+func assertDaemonEvent(t *testing.T, events []globaldb.DaemonEvent, sessionID, eventType string, attentionRequired bool) {
+	t.Helper()
+	for _, event := range events {
+		if event.SessionID == sessionID {
+			if event.EventType != eventType || event.AttentionRequired != attentionRequired {
+				t.Fatalf("daemon event for %s = %#v, want type %q attention=%v", sessionID, event, eventType, attentionRequired)
+			}
+			return
+		}
+	}
+	t.Fatalf("daemon events = %#v, want event for session %s", events, sessionID)
+}
+
+func hasDaemonEvent(t *testing.T, events []globaldb.DaemonEvent, sessionID, eventType string) bool {
+	t.Helper()
+	for _, event := range events {
+		if event.SessionID == sessionID && event.EventType == eventType {
+			return true
+		}
+	}
+	return false
+}
+
+func assertHarnessSessionStatusEventually(t *testing.T, ctx context.Context, store *globaldb.Store, sessionID, want string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var last string
+	for time.Now().Before(deadline) {
+		run, err := store.GetHarnessSession(ctx, sessionID)
+		if err != nil {
+			t.Fatalf("GetHarnessSession(%q) returned error: %v", sessionID, err)
+		}
+		last = run.Status
+		if last == want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("session %q status = %q, want %q", sessionID, last, want)
+}
 
 func TestJourneyInitToProjectStateIsDaemonBacked(t *testing.T) {
 	stubBootstrap(t)

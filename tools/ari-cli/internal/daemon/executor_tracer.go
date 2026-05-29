@@ -329,6 +329,7 @@ type AgentMessageSendRequest struct {
 	WorkspaceID       string   `json:"workspace_id,omitempty"`
 	SourceSessionID   string   `json:"source_session_id"`
 	TargetAgentID     string   `json:"target_agent_id"`
+	TargetProfileIDs  []string `json:"target_profile_ids,omitempty"`
 	TargetSessionID   string   `json:"target_session_id,omitempty"`
 	Body              string   `json:"body"`
 	ContextExcerptIDs []string `json:"context_excerpt_ids,omitempty"`
@@ -336,7 +337,16 @@ type AgentMessageSendRequest struct {
 }
 
 type AgentMessageSendResponse struct {
-	AgentMessage AgentMessageResponse `json:"agent_message"`
+	AgentMessage  AgentMessageResponse   `json:"agent_message"`
+	FanoutGroupID string                 `json:"fanout_group_id,omitempty"`
+	FanoutMembers []FanoutMemberResponse `json:"fanout_members,omitempty"`
+}
+
+type FanoutMemberResponse struct {
+	FanoutMemberID  string                  `json:"fanout_member_id"`
+	TargetProfileID string                  `json:"target_profile_id"`
+	Session         globaldb.HarnessSession `json:"session"`
+	Request         AgentMessageResponse    `json:"request"`
 }
 
 type AgentMessageResponse struct {
@@ -361,13 +371,17 @@ type EphemeralCallRequest struct {
 	ContextExcerptIDs   []string `json:"context_excerpt_ids,omitempty"`
 	SessionID           string   `json:"session_id,omitempty"`
 	ReplyAgentMessageID string   `json:"reply_agent_message_id,omitempty"`
+	FanoutGroupID       string   `json:"fanout_group_id,omitempty"`
+	FanoutMemberID      string   `json:"fanout_member_id,omitempty"`
+	SuppressReply       bool     `json:"suppress_reply,omitempty"`
 	TimeoutMS           int64    `json:"timeout_ms,omitempty"`
 }
 
 type EphemeralCallResponse struct {
-	Run     globaldb.HarnessSession `json:"run"`
-	Request AgentMessageResponse    `json:"request"`
-	Reply   AgentMessageResponse    `json:"reply"`
+	Run           globaldb.HarnessSession `json:"run"`
+	Request       AgentMessageResponse    `json:"request"`
+	Reply         AgentMessageResponse    `json:"reply"`
+	FinalResponse globaldb.FinalResponse  `json:"final_response,omitempty"`
 }
 
 type DefaultHelperEnsureRequest struct {
@@ -1971,6 +1985,9 @@ func (d *Daemon) startHarnessSession(ctx context.Context, store *globaldb.Store,
 	if executorName == "" {
 		return HarnessSessionStartResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "executor is required", nil)
 	}
+	if err := requireWorkspaceCanStartRuntime(ctx, store, req.Packet.WorkspaceID); err != nil {
+		return HarnessSessionStartResponse{}, err
+	}
 	primaryFolder, err := lookupPrimaryFolder(ctx, store, req.Packet.WorkspaceID)
 	if err != nil {
 		return HarnessSessionStartResponse{}, mapWorkspaceStoreError(err, req.Packet.WorkspaceID)
@@ -1990,9 +2007,6 @@ func (d *Daemon) startHarnessSession(ctx context.Context, store *globaldb.Store,
 		return HarnessSessionStartResponse{}, mapHarnessRunError(err)
 	} else if projection.Kind != "" {
 		req.AuthProjection = projection
-	}
-	if _, err := store.GetWorkspace(ctx, req.Packet.WorkspaceID); err != nil {
-		return HarnessSessionStartResponse{}, mapWorkspaceStoreError(err, req.Packet.WorkspaceID)
 	}
 	result, err := StartExecutorRunResultWithProjection(ctx, executor, req.Packet, strings.TrimSpace(req.SessionID), req.AuthProjection, profile...)
 	if err != nil {
