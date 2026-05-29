@@ -76,7 +76,7 @@ func (d *Daemon) registerMessageContextMethods(registry *rpc.MethodRegistry, sto
 		Name:        "session.fanout",
 		Description: "Fan out a visible session message to multiple sessions or profiles",
 		Handler: func(ctx context.Context, req AgentMessageSendRequest) (AgentMessageSendResponse, error) {
-			return sendAgentMessage(ctx, store, req)
+			return d.fanoutSession(ctx, store, req)
 		},
 	}); err != nil {
 		return fmt.Errorf("register session.fanout: %w", err)

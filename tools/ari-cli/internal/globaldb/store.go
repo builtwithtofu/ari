@@ -33,6 +33,7 @@ const (
 	commandStatusRunning = "running"
 	commandStatusExited  = "exited"
 	commandStatusLost    = "lost"
+	commandStatusStopped = "stopped"
 )
 
 type Workspace struct {
@@ -1493,7 +1494,7 @@ func isValidVCSType(vcsType string) bool {
 
 func isValidCommandStatus(status string) bool {
 	switch status {
-	case commandStatusRunning, commandStatusExited, commandStatusLost:
+	case commandStatusRunning, commandStatusExited, commandStatusLost, commandStatusStopped:
 		return true
 	default:
 		return false

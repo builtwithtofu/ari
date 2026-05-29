@@ -42,6 +42,8 @@ type Daemon struct {
 	commandWG       sync.WaitGroup
 	harnessCtx      context.Context
 	harnessWG       sync.WaitGroup
+	activeHarnessMu sync.Mutex
+	activeHarnesses map[string]*activeHarnessRun
 	executorMu      sync.RWMutex
 	executorRuns    map[string]HarnessSession
 	executorItems   map[string][]TimelineItem
@@ -96,6 +98,7 @@ func NewWithSignalChannel(socketPath, dbPath, pidPath, configPath, configSource,
 		commandLogs:     make(map[string]string),
 		commandLogOrder: make([]string, 0),
 		harnessCtx:      context.Background(),
+		activeHarnesses: make(map[string]*activeHarnessRun),
 		executorRuns:    make(map[string]HarnessSession),
 		executorItems:   make(map[string][]TimelineItem),
 		harnessRegistry: NewDefaultHarnessRegistry(),

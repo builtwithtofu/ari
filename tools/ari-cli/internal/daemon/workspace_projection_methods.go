@@ -29,6 +29,8 @@ type WorkspaceStatusResponse struct {
 	Proofs           []ProofResultSummary     `json:"proofs"`
 	ContextExcerpts  []ContextExcerptActivity `json:"context_excerpts"`
 	AgentMessages    []AgentMessageActivity   `json:"agent_messages"`
+	FanoutMembers    []FanoutMemberActivity   `json:"fanout_members"`
+	StickyInbox      []StickyInboxActivity    `json:"sticky_inbox"`
 	WorkspaceRoots   []string                 `json:"workspace_roots"`
 	RecentOperations []OperationActivity      `json:"recent_operations"`
 	RecentTimeline   []TimelineItem           `json:"recent_timeline"`
@@ -117,6 +119,29 @@ type AgentMessageActivity struct {
 	TargetAgentID       string `json:"target_agent_id"`
 	Status              string `json:"status"`
 	ContextExcerptCount int    `json:"context_excerpt_count"`
+}
+
+type FanoutMemberActivity struct {
+	FanoutMemberID        string `json:"fanout_member_id"`
+	FanoutGroupID         string `json:"fanout_group_id"`
+	WorkerSessionID       string `json:"worker_session_id"`
+	TargetProfileID       string `json:"target_profile_id"`
+	RequestAgentMessageID string `json:"request_agent_message_id,omitempty"`
+	ReplyAgentMessageID   string `json:"reply_agent_message_id,omitempty"`
+	FinalResponseID       string `json:"final_response_id,omitempty"`
+	Status                string `json:"status"`
+}
+
+type StickyInboxActivity struct {
+	InboxItemID     string `json:"inbox_item_id"`
+	TargetSessionID string `json:"target_session_id"`
+	FanoutGroupID   string `json:"fanout_group_id,omitempty"`
+	FanoutMemberID  string `json:"fanout_member_id,omitempty"`
+	WorkerSessionID string `json:"worker_session_id,omitempty"`
+	FinalResponseID string `json:"final_response_id,omitempty"`
+	Kind            string `json:"kind"`
+	Status          string `json:"status"`
+	Summary         string `json:"summary,omitempty"`
 }
 
 type ProofResultSummary struct {
@@ -227,6 +252,14 @@ func (d *Daemon) workspaceStatus(ctx context.Context, store *globaldb.Store, raw
 	if err != nil {
 		return WorkspaceStatusResponse{}, err
 	}
+	fanoutMembers, err := fanoutMemberActivity(ctx, store, workspaceID)
+	if err != nil {
+		return WorkspaceStatusResponse{}, err
+	}
+	stickyInbox, err := stickyInboxActivity(ctx, store, workspaceID, sessions)
+	if err != nil {
+		return WorkspaceStatusResponse{}, err
+	}
 	recentOperations, err := workspaceOperationActivity(ctx, store, workspaceID)
 	if err != nil {
 		return WorkspaceStatusResponse{}, err
@@ -248,6 +281,8 @@ func (d *Daemon) workspaceStatus(ctx context.Context, store *globaldb.Store, raw
 		Proofs:           proofs,
 		ContextExcerpts:  contextExcerpts,
 		AgentMessages:    agentMessages,
+		FanoutMembers:    fanoutMembers,
+		StickyInbox:      stickyInbox,
 		WorkspaceRoots:   roots,
 		RecentOperations: recentOperations,
 		RecentTimeline:   recentTimeline,
@@ -346,6 +381,35 @@ func agentSessionConfigMessages(ctx context.Context, store *globaldb.Store, work
 	out := make([]AgentMessageActivity, 0, len(messages))
 	for _, dm := range messages {
 		out = append(out, AgentMessageActivity{AgentMessageID: dm.AgentMessageID, SourceSessionID: dm.SourceSessionID, SourceAgentID: dm.SourceAgentID, TargetSessionID: dm.TargetSessionID, TargetAgentID: dm.TargetAgentID, Status: dm.Status, ContextExcerptCount: len(dm.ContextExcerptIDs)})
+	}
+	return out, nil
+}
+
+func fanoutMemberActivity(ctx context.Context, store *globaldb.Store, workspaceID string) ([]FanoutMemberActivity, error) {
+	members, err := store.ListFanoutMembersByWorkspace(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]FanoutMemberActivity, 0, len(members))
+	for _, member := range members {
+		out = append(out, FanoutMemberActivity{FanoutMemberID: member.FanoutMemberID, FanoutGroupID: member.FanoutGroupID, WorkerSessionID: member.WorkerSessionID, TargetProfileID: member.TargetProfileID, RequestAgentMessageID: member.RequestAgentMessageID, ReplyAgentMessageID: member.ReplyAgentMessageID, FinalResponseID: member.FinalResponseID, Status: member.Status})
+	}
+	return out, nil
+}
+
+func stickyInboxActivity(ctx context.Context, store *globaldb.Store, workspaceID string, sessions []SessionActivity) ([]StickyInboxActivity, error) {
+	out := make([]StickyInboxActivity, 0)
+	for _, session := range sessions {
+		if session.Usage != globaldb.HarnessSessionUsageSticky {
+			continue
+		}
+		items, err := store.ListStickyInboxItems(ctx, workspaceID, session.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range items {
+			out = append(out, StickyInboxActivity{InboxItemID: item.InboxItemID, TargetSessionID: item.TargetSessionID, FanoutGroupID: item.FanoutGroupID, FanoutMemberID: item.FanoutMemberID, WorkerSessionID: item.WorkerSessionID, FinalResponseID: item.FinalResponseID, Kind: item.Kind, Status: item.Status, Summary: item.Summary})
+		}
 	}
 	return out, nil
 }

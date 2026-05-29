@@ -248,6 +248,8 @@ func (d *Daemon) registerWorkspaceMethods(registry *rpc.MethodRegistry, store *g
 			if sessionID == "" {
 				return WorkspaceSuspendResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
 			}
+			d.stopActiveHarnessesForWorkspace(ctx, store, sessionID)
+			d.stopCommandsForWorkspace(ctx, store, sessionID)
 			if err := store.UpdateWorkspaceStatus(ctx, sessionID, "suspended"); err != nil {
 				return WorkspaceSuspendResponse{}, mapWorkspaceStoreError(err, sessionID)
 			}

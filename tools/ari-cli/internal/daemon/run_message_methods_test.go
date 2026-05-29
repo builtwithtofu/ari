@@ -679,6 +679,155 @@ func TestEphemeralCallTimeoutStopsHarnessAndMarksFailed(t *testing.T) {
 	assertHarnessSessionStatusRemains(t, ctx, store, got.Run.SessionID, "failed", 150*time.Millisecond)
 }
 
+func TestWorkspaceSuspendStopsActiveEphemeralHarnessAndMarksStopped(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "librarian", Harness: "suspend-harness", Model: "model-1", Prompt: "research"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
+	}
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	stopped := make(chan string, 1)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest("suspend-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return &blockingItemsHarness{name: "suspend-harness", providerSessionID: "provider-suspend-session", started: started, release: release, stopped: stopped, items: []TimelineItem{{Kind: "agent_text", Text: "too late"}}}, nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	got := callMethod[EphemeralCallResponse](t, registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-suspend", SessionID: "call-suspend-run", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research this"})
+	if got.Run.Status != "running" {
+		t.Fatalf("ephemeral response = %#v, want inspectable running run before suspend", got)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("harness did not start asynchronously")
+	}
+
+	suspend := callMethod[WorkspaceSuspendResponse](t, registry, "workspace.suspend", WorkspaceSuspendRequest{WorkspaceID: "ws-1"})
+	if suspend.Status != "suspended" {
+		t.Fatalf("suspend status = %q, want suspended", suspend.Status)
+	}
+	select {
+	case stoppedSessionID := <-stopped:
+		if stoppedSessionID != "provider-suspend-session" {
+			t.Fatalf("stopped session = %q, want provider-suspend-session", stoppedSessionID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("executor Stop was not invoked after workspace suspend")
+	}
+	stoppedRun := waitForStoredHarnessSession(t, ctx, store, got.Run.SessionID, func(run globaldb.HarnessSession) bool { return run.Status == "stopped" })
+	if stoppedRun.Status != "stopped" {
+		t.Fatalf("run status = %q, want stopped", stoppedRun.Status)
+	}
+	close(release)
+	assertHarnessSessionStatusRemains(t, ctx, store, got.Run.SessionID, "stopped", 150*time.Millisecond)
+}
+
+func TestWorkspaceSuspendStopsPersistedRunningStickyHarnessAndMarksStopped(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateHarnessSession(ctx, globaldb.HarnessSession{SessionID: "run-sticky", WorkspaceID: "ws-1", AgentID: "agent-1", Harness: "sticky-stop-harness", Status: "running", Usage: globaldb.HarnessSessionUsageSticky, ProviderSessionID: "provider-sticky-session", CWD: t.TempDir()}); err != nil {
+		t.Fatalf("CreateHarnessSession returned error: %v", err)
+	}
+
+	stopped := make(chan string, 1)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest("sticky-stop-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return &blockingItemsHarness{name: "sticky-stop-harness", stopped: stopped}, nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	suspend := callMethod[WorkspaceSuspendResponse](t, registry, "workspace.suspend", WorkspaceSuspendRequest{WorkspaceID: "ws-1"})
+	if suspend.Status != "suspended" {
+		t.Fatalf("suspend status = %q, want suspended", suspend.Status)
+	}
+	select {
+	case stoppedSessionID := <-stopped:
+		if stoppedSessionID != "provider-sticky-session" {
+			t.Fatalf("stopped session = %q, want provider-sticky-session", stoppedSessionID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("executor Stop was not invoked for persisted sticky session")
+	}
+	stoppedRun, err := store.GetHarnessSession(ctx, "run-sticky")
+	if err != nil {
+		t.Fatalf("GetHarnessSession returned error: %v", err)
+	}
+	if stoppedRun.Status != "stopped" {
+		t.Fatalf("run status = %q, want stopped", stoppedRun.Status)
+	}
+}
+
+func TestSuspendedWorkspaceRejectsNewHarnessStarts(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.UpdateWorkspaceStatus(ctx, "ws-1", "suspended"); err != nil {
+		t.Fatalf("UpdateWorkspaceStatus returned error: %v", err)
+	}
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-2", WorkspaceID: "ws-1", Name: "librarian", Harness: "test-harness", Model: "model-1", Prompt: "research"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
+	}
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return newFinalResponseHarness("test-harness", []TimelineItem{{Kind: "agent_text", Text: "should not start"}}), nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	startErr := callMethodError(registry, "session.start", HarnessSessionStartRequest{Executor: "test-harness", Packet: ContextPacket{ID: "ctx-suspended", WorkspaceID: "ws-1", TaskID: "task-suspended"}})
+	assertWorkspaceSuspendedStartError(t, startErr)
+	ephErr := callMethodError(registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-suspended", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research this"})
+	assertWorkspaceSuspendedStartError(t, ephErr)
+	if _, err := store.GetHarnessSession(ctx, "call-suspended-run"); !errors.Is(err, globaldb.ErrNotFound) {
+		t.Fatalf("GetHarnessSession suspended worker error = %v, want ErrNotFound", err)
+	}
+
+	if err := store.UpdateWorkspaceStatus(ctx, "ws-1", "active"); err != nil {
+		t.Fatalf("UpdateWorkspaceStatus active returned error: %v", err)
+	}
+	got := callMethod[EphemeralCallResponse](t, registry, "session.call.ephemeral", EphemeralCallRequest{CallID: "call-after-resume", SourceSessionID: "run-1", TargetAgentID: "agent-2", Body: "Research this"})
+	if got.Run.Status != "running" {
+		t.Fatalf("ephemeral after resume = %#v, want running", got)
+	}
+}
+
+func assertWorkspaceSuspendedStartError(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("start returned nil error, want workspace_suspended")
+	}
+	var handlerErr *rpc.HandlerError
+	if !errors.As(err, &handlerErr) {
+		t.Fatalf("start error = %T %[1]v, want HandlerError", err)
+	}
+	data, ok := handlerErr.Data.(map[string]any)
+	if !ok || data["reason"] != "workspace_suspended" || data["start_invoked"] != false {
+		t.Fatalf("start error data = %#v, want workspace_suspended without start", handlerErr.Data)
+	}
+}
+
 func TestEphemeralClaudeCallHonorsExplicitHeadlessProfileDefault(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
@@ -884,6 +1033,224 @@ func TestSessionFanoutGeneratesAgentMessageIDWhenOmitted(t *testing.T) {
 	if !strings.HasPrefix(got.AgentMessage.AgentMessageID, "am_") || !isULID(id) || got.AgentMessage.TargetSessionID != "reviewer-run" || got.AgentMessage.Status != "delivered" {
 		t.Fatalf("fanout response = %#v, want generated am_ ULID delivered message", got.AgentMessage)
 	}
+}
+
+func TestSessionFanoutToProfilesReturnsImmediatelyWithDurableMembers(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "fanout-worker-1", WorkspaceID: "ws-1", Name: "researcher", Harness: "fanout-harness", Model: "model-1", Prompt: "research"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig first target returned error: %v", err)
+	}
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "fanout-worker-2", WorkspaceID: "ws-1", Name: "reviewer", Harness: "fanout-harness", Model: "model-1", Prompt: "review"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig second target returned error: %v", err)
+	}
+	release := make(chan struct{})
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest("fanout-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return &blockingItemsHarness{name: "fanout-harness", started: make(chan struct{}), release: release, items: []TimelineItem{{Kind: "agent_text", Text: "answer"}}}, nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	got := callMethod[AgentMessageSendResponse](t, registry, "session.fanout", AgentMessageSendRequest{AgentMessageID: "fg-test", SourceSessionID: "run-1", TargetProfileIDs: []string{"fanout-worker-1", "fanout-worker-2"}, Body: "fan out"})
+	if got.FanoutGroupID != "fg-test" || len(got.FanoutMembers) != 2 {
+		t.Fatalf("fanout response = %#v, want group and two running members", got)
+	}
+	for _, member := range got.FanoutMembers {
+		if member.Session.Status != "running" || member.Request.Status != "delivered" || member.FanoutMemberID == "" {
+			t.Fatalf("fanout member = %#v, want running worker with delivered request", member)
+		}
+	}
+	members, err := store.ListFanoutMembers(ctx, "fg-test")
+	if err != nil {
+		t.Fatalf("ListFanoutMembers returned error: %v", err)
+	}
+	if len(members) != 2 || members[0].Status != "running" || members[1].Status != "running" {
+		t.Fatalf("stored members = %#v, want two running fanout members", members)
+	}
+	close(release)
+}
+
+func TestSessionFanoutToProfilesCompletesWorkersIndependentlyOutOfOrder(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "fanout-slow", WorkspaceID: "ws-1", Name: "slow", Harness: "slow-fanout-harness", Model: "model-1", Prompt: "slow"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig slow target returned error: %v", err)
+	}
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "fanout-fast", WorkspaceID: "ws-1", Name: "fast", Harness: "fast-fanout-harness", Model: "model-1", Prompt: "fast"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig fast target returned error: %v", err)
+	}
+	slowStarted := make(chan struct{})
+	fastStarted := make(chan struct{})
+	slowRelease := make(chan struct{})
+	fastRelease := make(chan struct{})
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest("slow-fanout-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return &blockingItemsHarness{name: "slow-fanout-harness", started: slowStarted, release: slowRelease, items: []TimelineItem{{Kind: "agent_text", Text: "slow answer"}}}, nil
+	})
+	d.setHarnessFactoryForTest("fast-fanout-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return &blockingItemsHarness{name: "fast-fanout-harness", started: fastStarted, release: fastRelease, items: []TimelineItem{{Kind: "agent_text", Text: "fast answer"}}}, nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	got := callMethod[AgentMessageSendResponse](t, registry, "session.fanout", AgentMessageSendRequest{AgentMessageID: "fg-order", SourceSessionID: "run-1", TargetProfileIDs: []string{"fanout-slow", "fanout-fast"}, Body: "fan out"})
+	if len(got.FanoutMembers) != 2 || got.FanoutMembers[0].Session.Status != "running" || got.FanoutMembers[1].Session.Status != "running" {
+		t.Fatalf("fanout response = %#v, want two running workers before completion", got)
+	}
+	select {
+	case <-slowStarted:
+	case <-time.After(time.Second):
+		t.Fatal("slow fanout worker did not start")
+	}
+	select {
+	case <-fastStarted:
+	case <-time.After(time.Second):
+		t.Fatal("fast fanout worker did not start")
+	}
+
+	close(fastRelease)
+	waitForFinalResponseText(t, ctx, store, "fg-order-c"+stableRuntimeAgentIDSegment("fanout-fast")+"-run", "fast answer")
+	assertHarnessSessionStatusRemains(t, ctx, store, "fg-order-c"+stableRuntimeAgentIDSegment("fanout-slow")+"-run", "running", 75*time.Millisecond)
+	assertFanoutMemberStatuses(t, ctx, store, "fg-order", map[string]string{"fanout-fast": "completed", "fanout-slow": "running"})
+
+	close(slowRelease)
+	waitForFinalResponseText(t, ctx, store, "fg-order-c"+stableRuntimeAgentIDSegment("fanout-slow")+"-run", "slow answer")
+	assertFanoutMemberStatuses(t, ctx, store, "fg-order", map[string]string{"fanout-fast": "completed", "fanout-slow": "completed"})
+}
+
+func TestSessionFanoutToProfilesIsolatesWorkerFailure(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "fanout-good", WorkspaceID: "ws-1", Name: "good", Harness: "good-fanout-harness", Model: "model-1", Prompt: "good"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig good target returned error: %v", err)
+	}
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "fanout-bad", WorkspaceID: "ws-1", Name: "bad", Harness: "bad-fanout-harness", Model: "model-1", Prompt: "bad"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig bad target returned error: %v", err)
+	}
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest("good-fanout-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return newFakeHarness("good-fanout-harness", []TimelineItem{{Kind: "agent_text", Text: "good answer"}}), nil
+	})
+	d.setHarnessFactoryForTest("bad-fanout-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return itemsFailHarness{}, nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	got := callMethod[AgentMessageSendResponse](t, registry, "session.fanout", AgentMessageSendRequest{AgentMessageID: "fg-failure", SourceSessionID: "run-1", TargetProfileIDs: []string{"fanout-good", "fanout-bad"}, Body: "fan out"})
+	if len(got.FanoutMembers) != 2 {
+		t.Fatalf("fanout response = %#v, want two workers despite later failure", got)
+	}
+	goodSessionID := "fg-failure-c" + stableRuntimeAgentIDSegment("fanout-good") + "-run"
+	badSessionID := "fg-failure-c" + stableRuntimeAgentIDSegment("fanout-bad") + "-run"
+	waitForFinalResponseText(t, ctx, store, goodSessionID, "good answer")
+	badFinal := waitForFinalResponseContains(t, ctx, store, badSessionID, "items failed")
+	if badFinal.Status != "failed" {
+		t.Fatalf("bad final response status = %q, want failed", badFinal.Status)
+	}
+	assertFanoutMemberStatuses(t, ctx, store, "fg-failure", map[string]string{"fanout-good": "completed", "fanout-bad": "failed"})
+	status := callMethod[WorkspaceStatusResponse](t, registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-1"})
+	assertProjectedFanoutMemberStatuses(t, status.FanoutMembers, map[string]string{"fanout-good": "completed", "fanout-bad": "failed"})
+	assertStickyInboxKinds(t, status.StickyInbox, map[string]string{"fg-failure-mfanout-good": "worker_completed", "fg-failure-mfanout-bad": "worker_failed"})
+	timeline := callMethod[WorkspaceTimelineResponse](t, registry, "workspace.timeline", WorkspaceTimelineRequest{WorkspaceID: "ws-1"})
+	assertTimelineFanoutMemberStatuses(t, timeline.Items, map[string]string{"fanout-good": "completed", "fanout-bad": "failed"})
+}
+
+func assertStickyInboxKinds(t *testing.T, items []StickyInboxActivity, want map[string]string) {
+	t.Helper()
+	got := make(map[string]string, len(items))
+	for _, item := range items {
+		got[item.FanoutMemberID] = item.Kind
+	}
+	for memberID, kind := range want {
+		if got[memberID] != kind {
+			t.Fatalf("sticky inbox = %#v, want %s=%s", items, memberID, kind)
+		}
+	}
+}
+
+func assertProjectedFanoutMemberStatuses(t *testing.T, members []FanoutMemberActivity, want map[string]string) {
+	t.Helper()
+	got := make(map[string]string, len(members))
+	for _, member := range members {
+		got[member.TargetProfileID] = member.Status
+	}
+	for profileID, status := range want {
+		if got[profileID] != status {
+			t.Fatalf("projected fanout members = %#v, want %s=%s", members, profileID, status)
+		}
+	}
+}
+
+func assertTimelineFanoutMemberStatuses(t *testing.T, items []TimelineItem, want map[string]string) {
+	t.Helper()
+	got := make(map[string]string, len(items))
+	for _, item := range items {
+		if item.Kind != "fanout_member" {
+			continue
+		}
+		profileID, _ := item.Metadata["target_profile_id"].(string)
+		got[profileID] = item.Status
+	}
+	for profileID, status := range want {
+		if got[profileID] != status {
+			t.Fatalf("timeline fanout member statuses = %#v, want %s=%s", got, profileID, status)
+		}
+	}
+}
+
+func assertFanoutMemberStatuses(t *testing.T, ctx context.Context, store *globaldb.Store, groupID string, want map[string]string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	var last []globaldb.FanoutMember
+	for time.Now().Before(deadline) {
+		members, err := store.ListFanoutMembers(ctx, groupID)
+		if err != nil {
+			t.Fatalf("ListFanoutMembers(%q) returned error: %v", groupID, err)
+		}
+		last = members
+		got := make(map[string]string, len(members))
+		for _, member := range members {
+			got[member.TargetProfileID] = member.Status
+		}
+		matched := len(got) == len(want)
+		for profileID, status := range want {
+			if got[profileID] != status {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("fanout member statuses for %q did not match %v; last=%#v", groupID, want, last)
 }
 
 func TestSessionMessageSendRejectsUnknownTargetAgentWithStructuredError(t *testing.T) {
@@ -1359,7 +1726,7 @@ func TestEphemeralCallMarksSessionFailedWhenHarnessItemsFail(t *testing.T) {
 func TestCompleteEphemeralCallDoesNotMarkBackgroundReadFailureFailed(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
-	_, markFailed, err := completeEphemeralCall(ctx, store, ephemeralCallSetup{SessionID: "missing-background-run"}, ephemeralCall{CallID: "call-background"}, globaldb.AgentMessage{}, ephemeralHarnessResult{InvocationMode: string(HarnessInvocationModeBackground)}, "")
+	_, markFailed, err := completeEphemeralCall(ctx, store, ephemeralCallSetup{SessionID: "missing-background-run"}, ephemeralCall{CallID: "call-background"}, globaldb.AgentMessage{}, ephemeralHarnessResult{InvocationMode: string(HarnessInvocationModeBackground)}, "", false)
 	if err == nil {
 		t.Fatal("completeEphemeralCall error = nil, want missing background run read error")
 	}

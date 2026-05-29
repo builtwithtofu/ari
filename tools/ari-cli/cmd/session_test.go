@@ -344,3 +344,54 @@ func TestSessionFanoutCallsPublicRPC(t *testing.T) {
 		t.Fatalf("session fanout output = %q, want stable fanout message id", out)
 	}
 }
+
+func TestSessionFanoutToProfilesCallsPublicRPC(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	originalEnsure := sessionEnsureDaemonRunning
+	originalFanout := sessionFanoutRPC
+	originalResolve := workspaceResolveRPC
+	sessionEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
+	workspaceResolveRPC = func(context.Context, string, daemon.WorkspaceResolveRequest) (daemon.WorkspaceResolveResponse, error) {
+		return daemon.WorkspaceResolveResponse{Workspace: daemon.WorkspaceGetResponse{WorkspaceID: "ws-1", Name: "alpha"}}, nil
+	}
+	sessionFanoutRPC = func(_ context.Context, _ string, req daemon.AgentMessageSendRequest) (daemon.AgentMessageSendResponse, error) {
+		if req.WorkspaceID != "ws-1" || req.SourceSessionID != "planner-main" || req.TargetSessionID != "" || req.Body != "Please execute" || len(req.TargetProfileIDs) != 2 || req.TargetProfileIDs[0] != "worker" || req.TargetProfileIDs[1] != "reviewer" {
+			t.Fatalf("session.fanout request = %#v", req)
+		}
+		return daemon.AgentMessageSendResponse{FanoutGroupID: "fg-cli", FanoutMembers: []daemon.FanoutMemberResponse{{FanoutMemberID: "fm-worker", TargetProfileID: "worker", Session: globaldb.HarnessSession{SessionID: "worker-run"}}, {FanoutMemberID: "fm-reviewer", TargetProfileID: "reviewer", Session: globaldb.HarnessSession{SessionID: "reviewer-run"}}}}, nil
+	}
+	t.Cleanup(func() {
+		sessionEnsureDaemonRunning = originalEnsure
+		sessionFanoutRPC = originalFanout
+		workspaceResolveRPC = originalResolve
+	})
+
+	out, err := executeRootCommand("session", "fanout", "--workspace", "alpha", "--from", "planner-main", "--to-profile", "worker", "--to-profile", "reviewer", "--message", "Please execute")
+	if err != nil {
+		t.Fatalf("session fanout returned error: %v", err)
+	}
+	for _, want := range []string{"Fanout group: fg-cli", "Worker: fm-worker\tworker\tworker-run", "Worker: fm-reviewer\treviewer\treviewer-run"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("session fanout output = %q, want %q", out, want)
+		}
+	}
+}
+
+func TestSessionFanoutRejectsAmbiguousTargets(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "multiple sessions", args: []string{"session", "fanout", "--from", "planner-main", "--to-session", "a", "--to-session", "b", "--message", "Please execute"}, want: "at most one --to-session"},
+		{name: "mixed session and profile", args: []string{"session", "fanout", "--from", "planner-main", "--to-session", "a", "--to-profile", "worker", "--message", "Please execute"}, want: "use either --to-session or --to-profile, not both"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := executeRootCommand(tc.args...)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("session fanout error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}

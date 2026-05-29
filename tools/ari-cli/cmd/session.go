@@ -309,15 +309,27 @@ func newSessionFanoutCmd() *cobra.Command {
 		if fromSessionID == "" || messageBody == "" {
 			return userFacingError{message: "--from and --message are required"}
 		}
-		if len(targetProfiles) > 0 {
-			return userFacingError{message: "--to-profile is not implemented yet"}
+		trimmedProfiles := make([]string, 0, len(targetProfiles))
+		for _, profile := range targetProfiles {
+			if strings.TrimSpace(profile) != "" {
+				trimmedProfiles = append(trimmedProfiles, strings.TrimSpace(profile))
+			}
 		}
-		if len(targetSessionIDs) != 1 {
-			return userFacingError{message: "exactly one --to-session is required in this phase"}
+		if len(targetSessionIDs) > 1 {
+			return userFacingError{message: fmt.Sprintf("at most one --to-session, got %d", len(targetSessionIDs))}
 		}
-		targetSessionID := strings.TrimSpace(targetSessionIDs[0])
-		if targetSessionID == "" {
-			return userFacingError{message: "--to-session must be non-empty"}
+		if len(targetSessionIDs) > 0 && len(trimmedProfiles) > 0 {
+			return userFacingError{message: "use either --to-session or --to-profile, not both"}
+		}
+		if len(trimmedProfiles) == 0 && len(targetSessionIDs) != 1 {
+			return userFacingError{message: "provide one --to-session or one or more --to-profile"}
+		}
+		targetSessionID := ""
+		if len(trimmedProfiles) == 0 {
+			targetSessionID = strings.TrimSpace(targetSessionIDs[0])
+			if targetSessionID == "" {
+				return userFacingError{message: "--to-session must be non-empty"}
+			}
 		}
 		ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 		defer cancel()
@@ -325,9 +337,20 @@ func newSessionFanoutCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		resp, err := sessionFanoutRPC(ctx, cfg.Daemon.SocketPath, daemon.AgentMessageSendRequest{WorkspaceID: workflowCtx.WorkspaceID, SourceSessionID: fromSessionID, TargetSessionID: targetSessionID, Body: messageBody, ContextExcerptIDs: excerptIDs})
+		resp, err := sessionFanoutRPC(ctx, cfg.Daemon.SocketPath, daemon.AgentMessageSendRequest{WorkspaceID: workflowCtx.WorkspaceID, SourceSessionID: fromSessionID, TargetSessionID: targetSessionID, TargetProfileIDs: trimmedProfiles, Body: messageBody, ContextExcerptIDs: excerptIDs})
 		if err != nil {
 			return mapWorkspaceRPCError(err)
+		}
+		if resp.FanoutGroupID != "" {
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Fanout group: %s\n", resp.FanoutGroupID); err != nil {
+				return err
+			}
+			for _, member := range resp.FanoutMembers {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Worker: %s\t%s\t%s\n", member.FanoutMemberID, member.TargetProfileID, member.Session.SessionID); err != nil {
+					return err
+				}
+			}
+			return nil
 		}
 		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Fanout message: %s\n", resp.AgentMessage.AgentMessageID)
 		return err

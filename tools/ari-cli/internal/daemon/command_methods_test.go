@@ -595,6 +595,46 @@ func TestCommandStopReturnsWithoutWaitingForStopPath(t *testing.T) {
 	}
 }
 
+func TestWorkspaceSuspendStopsRunningWorkspaceCommands(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerCommandMethods(registry, store); err != nil {
+		t.Fatalf("registerCommandMethods returned error: %v", err)
+	}
+	if err := d.registerWorkspaceMethods(registry, store); err != nil {
+		t.Fatalf("registerWorkspaceMethods returned error: %v", err)
+	}
+	workspace := t.TempDir()
+	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
+	runResp := callMethod[CommandRunResponse](t, registry, "command.run", CommandRunRequest{WorkspaceID: "sess-1", Command: "/bin/sh", Args: []string{"-c", "while true; do sleep 1; done"}})
+
+	stopped := make(chan struct{}, 1)
+	originalStop := stopCommandProcess
+	stopCommandProcess = func(proc *process.Process) error {
+		stopped <- struct{}{}
+		return originalStop(proc)
+	}
+	t.Cleanup(func() { stopCommandProcess = originalStop })
+
+	suspend := callMethod[WorkspaceSuspendResponse](t, registry, "workspace.suspend", WorkspaceSuspendRequest{WorkspaceID: "sess-1"})
+	if suspend.Status != "suspended" {
+		t.Fatalf("workspace.suspend status = %q, want suspended", suspend.Status)
+	}
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("workspace.suspend did not invoke command stop")
+	}
+	command, err := store.GetCommand(context.Background(), "sess-1", runResp.CommandID)
+	if err != nil {
+		t.Fatalf("GetCommand returned error: %v", err)
+	}
+	if command.Status != "stopped" {
+		t.Fatalf("command status = %q, want stopped after suspend", command.Status)
+	}
+}
+
 func TestCommandWaiterRetriesPersistingExitStatus(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()

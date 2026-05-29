@@ -159,8 +159,8 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 			if sessionID == "" {
 				return CommandRunResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", nil)
 			}
-			if _, err := store.GetWorkspace(ctx, sessionID); err != nil {
-				return CommandRunResponse{}, mapWorkspaceStoreError(err, sessionID)
+			if err := requireWorkspaceCanStartRuntime(ctx, store, sessionID); err != nil {
+				return CommandRunResponse{}, err
 			}
 			command := strings.TrimSpace(req.Command)
 			if command == "" {
@@ -556,6 +556,9 @@ func (d *Daemon) waitForCommandExit(commandID, sessionID string, store *globaldb
 	result, err := proc.Wait()
 	finishedAt := time.Now().UTC().Format(time.RFC3339Nano)
 	d.setCommandOutput(commandID, string(proc.OutputSnapshot()))
+	if command, getErr := store.GetCommand(context.Background(), sessionID, commandID); getErr == nil && command.Status == "stopped" {
+		return
+	}
 
 	status := "exited"
 	if err != nil {
@@ -633,6 +636,23 @@ func (d *Daemon) stopAllCommands() {
 
 	for _, proc := range procs {
 		_ = proc.Stop()
+	}
+}
+
+func (d *Daemon) stopCommandsForWorkspace(ctx context.Context, store *globaldb.Store, workspaceID string) {
+	commands, err := store.ListCommands(ctx, workspaceID)
+	if err != nil {
+		return
+	}
+	for _, command := range commands {
+		if command.Status != "running" {
+			continue
+		}
+		proc, ok := d.getCommandProcess(command.CommandID)
+		if ok {
+			go func() { _ = stopCommandProcess(proc) }()
+		}
+		_ = updateCommandStatus(store, ctx, globaldb.UpdateCommandStatusParams{WorkspaceID: workspaceID, CommandID: command.CommandID, Status: "stopped"})
 	}
 }
 
