@@ -138,6 +138,10 @@ func (r *activeHarnessRun) stop(ctx context.Context, store *globaldb.Store) {
 		return
 	}
 	r.once.Do(func() {
+		if store != nil {
+			_ = newHarnessLifecycle(store).markStopped(ctx, r.sessionID)
+			markFanoutMemberForWorkerSession(ctx, store, r.sessionID, "stopped", "", "")
+		}
 		if r.cancel != nil {
 			r.cancel()
 		}
@@ -147,10 +151,6 @@ func (r *activeHarnessRun) stop(ctx context.Context, store *globaldb.Store) {
 		}
 		if r.executor != nil {
 			_ = r.executor.Stop(context.Background(), providerSessionID)
-		}
-		if store != nil {
-			_ = newHarnessLifecycle(store).markStopped(ctx, r.sessionID)
-			markFanoutMemberForWorkerSession(ctx, store, r.sessionID, "stopped", "", "")
 		}
 	})
 }

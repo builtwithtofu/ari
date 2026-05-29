@@ -1114,6 +1114,51 @@ func TestSessionFanoutRejectsDuplicateTargetProfilesBeforeLaunchingWorkers(t *te
 	}
 }
 
+func TestSessionFanoutRejectsSourceWorkspaceMismatchBeforeLaunchingWorkers(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateWorkspace(ctx, "ws-2", "other", t.TempDir(), "manual", "auto"); err != nil {
+		t.Fatalf("CreateWorkspace ws-2 returned error: %v", err)
+	}
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "fanout-worker", WorkspaceID: "ws-1", Name: "researcher", Harness: "fanout-harness", Model: "model-1", Prompt: "research"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
+	}
+	starts := 0
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest("fanout-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		starts++
+		return newFakeHarness("fanout-harness", []TimelineItem{{Kind: "agent_text", Text: "answer"}}), nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "session.fanout", AgentMessageSendRequest{WorkspaceID: "ws-2", AgentMessageID: "fg-mismatch", SourceSessionID: "run-1", TargetProfileIDs: []string{"fanout-worker"}, Body: "fan out"})
+	var handlerErr *rpc.HandlerError
+	if !errors.As(err, &handlerErr) {
+		t.Fatalf("session.fanout error = %v, want handler error", err)
+	}
+	data, ok := handlerErr.Data.(map[string]any)
+	if !ok || data["reason"] != "source_workspace_mismatch" || data["workspace_id"] != "ws-2" || data["source_workspace_id"] != "ws-1" || data["start_invoked"] != false {
+		t.Fatalf("session.fanout error data = %#v, want source_workspace_mismatch without start", handlerErr.Data)
+	}
+	if starts != 0 {
+		t.Fatalf("harness starts = %d, want workspace mismatch validation before launching workers", starts)
+	}
+	members, listErr := store.ListFanoutMembers(ctx, "fg-mismatch")
+	if listErr != nil {
+		t.Fatalf("ListFanoutMembers returned error: %v", listErr)
+	}
+	if len(members) != 0 {
+		t.Fatalf("fanout members = %#v, want no durable members after workspace mismatch", members)
+	}
+}
+
 func TestSessionFanoutToProfilesCompletesWorkersIndependentlyOutOfOrder(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
@@ -1844,6 +1889,13 @@ type blockingItemsHarness struct {
 	items             []TimelineItem
 }
 
+type contextCancelledItemsHarness struct {
+	name              string
+	providerSessionID string
+	started           chan struct{}
+	store             *globaldb.Store
+}
+
 func (h *blockingItemsHarness) Descriptor() HarnessAdapterDescriptor {
 	return HarnessAdapterDescriptor{Name: h.name, Capabilities: []HarnessCapability{HarnessCapabilityHarnessSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems}}
 }
@@ -1872,6 +1924,42 @@ func (h *blockingItemsHarness) Stop(ctx context.Context, sessionID string) error
 	_ = ctx
 	if h.stopped != nil {
 		h.stopped <- sessionID
+	}
+	return nil
+}
+
+func (h *contextCancelledItemsHarness) Descriptor() HarnessAdapterDescriptor {
+	return HarnessAdapterDescriptor{Name: h.name, Capabilities: []HarnessCapability{HarnessCapabilityHarnessSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems}}
+}
+
+func (h *contextCancelledItemsHarness) Start(ctx context.Context, req ExecutorStartRequest) (ExecutorRun, error) {
+	_ = ctx
+	providerSessionID := h.providerSessionID
+	if providerSessionID == "" {
+		providerSessionID = req.SessionID
+	}
+	return ExecutorRun{SessionID: providerSessionID, Executor: h.name, ProviderSessionID: providerSessionID, CapabilityNames: []string{string(HarnessCapabilityTimelineItems)}}, nil
+}
+
+func (h *contextCancelledItemsHarness) Items(ctx context.Context, sessionID string) ([]TimelineItem, error) {
+	_ = sessionID
+	close(h.started)
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (h *contextCancelledItemsHarness) Stop(ctx context.Context, sessionID string) error {
+	_ = ctx
+	if h.store == nil {
+		return nil
+	}
+	deadline := time.Now().Add(100 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		run, err := h.store.GetHarnessSession(context.Background(), sessionID)
+		if err == nil && run.Status == "failed" {
+			return nil
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 	return nil
 }

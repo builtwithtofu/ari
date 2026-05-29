@@ -2,10 +2,12 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
 )
 
 func (d *Daemon) fanoutSession(ctx context.Context, store *globaldb.Store, req AgentMessageSendRequest) (AgentMessageSendResponse, error) {
@@ -14,7 +16,14 @@ func (d *Daemon) fanoutSession(ctx context.Context, store *globaldb.Store, req A
 	}
 	sourceRun, err := store.GetHarnessSession(ctx, req.SourceSessionID)
 	if err != nil {
+		if errors.Is(err, globaldb.ErrNotFound) {
+			return AgentMessageSendResponse{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "unknown_source_session", "source_session_id": strings.TrimSpace(req.SourceSessionID), "workspace_id": strings.TrimSpace(req.WorkspaceID), "start_invoked": false})
+		}
 		return AgentMessageSendResponse{}, err
+	}
+	workspaceID := strings.TrimSpace(req.WorkspaceID)
+	if workspaceID != "" && strings.TrimSpace(sourceRun.WorkspaceID) != workspaceID {
+		return AgentMessageSendResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "source_workspace_mismatch", "source_session_id": strings.TrimSpace(req.SourceSessionID), "source_workspace_id": sourceRun.WorkspaceID, "workspace_id": workspaceID, "start_invoked": false})
 	}
 	if err := requireWorkspaceCanStartRuntime(ctx, store, sourceRun.WorkspaceID); err != nil {
 		return AgentMessageSendResponse{}, err

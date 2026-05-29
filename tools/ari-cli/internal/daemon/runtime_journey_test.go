@@ -156,6 +156,42 @@ func TestJourneyStickyFlowFanoutSuspendResumeAndInbox(t *testing.T) {
 	close(slowRelease)
 }
 
+func TestJourneyWorkspaceSuspendDoesNotFailContextCancelledFanoutWorker(t *testing.T) {
+	j := newJourneyRuntime(t)
+	j.seedWorkspace("ws-1", t.TempDir())
+	j.createSessionConfig("planner", "ws-1", "planner", "planner-harness")
+	j.createHarnessSession("planner-run", "ws-1", "planner", "planner-harness", "waiting", globaldb.HarnessSessionUsageSticky)
+	j.createSessionConfig("slow-worker", "ws-1", "slow", "slow-harness")
+	started := make(chan struct{})
+	j.daemon.setHarnessFactoryForTest("slow-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return &contextCancelledItemsHarness{name: "slow-harness", providerSessionID: "provider-slow", started: started, store: j.store}, nil
+	})
+
+	_ = callMethod[AgentMessageSendResponse](t, j.registry, "session.fanout", AgentMessageSendRequest{AgentMessageID: "fg-context-cancel", SourceSessionID: "planner-run", TargetProfileIDs: []string{"slow-worker"}, Body: "fan out"})
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("context-cancelled worker did not start")
+	}
+	suspended := callMethod[WorkspaceSuspendResponse](t, j.registry, "workspace.suspend", WorkspaceSuspendRequest{WorkspaceID: "ws-1"})
+	if suspended.Status != "suspended" {
+		t.Fatalf("suspend = %#v, want suspended", suspended)
+	}
+	workerSessionID := "fg-context-cancel-c" + stableRuntimeAgentIDSegment("slow-worker") + "-run"
+	assertHarnessSessionStatusEventually(t, j.ctx, j.store, workerSessionID, "stopped", time.Second)
+	events, err := j.store.ListDaemonEventsAfter(j.ctx, "", 20)
+	if err != nil {
+		t.Fatalf("ListDaemonEventsAfter returned error: %v", err)
+	}
+	if hasDaemonEvent(t, events, workerSessionID, daemonEventSessionFailed) {
+		t.Fatalf("daemon events = %#v, want no failed event for intentionally stopped worker", events)
+	}
+	assertDaemonEvent(t, events, workerSessionID, daemonEventSessionCompleted, false)
+}
+
 func assertDaemonEvent(t *testing.T, events []globaldb.DaemonEvent, sessionID, eventType string, attentionRequired bool) {
 	t.Helper()
 	for _, event := range events {
@@ -167,6 +203,34 @@ func assertDaemonEvent(t *testing.T, events []globaldb.DaemonEvent, sessionID, e
 		}
 	}
 	t.Fatalf("daemon events = %#v, want event for session %s", events, sessionID)
+}
+
+func hasDaemonEvent(t *testing.T, events []globaldb.DaemonEvent, sessionID, eventType string) bool {
+	t.Helper()
+	for _, event := range events {
+		if event.SessionID == sessionID && event.EventType == eventType {
+			return true
+		}
+	}
+	return false
+}
+
+func assertHarnessSessionStatusEventually(t *testing.T, ctx context.Context, store *globaldb.Store, sessionID, want string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var last string
+	for time.Now().Before(deadline) {
+		run, err := store.GetHarnessSession(ctx, sessionID)
+		if err != nil {
+			t.Fatalf("GetHarnessSession(%q) returned error: %v", sessionID, err)
+		}
+		last = run.Status
+		if last == want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("session %q status = %q, want %q", sessionID, last, want)
 }
 
 func TestJourneyInitToProjectStateIsDaemonBacked(t *testing.T) {
