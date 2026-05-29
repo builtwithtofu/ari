@@ -31,7 +31,7 @@ func TestJourneyStickyFlowFanoutUsesFakeHarnessExecutableBoundary(t *testing.T) 
 		return NewClaudeExecutorForTest(claudeExecutorOptions{Executable: fake, Cwd: primaryFolder, InvocationMode: HarnessInvocationModeHeadless}), nil
 	})
 
-	fanout := callMethod[AgentMessageSendResponse](t, j.registry, "session.fanout", AgentMessageSendRequest{AgentMessageID: "fg-fake-exec", SourceSessionID: "planner-run", TargetProfileIDs: []string{"researcher", "reviewer"}, Body: "fan out through executable"})
+	fanout := callMethod[AgentMessageSendResponse](t, j.registry, "session.fanout", AgentMessageSendRequest{FanoutGroupID: "fg-fake-exec", SourceSessionID: "planner-run", TargetProfileIDs: []string{"researcher", "reviewer"}, Body: "fan out through executable"})
 	if fanout.FanoutGroupID != "fg-fake-exec" || len(fanout.FanoutMembers) != 2 {
 		t.Fatalf("fanout = %#v, want durable executable-backed group and workers", fanout)
 	}
@@ -107,7 +107,7 @@ func TestJourneyStickyFlowFanoutSuspendResumeAndInbox(t *testing.T) {
 		return &blockingItemsHarness{name: "slow-harness", providerSessionID: "provider-slow", started: slowStarted, release: slowRelease, stopped: stopped, items: []TimelineItem{{Kind: "agent_text", Text: "slow result"}}}, nil
 	})
 
-	fanout := callMethod[AgentMessageSendResponse](t, j.registry, "session.fanout", AgentMessageSendRequest{AgentMessageID: "fg-journey", SourceSessionID: "planner-run", TargetProfileIDs: []string{"good-worker", "bad-worker", "slow-worker"}, Body: "fan out"})
+	fanout := callMethod[AgentMessageSendResponse](t, j.registry, "session.fanout", AgentMessageSendRequest{FanoutGroupID: "fg-journey", SourceSessionID: "planner-run", TargetProfileIDs: []string{"good-worker", "bad-worker", "slow-worker"}, Body: "fan out"})
 	if fanout.FanoutGroupID != "fg-journey" || len(fanout.FanoutMembers) != 3 {
 		t.Fatalf("fanout = %#v, want durable group and three workers", fanout)
 	}
@@ -156,6 +156,86 @@ func TestJourneyStickyFlowFanoutSuspendResumeAndInbox(t *testing.T) {
 	close(slowRelease)
 }
 
+func TestJourneyStickyOrchestratorFanoutLoopThroughAriTools(t *testing.T) {
+	j := newJourneyRuntime(t)
+	j.seedWorkspace("ws-1", t.TempDir())
+	j.createSessionConfig("planner", "ws-1", "planner", "planner-harness")
+	j.createHarnessSession("planner-run", "ws-1", "planner", "planner-harness", "waiting", globaldb.HarnessSessionUsageSticky)
+	j.createSessionConfig("good-worker", "ws-1", "good", "good-harness")
+	j.createSessionConfig("bad-worker", "ws-1", "bad", "bad-harness")
+	j.createSessionConfig("slow-worker", "ws-1", "slow", "slow-harness")
+
+	slowStarted := make(chan struct{})
+	slowRelease := make(chan struct{})
+	stopped := make(chan string, 1)
+	j.daemon.setHarnessFactoryForTest("good-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return newFakeHarness("good-harness", []TimelineItem{{Kind: "agent_text", Text: "good result"}}), nil
+	})
+	j.daemon.setHarnessFactoryForTest("bad-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return itemsFailHarness{}, nil
+	})
+	j.daemon.setHarnessFactoryForTest("slow-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return &blockingItemsHarness{name: "slow-harness", providerSessionID: "provider-slow", started: slowStarted, release: slowRelease, stopped: stopped, items: []TimelineItem{{Kind: "agent_text", Text: "slow result"}}}, nil
+	})
+	scope := AriToolScope{SourceRunID: "planner-run", WorkspaceID: "ws-1", ProfileID: "planner", ProfileName: "planner", WithinDefaultScope: true}
+
+	fanout := callMethod[AriToolCallResponse](t, j.registry, "ari.tool.call", AriToolCallRequest{Name: "ari.session.fanout", Scope: scope, Input: map[string]any{"fanout_group_id": "fg-tool-journey", "target_profile_ids": []string{"good-worker", "bad-worker", "slow-worker"}, "body": "fan out", "wait": map[string]any{"mode": "all", "timeout_ms": 25}}})
+	if fanout.Status != "ok" || fanout.Output["fanout_group_id"] != "fg-tool-journey" || fanout.Output["wait_status"] != "partial" || fanout.Output["wait_timed_out"] != true {
+		t.Fatalf("tool fanout = %#v, want partial wait timeout without cancellation", fanout)
+	}
+	select {
+	case <-slowStarted:
+	case <-time.After(time.Second):
+		t.Fatal("slow worker did not start")
+	}
+	assertFanoutToolMemberStatuses(t, fanout, map[string]string{"good-worker": "completed", "bad-worker": "failed", "slow-worker": "running"})
+	plannerMessages, err := j.store.ListRunLogMessages(j.ctx, "planner-run", 0, 100)
+	if err != nil {
+		t.Fatalf("ListRunLogMessages planner returned error: %v", err)
+	}
+	if len(plannerMessages) != 0 {
+		t.Fatalf("planner run log = %#v, want no active-turn worker injection", plannerMessages)
+	}
+
+	statusTool := callMethod[AriToolCallResponse](t, j.registry, "ari.tool.call", AriToolCallRequest{Name: "ari.fanout.status", Scope: scope, Input: map[string]any{"fanout_group_id": "fg-tool-journey"}})
+	if statusTool.Status != "ok" || statusTool.Output["fanout_group_id"] != "fg-tool-journey" || statusTool.Output["source_session_id"] != "planner-run" || statusTool.Output["status"] != "partial" {
+		t.Fatalf("status tool response = %#v, want stable partial fanout metadata", statusTool)
+	}
+	assertFanoutToolMemberStatuses(t, statusTool, map[string]string{"good-worker": "completed", "bad-worker": "failed", "slow-worker": "running"})
+	inboxTool := callMethod[AriToolCallResponse](t, j.registry, "ari.tool.call", AriToolCallRequest{Name: "ari.inbox.list", Scope: scope, Input: map[string]any{"unread_only": true}})
+	assertAriToolInboxKinds(t, inboxTool, map[string]string{"fg-tool-journey-mgood-worker": "worker_completed", "fg-tool-journey-mbad-worker": "worker_failed"})
+	status := callMethod[WorkspaceStatusResponse](t, j.registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-1"})
+	assertProjectedFanoutMemberStatuses(t, status.FanoutMembers, map[string]string{"good-worker": "completed", "bad-worker": "failed", "slow-worker": "running"})
+	assertStickyInboxKinds(t, status.StickyInbox, map[string]string{"fg-tool-journey-mgood-worker": "worker_completed", "fg-tool-journey-mbad-worker": "worker_failed"})
+
+	suspended := callMethod[WorkspaceSuspendResponse](t, j.registry, "workspace.suspend", WorkspaceSuspendRequest{WorkspaceID: "ws-1"})
+	if suspended.Status != "suspended" {
+		t.Fatalf("suspend = %#v, want suspended", suspended)
+	}
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("slow worker was not stopped on workspace suspend")
+	}
+	statusTool = callMethod[AriToolCallResponse](t, j.registry, "ari.tool.call", AriToolCallRequest{Name: "ari.fanout.status", Scope: scope, Input: map[string]any{"fanout_group_id": "fg-tool-journey"}})
+	if statusTool.Output["status"] != "failed" {
+		t.Fatalf("status tool response after suspend = %#v, want failed aggregate because one worker failed", statusTool)
+	}
+	assertFanoutToolMemberStatuses(t, statusTool, map[string]string{"good-worker": "completed", "bad-worker": "failed", "slow-worker": "stopped"})
+	inboxTool = callMethod[AriToolCallResponse](t, j.registry, "ari.tool.call", AriToolCallRequest{Name: "ari.inbox.list", Scope: scope, Input: map[string]any{"unread_only": true}})
+	assertAriToolInboxKinds(t, inboxTool, map[string]string{"fg-tool-journey-mgood-worker": "worker_completed", "fg-tool-journey-mbad-worker": "worker_failed", "fg-tool-journey-mslow-worker": "worker_stopped"})
+	close(slowRelease)
+}
+
 func TestJourneyWorkspaceSuspendDoesNotFailContextCancelledFanoutWorker(t *testing.T) {
 	j := newJourneyRuntime(t)
 	j.seedWorkspace("ws-1", t.TempDir())
@@ -170,7 +250,7 @@ func TestJourneyWorkspaceSuspendDoesNotFailContextCancelledFanoutWorker(t *testi
 		return &contextCancelledItemsHarness{name: "slow-harness", providerSessionID: "provider-slow", started: started, store: j.store}, nil
 	})
 
-	_ = callMethod[AgentMessageSendResponse](t, j.registry, "session.fanout", AgentMessageSendRequest{AgentMessageID: "fg-context-cancel", SourceSessionID: "planner-run", TargetProfileIDs: []string{"slow-worker"}, Body: "fan out"})
+	_ = callMethod[AgentMessageSendResponse](t, j.registry, "session.fanout", AgentMessageSendRequest{FanoutGroupID: "fg-context-cancel", SourceSessionID: "planner-run", TargetProfileIDs: []string{"slow-worker"}, Body: "fan out"})
 	select {
 	case <-started:
 	case <-time.After(time.Second):

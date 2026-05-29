@@ -326,6 +326,7 @@ type HarnessSessionConfigResponse struct {
 
 type AgentMessageSendRequest struct {
 	AgentMessageID    string   `json:"agent_message_id"`
+	FanoutGroupID     string   `json:"fanout_group_id,omitempty"`
 	WorkspaceID       string   `json:"workspace_id,omitempty"`
 	SourceSessionID   string   `json:"source_session_id"`
 	TargetAgentID     string   `json:"target_agent_id"`

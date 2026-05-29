@@ -1058,7 +1058,7 @@ func TestSessionFanoutToProfilesReturnsImmediatelyWithDurableMembers(t *testing.
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
-	got := callMethod[AgentMessageSendResponse](t, registry, "session.fanout", AgentMessageSendRequest{AgentMessageID: "fg-test", SourceSessionID: "run-1", TargetProfileIDs: []string{"fanout-worker-1", "fanout-worker-2"}, Body: "fan out"})
+	got := callMethod[AgentMessageSendResponse](t, registry, "session.fanout", AgentMessageSendRequest{FanoutGroupID: "fg-test", SourceSessionID: "run-1", TargetProfileIDs: []string{"fanout-worker-1", "fanout-worker-2"}, Body: "fan out"})
 	if got.FanoutGroupID != "fg-test" || len(got.FanoutMembers) != 2 {
 		t.Fatalf("fanout response = %#v, want group and two running members", got)
 	}
@@ -1098,7 +1098,7 @@ func TestSessionFanoutRejectsDuplicateTargetProfilesBeforeLaunchingWorkers(t *te
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
-	err := callMethodError(registry, "session.fanout", AgentMessageSendRequest{AgentMessageID: "fg-duplicate", SourceSessionID: "run-1", TargetProfileIDs: []string{"fanout-worker", " fanout-worker "}, Body: "fan out"})
+	err := callMethodError(registry, "session.fanout", AgentMessageSendRequest{FanoutGroupID: "fg-duplicate", SourceSessionID: "run-1", TargetProfileIDs: []string{"fanout-worker", " fanout-worker "}, Body: "fan out"})
 	if err == nil {
 		t.Fatal("session.fanout returned nil error, want duplicate profile rejection")
 	}
@@ -1138,7 +1138,7 @@ func TestSessionFanoutRejectsSourceWorkspaceMismatchBeforeLaunchingWorkers(t *te
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
-	err := callMethodError(registry, "session.fanout", AgentMessageSendRequest{WorkspaceID: "ws-2", AgentMessageID: "fg-mismatch", SourceSessionID: "run-1", TargetProfileIDs: []string{"fanout-worker"}, Body: "fan out"})
+	err := callMethodError(registry, "session.fanout", AgentMessageSendRequest{WorkspaceID: "ws-2", FanoutGroupID: "fg-mismatch", SourceSessionID: "run-1", TargetProfileIDs: []string{"fanout-worker"}, Body: "fan out"})
 	var handlerErr *rpc.HandlerError
 	if !errors.As(err, &handlerErr) {
 		t.Fatalf("session.fanout error = %v, want handler error", err)
@@ -1191,7 +1191,7 @@ func TestSessionFanoutToProfilesCompletesWorkersIndependentlyOutOfOrder(t *testi
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
-	got := callMethod[AgentMessageSendResponse](t, registry, "session.fanout", AgentMessageSendRequest{AgentMessageID: "fg-order", SourceSessionID: "run-1", TargetProfileIDs: []string{"fanout-slow", "fanout-fast"}, Body: "fan out"})
+	got := callMethod[AgentMessageSendResponse](t, registry, "session.fanout", AgentMessageSendRequest{FanoutGroupID: "fg-order", SourceSessionID: "run-1", TargetProfileIDs: []string{"fanout-slow", "fanout-fast"}, Body: "fan out"})
 	if len(got.FanoutMembers) != 2 || got.FanoutMembers[0].Session.Status != "running" || got.FanoutMembers[1].Session.Status != "running" {
 		t.Fatalf("fanout response = %#v, want two running workers before completion", got)
 	}
@@ -1244,7 +1244,7 @@ func TestSessionFanoutToProfilesIsolatesWorkerFailure(t *testing.T) {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 
-	got := callMethod[AgentMessageSendResponse](t, registry, "session.fanout", AgentMessageSendRequest{AgentMessageID: "fg-failure", SourceSessionID: "run-1", TargetProfileIDs: []string{"fanout-good", "fanout-bad"}, Body: "fan out"})
+	got := callMethod[AgentMessageSendResponse](t, registry, "session.fanout", AgentMessageSendRequest{FanoutGroupID: "fg-failure", SourceSessionID: "run-1", TargetProfileIDs: []string{"fanout-good", "fanout-bad"}, Body: "fan out"})
 	if len(got.FanoutMembers) != 2 {
 		t.Fatalf("fanout response = %#v, want two workers despite later failure", got)
 	}
