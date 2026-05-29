@@ -82,24 +82,6 @@ func (s *Store) UpdateFanoutMemberStatus(ctx context.Context, memberID, status, 
 	return nil
 }
 
-func (s *Store) UpdateFanoutMemberStatusByWorkerSession(ctx context.Context, workerSessionID, status, replyAgentMessageID, finalResponseID string) error {
-	if strings.TrimSpace(workerSessionID) == "" || strings.TrimSpace(status) == "" {
-		return ErrInvalidInput
-	}
-	result, err := s.db.ExecContext(ctx, `UPDATE fanout_members SET status = ?, reply_agent_message_id = COALESCE(NULLIF(?, ''), reply_agent_message_id), final_response_id = COALESCE(NULLIF(?, ''), final_response_id), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE worker_session_id = ?`, strings.TrimSpace(status), strings.TrimSpace(replyAgentMessageID), strings.TrimSpace(finalResponseID), strings.TrimSpace(workerSessionID))
-	if err != nil {
-		return err
-	}
-	count, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if count == 0 {
-		return ErrNotFound
-	}
-	return nil
-}
-
 func (s *Store) UpdateFanoutMemberStatusAndInboxByWorkerSession(ctx context.Context, workerSessionID, status, replyAgentMessageID, finalResponseID, summary string) error {
 	workerSessionID = strings.TrimSpace(workerSessionID)
 	status = strings.TrimSpace(status)

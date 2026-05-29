@@ -105,7 +105,7 @@ func (l harnessLifecycle) markStopped(ctx context.Context, sessionID string) err
 	if err != nil {
 		return err
 	}
-	return appendDaemonEvent(ctx, l.store, globaldb.DaemonEvent{WorkspaceID: run.WorkspaceID, SessionID: sessionID, EventType: daemonEventSessionFailed, SubjectType: "session", SubjectID: sessionID, PayloadJSON: daemonEventPayload(map[string]string{"status": "stopped"}), AttentionRequired: true})
+	return appendDaemonEvent(ctx, l.store, globaldb.DaemonEvent{WorkspaceID: run.WorkspaceID, SessionID: sessionID, EventType: daemonEventSessionCompleted, SubjectType: "session", SubjectID: sessionID, PayloadJSON: daemonEventPayload(map[string]string{"status": "stopped"}), AttentionRequired: false})
 }
 
 func (l harnessLifecycle) markFailedWithFinalResponse(ctx context.Context, sessionID string, response globaldb.FinalResponse) {

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
@@ -17,6 +18,17 @@ func (d *Daemon) fanoutSession(ctx context.Context, store *globaldb.Store, req A
 	}
 	if err := requireWorkspaceCanStartRuntime(ctx, store, sourceRun.WorkspaceID); err != nil {
 		return AgentMessageSendResponse{}, err
+	}
+	seenProfiles := make(map[string]struct{}, len(req.TargetProfileIDs))
+	for _, rawProfileID := range req.TargetProfileIDs {
+		profileID := strings.TrimSpace(rawProfileID)
+		if profileID == "" {
+			continue
+		}
+		if _, ok := seenProfiles[profileID]; ok {
+			return AgentMessageSendResponse{}, fmt.Errorf("duplicate target profile %q", profileID)
+		}
+		seenProfiles[profileID] = struct{}{}
 	}
 	groupID := strings.TrimSpace(req.AgentMessageID)
 	if groupID == "" {

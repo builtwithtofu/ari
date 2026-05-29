@@ -35,6 +35,9 @@ CREATE TABLE IF NOT EXISTS fanout_members (
 CREATE INDEX IF NOT EXISTS fanout_members_group_idx
   ON fanout_members(fanout_group_id, created_at ASC, fanout_member_id ASC);
 
+CREATE INDEX IF NOT EXISTS fanout_members_workspace_idx
+  ON fanout_members(workspace_id, created_at ASC, fanout_member_id ASC);
+
 CREATE INDEX IF NOT EXISTS fanout_members_worker_idx
   ON fanout_members(worker_session_id);
 

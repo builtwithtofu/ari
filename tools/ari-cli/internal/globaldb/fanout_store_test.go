@@ -5,6 +5,18 @@ import (
 	"testing"
 )
 
+func TestFanoutMembersWorkspaceIndexSupportsWorkspaceProjection(t *testing.T) {
+	store := newGlobalDBTestStore(t, "fanout-members-workspace-index")
+	ctx := context.Background()
+	var indexName string
+	if err := store.db.QueryRowContext(ctx, `SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'fanout_members_workspace_idx'`).Scan(&indexName); err != nil {
+		t.Fatalf("fanout_members workspace index lookup returned error: %v", err)
+	}
+	if indexName != "fanout_members_workspace_idx" {
+		t.Fatalf("workspace index name = %q, want fanout_members_workspace_idx", indexName)
+	}
+}
+
 func TestFanoutGroupMembersAndStickyInboxLifecycle(t *testing.T) {
 	store := newGlobalDBTestStore(t, "fanout-inbox-lifecycle")
 	ctx := context.Background()

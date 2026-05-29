@@ -1077,6 +1077,43 @@ func TestSessionFanoutToProfilesReturnsImmediatelyWithDurableMembers(t *testing.
 	close(release)
 }
 
+func TestSessionFanoutRejectsDuplicateTargetProfilesBeforeLaunchingWorkers(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "fanout-worker", WorkspaceID: "ws-1", Name: "researcher", Harness: "fanout-harness", Model: "model-1", Prompt: "research"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig target returned error: %v", err)
+	}
+	starts := 0
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest("fanout-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		starts++
+		return newFakeHarness("fanout-harness", []TimelineItem{{Kind: "agent_text", Text: "answer"}}), nil
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "session.fanout", AgentMessageSendRequest{AgentMessageID: "fg-duplicate", SourceSessionID: "run-1", TargetProfileIDs: []string{"fanout-worker", " fanout-worker "}, Body: "fan out"})
+	if err == nil {
+		t.Fatal("session.fanout returned nil error, want duplicate profile rejection")
+	}
+	if starts != 0 {
+		t.Fatalf("harness starts = %d, want duplicate validation before launching workers", starts)
+	}
+	members, listErr := store.ListFanoutMembers(ctx, "fg-duplicate")
+	if listErr != nil {
+		t.Fatalf("ListFanoutMembers returned error: %v", listErr)
+	}
+	if len(members) != 0 {
+		t.Fatalf("fanout members = %#v, want no durable members after duplicate rejection", members)
+	}
+}
+
 func TestSessionFanoutToProfilesCompletesWorkersIndependentlyOutOfOrder(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
