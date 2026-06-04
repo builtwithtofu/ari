@@ -68,7 +68,7 @@ func (r Runner) Run(argv []string) int {
 		args = append(args, argv[1:]...)
 	}
 	stdin := ""
-	if shouldReadStdin(args) {
+	if shouldReadStdin(mode, args) {
 		stdin = readAvailable(r.Stdin)
 	}
 	if sentinel := env[EnvSentinel]; sentinel != "" && (strings.Contains(stdin, sentinel) || containsArg(args, sentinel)) {
@@ -83,6 +83,10 @@ func (r Runner) Run(argv []string) int {
 	switch mode {
 	case "auth-required":
 		return authRequired(r.Stdout, harness)
+	case "delivery-claude-pty":
+		return deliveryClaudePTY(r.Stdout, stdin)
+	case "delivery-codex-app-server":
+		return deliveryCodexAppServer(r.Stdout, stdin)
 	case "malformed", "unknown-output":
 		_, _ = fmt.Fprintln(r.Stdout, "{not-json")
 		return 0
@@ -94,6 +98,27 @@ func (r Runner) Run(argv []string) int {
 	default:
 		return authenticated(r.Stdout, harness, args)
 	}
+}
+
+func deliveryClaudePTY(w io.Writer, stdin string) int {
+	if strings.TrimSpace(stdin) == "" {
+		writeLine(w, `{"channel":"managed_pty","status":"failed","error":"empty_input"}`)
+		return 2
+	}
+	inputHash := shortHash(stdin)
+	_, _ = fmt.Fprintf(w, `{"channel":"managed_pty","status":"admitted","input_hash":"%s"}`+"\n", inputHash)
+	_, _ = fmt.Fprintf(w, `{"channel":"managed_pty","status":"completed","input_hash":"%s","output":"fake claude pty response"}`+"\n", inputHash)
+	return 0
+}
+
+func deliveryCodexAppServer(w io.Writer, stdin string) int {
+	if !strings.Contains(stdin, "turn/start") {
+		writeLine(w, `{"jsonrpc":"2.0","error":{"code":-32600,"message":"expected turn/start"}}`)
+		return 2
+	}
+	writeLine(w, `{"jsonrpc":"2.0","id":1,"result":{"turn":{"id":"fake-codex-turn"}}}`)
+	writeLine(w, `{"method":"turn/completed","params":{"turn_id":"fake-codex-turn","status":"completed"}}`)
+	return 0
 }
 
 func authenticated(w io.Writer, harness string, args []string) int {
@@ -187,6 +212,54 @@ func serveOpenCode(w io.Writer) int {
 	return 0
 }
 
+type OpenCodePromptDelivery struct {
+	SessionID      string `json:"session_id"`
+	PromptID       string `json:"prompt_id"`
+	Delivery       string `json:"delivery"`
+	IdempotencyKey string `json:"idempotency_key"`
+	TextHash       string `json:"text_hash"`
+}
+
+func OpenCodeDeliveryHandler(record func(OpenCodePromptDelivery)) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/session/", func(w http.ResponseWriter, r *http.Request) {
+		trimmed := strings.TrimPrefix(r.URL.Path, "/api/session/")
+		parts := strings.Split(trimmed, "/")
+		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" {
+			http.NotFound(w, r)
+			return
+		}
+		sessionID := parts[0]
+		switch {
+		case r.Method == http.MethodPost && parts[1] == "prompt":
+			var body struct {
+				Text           string `json:"text"`
+				Delivery       string `json:"delivery"`
+				IdempotencyKey string `json:"idempotency_key"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if strings.TrimSpace(body.Delivery) == "" {
+				body.Delivery = "queue"
+			}
+			delivery := OpenCodePromptDelivery{SessionID: sessionID, PromptID: "fake-opencode-prompt", Delivery: body.Delivery, IdempotencyKey: body.IdempotencyKey, TextHash: shortHash(body.Text)}
+			if record != nil {
+				record(delivery)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"session_id": delivery.SessionID, "prompt_id": delivery.PromptID, "status": "queued"})
+		case r.Method == http.MethodGet && parts[1] == "events":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"events": []map[string]string{{"type": "prompt.completed", "session_id": sessionID, "prompt_id": "fake-opencode-prompt"}, {"type": "session.idle", "session_id": sessionID, "prompt_id": "fake-opencode-prompt"}}})
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	return mux
+}
+
 func envMap(env []string) map[string]string {
 	m := map[string]string{}
 	for _, kv := range env {
@@ -220,7 +293,10 @@ func containsArg(args []string, s string) bool {
 	return false
 }
 
-func shouldReadStdin(args []string) bool {
+func shouldReadStdin(mode string, args []string) bool {
+	if mode == "delivery-claude-pty" || mode == "delivery-codex-app-server" {
+		return true
+	}
 	for i := 0; i < len(args)-1; i++ {
 		if args[i] == "-p" && args[i+1] == "-" {
 			return true
@@ -229,12 +305,16 @@ func shouldReadStdin(args []string) bool {
 	return false
 }
 
+func shortHash(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return "sha256:" + hex.EncodeToString(sum[:8])
+}
+
 func stdinSummary(s string) string {
 	if strings.TrimSpace(s) == "" {
 		return ""
 	}
-	sum := sha256.Sum256([]byte(s))
-	return "sha256:" + hex.EncodeToString(sum[:8])
+	return shortHash(s)
 }
 
 func safeEnv(env map[string]string) map[string]string {

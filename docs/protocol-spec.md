@@ -5,7 +5,7 @@ Ari is headless first. Product operations belong behind the daemon API before th
 See also:
 
 - `docs/adr/0001-headless-daemon-api-authority.md`
-- `docs/ep/ari-workspace-runtime.md`
+- `docs/adr/0010-workspace-event-history-and-subscriptions.md`
 
 ## API authority
 
@@ -34,9 +34,12 @@ The daemon owns durable runtime behavior and state, including:
 - workspace creation, resolution, lifecycle, and folder membership;
 - background agent and command lifecycles;
 - process output and attachable terminal state;
-- context, proof, activity, timeline, and other projections;
+- append-only workspace event history with durable subscriptions (filters, cursors, acknowledgements), signals, durable timers, and pending deliveries (ADR 0010, ADR 0011);
+- context, proof, activity, timeline, inbox, fanout-status, and other projections derived from workspace event history;
 - approvals, blockers, completions, idle/waiting state, and other attention facts;
 - profile, helper, settings, and final-response operations when present.
+
+Agent-callable Ari tools (`ari.*` via `ari.tool.call`) and any future MCP surface project this same daemon authority; they do not own orchestration semantics or state.
 
 ## Attach transport
 

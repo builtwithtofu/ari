@@ -1820,7 +1820,7 @@ func sendAgentMessage(ctx context.Context, store *globaldb.Store, req AgentMessa
 			return AgentMessageSendResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "source_workspace_mismatch", "source_session_id": sourceSessionID, "source_workspace_id": sourceRun.WorkspaceID, "workspace_id": workspaceID, "start_invoked": false})
 		}
 	}
-	dm, err := store.SendAgentMessage(ctx, globaldb.AgentMessageSendParams{AgentMessageID: agentMessageID, SourceSessionID: sourceSessionID, TargetAgentID: targetAgentID, TargetSessionID: targetSessionID, Body: body, ContextExcerptIDs: contextExcerptIDs, StartSessionID: startSessionID, DaemonEvent: &globaldb.DaemonEvent{EventType: daemonEventSessionMessageSent, SubjectType: "agent_message", SubjectID: agentMessageID, PayloadJSON: daemonEventPayload(map[string]string{"source_session_id": sourceSessionID, "target_agent_id": targetAgentID, "target_session_id": effectiveTargetSessionID}), AttentionRequired: true}})
+	dm, err := store.SendAgentMessage(ctx, globaldb.AgentMessageSendParams{AgentMessageID: agentMessageID, SourceSessionID: sourceSessionID, TargetAgentID: targetAgentID, TargetSessionID: targetSessionID, Body: body, ContextExcerptIDs: contextExcerptIDs, StartSessionID: startSessionID, WorkspaceEvent: &globaldb.WorkspaceEvent{EventType: workspaceEventMessageSent, SubjectType: "agent_message", SubjectID: agentMessageID, ProducerType: workspaceEventProducerSession, ProducerID: sourceSessionID, PayloadJSON: daemonEventPayload(map[string]string{"source_session_id": sourceSessionID, "target_agent_id": targetAgentID, "target_session_id": effectiveTargetSessionID})}})
 	if err != nil {
 		errText := strings.ToLower(err.Error())
 		if strings.Contains(errText, "unique constraint failed") && strings.Contains(errText, "agent_messages.agent_message_id") {
@@ -2362,11 +2362,12 @@ func opencodeProjectionSecretID(metadataJSON string) (string, error) {
 	return secretID, nil
 }
 
-func storeFinalResponse(ctx context.Context, store *globaldb.Store, result HarnessCallResult, profile ...Profile) error {
+func storeFinalResponse(ctx context.Context, store *globaldb.Store, result HarnessCallResult, profile ...Profile) (string, error) {
 	responseID, err := newAriULID()
 	if err != nil {
-		return err
+		return "", err
 	}
+	finalResponseID := "fr_" + responseID
 	profileID := ""
 	if len(profile) > 0 {
 		profileID = strings.TrimSpace(profile[0].ProfileID)
@@ -2379,9 +2380,12 @@ func storeFinalResponse(ctx context.Context, store *globaldb.Store, result Harne
 	}
 	encodedLinks, err := json.Marshal(links)
 	if err != nil {
-		return err
+		return "", err
 	}
-	return store.UpsertFinalResponse(ctx, globaldb.FinalResponse{FinalResponseID: "fr_" + responseID, HarnessSessionID: result.HarnessSession.HarnessSessionID, WorkspaceID: result.HarnessSession.WorkspaceID, TaskID: result.HarnessSession.TaskID, ContextPacketID: result.HarnessSession.ContextPacketID, ProfileID: profileID, Status: result.FinalResponse.Status, Text: result.FinalResponse.Text, EvidenceLinksJSON: string(encodedLinks)})
+	if err := store.UpsertFinalResponse(ctx, globaldb.FinalResponse{FinalResponseID: finalResponseID, HarnessSessionID: result.HarnessSession.HarnessSessionID, WorkspaceID: result.HarnessSession.WorkspaceID, TaskID: result.HarnessSession.TaskID, ContextPacketID: result.HarnessSession.ContextPacketID, ProfileID: profileID, Status: result.FinalResponse.Status, Text: result.FinalResponse.Text, EvidenceLinksJSON: string(encodedLinks)}); err != nil {
+		return "", err
+	}
+	return finalResponseID, nil
 }
 
 func storeHarnessSessionTelemetry(ctx context.Context, store *globaldb.Store, result HarnessCallResult, sample ProcessMetricsSample, profile ...Profile) error {

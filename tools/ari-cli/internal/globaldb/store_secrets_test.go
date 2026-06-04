@@ -238,12 +238,12 @@ func TestExpiredSecretGrantDeniesProjectionAndAuditsRedactedDenial(t *testing.T)
 
 func assertLatestSecretAuditEventRedacted(t *testing.T, store *Store, eventType string, forbidden []byte) {
 	t.Helper()
-	events, err := store.ListDaemonEventsAfter(context.Background(), "", 20)
+	events, err := store.ListSecretAuditEvents(context.Background(), 20)
 	if err != nil {
-		t.Fatalf("ListDaemonEventsAfter returned error: %v", err)
+		t.Fatalf("ListSecretAuditEvents returned error: %v", err)
 	}
 	if len(events) == 0 {
-		t.Fatalf("no daemon events recorded")
+		t.Fatalf("no secret audit events recorded")
 	}
 	event := events[len(events)-1]
 	if event.EventType != eventType || event.SubjectType != "secret" {

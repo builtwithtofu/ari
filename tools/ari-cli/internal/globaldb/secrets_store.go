@@ -376,12 +376,14 @@ func validateSecretGrant(grant SecretGrant) error {
 }
 
 func (s *Store) appendSecretAuditEvent(ctx context.Context, eventType string, grant SecretGrant, attention bool) error {
+	// The audit trail has no attention surface; the parameter survives so
+	// call sites keep documenting which paths are denials.
+	_ = attention
 	payload, err := json.Marshal(map[string]string{"grant_id": grant.GrantID, "secret_id": grant.SecretID, "subject_type": grant.SubjectType, "subject_id": grant.SubjectID, "purpose": grant.Purpose, "redacted": "true"})
 	if err != nil {
 		return err
 	}
-	_, err = s.AppendDaemonEvent(ctx, DaemonEvent{EventType: eventType, SubjectType: "secret", SubjectID: grant.SecretID, PayloadJSON: string(payload), AttentionRequired: attention})
-	return err
+	return s.appendSecretAuditEventRow(ctx, SecretAuditEvent{EventType: eventType, SubjectType: "secret", SubjectID: grant.SecretID, PayloadJSON: string(payload)})
 }
 
 func secretMetadataFromSQLC(row dbsqlc.AriSecret) SecretMetadata {

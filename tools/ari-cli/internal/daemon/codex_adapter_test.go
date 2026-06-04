@@ -6,9 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/fakeharness"
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
 )
 
 func TestCodexExecutorMapsAppServerNotifications(t *testing.T) {
@@ -89,6 +93,42 @@ func TestCodexExecutorAdvertisesFinalResponseCapability(t *testing.T) {
 	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo", StartTransport: fakeCodexStarter(newFakeCodexTransport(nil))})
 	if !harnessCapabilitiesContain(executor.Descriptor().Capabilities, HarnessCapabilityFinalResponse) {
 		t.Fatalf("codex capabilities = %#v, want final_response", executor.Descriptor().Capabilities)
+	}
+}
+
+func TestCodexExecutorAttemptsAppServerDeliveryAgainstFakeHarness(t *testing.T) {
+	fake := buildFakeHarnessExecutable(t)
+	recordPath := t.TempDir() + "/delivery-record.jsonl"
+	t.Setenv(fakeharness.EnvHarness, "codex")
+	t.Setenv(fakeharness.EnvMode, "delivery-codex-app-server")
+	t.Setenv(fakeharness.EnvRecord, recordPath)
+	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: fake, Cwd: t.TempDir()})
+
+	result, err := executor.AttemptWorkspaceDelivery(context.Background(), WorkspaceDeliveryAttempt{Delivery: globaldb.PendingDelivery{DeliveryID: "pd-codex", WorkspaceID: "ws-1", SubscriptionID: "sub-1", TargetType: "harness_session", TargetID: "codex-thread", EventIDs: []string{"we-1"}, Status: "attempted", Attempts: 1}})
+	if err != nil {
+		t.Fatalf("AttemptWorkspaceDelivery returned error: %v", err)
+	}
+	if result.Status != WorkspaceDeliveryAttemptCompleted || result.LastError != "" {
+		t.Fatalf("delivery result = %#v, want completed fake app-server delivery", result)
+	}
+
+	data, err := os.ReadFile(recordPath)
+	if err != nil {
+		t.Fatalf("ReadFile record returned error: %v", err)
+	}
+	invocations, err := fakeharness.DecodeInvocations(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("DecodeInvocations returned error: %v", err)
+	}
+	if len(invocations) != 1 {
+		t.Fatalf("invocations = %#v, want one fake harness delivery invocation", invocations)
+	}
+	invocation := invocations[0]
+	if invocation.Harness != "codex" || invocation.Mode != "delivery-codex-app-server" || strings.Join(invocation.Args, " ") != "app-server" {
+		t.Fatalf("invocation = %#v, want codex app-server fake delivery", invocation)
+	}
+	if invocation.Stdin == "" || strings.Contains(invocation.Stdin, "we-1") || strings.Contains(invocation.Stdin, "pd-codex") {
+		t.Fatalf("invocation stdin summary = %q, want hashed app-server input without raw event ids", invocation.Stdin)
 	}
 }
 

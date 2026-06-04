@@ -1222,13 +1222,21 @@ func TestOpenCodeProfileRunBuildsAuthContentProjectionFromGrantedSecret(t *testi
 	if captured.AuthProjection.Kind != HarnessAuthProjectionAuthContent || captured.AuthProjection.Owner != HarnessAuthProjectionOwnerAri || captured.AuthProjection.Env["OPENCODE_AUTH_CONTENT"] != string(value) {
 		t.Fatalf("captured projection = %#v, want granted OpenCode auth-content projection", captured.AuthProjection)
 	}
-	events, err := store.ListDaemonEventsAfter(ctx, "", 20)
+	workspaceEvents, err := store.ListWorkspaceEventsAfterSequence(ctx, "ws-1", 0, 100)
 	if err != nil {
-		t.Fatalf("ListDaemonEventsAfter returned error: %v", err)
+		t.Fatalf("ListWorkspaceEventsAfterSequence returned error: %v", err)
 	}
-	encodedEvents, _ := json.Marshal(events)
-	if strings.Contains(string(encodedEvents), "ari-opencode-secret-sentinel") || strings.Contains(string(encodedEvents), "apiKey") {
-		t.Fatalf("daemon events leaked OpenCode auth content: %s", encodedEvents)
+	encodedWorkspaceEvents, _ := json.Marshal(workspaceEvents)
+	if strings.Contains(string(encodedWorkspaceEvents), "ari-opencode-secret-sentinel") || strings.Contains(string(encodedWorkspaceEvents), "apiKey") {
+		t.Fatalf("workspace events leaked OpenCode auth content: %s", encodedWorkspaceEvents)
+	}
+	auditEvents, err := store.ListSecretAuditEvents(ctx, 20)
+	if err != nil {
+		t.Fatalf("ListSecretAuditEvents returned error: %v", err)
+	}
+	encodedAuditEvents, _ := json.Marshal(auditEvents)
+	if strings.Contains(string(encodedAuditEvents), "ari-opencode-secret-sentinel") || strings.Contains(string(encodedAuditEvents), "apiKey") {
+		t.Fatalf("secret audit events leaked OpenCode auth content: %s", encodedAuditEvents)
 	}
 }
 

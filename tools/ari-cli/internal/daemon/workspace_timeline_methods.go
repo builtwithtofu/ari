@@ -202,7 +202,7 @@ func (d *Daemon) workspaceTimeline(ctx context.Context, store *globaldb.Store, w
 	for _, excerptID := range excerptOrder {
 		appendExcerpt(excerptID)
 	}
-	fanoutMembers, err := store.ListFanoutMembersByWorkspace(ctx, workspaceID)
+	fanoutMembers, err := fanoutMemberProjectionForWorkspace(ctx, store, workspaceID)
 	if err != nil {
 		return nil, err
 	}

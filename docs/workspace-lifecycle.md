@@ -5,7 +5,7 @@ Workspace is Ari's primary durable runtime unit.
 See also:
 
 - `docs/adr/0002-workspace-as-runtime-unit.md`
-- `docs/ep/ari-workspace-runtime.md`
+- `.ari/plan.lock`
 
 ## Definition
 
@@ -45,12 +45,15 @@ This supports different LLM work contexts over overlapping files. For example, a
 Workspace-scoped runtime state may include:
 
 - active and historical harness sessions and calls;
+- append-only workspace event history, with durable subscriptions, signals, timers, and pending deliveries scoped to the workspace (ADR 0010);
 - command and process records;
 - retained process output;
 - context packets and projection results;
 - proof summaries and timeline items;
 - approvals, blockers, idle state, completions, and other attention signals;
 - final responses and shareable artifacts.
+
+Inbox, fanout status, attention, status, and timeline are projections over workspace event history and its linked artifacts, not independent sources of truth. Events do not leak across workspaces.
 
 Not every runtime fact must be displayed by every client. A GUI may compose a few daemon calls into a dashboard, while the CLI may expose lower-level commands for inspection and automation.
 

@@ -1,7 +1,6 @@
 # Harness auth proof procedures
 
-Parent: `.ari/harness-auth-proof/PRD.md`  
-Slice evidence: `.ari/harness-auth-proof/evidence/pr-slice-evidence-matrix.md`
+Former planning source was consolidated into `.ari/workspace-event-orchestration/PRD.md`. This procedure remains the standalone harness-auth proof reference.
 
 ## Safe fake-harness proof
 

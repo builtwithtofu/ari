@@ -104,7 +104,19 @@ func (d *Daemon) registerMethods(registry *rpc.MethodRegistry, store *globaldb.S
 		return err
 	}
 
-	if err := d.registerDaemonEventMethods(registry, store); err != nil {
+	if err := d.registerWorkspaceEventMethods(registry, store); err != nil {
+		return err
+	}
+
+	if err := d.registerWorkspaceTimerMethods(registry, store); err != nil {
+		return err
+	}
+
+	if err := d.registerWorkspaceSignalMethods(registry, store); err != nil {
+		return err
+	}
+
+	if err := d.registerWorkspaceDeliveryMethods(registry, store); err != nil {
 		return err
 	}
 

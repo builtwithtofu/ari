@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb/dbsqlc"
 )
@@ -153,7 +154,10 @@ type AgentMessageSendParams struct {
 	Body              string
 	ContextExcerptIDs []string
 	StartSessionID    string
-	DaemonEvent       *DaemonEvent
+	// WorkspaceEvent, when set, is appended to workspace event history in the
+	// same transaction as the message. The store fills workspace, subject,
+	// and correlation identity from the resolved message.
+	WorkspaceEvent *WorkspaceEvent
 }
 
 func (s *Store) CreateHarnessSessionConfig(ctx context.Context, agent HarnessSessionConfig) error {
@@ -597,13 +601,24 @@ func (s *Store) SendAgentMessage(ctx context.Context, params AgentMessageSendPar
 	if targetAgentID == "" && targetSessionID == "" {
 		return AgentMessage{}, ErrInvalidInput
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
+	// BEGIN IMMEDIATE (withImmediateQueries) rather than a deferred
+	// transaction: the workspace event sequence is a MAX+1 read that must not
+	// race concurrent appenders.
+	var message AgentMessage
+	if err := s.withImmediateQueries(ctx, func(qtx *dbsqlc.Queries) error {
+		sent, err := sendAgentMessageWithQueries(ctx, qtx, params, targetSessionID, targetAgentID)
+		if err != nil {
+			return err
+		}
+		message = sent
+		return nil
+	}); err != nil {
 		return AgentMessage{}, err
 	}
-	defer func() { _ = tx.Rollback() }()
-	qtx := s.sqlc.WithTx(tx)
+	return message, nil
+}
 
+func sendAgentMessageWithQueries(ctx context.Context, qtx *dbsqlc.Queries, params AgentMessageSendParams, targetSessionID, targetAgentID string) (AgentMessage, error) {
 	source, err := qtx.GetHarnessSession(ctx, dbsqlc.GetHarnessSessionParams{SessionID: params.SourceSessionID})
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -700,23 +715,33 @@ func (s *Store) SendAgentMessage(ctx context.Context, params AgentMessageSendPar
 	if err := appendRunLogMessageTx(ctx, qtx, RunLogMessage{MessageID: params.AgentMessageID + "-message", SessionID: targetSessionID, WorkspaceID: source.WorkspaceID, AgentID: targetAgent.AgentID, Sequence: int(nextSequence), Role: "user", Status: "completed", Parts: []RunLogMessagePart{{PartID: params.AgentMessageID + "-part-1", Sequence: 1, Kind: "text", Text: params.Body}}}); err != nil {
 		return AgentMessage{}, err
 	}
-	if params.DaemonEvent != nil {
-		event := *params.DaemonEvent
+	if params.WorkspaceEvent != nil {
+		event := *params.WorkspaceEvent
 		if strings.TrimSpace(event.WorkspaceID) == "" {
 			event.WorkspaceID = source.WorkspaceID
-		}
-		if strings.TrimSpace(event.SessionID) == "" {
-			event.SessionID = targetSessionID
 		}
 		if strings.TrimSpace(event.SubjectID) == "" {
 			event.SubjectID = params.AgentMessageID
 		}
-		if _, err := appendDaemonEventWithQueries(ctx, qtx, event); err != nil {
+		if strings.TrimSpace(event.CorrelationID) == "" {
+			event.CorrelationID = targetSessionID
+		}
+		event = normalizeWorkspaceEvent(event)
+		if err := validateWorkspaceEvent(event); err != nil {
 			return AgentMessage{}, err
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return AgentMessage{}, err
+		if event.EventID == "" {
+			event.EventID = newWorkspaceEventID()
+		}
+		if event.CreatedAt.IsZero() {
+			event.CreatedAt = time.Now().UTC()
+		}
+		if err := createWorkspaceEventWithQueries(ctx, qtx, &event); err != nil {
+			return AgentMessage{}, err
+		}
+		if err := createPendingDeliveriesForWorkspaceEvent(ctx, qtx, event); err != nil {
+			return AgentMessage{}, err
+		}
 	}
 	return AgentMessage{AgentMessageID: params.AgentMessageID, WorkspaceID: source.WorkspaceID, SourceAgentID: source.AgentID, SourceSessionID: source.SessionID, TargetAgentID: targetAgent.AgentID, TargetSessionID: targetSessionID, Body: params.Body, Status: "delivered", DeliveredSessionID: targetSessionID, ContextExcerptIDs: params.ContextExcerptIDs}, nil
 }

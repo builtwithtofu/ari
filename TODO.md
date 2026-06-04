@@ -4,7 +4,8 @@ This file no longer carries the Ariadne-era v0 architecture plan.
 
 Current durable direction lives in:
 
-- `docs/ep/ari-workspace-runtime.md`
+- `.ari/plan.lock`
+- `.ari/workspace-event-orchestration/PRD.md`
 - `docs/adr/0001-headless-daemon-api-authority.md`
 - `docs/adr/0002-workspace-as-runtime-unit.md`
 

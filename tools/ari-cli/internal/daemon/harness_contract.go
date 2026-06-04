@@ -38,6 +38,10 @@ type HarnessCall struct {
 
 type HarnessCapability string
 
+type HarnessObservationCapability string
+
+type HarnessDeliveryCapability string
+
 type HarnessInvocationClass string
 
 const (
@@ -54,6 +58,32 @@ const (
 	HarnessInputSchemaHarnessSessionFromContextV1                   = "harness_session.from_context.v1"
 	HarnessResultSchemaV1                                           = "harness.call.result.v1"
 )
+
+const (
+	HarnessObservationPullTools   HarnessObservationCapability = "pull_tools"
+	HarnessObservationEventStream HarnessObservationCapability = "event_stream"
+	HarnessObservationMCPChannel  HarnessObservationCapability = "mcp_channel"
+	HarnessObservationUnsupported HarnessObservationCapability = "unsupported"
+)
+
+const (
+	HarnessDeliveryVisiblePromptTurn HarnessDeliveryCapability = "visible_prompt_turn"
+	HarnessDeliveryQueuedPromptTurn  HarnessDeliveryCapability = "queued_prompt_turn"
+	HarnessDeliveryNativeResume      HarnessDeliveryCapability = "native_resume_control"
+	HarnessDeliveryHumanNotification HarnessDeliveryCapability = "human_notification"
+	HarnessDeliveryMCPChannel        HarnessDeliveryCapability = "mcp_channel"
+	HarnessDeliveryUnsupported       HarnessDeliveryCapability = "unsupported"
+)
+
+func sharedHarnessRuntimeCapabilities() []HarnessCapability {
+	return []HarnessCapability{
+		HarnessCapabilityHarnessSessionFromContext,
+		HarnessCapabilityContextPacket,
+		HarnessCapabilityTimelineItems,
+		HarnessCapabilityFinalResponse,
+		HarnessCapabilityMeasuredTokenTelemetry,
+	}
+}
 
 type HarnessCallStatus string
 
@@ -296,9 +326,11 @@ func authSlotIsDefaultForHarness(harness, slotID string) bool {
 }
 
 type HarnessAdapterDescriptor struct {
-	Name         string
-	Capabilities []HarnessCapability
-	Auth         HarnessAuthDescriptor
+	Name                    string
+	Capabilities            []HarnessCapability
+	ObservationCapabilities []HarnessObservationCapability
+	DeliveryCapabilities    []HarnessDeliveryCapability
+	Auth                    HarnessAuthDescriptor
 }
 
 type HarnessAuthDescriptor struct {

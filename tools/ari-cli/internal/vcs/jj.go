@@ -88,8 +88,10 @@ func (j *jjBackend) RecentCommits(n int) ([]Commit, error) {
 
 // ChangedFiles returns the list of files with uncommitted changes.
 func (j *jjBackend) ChangedFiles() ([]string, error) {
-	// Get files changed between parent and working copy.
-	cmd := exec.Command("jj", "diff", "--summary", "--no-pager", "--color=never", "-r", "@-", "-r", "@")
+	// Get files changed between parent and working copy. Passing -r twice
+	// unions both revisions' own diffs (leaking the parent's files), so use
+	// the explicit --from/--to range.
+	cmd := exec.Command("jj", "diff", "--summary", "--no-pager", "--color=never", "--from", "@-", "--to", "@")
 	cmd.Dir = j.root
 	out, err := cmd.Output()
 	if err != nil {

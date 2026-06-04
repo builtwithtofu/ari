@@ -234,6 +234,53 @@ func TestGitChangedFilesReturnsSortedFiles(t *testing.T) {
 	}
 }
 
+func TestJJChangedFilesIntegration(t *testing.T) {
+	if _, err := exec.LookPath("jj"); err != nil {
+		t.Skip("jj not available")
+	}
+	repo := t.TempDir()
+	runJJ(t, repo, "git", "init")
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("a"), 0o644); err != nil {
+		t.Fatalf("write a.txt: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "untouched.txt"), []byte("base only"), 0o644); err != nil {
+		t.Fatalf("write untouched.txt: %v", err)
+	}
+	runJJ(t, repo, "commit", "-m", "base")
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("changed"), 0o644); err != nil {
+		t.Fatalf("modify a.txt: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "b.txt"), []byte("b"), 0o644); err != nil {
+		t.Fatalf("write b.txt: %v", err)
+	}
+
+	files, err := (&jjBackend{root: repo}).ChangedFiles()
+	if err != nil {
+		t.Fatalf("ChangedFiles returned error: %v", err)
+	}
+	// Only working-copy changes: files committed in the base change (like
+	// untouched.txt) must not leak in from the parent revision's own diff.
+	want := []string{"a.txt", "b.txt"}
+	if len(files) != len(want) {
+		t.Fatalf("files = %#v, want exactly %#v", files, want)
+	}
+	for i := range want {
+		if files[i] != want[i] {
+			t.Fatalf("files = %#v, want %#v", files, want)
+		}
+	}
+}
+
+func runJJ(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("jj", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "JJ_USER=test", "JJ_EMAIL=test@example.com")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("jj %v failed: %v (%s)", args, err, string(out))
+	}
+}
+
 func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)

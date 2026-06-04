@@ -1817,6 +1817,11 @@ func TestCompleteEphemeralCallDoesNotMarkBackgroundReadFailureFailed(t *testing.
 	}
 }
 
+// waitForFinalResponseText and the helpers below poll store state directly:
+// they wait on arbitrary rows (final responses, session status) that have no
+// single workspace event to block on, so a bounded client poll is the
+// accepted wait. Event-shaped waits should use the server-side bounded wait
+// on workspace.events.next instead.
 func waitForFinalResponseText(t *testing.T, ctx context.Context, store *globaldb.Store, sessionID, text string) FinalResponseResponse {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
@@ -1922,8 +1927,15 @@ func (h *blockingItemsHarness) Items(ctx context.Context, sessionID string) ([]T
 
 func (h *blockingItemsHarness) Stop(ctx context.Context, sessionID string) error {
 	_ = ctx
+	// Non-blocking send: Stop can be invoked more than once (active-run stop
+	// plus persisted-session sweep, or a re-resolved harness instance under
+	// load). A second unconditional send on the buffered channel would
+	// deadlock the suspend handler; tests only need the first signal.
 	if h.stopped != nil {
-		h.stopped <- sessionID
+		select {
+		case h.stopped <- sessionID:
+		default:
+		}
 	}
 	return nil
 }

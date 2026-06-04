@@ -1,12 +1,15 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"os"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/fakeharness"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
 )
@@ -121,6 +124,42 @@ func TestClaudeBackgroundInvocationOmitsEmptyPromptArgument(t *testing.T) {
 		if arg == "" {
 			t.Fatalf("claude args = %#v, want no empty positional prompt", runner.args)
 		}
+	}
+}
+
+func TestClaudeExecutorAttemptsManagedPTYDeliveryAgainstFakeHarness(t *testing.T) {
+	fake := buildFakeHarnessExecutable(t)
+	recordPath := t.TempDir() + "/delivery-record.jsonl"
+	t.Setenv(fakeharness.EnvHarness, "claude")
+	t.Setenv(fakeharness.EnvMode, "delivery-claude-pty")
+	t.Setenv(fakeharness.EnvRecord, recordPath)
+	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: fake, Cwd: t.TempDir()})
+
+	result, err := executor.AttemptWorkspaceDelivery(context.Background(), WorkspaceDeliveryAttempt{Delivery: globaldb.PendingDelivery{DeliveryID: "pd-claude", WorkspaceID: "ws-1", SubscriptionID: "sub-1", TargetType: "harness_session", TargetID: "claude-session", EventIDs: []string{"we-1"}, Status: "attempted", Attempts: 1}})
+	if err != nil {
+		t.Fatalf("AttemptWorkspaceDelivery returned error: %v", err)
+	}
+	if result.Status != WorkspaceDeliveryAttemptCompleted || result.LastError != "" {
+		t.Fatalf("delivery result = %#v, want completed fake managed PTY delivery", result)
+	}
+
+	data, err := os.ReadFile(recordPath)
+	if err != nil {
+		t.Fatalf("ReadFile record returned error: %v", err)
+	}
+	invocations, err := fakeharness.DecodeInvocations(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("DecodeInvocations returned error: %v", err)
+	}
+	if len(invocations) != 1 {
+		t.Fatalf("invocations = %#v, want one fake harness delivery invocation", invocations)
+	}
+	invocation := invocations[0]
+	if invocation.Harness != "claude" || invocation.Mode != "delivery-claude-pty" || strings.Join(invocation.Args, " ") != "managed-pty" {
+		t.Fatalf("invocation = %#v, want claude managed-pty fake delivery", invocation)
+	}
+	if invocation.Stdin == "" || strings.Contains(invocation.Stdin, "we-1") || strings.Contains(invocation.Stdin, "pd-claude") {
+		t.Fatalf("invocation stdin summary = %q, want hashed visible turn without raw event ids", invocation.Stdin)
 	}
 }
 

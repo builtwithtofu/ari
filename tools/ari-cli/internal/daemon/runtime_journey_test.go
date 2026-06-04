@@ -140,11 +140,11 @@ func TestJourneyStickyFlowFanoutSuspendResumeAndInbox(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("slow worker was not stopped on workspace suspend")
 	}
-	events, err := j.store.ListDaemonEventsAfter(j.ctx, "", 20)
+	events, err := j.store.ListWorkspaceEventsAfterSequence(j.ctx, "ws-1", 0, 200)
 	if err != nil {
-		t.Fatalf("ListDaemonEventsAfter returned error: %v", err)
+		t.Fatalf("ListWorkspaceEventsAfterSequence returned error: %v", err)
 	}
-	assertDaemonEvent(t, events, "fg-journey-c"+stableRuntimeAgentIDSegment("slow-worker")+"-run", daemonEventSessionCompleted, false)
+	assertSessionWorkspaceEvent(t, events, "fg-journey-c"+stableRuntimeAgentIDSegment("slow-worker")+"-run", workspaceEventSessionStopped, false)
 	status = callMethod[WorkspaceStatusResponse](t, j.registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-1"})
 	assertProjectedFanoutMemberStatuses(t, status.FanoutMembers, map[string]string{"slow-worker": "stopped"})
 	assertStickyInboxKinds(t, status.StickyInbox, map[string]string{"fg-journey-mslow-worker": "worker_stopped"})
@@ -262,33 +262,35 @@ func TestJourneyWorkspaceSuspendDoesNotFailContextCancelledFanoutWorker(t *testi
 	}
 	workerSessionID := "fg-context-cancel-c" + stableRuntimeAgentIDSegment("slow-worker") + "-run"
 	assertHarnessSessionStatusEventually(t, j.ctx, j.store, workerSessionID, "stopped", time.Second)
-	events, err := j.store.ListDaemonEventsAfter(j.ctx, "", 20)
+	events, err := j.store.ListWorkspaceEventsAfterSequence(j.ctx, "ws-1", 0, 200)
 	if err != nil {
-		t.Fatalf("ListDaemonEventsAfter returned error: %v", err)
+		t.Fatalf("ListWorkspaceEventsAfterSequence returned error: %v", err)
 	}
-	if hasDaemonEvent(t, events, workerSessionID, daemonEventSessionFailed) {
-		t.Fatalf("daemon events = %#v, want no failed event for intentionally stopped worker", events)
+	if hasSessionWorkspaceEvent(events, workerSessionID, workspaceEventSessionFailed) {
+		t.Fatalf("workspace events = %#v, want no failed event for intentionally stopped worker", events)
 	}
-	assertDaemonEvent(t, events, workerSessionID, daemonEventSessionCompleted, false)
+	assertSessionWorkspaceEvent(t, events, workerSessionID, workspaceEventSessionStopped, false)
 }
 
-func assertDaemonEvent(t *testing.T, events []globaldb.DaemonEvent, sessionID, eventType string, attentionRequired bool) {
+// assertSessionWorkspaceEvent asserts the session's terminal fact in
+// workspace event history (subject_type harness_session).
+func assertSessionWorkspaceEvent(t *testing.T, events []globaldb.WorkspaceEvent, sessionID, eventType string, attentionRequired bool) {
 	t.Helper()
 	for _, event := range events {
-		if event.SessionID == sessionID {
-			if event.EventType != eventType || event.AttentionRequired != attentionRequired {
-				t.Fatalf("daemon event for %s = %#v, want type %q attention=%v", sessionID, event, eventType, attentionRequired)
-			}
-			return
+		if event.SubjectID != sessionID || event.EventType != eventType {
+			continue
 		}
+		if event.SubjectType != workspaceEventSubjectHarnessSession || event.AttentionRequired != attentionRequired {
+			t.Fatalf("workspace event for %s = %#v, want harness_session subject attention=%v", sessionID, event, attentionRequired)
+		}
+		return
 	}
-	t.Fatalf("daemon events = %#v, want event for session %s", events, sessionID)
+	t.Fatalf("workspace events = %#v, want %s event for session %s", events, eventType, sessionID)
 }
 
-func hasDaemonEvent(t *testing.T, events []globaldb.DaemonEvent, sessionID, eventType string) bool {
-	t.Helper()
+func hasSessionWorkspaceEvent(events []globaldb.WorkspaceEvent, sessionID, eventType string) bool {
 	for _, event := range events {
-		if event.SessionID == sessionID && event.EventType == eventType {
+		if event.SubjectID == sessionID && event.EventType == eventType {
 			return true
 		}
 	}

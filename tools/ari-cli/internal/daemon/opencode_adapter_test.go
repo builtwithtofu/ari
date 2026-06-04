@@ -6,9 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/fakeharness"
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
 )
 
 func TestOpenCodeExecutorMapsJSONEvents(t *testing.T) {
@@ -63,6 +67,26 @@ func TestOpenCodeExecutorIncludesProfilePromptInVisibleRunInput(t *testing.T) {
 	}
 	if !strings.Contains(runner.prompt, "ctx_123") {
 		t.Fatalf("opencode prompt = %q, want context packet visible in user payload", runner.prompt)
+	}
+}
+
+func TestOpenCodeExecutorAttemptsServerPromptDeliveryAgainstFakeHandler(t *testing.T) {
+	var recorded fakeharness.OpenCodePromptDelivery
+	server := httptest.NewServer(fakeharness.OpenCodeDeliveryHandler(func(delivery fakeharness.OpenCodePromptDelivery) {
+		recorded = delivery
+	}))
+	t.Cleanup(server.Close)
+	executor := NewOpenCodeExecutorForTest(opencodeExecutorOptions{DeliveryServerURL: server.URL})
+
+	result, err := executor.AttemptWorkspaceDelivery(context.Background(), WorkspaceDeliveryAttempt{Delivery: globaldb.PendingDelivery{DeliveryID: "pd-opencode", WorkspaceID: "ws-1", SubscriptionID: "sub-1", TargetType: "harness_session", TargetID: "sess_123", EventIDs: []string{"we-1"}, Status: "attempted", Attempts: 1}})
+	if err != nil {
+		t.Fatalf("AttemptWorkspaceDelivery returned error: %v", err)
+	}
+	if result.Status != WorkspaceDeliveryAttemptCompleted || result.LastError != "" {
+		t.Fatalf("delivery result = %#v, want completed fake server prompt delivery", result)
+	}
+	if recorded.SessionID != "sess_123" || recorded.IdempotencyKey != "pd-opencode" || recorded.Delivery != "queue" || recorded.TextHash == "" {
+		t.Fatalf("recorded prompt = %#v, want queued idempotent prompt for target session", recorded)
 	}
 }
 

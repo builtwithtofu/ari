@@ -4,7 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
+	"time"
+
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb/dbsqlc"
 )
 
 type FanoutGroup struct {
@@ -33,21 +37,6 @@ type FanoutMember struct {
 	UpdatedAt             string
 }
 
-type StickyInboxItem struct {
-	InboxItemID     string
-	WorkspaceID     string
-	TargetSessionID string
-	FanoutGroupID   string
-	FanoutMemberID  string
-	WorkerSessionID string
-	FinalResponseID string
-	Kind            string
-	Status          string
-	Summary         string
-	CreatedAt       string
-	UpdatedAt       string
-}
-
 func (s *Store) CreateFanoutGroup(ctx context.Context, group FanoutGroup) error {
 	if strings.TrimSpace(group.FanoutGroupID) == "" || strings.TrimSpace(group.WorkspaceID) == "" || strings.TrimSpace(group.SourceSessionID) == "" {
 		return ErrInvalidInput
@@ -69,90 +58,102 @@ func (s *Store) GetFanoutGroup(ctx context.Context, groupID string) (FanoutGroup
 	return group, nil
 }
 
-func (s *Store) AddFanoutMember(ctx context.Context, member FanoutMember) error {
+// ProjectFanoutMember materializes a fanout member row from workspace event
+// history. Event facts win for status; identity and evidence links are only
+// filled in, never blanked, so replayed/late events cannot erase linkage.
+func (s *Store) ProjectFanoutMember(ctx context.Context, member FanoutMember) error {
+	if err := validateFanoutMemberProjection(member); err != nil {
+		return err
+	}
+	return upsertFanoutMemberWithQueries(ctx, s.sqlcQueries(), member)
+}
+
+func validateFanoutMemberProjection(member FanoutMember) error {
 	if strings.TrimSpace(member.FanoutMemberID) == "" || strings.TrimSpace(member.FanoutGroupID) == "" || strings.TrimSpace(member.WorkspaceID) == "" || strings.TrimSpace(member.WorkerSessionID) == "" {
 		return ErrInvalidInput
 	}
-	status := defaultString(strings.TrimSpace(member.Status), "running")
-	_, err := s.db.ExecContext(ctx, `INSERT INTO fanout_members (fanout_member_id, fanout_group_id, workspace_id, worker_session_id, target_profile_id, request_agent_message_id, reply_agent_message_id, final_response_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`, strings.TrimSpace(member.FanoutMemberID), strings.TrimSpace(member.FanoutGroupID), strings.TrimSpace(member.WorkspaceID), strings.TrimSpace(member.WorkerSessionID), strings.TrimSpace(member.TargetProfileID), strings.TrimSpace(member.RequestAgentMessageID), strings.TrimSpace(member.ReplyAgentMessageID), strings.TrimSpace(member.FinalResponseID), status)
-	return err
+	return nil
 }
 
-func (s *Store) UpdateFanoutMemberStatus(ctx context.Context, memberID, status, replyAgentMessageID, finalResponseID string) error {
-	if strings.TrimSpace(memberID) == "" || strings.TrimSpace(status) == "" {
-		return ErrInvalidInput
-	}
-	result, err := s.db.ExecContext(ctx, `UPDATE fanout_members SET status = ?, reply_agent_message_id = COALESCE(NULLIF(?, ''), reply_agent_message_id), final_response_id = COALESCE(NULLIF(?, ''), final_response_id), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE fanout_member_id = ?`, strings.TrimSpace(status), strings.TrimSpace(replyAgentMessageID), strings.TrimSpace(finalResponseID), strings.TrimSpace(memberID))
-	if err != nil {
-		return err
-	}
-	count, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if count == 0 {
-		return ErrNotFound
+func upsertFanoutMemberWithQueries(ctx context.Context, queries *dbsqlc.Queries, member FanoutMember) error {
+	status := defaultString(strings.TrimSpace(member.Status), "running")
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if err := queries.UpsertFanoutMember(ctx, dbsqlc.UpsertFanoutMemberParams{FanoutMemberID: strings.TrimSpace(member.FanoutMemberID), FanoutGroupID: strings.TrimSpace(member.FanoutGroupID), WorkspaceID: strings.TrimSpace(member.WorkspaceID), WorkerSessionID: strings.TrimSpace(member.WorkerSessionID), TargetProfileID: strings.TrimSpace(member.TargetProfileID), RequestAgentMessageID: strings.TrimSpace(member.RequestAgentMessageID), ReplyAgentMessageID: strings.TrimSpace(member.ReplyAgentMessageID), FinalResponseID: strings.TrimSpace(member.FinalResponseID), Status: status, CreatedAt: now, UpdatedAt: now}); err != nil {
+		return fmt.Errorf("upsert fanout member %q: %w", member.FanoutMemberID, err)
 	}
 	return nil
 }
 
-func (s *Store) UpdateFanoutMemberStatusAndInboxByWorkerSession(ctx context.Context, workerSessionID, status, replyAgentMessageID, finalResponseID, summary string) error {
-	workerSessionID = strings.TrimSpace(workerSessionID)
-	status = strings.TrimSpace(status)
-	if workerSessionID == "" || status == "" {
-		return ErrInvalidInput
+// ProjectFanoutWorkerEvent records a fanout worker fact and its projections
+// as one atomic unit: the workspace event, matched pending deliveries, the
+// fanout member row, and the optional inbox item all commit together or not
+// at all. The store fills the inbox item's event linkage because the event ID
+// is only final inside the call.
+func (s *Store) ProjectFanoutWorkerEvent(ctx context.Context, event WorkspaceEvent, member FanoutMember, inboxItem *InboxItem) (WorkspaceEvent, error) {
+	event = normalizeWorkspaceEvent(event)
+	if err := validateWorkspaceEvent(event); err != nil {
+		return WorkspaceEvent{}, err
 	}
-	conn, err := s.db.Conn(ctx)
-	if err != nil {
-		return err
+	if err := validateFanoutMemberProjection(member); err != nil {
+		return WorkspaceEvent{}, err
 	}
-	defer func() { _ = conn.Close() }()
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return err
+	if event.EventID == "" {
+		event.EventID = newWorkspaceEventID()
 	}
-	committed := false
-	defer func() {
-		if !committed {
-			_, _ = conn.ExecContext(ctx, "ROLLBACK")
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = time.Now().UTC()
+	}
+	var item InboxItem
+	if inboxItem != nil {
+		item = *inboxItem
+		item.WorkspaceEventID = event.EventID
+		item.EventType = event.EventType
+		item.AttentionRequired = event.AttentionRequired
+		item = normalizeInboxItem(item)
+		if err := validateInboxItem(item); err != nil {
+			return WorkspaceEvent{}, err
 		}
-	}()
-	result, err := conn.ExecContext(ctx, `UPDATE fanout_members SET status = ?, reply_agent_message_id = COALESCE(NULLIF(?, ''), reply_agent_message_id), final_response_id = COALESCE(NULLIF(?, ''), final_response_id), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE worker_session_id = ?`, status, strings.TrimSpace(replyAgentMessageID), strings.TrimSpace(finalResponseID), workerSessionID)
-	if err != nil {
-		return err
+		if item.CreatedAt.IsZero() {
+			item.CreatedAt = event.CreatedAt
+		}
+		if item.UpdatedAt.IsZero() {
+			item.UpdatedAt = item.CreatedAt
+		}
 	}
-	count, err := result.RowsAffected()
-	if err != nil {
-		return err
+	if err := s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
+		if err := createWorkspaceEventWithQueries(ctx, queries, &event); err != nil {
+			return err
+		}
+		if err := createPendingDeliveriesForWorkspaceEvent(ctx, queries, event); err != nil {
+			return err
+		}
+		if err := upsertFanoutMemberWithQueries(ctx, queries, member); err != nil {
+			return err
+		}
+		if inboxItem != nil {
+			return createInboxItemWithQueries(ctx, queries, item)
+		}
+		return nil
+	}); err != nil {
+		return WorkspaceEvent{}, err
 	}
-	if count == 0 {
-		return ErrNotFound
+	return event, nil
+}
+
+func (s *Store) GetFanoutMemberByWorkerSession(ctx context.Context, workerSessionID string) (FanoutMember, error) {
+	workerSessionID = strings.TrimSpace(workerSessionID)
+	if workerSessionID == "" {
+		return FanoutMember{}, ErrInvalidInput
 	}
 	var member FanoutMember
-	var targetSessionID string
-	err = conn.QueryRowContext(ctx, `SELECT m.fanout_member_id, m.fanout_group_id, m.workspace_id, m.worker_session_id, m.target_profile_id, m.request_agent_message_id, m.reply_agent_message_id, m.final_response_id, m.status, m.created_at, m.updated_at, g.source_session_id FROM fanout_members m JOIN fanout_groups g ON g.fanout_group_id = m.fanout_group_id WHERE m.worker_session_id = ?`, workerSessionID).Scan(&member.FanoutMemberID, &member.FanoutGroupID, &member.WorkspaceID, &member.WorkerSessionID, &member.TargetProfileID, &member.RequestAgentMessageID, &member.ReplyAgentMessageID, &member.FinalResponseID, &member.Status, &member.CreatedAt, &member.UpdatedAt, &targetSessionID)
+	err := s.db.QueryRowContext(ctx, `SELECT fanout_member_id, fanout_group_id, workspace_id, worker_session_id, target_profile_id, request_agent_message_id, reply_agent_message_id, final_response_id, status, created_at, updated_at FROM fanout_members WHERE worker_session_id = ?`, workerSessionID).Scan(&member.FanoutMemberID, &member.FanoutGroupID, &member.WorkspaceID, &member.WorkerSessionID, &member.TargetProfileID, &member.RequestAgentMessageID, &member.ReplyAgentMessageID, &member.FinalResponseID, &member.Status, &member.CreatedAt, &member.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return FanoutMember{}, ErrNotFound
+	}
 	if err != nil {
-		return err
+		return FanoutMember{}, err
 	}
-	kind := "worker_" + status
-	inboxItemID := "inbox-" + member.FanoutMemberID
-	_, err = conn.ExecContext(ctx, `INSERT INTO sticky_inbox_items (inbox_item_id, workspace_id, target_session_id, fanout_group_id, fanout_member_id, worker_session_id, final_response_id, kind, status, summary, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'unread', ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) ON CONFLICT(inbox_item_id) DO UPDATE SET workspace_id = excluded.workspace_id, target_session_id = excluded.target_session_id, fanout_group_id = excluded.fanout_group_id, fanout_member_id = excluded.fanout_member_id, worker_session_id = excluded.worker_session_id, final_response_id = excluded.final_response_id, kind = excluded.kind, status = sticky_inbox_items.status, summary = excluded.summary, updated_at = excluded.updated_at`, inboxItemID, member.WorkspaceID, targetSessionID, member.FanoutGroupID, member.FanoutMemberID, member.WorkerSessionID, member.FinalResponseID, kind, strings.TrimSpace(summary))
-	if err != nil {
-		return err
-	}
-	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
-		return err
-	}
-	committed = true
-	return nil
-}
-
-func (s *Store) CreateStickyInboxItem(ctx context.Context, item StickyInboxItem) error {
-	if strings.TrimSpace(item.InboxItemID) == "" || strings.TrimSpace(item.WorkspaceID) == "" || strings.TrimSpace(item.TargetSessionID) == "" || strings.TrimSpace(item.Kind) == "" {
-		return ErrInvalidInput
-	}
-	status := defaultString(strings.TrimSpace(item.Status), "unread")
-	_, err := s.db.ExecContext(ctx, `INSERT INTO sticky_inbox_items (inbox_item_id, workspace_id, target_session_id, fanout_group_id, fanout_member_id, worker_session_id, final_response_id, kind, status, summary, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`, strings.TrimSpace(item.InboxItemID), strings.TrimSpace(item.WorkspaceID), strings.TrimSpace(item.TargetSessionID), strings.TrimSpace(item.FanoutGroupID), strings.TrimSpace(item.FanoutMemberID), strings.TrimSpace(item.WorkerSessionID), strings.TrimSpace(item.FinalResponseID), strings.TrimSpace(item.Kind), status, strings.TrimSpace(item.Summary))
-	return err
+	return member, nil
 }
 
 func (s *Store) ListFanoutMembers(ctx context.Context, groupID string) ([]FanoutMember, error) {
@@ -187,23 +188,6 @@ func (s *Store) ListFanoutMembersByWorkspace(ctx context.Context, workspaceID st
 		members = append(members, member)
 	}
 	return members, rows.Err()
-}
-
-func (s *Store) ListStickyInboxItems(ctx context.Context, workspaceID, targetSessionID string) ([]StickyInboxItem, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT inbox_item_id, workspace_id, target_session_id, fanout_group_id, fanout_member_id, worker_session_id, final_response_id, kind, status, summary, created_at, updated_at FROM sticky_inbox_items WHERE workspace_id = ? AND target_session_id = ? ORDER BY created_at DESC, inbox_item_id ASC`, strings.TrimSpace(workspaceID), strings.TrimSpace(targetSessionID))
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var items []StickyInboxItem
-	for rows.Next() {
-		var item StickyInboxItem
-		if err := rows.Scan(&item.InboxItemID, &item.WorkspaceID, &item.TargetSessionID, &item.FanoutGroupID, &item.FanoutMemberID, &item.WorkerSessionID, &item.FinalResponseID, &item.Kind, &item.Status, &item.Summary, &item.CreatedAt, &item.UpdatedAt); err != nil {
-			return nil, err
-		}
-		items = append(items, item)
-	}
-	return items, rows.Err()
 }
 
 func defaultString(value, fallback string) string {
