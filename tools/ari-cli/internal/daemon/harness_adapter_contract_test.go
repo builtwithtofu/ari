@@ -17,6 +17,7 @@ type harnessAdapterContractCase struct {
 	observation        []HarnessObservationCapability
 	delivery           []HarnessDeliveryCapability
 	invocationModes    []HarnessInvocationMode
+	statusCheck        HarnessAuthSupport
 	login              HarnessAuthSupport
 	loginMethods       []string
 	logout             HarnessAuthSupport
@@ -42,6 +43,7 @@ func harnessAdapterContractCases() []harnessAdapterContractCase {
 			observation:        []HarnessObservationCapability{HarnessObservationUnsupported},
 			delivery:           []HarnessDeliveryCapability{HarnessDeliveryVisiblePromptTurn},
 			invocationModes:    []HarnessInvocationMode{HarnessInvocationModeHeadless, HarnessInvocationModeBackground},
+			statusCheck:        HarnessAuthSupportSupported,
 			login:              HarnessAuthSupportPartial,
 			loginMethods:       []string{"browser", "console", "api_key"},
 			logout:             HarnessAuthSupportSupported,
@@ -70,6 +72,7 @@ func harnessAdapterContractCases() []harnessAdapterContractCase {
 			observation:        []HarnessObservationCapability{HarnessObservationEventStream},
 			delivery:           []HarnessDeliveryCapability{HarnessDeliveryVisiblePromptTurn},
 			invocationModes:    []HarnessInvocationMode{HarnessInvocationModeServer},
+			statusCheck:        HarnessAuthSupportSupported,
 			login:              HarnessAuthSupportSupported,
 			loginMethods:       []string{"browser", "device_code", "api_key"},
 			logout:             HarnessAuthSupportSupported,
@@ -101,6 +104,7 @@ func harnessAdapterContractCases() []harnessAdapterContractCase {
 			observation:        []HarnessObservationCapability{HarnessObservationUnsupported},
 			delivery:           []HarnessDeliveryCapability{HarnessDeliveryVisiblePromptTurn},
 			invocationModes:    []HarnessInvocationMode{HarnessInvocationModeHeadless},
+			statusCheck:        HarnessAuthSupportSupported,
 			login:              HarnessAuthSupportPartial,
 			loginMethods:       []string{"opencode_interactive"},
 			logout:             HarnessAuthSupportSupported,
@@ -125,6 +129,39 @@ func harnessAdapterContractCases() []harnessAdapterContractCase {
 			},
 			wantPersistence: HarnessSessionPersistent,
 			wantResumeMode:  HarnessResumeHTTPAPI,
+			wantCursorKey:   "session_id",
+		},
+		{
+			name:               HarnessNamePi,
+			describer:          NewPiExecutorForTest(piExecutorOptions{Executable: "pi", Cwd: "/repo"}),
+			observation:        []HarnessObservationCapability{HarnessObservationEventStream},
+			delivery:           []HarnessDeliveryCapability{HarnessDeliveryVisiblePromptTurn},
+			invocationModes:    []HarnessInvocationMode{HarnessInvocationModeHeadless, HarnessInvocationModeServer},
+			statusCheck:        HarnessAuthSupportPartial,
+			login:              HarnessAuthSupportPartial,
+			loginMethods:       []string{"provider_env_key", "pi_interactive"},
+			logout:             HarnessAuthSupportUnsupported,
+			namedSlotStatus:    HarnessAuthSupportPartial,
+			namedSlotExecution: HarnessAuthSupportSupported,
+			slotScope:          "ari_env_keys",
+			riskLabels:         []string{"provider_owned", "ari_projected_env_keys", "env_projection_downgrade_risk"},
+			caveats:            []string{"env_key_presence_status_only", "named_execution_requires_ari_secret_grant", "no_provider_logout"},
+			startCall: func(t *testing.T) HarnessCallResult {
+				t.Helper()
+				runner := &fakePiRunner{output: []byte(strings.Join([]string{
+					`{"type":"agent_start"}`,
+					`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"usage":{"input":1,"output":1},"stopReason":"stop"}}`,
+					`{"type":"agent_end","messages":[]}`,
+				}, "\n"))}
+				executor := NewPiExecutorForTest(piExecutorOptions{Executable: "pi", Cwd: "/repo", RunCommand: runner.Run})
+				result, err := StartExecutorRunResult(context.Background(), executor, contractPacket, "", Profile{Name: "builder", Harness: HarnessNamePi, InvocationClass: HarnessInvocationSticky})
+				if err != nil {
+					t.Fatalf("StartExecutorRunResult returned error: %v", err)
+				}
+				return result
+			},
+			wantPersistence: HarnessSessionPersistent,
+			wantResumeMode:  HarnessResumeJSONRPC,
 			wantCursorKey:   "session_id",
 		},
 	}
@@ -172,7 +209,7 @@ func TestProviderAuthDescriptorsMatchCurrentHarnessBehavior(t *testing.T) {
 	for _, tt := range harnessAdapterContractCases() {
 		t.Run(tt.name, func(t *testing.T) {
 			auth := tt.describer.Descriptor().Auth
-			if auth.StatusCheck != HarnessAuthSupportSupported || auth.Login != tt.login || auth.Logout != tt.logout || auth.NamedSlotStatus != tt.namedSlotStatus || auth.NamedSlotExecution != tt.namedSlotExecution || auth.SlotScope != tt.slotScope || auth.CredentialOwner != HarnessCredentialOwnerProvider {
+			if auth.StatusCheck != tt.statusCheck || auth.Login != tt.login || auth.Logout != tt.logout || auth.NamedSlotStatus != tt.namedSlotStatus || auth.NamedSlotExecution != tt.namedSlotExecution || auth.SlotScope != tt.slotScope || auth.CredentialOwner != HarnessCredentialOwnerProvider {
 				t.Fatalf("auth descriptor = %#v, want current %s capability facts", auth, tt.name)
 			}
 			if len(auth.RiskLabels) == 0 || len(auth.Caveats) == 0 {

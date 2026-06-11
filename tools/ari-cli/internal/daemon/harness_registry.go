@@ -37,6 +37,13 @@ func NewDefaultHarnessRegistry() *HarnessRegistry {
 	}, NewOpenCodeExecutor("").Descriptor()); err != nil {
 		panic(fmt.Sprintf("register default OpenCode harness: %v", err))
 	}
+	if err := registry.RegisterWithDescriptor(HarnessNamePi, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = sink
+		return NewPiExecutor(primaryFolder), nil
+	}, NewPiExecutor("").Descriptor()); err != nil {
+		panic(fmt.Sprintf("register default pi harness: %v", err))
+	}
 	if err := registry.Register(HarnessNamePTY, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		return NewPTYExecutorWithSink(req.Command, req.Args, primaryFolder, sink), nil
 	}); err != nil {
