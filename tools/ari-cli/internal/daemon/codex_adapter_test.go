@@ -191,6 +191,29 @@ func TestCodexWorkspaceDeliveryAppServerRequestInitializesBeforeTurn(t *testing.
 	}
 }
 
+func TestCodexWorkspaceDeliveryAppServerRequestRequiresTargetThread(t *testing.T) {
+	request, err := codexWorkspaceDeliveryAppServerRequest(WorkspaceDeliveryAttempt{Delivery: globaldb.PendingDelivery{DeliveryID: "pd-codex", WorkspaceID: "ws-1", SubscriptionID: "sub-1", EventIDs: []string{"we-1"}}})
+	if err == nil {
+		t.Fatalf("codexWorkspaceDeliveryAppServerRequest returned nil error and request %q, want missing target thread error", request)
+	}
+}
+
+func TestCodexWorkspaceDeliveryRejectsMissingTargetThreadBeforeRunDelivery(t *testing.T) {
+	runDeliveryCalled := false
+	executor := NewCodexExecutorForTest(codexExecutorOptions{RunDelivery: func(ctx context.Context, opts codexExecutorOptions, input string) (commandRunResult, error) {
+		runDeliveryCalled = true
+		return commandRunResult{}, nil
+	}})
+
+	_, err := executor.AttemptWorkspaceDelivery(context.Background(), WorkspaceDeliveryAttempt{Delivery: globaldb.PendingDelivery{DeliveryID: "pd-codex", WorkspaceID: "ws-1", SubscriptionID: "sub-1", EventIDs: []string{"we-1"}}})
+	if err == nil {
+		t.Fatalf("AttemptWorkspaceDelivery returned nil error, want missing target thread error")
+	}
+	if runDeliveryCalled {
+		t.Fatalf("RunDelivery was called for delivery without target thread id")
+	}
+}
+
 func TestCodexStdioTransportReadsLargeNotificationLines(t *testing.T) {
 	largeText := strings.Repeat("x", 128*1024)
 	params, err := json.Marshal(map[string]any{"item": map[string]string{"id": "large", "type": "agent_message", "text": largeText}})

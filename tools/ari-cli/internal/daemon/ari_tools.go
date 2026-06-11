@@ -946,7 +946,7 @@ func ariWorkspaceTimerGet(ctx context.Context, store *globaldb.Store, scope AriT
 	if err != nil {
 		return AriToolCallResponse{}, err
 	}
-	timer, err := scopedAriWorkspaceTimer(ctx, store, scope, stringValue(body, "timer_id"), false)
+	timer, err := scopedAriWorkspaceTimer(ctx, store, scope, stringValue(body, "timer_id"), true)
 	if err != nil {
 		return AriToolCallResponse{}, err
 	}
@@ -958,7 +958,7 @@ func ariWorkspaceTimerCancel(ctx context.Context, store *globaldb.Store, scope A
 	if err != nil {
 		return AriToolCallResponse{}, err
 	}
-	timer, err := scopedAriWorkspaceTimer(ctx, store, scope, stringValue(body, "timer_id"), true)
+	timer, err := scopedAriWorkspaceTimer(ctx, store, scope, stringValue(body, "timer_id"), false)
 	if err != nil {
 		return AriToolCallResponse{}, err
 	}
@@ -1052,7 +1052,7 @@ func ariWorkspaceEventOutput(event globaldb.WorkspaceEvent) map[string]any {
 
 const ariWorkspaceDeliveriesListDueMaxLimit = 1000
 
-func scopedAriWorkspaceTimer(ctx context.Context, store *globaldb.Store, scope AriToolScope, timerID string, requireOwner bool) (globaldb.WorkspaceTimer, error) {
+func scopedAriWorkspaceTimer(ctx context.Context, store *globaldb.Store, scope AriToolScope, timerID string, allowBlankOwner bool) (globaldb.WorkspaceTimer, error) {
 	timerID = strings.TrimSpace(timerID)
 	if timerID == "" {
 		return globaldb.WorkspaceTimer{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "missing_required_fields", "missing_field": "timer_id"})
@@ -1065,7 +1065,11 @@ func scopedAriWorkspaceTimer(ctx context.Context, store *globaldb.Store, scope A
 		return globaldb.WorkspaceTimer{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "timer_scope_mismatch", "timer_id": timer.TimerID, "workspace_id": strings.TrimSpace(scope.WorkspaceID), "timer_workspace_id": timer.WorkspaceID})
 	}
 	ownerSessionID := strings.TrimSpace(timer.OwnerSessionID)
-	if requireOwner && ownerSessionID != strings.TrimSpace(scope.SourceRunID) {
+	scopeSourceRunID := strings.TrimSpace(scope.SourceRunID)
+	if ownerSessionID == "" && allowBlankOwner {
+		return timer, nil
+	}
+	if ownerSessionID != scopeSourceRunID {
 		return globaldb.WorkspaceTimer{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "timer_scope_mismatch", "timer_id": timer.TimerID, "owner_session_id": ownerSessionID, "scope_source_run_id": strings.TrimSpace(scope.SourceRunID)})
 	}
 	return timer, nil

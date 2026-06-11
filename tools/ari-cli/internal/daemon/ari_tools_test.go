@@ -285,6 +285,9 @@ func TestAriWorkspaceTimerToolsRejectBlankOwnerMismatch(t *testing.T) {
 	if _, err := store.CreateWorkspaceTimer(ctx, globaldb.WorkspaceTimer{TimerID: "timer-system", WorkspaceID: "ws-1", FireAt: fireAt}); err != nil {
 		t.Fatalf("CreateWorkspaceTimer returned error: %v", err)
 	}
+	if _, err := store.CreateWorkspaceTimer(ctx, globaldb.WorkspaceTimer{TimerID: "timer-other-owner", WorkspaceID: "ws-1", OwnerSessionID: "other-run", FireAt: fireAt}); err != nil {
+		t.Fatalf("CreateWorkspaceTimer other owner returned error: %v", err)
+	}
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
 	if err := d.registerMethods(registry, store); err != nil {
@@ -299,6 +302,10 @@ func TestAriWorkspaceTimerToolsRejectBlankOwnerMismatch(t *testing.T) {
 	_, err := callMethodResult[AriToolCallResponse](registry, "ari.tool.call", AriToolCallRequest{Name: "ari.workspace.timers.cancel", Scope: scope, Input: map[string]any{"timer_id": "timer-system"}})
 	if err == nil {
 		t.Fatalf("timers.cancel returned nil error, want timer scope mismatch")
+	}
+	_, err = callMethodResult[AriToolCallResponse](registry, "ari.tool.call", AriToolCallRequest{Name: "ari.workspace.timers.get", Scope: scope, Input: map[string]any{"timer_id": "timer-other-owner"}})
+	if err == nil {
+		t.Fatalf("timers.get returned nil error for other owner, want timer scope mismatch")
 	}
 }
 

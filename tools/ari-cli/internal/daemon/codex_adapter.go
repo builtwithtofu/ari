@@ -435,8 +435,8 @@ func (e *CodexExecutor) AttemptWorkspaceDelivery(ctx context.Context, attempt Wo
 	if e == nil {
 		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("executor is required")
 	}
-	if strings.TrimSpace(attempt.Delivery.DeliveryID) == "" || len(attempt.Delivery.EventIDs) == 0 {
-		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("delivery id and event ids are required")
+	if strings.TrimSpace(attempt.Delivery.TargetID) == "" || strings.TrimSpace(attempt.Delivery.DeliveryID) == "" || len(attempt.Delivery.EventIDs) == 0 {
+		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("delivery target thread id, delivery id, and event ids are required")
 	}
 	request, err := codexWorkspaceDeliveryAppServerRequest(attempt)
 	if err != nil {
@@ -482,7 +482,7 @@ func codexPromptFromRequest(req ExecutorStartRequest) string {
 func codexWorkspaceDeliveryAppServerRequest(attempt WorkspaceDeliveryAttempt) (string, error) {
 	threadID := strings.TrimSpace(attempt.Delivery.TargetID)
 	if threadID == "" {
-		threadID = strings.TrimSpace(attempt.Delivery.SubscriptionID)
+		return "", fmt.Errorf("delivery target thread id is required")
 	}
 	messages := []map[string]any{
 		{

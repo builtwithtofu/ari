@@ -78,7 +78,9 @@ func validateFanoutMemberProjection(member FanoutMember) error {
 func upsertFanoutMemberWithQueries(ctx context.Context, queries *dbsqlc.Queries, member FanoutMember) error {
 	status := defaultString(strings.TrimSpace(member.Status), "running")
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if err := queries.UpsertFanoutMember(ctx, dbsqlc.UpsertFanoutMemberParams{FanoutMemberID: strings.TrimSpace(member.FanoutMemberID), FanoutGroupID: strings.TrimSpace(member.FanoutGroupID), WorkspaceID: strings.TrimSpace(member.WorkspaceID), WorkerSessionID: strings.TrimSpace(member.WorkerSessionID), TargetProfileID: strings.TrimSpace(member.TargetProfileID), RequestAgentMessageID: strings.TrimSpace(member.RequestAgentMessageID), ReplyAgentMessageID: strings.TrimSpace(member.ReplyAgentMessageID), FinalResponseID: strings.TrimSpace(member.FinalResponseID), Status: status, CreatedAt: now, UpdatedAt: now}); err != nil {
+	createdAt := defaultString(strings.TrimSpace(member.CreatedAt), now)
+	updatedAt := defaultString(strings.TrimSpace(member.UpdatedAt), now)
+	if err := queries.UpsertFanoutMember(ctx, dbsqlc.UpsertFanoutMemberParams{FanoutMemberID: strings.TrimSpace(member.FanoutMemberID), FanoutGroupID: strings.TrimSpace(member.FanoutGroupID), WorkspaceID: strings.TrimSpace(member.WorkspaceID), WorkerSessionID: strings.TrimSpace(member.WorkerSessionID), TargetProfileID: strings.TrimSpace(member.TargetProfileID), RequestAgentMessageID: strings.TrimSpace(member.RequestAgentMessageID), ReplyAgentMessageID: strings.TrimSpace(member.ReplyAgentMessageID), FinalResponseID: strings.TrimSpace(member.FinalResponseID), Status: status, CreatedAt: createdAt, UpdatedAt: updatedAt}); err != nil {
 		return fmt.Errorf("upsert fanout member %q: %w", member.FanoutMemberID, err)
 	}
 	return nil
@@ -133,6 +135,10 @@ func (s *Store) ProjectFanoutWorkerEvent(ctx context.Context, event WorkspaceEve
 		if err := createWorkspaceEventWithQueries(ctx, queries, &event); err != nil {
 			return err
 		}
+		if strings.TrimSpace(member.CreatedAt) == "" {
+			member.CreatedAt = event.CreatedAt.UTC().Format(time.RFC3339Nano)
+		}
+		member.UpdatedAt = event.CreatedAt.UTC().Format(time.RFC3339Nano)
 		if err := createPendingDeliveriesForWorkspaceEvent(ctx, queries, event); err != nil {
 			return err
 		}

@@ -35,6 +35,9 @@ func TestProjectFanoutWorkerEventWritesEventMemberInboxAndDeliveryAtomically(t *
 	if err != nil || len(members) != 1 || members[0].Status != "completed" || members[0].FinalResponseID != "fr-1" {
 		t.Fatalf("members = %#v err=%v, want completed member with final response", members, err)
 	}
+	if members[0].UpdatedAt != stored.CreatedAt.UTC().Format(time.RFC3339Nano) {
+		t.Fatalf("member updated_at = %q, want emitted event time %q", members[0].UpdatedAt, stored.CreatedAt.UTC().Format(time.RFC3339Nano))
+	}
 	item, err := store.GetInboxItem(ctx, "inbox-fg-atomic-m1")
 	if err != nil {
 		t.Fatalf("GetInboxItem returned error: %v", err)

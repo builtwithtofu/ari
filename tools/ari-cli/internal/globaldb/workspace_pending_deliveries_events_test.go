@@ -123,6 +123,26 @@ func TestPendingDeliveryTransitionsEmitEventsAtomically(t *testing.T) {
 	}
 }
 
+func TestRecordPendingDeliveryAttemptEmitsRetryEvent(t *testing.T) {
+	store := newGlobalDBTestStore(t, "pending-delivery-record-attempt-event")
+	ctx := context.Background()
+	base := time.Date(2026, 6, 11, 9, 30, 0, 0, time.UTC)
+	delivery := seedDuePendingDeliveryForEvents(t, store, ctx, base)
+	retryAt := base.Add(5 * time.Minute)
+
+	if _, err := store.RecordPendingDeliveryAttempt(ctx, delivery.DeliveryID, &retryAt, "manual retry"); err != nil {
+		t.Fatalf("RecordPendingDeliveryAttempt returned error: %v", err)
+	}
+	events := deliveryEventsForSubject(t, store, ctx, delivery.WorkspaceID, delivery.DeliveryID)
+	if len(events) != 1 || events[0].EventType != "delivery.retry_scheduled" {
+		t.Fatalf("events after record attempt = %#v, want delivery.retry_scheduled", events)
+	}
+	payload := workspaceEventStringPayloadForTest(t, events[0].PayloadJSON)
+	if payload["last_error"] != "manual retry" || payload["attempts"] != "1" || !strings.HasPrefix(payload["next_attempt_at"], "2026-06-11T09:35:00") {
+		t.Fatalf("record attempt payload = %#v, want retry facts", payload)
+	}
+}
+
 func TestFailPendingDeliveryEmitsAttentionEventAtomically(t *testing.T) {
 	store := newGlobalDBTestStore(t, "pending-delivery-fail-event")
 	ctx := context.Background()

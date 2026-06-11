@@ -197,8 +197,8 @@ func TestWorkspaceDeliveryWorkerFailsRetryAfterMaxAttempts(t *testing.T) {
 	if len(unread) != 1 || unread[0].EventID != event.EventID {
 		t.Fatalf("subscription unread = %#v, want original event still unread", unread)
 	}
-	if gotTypes := workspaceEventTypes(listDeliveryWorkspaceEvents(t, store, delivery.WorkspaceID, event.Sequence)); !sameStringSlice(gotTypes, []string{"delivery.attempted", "delivery.failed"}) {
-		t.Fatalf("delivery event types = %#v, want attempted then failed", gotTypes)
+	if gotTypes := workspaceEventTypes(listDeliveryWorkspaceEvents(t, store, delivery.WorkspaceID, event.Sequence)); !sameStringSlice(gotTypes, []string{"delivery.retry_scheduled", "delivery.retry_scheduled", "delivery.attempted", "delivery.failed"}) {
+		t.Fatalf("delivery event types = %#v, want retry records then attempted and failed", gotTypes)
 	}
 }
 

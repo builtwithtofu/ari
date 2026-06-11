@@ -113,7 +113,7 @@ func (s *Store) ListDuePendingDeliveries(ctx context.Context, now time.Time, lim
 		limit = 100
 	}
 	formatted := now.UTC().Format(time.RFC3339Nano)
-	rows, err := s.sqlcQueries().ListDuePendingDeliveries(ctx, dbsqlc.ListDuePendingDeliveriesParams{NextAttemptAt: &formatted, DeadlineAt: &formatted, Limit: int64(limit)})
+	rows, err := s.sqlcQueries().ListDuePendingDeliveries(ctx, dbsqlc.ListDuePendingDeliveriesParams{NextAttemptAt: &formatted, DeadlineAt: &formatted, TimeoutAt: &formatted, Limit: int64(limit)})
 	if err != nil {
 		return nil, fmt.Errorf("list due pending deliveries: %w", err)
 	}
@@ -142,7 +142,7 @@ func (s *Store) ListDuePendingDeliveriesForScope(ctx context.Context, now time.T
 		limit = 100
 	}
 	formatted := now.UTC().Format(time.RFC3339Nano)
-	rows, err := s.sqlcQueries().ListDuePendingDeliveriesForScope(ctx, dbsqlc.ListDuePendingDeliveriesForScopeParams{WorkspaceID: workspaceID, OwnerSessionID: strings.TrimSpace(ownerSessionID), NextAttemptAt: &formatted, DeadlineAt: &formatted, Limit: int64(limit)})
+	rows, err := s.sqlcQueries().ListDuePendingDeliveriesForScope(ctx, dbsqlc.ListDuePendingDeliveriesForScopeParams{WorkspaceID: workspaceID, OwnerSessionID: strings.TrimSpace(ownerSessionID), NextAttemptAt: &formatted, DeadlineAt: &formatted, TimeoutAt: &formatted, Limit: int64(limit)})
 	if err != nil {
 		return nil, fmt.Errorf("list scoped due pending deliveries: %w", err)
 	}
@@ -183,14 +183,25 @@ func (s *Store) RecordPendingDeliveryAttempt(ctx context.Context, deliveryID str
 		return PendingDelivery{}, fmt.Errorf("%w: delivery id is required", ErrInvalidInput)
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	rows, err := s.sqlcQueries().RecordPendingDeliveryAttempt(ctx, dbsqlc.RecordPendingDeliveryAttemptParams{NextAttemptAt: formatOptionalTime(nextAttemptAt), LastError: strings.TrimSpace(lastError), UpdatedAt: now, DeliveryID: deliveryID})
-	if err != nil {
-		return PendingDelivery{}, fmt.Errorf("record pending delivery attempt %q: %w", deliveryID, err)
+	var delivery PendingDelivery
+	if err := s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
+		rows, err := queries.RecordPendingDeliveryAttempt(ctx, dbsqlc.RecordPendingDeliveryAttemptParams{NextAttemptAt: formatOptionalTime(nextAttemptAt), LastError: strings.TrimSpace(lastError), UpdatedAt: now, DeliveryID: deliveryID})
+		if err != nil {
+			return fmt.Errorf("record pending delivery attempt %q: %w", deliveryID, err)
+		}
+		if rows == 0 {
+			return ErrNotFound
+		}
+		row, err := queries.GetPendingDelivery(ctx, dbsqlc.GetPendingDeliveryParams{DeliveryID: deliveryID})
+		if err != nil {
+			return fmt.Errorf("get recorded pending delivery %q: %w", deliveryID, err)
+		}
+		delivery = pendingDeliveryFromSQLC(row)
+		return appendPendingDeliveryEventWithQueries(ctx, queries, delivery, pendingDeliveryEventRetryScheduled, "retry", delivery.LastError, delivery.NextAttemptAt)
+	}); err != nil {
+		return PendingDelivery{}, err
 	}
-	if rows == 0 {
-		return PendingDelivery{}, ErrNotFound
-	}
-	return s.GetPendingDelivery(ctx, deliveryID)
+	return delivery, nil
 }
 
 func (s *Store) ClaimDuePendingDeliveryAttempt(ctx context.Context, deliveryID string, now time.Time) (PendingDelivery, error) {
@@ -307,6 +318,9 @@ func ackSubscriptionForCompletedDelivery(ctx context.Context, queries *dbsqlc.Qu
 		}
 		for _, event := range events {
 			sequence = event.Sequence
+			if strings.HasPrefix(event.EventType, "delivery.") {
+				continue
+			}
 			if !filter.matches(event) {
 				continue
 			}
@@ -344,13 +358,27 @@ updateCursor:
 func pendingDeliveryForSubscriptionEventIsCompleted(ctx context.Context, queries *dbsqlc.Queries, subscriptionID, eventID string) (bool, error) {
 	deliveryID := pendingDeliveryIDForSubscriptionEvent(subscriptionID, eventID)
 	row, err := queries.GetPendingDelivery(ctx, dbsqlc.GetPendingDeliveryParams{DeliveryID: deliveryID})
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return false, nil
-		}
-		return false, fmt.Errorf("get pending delivery %q: %w", deliveryID, err)
+	if err == nil && row.Status == pendingDeliveryStatusCompleted {
+		return true, nil
 	}
-	return row.Status == pendingDeliveryStatusCompleted, nil
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return false, fmt.Errorf("get pending delivery %q: %w", deliveryID, err)
+		}
+	}
+	rows, listErr := queries.ListCompletedPendingDeliveriesForSubscription(ctx, dbsqlc.ListCompletedPendingDeliveriesForSubscriptionParams{SubscriptionID: subscriptionID})
+	if listErr != nil {
+		return false, fmt.Errorf("list completed pending deliveries for subscription %q: %w", subscriptionID, listErr)
+	}
+	for _, candidate := range rows {
+		delivery := pendingDeliveryFromSQLC(candidate)
+		for _, candidateEventID := range delivery.EventIDs {
+			if strings.TrimSpace(candidateEventID) == strings.TrimSpace(eventID) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 func listWorkspaceEventsAfterSequenceWithQueries(ctx context.Context, queries *dbsqlc.Queries, workspaceID string, afterSequence int64, limit int) ([]WorkspaceEvent, error) {
