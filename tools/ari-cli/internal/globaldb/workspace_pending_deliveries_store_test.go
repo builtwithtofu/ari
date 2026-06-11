@@ -148,6 +148,39 @@ func TestCompletedDeliveryAcksOnlyContiguousDeliveredEvents(t *testing.T) {
 	}
 }
 
+func TestCompletedCustomDeliveryAcksItsEventIDs(t *testing.T) {
+	store := newGlobalDBTestStore(t, "pending-delivery-custom-id-ack")
+	ctx := context.Background()
+	base := time.Date(2026, 6, 11, 12, 30, 0, 0, time.UTC)
+
+	if err := store.CreateWorkspace(ctx, "ws-custom-id-ack", "ws-custom-id-ack", t.TempDir(), "manual", "auto"); err != nil {
+		t.Fatalf("CreateWorkspace returned error: %v", err)
+	}
+	if _, err := store.CreateEventSubscription(ctx, EventSubscription{SubscriptionID: "sub-custom-id-ack", WorkspaceID: "ws-custom-id-ack", OwnerSessionID: "orch-custom-id-ack", FilterJSON: `{"event_types":["worker.completed"]}`, DeliveryTargetType: "harness_session", DeliveryTargetID: "orch-custom-id-ack", DeliveryPolicyJSON: `{"channel":"visible_prompt_turn"}`, CreatedAt: base, UpdatedAt: base}); err != nil {
+		t.Fatalf("CreateEventSubscription returned error: %v", err)
+	}
+	event, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-custom-id-ack", WorkspaceID: "ws-custom-id-ack", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-custom-id-ack", ProducerType: "session", ProducerID: "worker-custom-id-ack", CreatedAt: base.Add(time.Second)})
+	if err != nil {
+		t.Fatalf("AppendWorkspaceEvent returned error: %v", err)
+	}
+	nextAttempt := base.Add(time.Minute)
+	customDelivery, err := store.CreatePendingDelivery(ctx, PendingDelivery{DeliveryID: "pd-custom-manual", WorkspaceID: "ws-custom-id-ack", SubscriptionID: "sub-custom-id-ack", TargetType: "harness_session", TargetID: "orch-custom-id-ack", EventIDs: []string{event.EventID}, NextAttemptAt: &nextAttempt, CreatedAt: base, UpdatedAt: base})
+	if err != nil {
+		t.Fatalf("CreatePendingDelivery returned error: %v", err)
+	}
+	if _, err := store.CompletePendingDelivery(ctx, customDelivery.DeliveryID); err != nil {
+		t.Fatalf("CompletePendingDelivery returned error: %v", err)
+	}
+
+	subscription, err := store.GetEventSubscription(ctx, "sub-custom-id-ack")
+	if err != nil {
+		t.Fatalf("GetEventSubscription returned error: %v", err)
+	}
+	if subscription.CursorSequence != event.Sequence || subscription.AckSequence != event.Sequence {
+		t.Fatalf("subscription cursor/ack after custom delivery = %d/%d, want %d", subscription.CursorSequence, subscription.AckSequence, event.Sequence)
+	}
+}
+
 func TestOverdueDeliveriesAreFailedBeforeDueSelection(t *testing.T) {
 	store := newGlobalDBTestStore(t, "pending-delivery-deadline")
 	ctx := context.Background()
