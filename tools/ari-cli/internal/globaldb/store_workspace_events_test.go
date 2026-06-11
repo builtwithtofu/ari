@@ -132,6 +132,37 @@ func TestWorkspaceEventValidation(t *testing.T) {
 	}
 }
 
+func TestWorkspaceEventTimestampParseFailuresSurface(t *testing.T) {
+	store := newGlobalDBTestStore(t, "workspace-events-invalid-timestamps")
+	ctx := context.Background()
+	base := time.Date(2026, 6, 11, 16, 30, 0, 0, time.UTC)
+
+	for _, workspaceID := range []string{"ws-invalid-timestamps", "ws-invalid-subscription-timestamps"} {
+		if err := store.CreateWorkspace(ctx, workspaceID, workspaceID, t.TempDir(), "manual", "auto"); err != nil {
+			t.Fatalf("CreateWorkspace %s returned error: %v", workspaceID, err)
+		}
+	}
+	if _, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-invalid-timestamp", WorkspaceID: "ws-invalid-timestamps", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-invalid-timestamp", CreatedAt: base}); err != nil {
+		t.Fatalf("AppendWorkspaceEvent returned error: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE workspace_events SET created_at = 'not-a-time' WHERE event_id = 'we-invalid-timestamp'`); err != nil {
+		t.Fatalf("corrupt workspace event timestamp: %v", err)
+	}
+	if _, err := store.ListWorkspaceEventsAfterSequence(ctx, "ws-invalid-timestamps", 0, 10); err == nil {
+		t.Fatalf("ListWorkspaceEventsAfterSequence returned nil error, want timestamp parse failure")
+	}
+
+	if _, err := store.CreateEventSubscription(ctx, EventSubscription{SubscriptionID: "sub-invalid-timestamp", WorkspaceID: "ws-invalid-subscription-timestamps", OwnerSessionID: "orch-invalid-timestamp", FilterJSON: `{}`, CreatedAt: base, UpdatedAt: base}); err != nil {
+		t.Fatalf("CreateEventSubscription returned error: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE event_subscriptions SET updated_at = 'not-a-time' WHERE subscription_id = 'sub-invalid-timestamp'`); err != nil {
+		t.Fatalf("corrupt event subscription timestamp: %v", err)
+	}
+	if _, err := store.GetEventSubscription(ctx, "sub-invalid-timestamp"); err == nil {
+		t.Fatalf("GetEventSubscription returned nil error, want timestamp parse failure")
+	}
+}
+
 func TestWorkspaceEventSequenceAllocationIsConcurrentSafe(t *testing.T) {
 	store := newGlobalDBTestStore(t, "workspace-events-concurrent-sequences")
 	ctx := context.Background()

@@ -63,9 +63,10 @@ type (
 )
 
 type ClaudeExecutor struct {
-	options claudeExecutorOptions
-	mu      sync.Mutex
-	runs    map[string][]TimelineItem
+	options         claudeExecutorOptions
+	mu              sync.Mutex
+	runs            map[string][]TimelineItem
+	deliveryOptions map[string]claudeExecutorOptions
 }
 
 func NewClaudeExecutor(cwd string) *ClaudeExecutor {
@@ -92,7 +93,7 @@ func newClaudeExecutor(options claudeExecutorOptions) *ClaudeExecutor {
 	if options.RunAuthCommand == nil {
 		options.RunAuthCommand = runClaudeAuthCommand
 	}
-	return &ClaudeExecutor{options: options, runs: map[string][]TimelineItem{}}
+	return &ClaudeExecutor{options: options, runs: map[string][]TimelineItem{}, deliveryOptions: map[string]claudeExecutorOptions{}}
 }
 
 func (options claudeExecutorOptions) withClaudeAuthSlotProjection(authSlotID string) (claudeExecutorOptions, error) {
@@ -236,6 +237,7 @@ func (e *ClaudeExecutor) Start(ctx context.Context, req ExecutorStartRequest) (E
 	items := claudeTimelineItemsFromResult(workspaceID, sessionID, result, options.InvocationMode)
 	e.mu.Lock()
 	e.runs[sessionID] = items
+	e.deliveryOptions[sessionID] = options
 	e.mu.Unlock()
 	return ExecutorRun{RunID: sessionID, SessionID: sessionID, Executor: HarnessNameClaude, ProviderSessionID: sessionID, ProviderRunID: sessionID, ExitCode: commandResult.ExitCode, ProcessSample: commandResult.ProcessSample, CapabilityNames: harnessCapabilitiesToStrings(e.Descriptor().Capabilities)}, nil
 }
@@ -270,7 +272,15 @@ func (e *ClaudeExecutor) AttemptWorkspaceDelivery(ctx context.Context, attempt W
 	if strings.TrimSpace(attempt.Delivery.DeliveryID) == "" || len(attempt.Delivery.EventIDs) == 0 {
 		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("delivery id and event ids are required")
 	}
-	commandResult, commandErr := e.options.RunDelivery(ctx, e.options, claudeWorkspaceDeliveryTurn(attempt))
+	deliveryOptions := e.options
+	if sessionID := strings.TrimSpace(attempt.Delivery.TargetID); sessionID != "" {
+		e.mu.Lock()
+		if options, ok := e.deliveryOptions[sessionID]; ok {
+			deliveryOptions = options
+		}
+		e.mu.Unlock()
+	}
+	commandResult, commandErr := deliveryOptions.RunDelivery(ctx, deliveryOptions, claudeWorkspaceDeliveryTurn(attempt))
 	deliveryResult, parseErr := parseClaudeManagedPTYDeliveryOutput(commandResult.Output)
 	if parseErr == nil {
 		return deliveryResult, nil

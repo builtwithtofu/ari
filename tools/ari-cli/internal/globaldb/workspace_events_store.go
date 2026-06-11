@@ -97,7 +97,10 @@ func createPendingDeliveriesForWorkspaceEvent(ctx context.Context, queries *dbsq
 		return fmt.Errorf("list active event subscriptions for %q: %w", event.WorkspaceID, err)
 	}
 	for _, row := range rows {
-		subscription := eventSubscriptionFromSQLC(row)
+		subscription, err := eventSubscriptionFromSQLC(row)
+		if err != nil {
+			return err
+		}
 		if strings.TrimSpace(subscription.DeliveryTargetType) == "" || strings.TrimSpace(subscription.DeliveryTargetID) == "" {
 			continue
 		}
@@ -153,7 +156,7 @@ func (s *Store) ListWorkspaceEventsAfterSequence(ctx context.Context, workspaceI
 	if err != nil {
 		return nil, fmt.Errorf("list workspace events for %q after %d: %w", workspaceID, afterSequence, err)
 	}
-	return workspaceEventsFromSQLC(rows), nil
+	return workspaceEventsFromSQLC(rows)
 }
 
 func (s *Store) CreateEventSubscription(ctx context.Context, subscription EventSubscription) (EventSubscription, error) {
@@ -231,7 +234,7 @@ func (s *Store) GetEventSubscription(ctx context.Context, subscriptionID string)
 		}
 		return EventSubscription{}, fmt.Errorf("get event subscription %q: %w", subscriptionID, err)
 	}
-	return eventSubscriptionFromSQLC(row), nil
+	return eventSubscriptionFromSQLC(row)
 }
 
 func (s *Store) ListEventSubscriptionEvents(ctx context.Context, subscriptionID string, limit int) ([]WorkspaceEvent, error) {
@@ -332,7 +335,7 @@ func subscriptionByIDWithQueries(ctx context.Context, queries *dbsqlc.Queries, s
 		}
 		return EventSubscription{}, fmt.Errorf("get event subscription %q: %w", subscriptionID, err)
 	}
-	return eventSubscriptionFromSQLC(row), nil
+	return eventSubscriptionFromSQLC(row)
 }
 
 func normalizeWorkspaceEvent(event WorkspaceEvent) WorkspaceEvent {
@@ -402,28 +405,44 @@ func validateEventSubscription(subscription EventSubscription) error {
 	return nil
 }
 
-func workspaceEventsFromSQLC(rows []dbsqlc.WorkspaceEvent) []WorkspaceEvent {
+func workspaceEventsFromSQLC(rows []dbsqlc.WorkspaceEvent) ([]WorkspaceEvent, error) {
 	events := make([]WorkspaceEvent, 0, len(rows))
 	for _, row := range rows {
-		events = append(events, workspaceEventFromSQLC(row))
+		event, err := workspaceEventFromSQLC(row)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, event)
 	}
-	return events
+	return events, nil
 }
 
-func workspaceEventFromSQLC(row dbsqlc.WorkspaceEvent) WorkspaceEvent {
-	createdAt, _ := time.Parse(time.RFC3339Nano, row.CreatedAt)
-	return WorkspaceEvent{EventID: row.EventID, WorkspaceID: row.WorkspaceID, Sequence: row.Sequence, EventType: row.EventType, SubjectType: row.SubjectType, SubjectID: row.SubjectID, ProducerType: row.ProducerType, ProducerID: row.ProducerID, CorrelationID: row.CorrelationID, CausationID: row.CausationID, PayloadJSON: row.PayloadJson, PayloadRefJSON: row.PayloadRefJson, AttentionRequired: row.AttentionRequired != 0, CreatedAt: createdAt}
+func workspaceEventFromSQLC(row dbsqlc.WorkspaceEvent) (WorkspaceEvent, error) {
+	createdAt, err := time.Parse(time.RFC3339Nano, row.CreatedAt)
+	if err != nil {
+		return WorkspaceEvent{}, fmt.Errorf("parse workspace event %q created_at %q: %w", row.EventID, row.CreatedAt, err)
+	}
+	return WorkspaceEvent{EventID: row.EventID, WorkspaceID: row.WorkspaceID, Sequence: row.Sequence, EventType: row.EventType, SubjectType: row.SubjectType, SubjectID: row.SubjectID, ProducerType: row.ProducerType, ProducerID: row.ProducerID, CorrelationID: row.CorrelationID, CausationID: row.CausationID, PayloadJSON: row.PayloadJson, PayloadRefJSON: row.PayloadRefJson, AttentionRequired: row.AttentionRequired != 0, CreatedAt: createdAt}, nil
 }
 
-func eventSubscriptionFromSQLC(row dbsqlc.EventSubscription) EventSubscription {
-	createdAt, _ := time.Parse(time.RFC3339Nano, row.CreatedAt)
-	updatedAt, _ := time.Parse(time.RFC3339Nano, row.UpdatedAt)
+func eventSubscriptionFromSQLC(row dbsqlc.EventSubscription) (EventSubscription, error) {
+	createdAt, err := time.Parse(time.RFC3339Nano, row.CreatedAt)
+	if err != nil {
+		return EventSubscription{}, fmt.Errorf("parse event subscription %q created_at %q: %w", row.SubscriptionID, row.CreatedAt, err)
+	}
+	updatedAt, err := time.Parse(time.RFC3339Nano, row.UpdatedAt)
+	if err != nil {
+		return EventSubscription{}, fmt.Errorf("parse event subscription %q updated_at %q: %w", row.SubscriptionID, row.UpdatedAt, err)
+	}
 	var timeoutAt *time.Time
 	if row.TimeoutAt != nil {
-		parsed, _ := time.Parse(time.RFC3339Nano, *row.TimeoutAt)
+		parsed, err := time.Parse(time.RFC3339Nano, *row.TimeoutAt)
+		if err != nil {
+			return EventSubscription{}, fmt.Errorf("parse event subscription %q timeout_at %q: %w", row.SubscriptionID, *row.TimeoutAt, err)
+		}
 		timeoutAt = &parsed
 	}
-	return EventSubscription{SubscriptionID: row.SubscriptionID, WorkspaceID: row.WorkspaceID, OwnerSessionID: row.OwnerSessionID, Name: row.Name, FilterJSON: row.FilterJson, DeliveryTargetType: row.DeliveryTargetType, DeliveryTargetID: row.DeliveryTargetID, DeliveryPolicyJSON: row.DeliveryPolicyJson, CursorSequence: row.CursorSequence, AckSequence: row.AckSequence, Status: row.Status, CompletionConditionJSON: row.CompletionConditionJson, TimeoutAt: timeoutAt, CreatedAt: createdAt, UpdatedAt: updatedAt}
+	return EventSubscription{SubscriptionID: row.SubscriptionID, WorkspaceID: row.WorkspaceID, OwnerSessionID: row.OwnerSessionID, Name: row.Name, FilterJSON: row.FilterJson, DeliveryTargetType: row.DeliveryTargetType, DeliveryTargetID: row.DeliveryTargetID, DeliveryPolicyJSON: row.DeliveryPolicyJson, CursorSequence: row.CursorSequence, AckSequence: row.AckSequence, Status: row.Status, CompletionConditionJSON: row.CompletionConditionJson, TimeoutAt: timeoutAt, CreatedAt: createdAt, UpdatedAt: updatedAt}, nil
 }
 
 func parseEventSubscriptionFilter(raw string) (EventSubscriptionFilter, error) {

@@ -163,6 +163,33 @@ func TestClaudeExecutorAttemptsManagedPTYDeliveryAgainstFakeHarness(t *testing.T
 	}
 }
 
+func TestClaudeExecutorReusesSessionAuthProjectionForDelivery(t *testing.T) {
+	startRunner := &fakeClaudeRunner{output: []byte(`Started background session 550e8400-e29b-41d4-a716-446655440001`)}
+	var deliveryProjection HarnessAuthProjectionPlan
+	executor := NewClaudeExecutorForTest(claudeExecutorOptions{
+		Executable: "claude",
+		Cwd:        "/repo",
+		RunCommand: startRunner.Run,
+		RunDelivery: func(ctx context.Context, opts claudeExecutorOptions, prompt string) (commandRunResult, error) {
+			_ = ctx
+			_ = prompt
+			deliveryProjection = opts.AuthProjection
+			return commandRunResult{Output: []byte(`{"channel":"managed_pty","status":"completed"}`)}, nil
+		},
+	})
+	projection := HarnessAuthProjectionPlan{Owner: HarnessAuthProjectionOwnerNative, Kind: HarnessAuthProjectionConfigRoot, Env: map[string]string{"CLAUDE_CONFIG_DIR": "/tmp/ari-claude-slot"}}
+	if _, err := executor.Start(context.Background(), ExecutorStartRequest{WorkspaceID: "ws-1", AuthProjection: projection, ContextPacket: `{"context_packet_id":"ctx_123"}`}); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+
+	if _, err := executor.AttemptWorkspaceDelivery(context.Background(), WorkspaceDeliveryAttempt{Delivery: globaldb.PendingDelivery{DeliveryID: "pd-claude-auth", WorkspaceID: "ws-1", SubscriptionID: "sub-1", TargetType: "harness_session", TargetID: "550e8400-e29b-41d4-a716-446655440001", EventIDs: []string{"we-1"}, Status: "attempted", Attempts: 1}}); err != nil {
+		t.Fatalf("AttemptWorkspaceDelivery returned error: %v", err)
+	}
+	if deliveryProjection.Kind != projection.Kind || deliveryProjection.Env["CLAUDE_CONFIG_DIR"] != projection.Env["CLAUDE_CONFIG_DIR"] {
+		t.Fatalf("delivery auth projection = %#v, want session projection %#v", deliveryProjection, projection)
+	}
+}
+
 func TestClaudeExecutorUsesTypedBackgroundOption(t *testing.T) {
 	runner := &fakeClaudeRunner{output: []byte(`Started background session 550e8400-e29b-41d4-a716-446655440000`)}
 	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunCommand: runner.Run})

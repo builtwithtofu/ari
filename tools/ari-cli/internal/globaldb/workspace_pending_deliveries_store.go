@@ -358,7 +358,7 @@ func listWorkspaceEventsAfterSequenceWithQueries(ctx context.Context, queries *d
 	if err != nil {
 		return nil, fmt.Errorf("list workspace events for %q after %d: %w", workspaceID, afterSequence, err)
 	}
-	return workspaceEventsFromSQLC(rows), nil
+	return workspaceEventsFromSQLC(rows)
 }
 
 func failPendingDeliveriesForSubscriptionWithQueries(ctx context.Context, queries *dbsqlc.Queries, subscriptionID, lastError string, now time.Time) error {
