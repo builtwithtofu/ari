@@ -6,7 +6,7 @@ Date: 2026-05-18
 
 ## Context
 
-Ari runs LLM work through external harnesses such as Claude Code, Codex, OpenCode, and future adapters. These harnesses already own model interaction, provider authentication, native tools, permissions, project memory, transcripts, and interaction quality.
+Ari runs LLM work through external harnesses such as Claude Code, Codex, OpenCode, pi, the Grok CLI, and future adapters. These harnesses already own model interaction, provider authentication, native tools, permissions, project memory, transcripts, and interaction quality.
 
 Ari's value is the durable runtime around those harnesses: workspaces, persistence, attach/inspect surfaces, attention, context movement, messages, profiles, and coordination. If Ari tries to become the harness, it loses the benefit of native harness behavior and becomes another provider-shaped agent framework.
 
