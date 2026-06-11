@@ -80,6 +80,35 @@ func TestWorkspaceEventSubscriptionContract(t *testing.T) {
 	}
 }
 
+func TestCreateEventSubscriptionBackfillsExistingEventDeliveries(t *testing.T) {
+	store := newGlobalDBTestStore(t, "workspace-events-subscription-backfill")
+	ctx := context.Background()
+	base := time.Date(2026, 6, 11, 16, 0, 0, 0, time.UTC)
+
+	if err := store.CreateWorkspace(ctx, "ws-backfill", "ws-backfill", t.TempDir(), "manual", "auto"); err != nil {
+		t.Fatalf("CreateWorkspace returned error: %v", err)
+	}
+	matching, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-backfill-match", WorkspaceID: "ws-backfill", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "worker-1", CreatedAt: base.Add(time.Second)})
+	if err != nil {
+		t.Fatalf("AppendWorkspaceEvent matching returned error: %v", err)
+	}
+	if _, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-backfill-delivery", WorkspaceID: "ws-backfill", EventType: "delivery.completed", SubjectType: "pending_delivery", SubjectID: "pd-1", ProducerType: "daemon", ProducerID: "workspace_delivery_worker", CreatedAt: base.Add(2 * time.Second)}); err != nil {
+		t.Fatalf("AppendWorkspaceEvent delivery returned error: %v", err)
+	}
+
+	if _, err := store.CreateEventSubscription(ctx, EventSubscription{SubscriptionID: "sub-backfill", WorkspaceID: "ws-backfill", OwnerSessionID: "orch-backfill", FilterJSON: `{"event_types":["worker.completed"]}`, DeliveryTargetType: "harness_session", DeliveryTargetID: "orch-backfill", CreatedAt: base, UpdatedAt: base}); err != nil {
+		t.Fatalf("CreateEventSubscription returned error: %v", err)
+	}
+
+	due, err := store.ListDuePendingDeliveries(ctx, base.Add(time.Minute), 10)
+	if err != nil {
+		t.Fatalf("ListDuePendingDeliveries returned error: %v", err)
+	}
+	if len(due) != 1 || due[0].SubscriptionID != "sub-backfill" || len(due[0].EventIDs) != 1 || due[0].EventIDs[0] != matching.EventID {
+		t.Fatalf("due deliveries = %#v, want backfilled delivery for matching existing event only", due)
+	}
+}
+
 func TestWorkspaceEventValidation(t *testing.T) {
 	store := newGlobalDBTestStore(t, "workspace-events-validation")
 	ctx := context.Background()

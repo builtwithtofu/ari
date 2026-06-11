@@ -102,11 +102,15 @@ func (e *OpenCodeExecutor) AuthLogout(ctx context.Context, slot HarnessAuthSlot)
 }
 
 func (e *OpenCodeExecutor) Descriptor() HarnessAdapterDescriptor {
+	deliveryCapabilities := []HarnessDeliveryCapability{}
+	if e != nil && strings.TrimSpace(e.options.DeliveryServerURL) != "" {
+		deliveryCapabilities = []HarnessDeliveryCapability{HarnessDeliveryVisiblePromptTurn}
+	}
 	return HarnessAdapterDescriptor{
 		Name:                    HarnessNameOpenCode,
 		Capabilities:            sharedHarnessRuntimeCapabilities(),
 		ObservationCapabilities: []HarnessObservationCapability{HarnessObservationUnsupported},
-		DeliveryCapabilities:    []HarnessDeliveryCapability{HarnessDeliveryVisiblePromptTurn},
+		DeliveryCapabilities:    deliveryCapabilities,
 		Auth: HarnessAuthDescriptor{
 			StatusCheck:        HarnessAuthSupportSupported,
 			Login:              HarnessAuthSupportPartial,

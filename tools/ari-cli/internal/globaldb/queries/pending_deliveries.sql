@@ -56,6 +56,16 @@ WHERE status = 'pending'
   AND deadline_at <= ?
 ORDER BY deadline_at ASC, created_at ASC, delivery_id ASC;
 
+-- name: RequeueStaleAttemptedPendingDeliveries :execrows
+UPDATE pending_deliveries
+SET status = 'pending',
+    next_attempt_at = ?,
+    last_error = 'delivery attempt interrupted before completion',
+    updated_at = ?
+WHERE status = 'attempted'
+  AND terminal_at IS NULL
+  AND updated_at <= ?;
+
 -- name: ListPendingDeliveriesForSubscription :many
 SELECT delivery_id, workspace_id, subscription_id, target_type, target_id, delivery_policy_json, event_ids_json, status, attempts, next_attempt_at, deadline_at, last_error, created_at, updated_at, terminal_at
 FROM pending_deliveries

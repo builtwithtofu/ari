@@ -175,10 +175,48 @@ func (s *Store) CreateEventSubscription(ctx context.Context, subscription EventS
 		formatted := subscription.TimeoutAt.UTC().Format(time.RFC3339Nano)
 		timeoutAt = &formatted
 	}
-	if err := s.sqlcQueries().CreateEventSubscription(ctx, dbsqlc.CreateEventSubscriptionParams{SubscriptionID: subscription.SubscriptionID, WorkspaceID: subscription.WorkspaceID, OwnerSessionID: subscription.OwnerSessionID, Name: subscription.Name, FilterJson: subscription.FilterJSON, DeliveryTargetType: subscription.DeliveryTargetType, DeliveryTargetID: subscription.DeliveryTargetID, DeliveryPolicyJson: subscription.DeliveryPolicyJSON, CursorSequence: subscription.CursorSequence, AckSequence: subscription.AckSequence, Status: subscription.Status, CompletionConditionJson: subscription.CompletionConditionJSON, TimeoutAt: timeoutAt, CreatedAt: subscription.CreatedAt.UTC().Format(time.RFC3339Nano), UpdatedAt: subscription.UpdatedAt.UTC().Format(time.RFC3339Nano)}); err != nil {
-		return EventSubscription{}, fmt.Errorf("create event subscription %q: %w", subscription.SubscriptionID, err)
+	if err := s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
+		if err := queries.CreateEventSubscription(ctx, dbsqlc.CreateEventSubscriptionParams{SubscriptionID: subscription.SubscriptionID, WorkspaceID: subscription.WorkspaceID, OwnerSessionID: subscription.OwnerSessionID, Name: subscription.Name, FilterJson: subscription.FilterJSON, DeliveryTargetType: subscription.DeliveryTargetType, DeliveryTargetID: subscription.DeliveryTargetID, DeliveryPolicyJson: subscription.DeliveryPolicyJSON, CursorSequence: subscription.CursorSequence, AckSequence: subscription.AckSequence, Status: subscription.Status, CompletionConditionJson: subscription.CompletionConditionJSON, TimeoutAt: timeoutAt, CreatedAt: subscription.CreatedAt.UTC().Format(time.RFC3339Nano), UpdatedAt: subscription.UpdatedAt.UTC().Format(time.RFC3339Nano)}); err != nil {
+			return fmt.Errorf("create event subscription %q: %w", subscription.SubscriptionID, err)
+		}
+		return createPendingDeliveriesForExistingSubscription(ctx, queries, subscription)
+	}); err != nil {
+		return EventSubscription{}, err
 	}
 	return subscription, nil
+}
+
+func createPendingDeliveriesForExistingSubscription(ctx context.Context, queries *dbsqlc.Queries, subscription EventSubscription) error {
+	if subscription.Status != eventSubscriptionStatusActive || strings.TrimSpace(subscription.DeliveryTargetType) == "" || strings.TrimSpace(subscription.DeliveryTargetID) == "" {
+		return nil
+	}
+	filter, err := parseEventSubscriptionFilter(subscription.FilterJSON)
+	if err != nil {
+		return fmt.Errorf("parse event subscription filter %q: %w", subscription.SubscriptionID, err)
+	}
+	sequence := subscription.CursorSequence
+	for {
+		events, err := listWorkspaceEventsAfterSequenceWithQueries(ctx, queries, subscription.WorkspaceID, sequence, 100)
+		if err != nil {
+			return err
+		}
+		if len(events) == 0 {
+			return nil
+		}
+		for _, event := range events {
+			sequence = event.Sequence
+			if strings.HasPrefix(event.EventType, "delivery.") || (subscription.TimeoutAt != nil && !subscription.TimeoutAt.After(event.CreatedAt)) || !filter.matches(event) {
+				continue
+			}
+			nextAttemptAt := event.CreatedAt
+			if _, err := createPendingDeliveryWithQueries(ctx, queries, PendingDelivery{DeliveryID: pendingDeliveryIDForSubscriptionEvent(subscription.SubscriptionID, event.EventID), WorkspaceID: event.WorkspaceID, SubscriptionID: subscription.SubscriptionID, TargetType: subscription.DeliveryTargetType, TargetID: subscription.DeliveryTargetID, DeliveryPolicyJSON: subscription.DeliveryPolicyJSON, EventIDs: []string{event.EventID}, NextAttemptAt: &nextAttemptAt}); err != nil {
+				return err
+			}
+		}
+		if len(events) < 100 {
+			return nil
+		}
+	}
 }
 
 func (s *Store) GetEventSubscription(ctx context.Context, subscriptionID string) (EventSubscription, error) {

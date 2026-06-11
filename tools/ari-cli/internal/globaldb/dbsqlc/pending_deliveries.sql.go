@@ -444,6 +444,31 @@ func (q *Queries) RecordPendingDeliveryAttempt(ctx context.Context, arg RecordPe
 	return result.RowsAffected()
 }
 
+const requeueStaleAttemptedPendingDeliveries = `-- name: RequeueStaleAttemptedPendingDeliveries :execrows
+UPDATE pending_deliveries
+SET status = 'pending',
+    next_attempt_at = ?,
+    last_error = 'delivery attempt interrupted before completion',
+    updated_at = ?
+WHERE status = 'attempted'
+  AND terminal_at IS NULL
+  AND updated_at <= ?
+`
+
+type RequeueStaleAttemptedPendingDeliveriesParams struct {
+	NextAttemptAt *string `json:"next_attempt_at"`
+	UpdatedAt     string  `json:"updated_at"`
+	UpdatedAt_2   string  `json:"updated_at_2"`
+}
+
+func (q *Queries) RequeueStaleAttemptedPendingDeliveries(ctx context.Context, arg RequeueStaleAttemptedPendingDeliveriesParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, requeueStaleAttemptedPendingDeliveries, arg.NextAttemptAt, arg.UpdatedAt, arg.UpdatedAt_2)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const schedulePendingDeliveryRetry = `-- name: SchedulePendingDeliveryRetry :execrows
 UPDATE pending_deliveries
 SET status = 'pending',

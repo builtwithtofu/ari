@@ -2015,8 +2015,9 @@ func (d *Daemon) startHarnessSession(ctx context.Context, store *globaldb.Store,
 	}
 	run := result.HarnessSession
 	items := result.Items
-	if run.Status == "running" || run.Status == "completed" {
-		d.registerActiveHarnessRun(run.WorkspaceID, run.HarnessSessionID, run.ProviderSessionID, executor, func() {})
+	if run.Status == "running" {
+		_, cancel := context.WithCancel(context.Background())
+		d.registerActiveHarnessRun(run.WorkspaceID, run.HarnessSessionID, run.ProviderSessionID, executor, cancel)
 	}
 	d.recordExecutorRun(run, items)
 	if err := newHarnessLifecycle(store).persistNewStickyResult(ctx, result, primaryFolder, profile...); err != nil {

@@ -16,9 +16,8 @@ func TestHarnessAdapterDescriptorsAdvertiseSharedRuntimeContract(t *testing.T) {
 		HarnessNameOpenCode: {HarnessObservationUnsupported},
 	}
 	expectedDelivery := map[string][]HarnessDeliveryCapability{
-		HarnessNameClaude:   {HarnessDeliveryVisiblePromptTurn},
-		HarnessNameCodex:    {HarnessDeliveryVisiblePromptTurn},
-		HarnessNameOpenCode: {HarnessDeliveryVisiblePromptTurn},
+		HarnessNameClaude: {HarnessDeliveryVisiblePromptTurn},
+		HarnessNameCodex:  {HarnessDeliveryVisiblePromptTurn},
 	}
 	adapters := []HarnessDescriber{
 		NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo"}),

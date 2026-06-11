@@ -13,6 +13,8 @@ import (
 )
 
 const (
+	pendingDeliveryAttemptLease = 5 * time.Minute
+
 	pendingDeliveryStatusPending   = "pending"
 	pendingDeliveryStatusAttempted = "attempted"
 	pendingDeliveryStatusCompleted = "completed"
@@ -55,6 +57,13 @@ func createPendingDeliveryWithQueries(ctx context.Context, queries *dbsqlc.Queri
 	if err := validatePendingDelivery(delivery); err != nil {
 		return PendingDelivery{}, err
 	}
+	subscription, err := subscriptionByIDWithQueries(ctx, queries, delivery.SubscriptionID)
+	if err != nil {
+		return PendingDelivery{}, err
+	}
+	if subscription.WorkspaceID != delivery.WorkspaceID {
+		return PendingDelivery{}, fmt.Errorf("%w: pending delivery workspace must match subscription workspace", ErrInvalidInput)
+	}
 	if delivery.DeliveryID == "" {
 		delivery.DeliveryID = randomID("pd")
 	}
@@ -94,6 +103,9 @@ func (s *Store) ListDuePendingDeliveries(ctx context.Context, now time.Time, lim
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
+	if err := s.requeueStaleAttemptedPendingDeliveries(ctx, now); err != nil {
+		return nil, err
+	}
 	if err := s.failExpiredPendingDeliveries(ctx, now); err != nil {
 		return nil, err
 	}
@@ -120,6 +132,9 @@ func (s *Store) ListDuePendingDeliveriesForScope(ctx context.Context, now time.T
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
+	if err := s.requeueStaleAttemptedPendingDeliveries(ctx, now); err != nil {
+		return nil, err
+	}
 	if err := s.failExpiredPendingDeliveries(ctx, now); err != nil {
 		return nil, err
 	}
@@ -136,6 +151,15 @@ func (s *Store) ListDuePendingDeliveriesForScope(ctx context.Context, now time.T
 		deliveries = append(deliveries, pendingDeliveryFromSQLC(row))
 	}
 	return deliveries, nil
+}
+
+func (s *Store) requeueStaleAttemptedPendingDeliveries(ctx context.Context, now time.Time) error {
+	formattedNow := now.UTC().Format(time.RFC3339Nano)
+	staleBefore := now.Add(-pendingDeliveryAttemptLease).UTC().Format(time.RFC3339Nano)
+	if _, err := s.sqlcQueries().RequeueStaleAttemptedPendingDeliveries(ctx, dbsqlc.RequeueStaleAttemptedPendingDeliveriesParams{NextAttemptAt: &formattedNow, UpdatedAt: formattedNow, UpdatedAt_2: staleBefore}); err != nil {
+		return fmt.Errorf("requeue stale attempted pending deliveries: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) failExpiredPendingDeliveries(ctx context.Context, now time.Time) error {
@@ -267,6 +291,10 @@ func ackSubscriptionForCompletedDelivery(ctx context.Context, queries *dbsqlc.Qu
 	if err != nil {
 		return fmt.Errorf("parse event subscription filter %q: %w", subscription.SubscriptionID, err)
 	}
+	completedByCurrentDelivery := make(map[string]struct{}, len(delivery.EventIDs))
+	for _, eventID := range delivery.EventIDs {
+		completedByCurrentDelivery[strings.TrimSpace(eventID)] = struct{}{}
+	}
 	sequence := subscription.CursorSequence
 	ackSequence := subscription.CursorSequence
 	for {
@@ -282,9 +310,12 @@ func ackSubscriptionForCompletedDelivery(ctx context.Context, queries *dbsqlc.Qu
 			if !filter.matches(event) {
 				continue
 			}
-			completed, err := pendingDeliveryForSubscriptionEventIsCompleted(ctx, queries, subscription.SubscriptionID, event.EventID)
-			if err != nil {
-				return err
+			_, completed := completedByCurrentDelivery[event.EventID]
+			if !completed {
+				completed, err = pendingDeliveryForSubscriptionEventIsCompleted(ctx, queries, subscription.SubscriptionID, event.EventID)
+				if err != nil {
+					return err
+				}
 			}
 			if !completed {
 				goto updateCursor

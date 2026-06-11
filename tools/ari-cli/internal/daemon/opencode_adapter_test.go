@@ -90,6 +90,18 @@ func TestOpenCodeExecutorAttemptsServerPromptDeliveryAgainstFakeHandler(t *testi
 	}
 }
 
+func TestOpenCodeExecutorAdvertisesDeliveryOnlyWithServerURL(t *testing.T) {
+	withoutServer := NewOpenCodeExecutorForTest(opencodeExecutorOptions{})
+	if got := withoutServer.Descriptor().DeliveryCapabilities; len(got) != 0 {
+		t.Fatalf("delivery capabilities without server = %#v, want none", got)
+	}
+
+	withServer := NewOpenCodeExecutorForTest(opencodeExecutorOptions{DeliveryServerURL: "http://127.0.0.1:3000"})
+	if got := withServer.Descriptor().DeliveryCapabilities; len(got) != 1 || got[0] != HarnessDeliveryVisiblePromptTurn {
+		t.Fatalf("delivery capabilities with server = %#v, want visible prompt turn", got)
+	}
+}
+
 func TestOpenCodeExecutorParsesLargeJSONLEvent(t *testing.T) {
 	largeText := strings.Repeat("x", 128*1024)
 	line, err := json.Marshal(map[string]any{"type": "message.part.updated", "properties": map[string]any{"part": map[string]string{"id": "part_1", "sessionID": "sess_123", "messageID": "msg_123", "type": "text", "text": largeText}}})

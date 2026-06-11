@@ -181,3 +181,51 @@ func TestOverdueDeliveriesAreFailedBeforeDueSelection(t *testing.T) {
 		t.Fatalf("overdue delivery = %#v, want terminal failure before dispatch", stored)
 	}
 }
+
+func TestStaleAttemptedDeliveriesAreRequeuedBeforeDueSelection(t *testing.T) {
+	store := newGlobalDBTestStore(t, "pending-delivery-stale-attempt")
+	ctx := context.Background()
+	base := time.Date(2026, 6, 11, 14, 0, 0, 0, time.UTC)
+
+	if err := store.CreateWorkspace(ctx, "ws-stale-attempt", "ws-stale-attempt", t.TempDir(), "manual", "auto"); err != nil {
+		t.Fatalf("CreateWorkspace returned error: %v", err)
+	}
+	if _, err := store.CreateEventSubscription(ctx, EventSubscription{SubscriptionID: "sub-stale-attempt", WorkspaceID: "ws-stale-attempt", OwnerSessionID: "orch-stale-attempt", FilterJSON: `{}`, DeliveryTargetType: "harness_session", DeliveryTargetID: "orch-stale-attempt", CreatedAt: base, UpdatedAt: base}); err != nil {
+		t.Fatalf("CreateEventSubscription returned error: %v", err)
+	}
+	nextAttempt := base
+	delivery, err := store.CreatePendingDelivery(ctx, PendingDelivery{DeliveryID: "pd-stale-attempt", WorkspaceID: "ws-stale-attempt", SubscriptionID: "sub-stale-attempt", TargetType: "harness_session", TargetID: "orch-stale-attempt", EventIDs: []string{"we-stale-attempt"}, NextAttemptAt: &nextAttempt, CreatedAt: base, UpdatedAt: base})
+	if err != nil {
+		t.Fatalf("CreatePendingDelivery returned error: %v", err)
+	}
+	if _, err := store.ClaimDuePendingDeliveryAttempt(ctx, delivery.DeliveryID, base.Add(time.Minute)); err != nil {
+		t.Fatalf("ClaimDuePendingDeliveryAttempt returned error: %v", err)
+	}
+
+	due, err := store.ListDuePendingDeliveries(ctx, base.Add(time.Minute).Add(pendingDeliveryAttemptLease), 10)
+	if err != nil {
+		t.Fatalf("ListDuePendingDeliveries returned error: %v", err)
+	}
+	if len(due) != 1 || due[0].DeliveryID != delivery.DeliveryID || due[0].Status != pendingDeliveryStatusPending || due[0].Attempts != 1 || due[0].LastError == "" {
+		t.Fatalf("due deliveries after stale attempt = %#v, want original delivery requeued as pending", due)
+	}
+}
+
+func TestCreatePendingDeliveryRequiresSubscriptionWorkspace(t *testing.T) {
+	store := newGlobalDBTestStore(t, "pending-delivery-subscription-workspace")
+	ctx := context.Background()
+	base := time.Date(2026, 6, 11, 15, 0, 0, 0, time.UTC)
+
+	for _, workspaceID := range []string{"ws-subscription", "ws-delivery"} {
+		if err := store.CreateWorkspace(ctx, workspaceID, workspaceID, t.TempDir(), "manual", "auto"); err != nil {
+			t.Fatalf("CreateWorkspace %s returned error: %v", workspaceID, err)
+		}
+	}
+	if _, err := store.CreateEventSubscription(ctx, EventSubscription{SubscriptionID: "sub-workspace", WorkspaceID: "ws-subscription", OwnerSessionID: "orch-workspace", FilterJSON: `{}`, DeliveryTargetType: "harness_session", DeliveryTargetID: "orch-workspace", CreatedAt: base, UpdatedAt: base}); err != nil {
+		t.Fatalf("CreateEventSubscription returned error: %v", err)
+	}
+	nextAttempt := base
+	if _, err := store.CreatePendingDelivery(ctx, PendingDelivery{DeliveryID: "pd-wrong-workspace", WorkspaceID: "ws-delivery", SubscriptionID: "sub-workspace", TargetType: "harness_session", TargetID: "orch-workspace", EventIDs: []string{"we-workspace"}, NextAttemptAt: &nextAttempt, CreatedAt: base, UpdatedAt: base}); err == nil {
+		t.Fatalf("CreatePendingDelivery returned nil error, want workspace mismatch rejection")
+	}
+}
