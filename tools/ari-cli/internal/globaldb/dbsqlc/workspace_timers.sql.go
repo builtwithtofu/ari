@@ -48,19 +48,19 @@ INSERT INTO workspace_timers (
 `
 
 type CreateWorkspaceTimerParams struct {
-	TimerID        string `json:"timer_id"`
-	WorkspaceID    string `json:"workspace_id"`
-	OwnerSessionID string `json:"owner_session_id"`
-	SubscriptionID string `json:"subscription_id"`
-	SubjectType    string `json:"subject_type"`
-	SubjectID      string `json:"subject_id"`
-	Purpose        string `json:"purpose"`
-	Status         string `json:"status"`
-	FireAt         string `json:"fire_at"`
-	PayloadJson    string `json:"payload_json"`
-	FiredEventID   string `json:"fired_event_id"`
-	CreatedAt      string `json:"created_at"`
-	UpdatedAt      string `json:"updated_at"`
+	TimerID        string  `json:"timer_id"`
+	WorkspaceID    string  `json:"workspace_id"`
+	OwnerSessionID string  `json:"owner_session_id"`
+	SubscriptionID *string `json:"subscription_id"`
+	SubjectType    string  `json:"subject_type"`
+	SubjectID      string  `json:"subject_id"`
+	Purpose        string  `json:"purpose"`
+	Status         string  `json:"status"`
+	FireAt         string  `json:"fire_at"`
+	PayloadJson    string  `json:"payload_json"`
+	FiredEventID   string  `json:"fired_event_id"`
+	CreatedAt      string  `json:"created_at"`
+	UpdatedAt      string  `json:"updated_at"`
 }
 
 func (q *Queries) CreateWorkspaceTimer(ctx context.Context, arg CreateWorkspaceTimerParams) error {

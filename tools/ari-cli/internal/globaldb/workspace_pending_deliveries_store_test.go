@@ -356,6 +356,44 @@ func TestStaleAttemptedDeliveriesAreRequeuedBeforeDueSelection(t *testing.T) {
 	}
 }
 
+func TestScopedDueDeliverySelectionDoesNotMutateOtherWorkspaces(t *testing.T) {
+	store := newGlobalDBTestStore(t, "pending-delivery-scoped-readonly")
+	ctx := context.Background()
+	base := time.Date(2026, 6, 11, 14, 30, 0, 0, time.UTC)
+
+	for _, workspaceID := range []string{"ws-scope", "ws-other"} {
+		if err := store.CreateWorkspace(ctx, workspaceID, workspaceID, t.TempDir(), "manual", "auto"); err != nil {
+			t.Fatalf("CreateWorkspace %s returned error: %v", workspaceID, err)
+		}
+		if _, err := store.CreateEventSubscription(ctx, EventSubscription{SubscriptionID: "sub-" + workspaceID, WorkspaceID: workspaceID, OwnerSessionID: "owner-" + workspaceID, FilterJSON: `{}`, DeliveryTargetType: "harness_session", DeliveryTargetID: "owner-" + workspaceID, CreatedAt: base, UpdatedAt: base}); err != nil {
+			t.Fatalf("CreateEventSubscription %s returned error: %v", workspaceID, err)
+		}
+	}
+	nextAttempt := base
+	other, err := store.CreatePendingDelivery(ctx, PendingDelivery{DeliveryID: "pd-other", WorkspaceID: "ws-other", SubscriptionID: "sub-ws-other", TargetType: "harness_session", TargetID: "owner-ws-other", EventIDs: []string{"we-other"}, NextAttemptAt: &nextAttempt, CreatedAt: base, UpdatedAt: base})
+	if err != nil {
+		t.Fatalf("CreatePendingDelivery other returned error: %v", err)
+	}
+	if _, err := store.ClaimDuePendingDeliveryAttempt(ctx, other.DeliveryID, base.Add(time.Minute)); err != nil {
+		t.Fatalf("ClaimDuePendingDeliveryAttempt returned error: %v", err)
+	}
+
+	due, err := store.ListDuePendingDeliveriesForScope(ctx, base.Add(time.Minute).Add(pendingDeliveryAttemptLease), "ws-scope", "owner-ws-scope", 10)
+	if err != nil {
+		t.Fatalf("ListDuePendingDeliveriesForScope returned error: %v", err)
+	}
+	if len(due) != 0 {
+		t.Fatalf("scoped due deliveries = %#v, want none", due)
+	}
+	storedOther, err := store.GetPendingDelivery(ctx, other.DeliveryID)
+	if err != nil {
+		t.Fatalf("GetPendingDelivery other returned error: %v", err)
+	}
+	if storedOther.Status != pendingDeliveryStatusAttempted {
+		t.Fatalf("other delivery status = %q, want attempted because scoped list is side-effect-free", storedOther.Status)
+	}
+}
+
 func TestCreatePendingDeliveryRequiresSubscriptionWorkspace(t *testing.T) {
 	store := newGlobalDBTestStore(t, "pending-delivery-subscription-workspace")
 	ctx := context.Background()

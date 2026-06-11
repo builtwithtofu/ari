@@ -57,7 +57,7 @@ func (d *Daemon) startWorkspaceDeliveryWorker(store *globaldb.Store) {
 	if d == nil || store == nil {
 		return
 	}
-	dispatcher := newHarnessWorkspaceDeliveryDispatcher(d)
+	dispatcher := newHarnessWorkspaceDeliveryDispatcher(d, store)
 	d.startHarnessLifecycleWork(func(ctx context.Context) {
 		ticker := time.NewTicker(defaultWorkspaceDeliveryWorkerInterval)
 		defer ticker.Stop()

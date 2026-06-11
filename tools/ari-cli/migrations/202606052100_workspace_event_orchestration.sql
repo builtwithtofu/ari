@@ -94,7 +94,7 @@ CREATE TABLE IF NOT EXISTS workspace_timers (
   timer_id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,
   owner_session_id TEXT NOT NULL DEFAULT '',
-  subscription_id TEXT NOT NULL DEFAULT '',
+  subscription_id TEXT,
   subject_type TEXT NOT NULL DEFAULT '',
   subject_id TEXT NOT NULL DEFAULT '',
   purpose TEXT NOT NULL DEFAULT '',

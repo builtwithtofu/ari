@@ -132,12 +132,6 @@ func (s *Store) ListDuePendingDeliveriesForScope(ctx context.Context, now time.T
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	if err := s.requeueStaleAttemptedPendingDeliveries(ctx, now); err != nil {
-		return nil, err
-	}
-	if err := s.failExpiredPendingDeliveries(ctx, now); err != nil {
-		return nil, err
-	}
 	if limit <= 0 {
 		limit = 100
 	}

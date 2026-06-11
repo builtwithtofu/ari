@@ -135,6 +135,9 @@ func (d *Daemon) registerWorkspaceDeliveryMethods(registry *rpc.MethodRegistry, 
 		Name:        "workspace.deliveries.record_attempt",
 		Description: "Record a failed pending delivery attempt and next retry time",
 		Handler: func(ctx context.Context, req WorkspaceDeliveryRecordAttemptRequest) (WorkspaceDeliveryResponse, error) {
+			if req.NextAttemptAt == "" {
+				return WorkspaceDeliveryResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "missing_required_fields", "missing_field": "next_attempt_at"})
+			}
 			nextAttemptAt, err := parseOptionalDeliveryTime(req.NextAttemptAt, "invalid_next_attempt_at")
 			if err != nil {
 				return WorkspaceDeliveryResponse{}, err

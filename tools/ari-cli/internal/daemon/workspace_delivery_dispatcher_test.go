@@ -74,6 +74,68 @@ func TestStartHarnessSessionRegistersStickyDeliveryTarget(t *testing.T) {
 	}
 }
 
+func TestHarnessWorkspaceDeliveryDispatcherRehydratesPersistedStickyTarget(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	if err := store.CreateWorkspace(ctx, "ws-delivery", "ws-delivery", t.TempDir(), "manual", "auto"); err != nil {
+		t.Fatalf("CreateWorkspace returned error: %v", err)
+	}
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-1", WorkspaceID: "ws-delivery", Name: "agent-1", Harness: "sticky-delivery"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig returned error: %v", err)
+	}
+	if err := store.CreateHarnessSession(ctx, globaldb.HarnessSession{SessionID: "ari-session", WorkspaceID: "ws-delivery", AgentID: "agent-1", Harness: "sticky-delivery", Status: "completed", Usage: globaldb.HarnessSessionUsageSticky, ProviderSessionID: "provider-session", CWD: t.TempDir()}); err != nil {
+		t.Fatalf("CreateHarnessSession returned error: %v", err)
+	}
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	executor := &recordingHarnessDeliveryExecutor{result: WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptCompleted}}
+	d.setHarnessFactoryForTest("sticky-delivery", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		if req.SessionID != "ari-session" || req.WorkspaceID != "ws-delivery" {
+			t.Fatalf("rehydrate request = %#v, want persisted session identity", req)
+		}
+		return executor, nil
+	})
+	dispatcher := newHarnessWorkspaceDeliveryDispatcher(d, store)
+
+	result, err := dispatcher.AttemptWorkspaceDelivery(ctx, WorkspaceDeliveryAttempt{Delivery: globaldb.PendingDelivery{DeliveryID: "pd-rehydrate", WorkspaceID: "ws-delivery", SubscriptionID: "sub-rehydrate", TargetType: "harness_session", TargetID: "ari-session", DeliveryPolicyJSON: `{"channel":"visible_prompt_turn"}`, EventIDs: []string{"we-rehydrate"}, Status: "attempted", Attempts: 1}, Now: time.Date(2026, 6, 11, 21, 30, 0, 0, time.UTC)})
+	if err != nil {
+		t.Fatalf("AttemptWorkspaceDelivery returned error: %v", err)
+	}
+	if result.Status != WorkspaceDeliveryAttemptCompleted {
+		t.Fatalf("AttemptWorkspaceDelivery status = %s error=%q, want completed", result.Status, result.LastError)
+	}
+	attempts := executor.Attempts()
+	if len(attempts) != 1 || attempts[0].Delivery.TargetID != "provider-session" {
+		t.Fatalf("executor attempts = %#v, want rehydrated provider target", attempts)
+	}
+}
+
+func TestHarnessWorkspaceDeliveryDispatcherRetriesWhileWorkspaceSuspended(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	if err := store.CreateWorkspace(ctx, "ws-suspended", "ws-suspended", t.TempDir(), "manual", "auto"); err != nil {
+		t.Fatalf("CreateWorkspace returned error: %v", err)
+	}
+	if err := store.UpdateWorkspaceStatus(ctx, "ws-suspended", "suspended"); err != nil {
+		t.Fatalf("UpdateWorkspaceStatus returned error: %v", err)
+	}
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	executor := &recordingHarnessDeliveryExecutor{result: WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptCompleted}}
+	unregister := d.registerHarnessDeliveryTarget("ws-suspended", "ari-session", "provider-session", executor)
+	t.Cleanup(unregister)
+	dispatcher := newHarnessWorkspaceDeliveryDispatcher(d, store)
+
+	result, err := dispatcher.AttemptWorkspaceDelivery(ctx, WorkspaceDeliveryAttempt{Delivery: globaldb.PendingDelivery{DeliveryID: "pd-suspended", WorkspaceID: "ws-suspended", SubscriptionID: "sub-suspended", TargetType: "harness_session", TargetID: "ari-session", DeliveryPolicyJSON: `{"channel":"visible_prompt_turn"}`, EventIDs: []string{"we-suspended"}, Status: "attempted", Attempts: 1}, Now: time.Date(2026, 6, 11, 21, 35, 0, 0, time.UTC)})
+	if err != nil {
+		t.Fatalf("AttemptWorkspaceDelivery returned error: %v", err)
+	}
+	if result.Status != WorkspaceDeliveryAttemptRetry || result.LastError == "" {
+		t.Fatalf("AttemptWorkspaceDelivery result = %#v, want retry while suspended", result)
+	}
+	if attempts := executor.Attempts(); len(attempts) != 0 {
+		t.Fatalf("executor attempts = %#v, want no delivery while suspended", attempts)
+	}
+}
+
 type recordingHarnessDeliveryExecutor struct {
 	mu       sync.Mutex
 	result   WorkspaceDeliveryAttemptResult

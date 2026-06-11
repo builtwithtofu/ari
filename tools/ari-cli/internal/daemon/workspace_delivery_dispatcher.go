@@ -3,8 +3,11 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
 )
 
 type workspaceDeliveryExecutor interface {
@@ -13,6 +16,7 @@ type workspaceDeliveryExecutor interface {
 
 type harnessWorkspaceDeliveryDispatcher struct {
 	daemon *Daemon
+	store  *globaldb.Store
 }
 
 type activeHarnessDeliveryTarget struct {
@@ -27,8 +31,12 @@ type workspaceDeliveryPolicy struct {
 	MaxAttempts int64
 }
 
-func newHarnessWorkspaceDeliveryDispatcher(d *Daemon) *harnessWorkspaceDeliveryDispatcher {
-	return &harnessWorkspaceDeliveryDispatcher{daemon: d}
+func newHarnessWorkspaceDeliveryDispatcher(d *Daemon, stores ...*globaldb.Store) *harnessWorkspaceDeliveryDispatcher {
+	var store *globaldb.Store
+	if len(stores) > 0 {
+		store = stores[0]
+	}
+	return &harnessWorkspaceDeliveryDispatcher{daemon: d, store: store}
 }
 
 func (d *harnessWorkspaceDeliveryDispatcher) AttemptWorkspaceDelivery(ctx context.Context, attempt WorkspaceDeliveryAttempt) (WorkspaceDeliveryAttemptResult, error) {
@@ -46,9 +54,19 @@ func (d *harnessWorkspaceDeliveryDispatcher) AttemptWorkspaceDelivery(ctx contex
 	if targetSessionID == "" {
 		return failedWorkspaceDeliveryAttempt("delivery target session is required"), nil
 	}
+	if d.workspaceIsSuspended(ctx, delivery.WorkspaceID) {
+		return retryWorkspaceDeliveryAttempt("workspace %q is suspended", delivery.WorkspaceID), nil
+	}
 	target, ok := d.daemon.activeHarnessDeliveryTarget(targetSessionID)
 	if !ok {
-		return retryWorkspaceDeliveryAttempt("delivery target session %q is not active", targetSessionID), nil
+		var err error
+		target, ok, err = d.rehydrateStickyDeliveryTarget(ctx, targetSessionID)
+		if err != nil {
+			return retryWorkspaceDeliveryAttempt("delivery target session %q could not be rehydrated: %v", targetSessionID, err), nil
+		}
+		if !ok {
+			return retryWorkspaceDeliveryAttempt("delivery target session %q is not active", targetSessionID), nil
+		}
 	}
 	if target.workspaceID != "" && strings.TrimSpace(delivery.WorkspaceID) != target.workspaceID {
 		return failedWorkspaceDeliveryAttempt("delivery target session %q belongs to workspace %q, not %q", targetSessionID, target.workspaceID, delivery.WorkspaceID), nil
@@ -71,6 +89,53 @@ func (d *harnessWorkspaceDeliveryDispatcher) AttemptWorkspaceDelivery(ctx contex
 	}
 	attempt.Delivery = delivery
 	return executor.AttemptWorkspaceDelivery(ctx, attempt)
+}
+
+func (d *harnessWorkspaceDeliveryDispatcher) workspaceIsSuspended(ctx context.Context, workspaceID string) bool {
+	if d == nil || d.store == nil {
+		return false
+	}
+	workspace, err := d.store.GetWorkspace(ctx, strings.TrimSpace(workspaceID))
+	return err == nil && workspace != nil && workspace.Status == "suspended"
+}
+
+func (d *harnessWorkspaceDeliveryDispatcher) rehydrateStickyDeliveryTarget(ctx context.Context, sessionID string) (activeHarnessDeliveryTarget, bool, error) {
+	if d == nil || d.store == nil || d.daemon == nil {
+		return activeHarnessDeliveryTarget{}, false, nil
+	}
+	session, err := d.store.GetHarnessSession(ctx, sessionID)
+	if err != nil {
+		if errors.Is(err, globaldb.ErrNotFound) {
+			return activeHarnessDeliveryTarget{}, false, nil
+		}
+		return activeHarnessDeliveryTarget{}, false, err
+	}
+	if session.Usage != globaldb.HarnessSessionUsageSticky || !stickySessionCanReceiveDelivery(session.Status) {
+		return activeHarnessDeliveryTarget{}, false, nil
+	}
+	executor, err := d.daemon.resolveHarness(HarnessSessionStartRequest{Executor: session.Harness, SessionID: session.SessionID, WorkspaceID: session.WorkspaceID}, session.CWD)
+	if err != nil {
+		return activeHarnessDeliveryTarget{}, false, err
+	}
+	providerSessionID := strings.TrimSpace(session.ProviderSessionID)
+	if providerSessionID == "" {
+		providerSessionID = strings.TrimSpace(session.ProviderThreadID)
+	}
+	if providerSessionID == "" {
+		providerSessionID = strings.TrimSpace(session.SessionID)
+	}
+	d.daemon.registerHarnessDeliveryTarget(session.WorkspaceID, session.SessionID, providerSessionID, executor)
+	target, ok := d.daemon.activeHarnessDeliveryTarget(session.SessionID)
+	return target, ok, nil
+}
+
+func stickySessionCanReceiveDelivery(status string) bool {
+	switch strings.TrimSpace(status) {
+	case "running", "waiting", "completed":
+		return true
+	default:
+		return false
+	}
 }
 
 func (d *Daemon) activeHarnessDeliveryTarget(sessionID string) (activeHarnessDeliveryTarget, bool) {

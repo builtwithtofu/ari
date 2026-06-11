@@ -189,6 +189,9 @@ func TestWorkspaceEventSchemaEnforcesWorkspaceScopedReferences(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO workspace_timers (timer_id, workspace_id, subscription_id, fire_at, created_at, updated_at) VALUES ('timer-cross-fk', 'ws-fk-b', 'sub-fk', ?, ?, ?)`, base.Format(time.RFC3339Nano), base.Format(time.RFC3339Nano), base.Format(time.RFC3339Nano)); err == nil {
 		t.Fatalf("cross-workspace timer insert succeeded, want FK failure")
 	}
+	if _, err := store.CreateWorkspaceTimer(ctx, WorkspaceTimer{TimerID: "timer-standalone", WorkspaceID: "ws-fk-b", FireAt: base}); err != nil {
+		t.Fatalf("CreateWorkspaceTimer standalone returned error: %v", err)
+	}
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO inbox_items (inbox_item_id, workspace_id, source_session_id, workspace_event_id, event_type, kind, created_at, updated_at) VALUES ('inbox-cross-fk', 'ws-fk-b', 'orch-fk', 'we-fk', 'worker.completed', 'workspace_event', ?, ?)`, base.Format(time.RFC3339Nano), base.Format(time.RFC3339Nano)); err == nil {
 		t.Fatalf("cross-workspace inbox item insert succeeded, want FK failure")
 	}

@@ -53,6 +53,20 @@ func TestWorkspaceDeliveryRPCRetryLifecycle(t *testing.T) {
 	}
 }
 
+func TestWorkspaceDeliveryRecordAttemptRequiresRetryTime(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	_, err := callMethodResult[WorkspaceDeliveryResponse](registry, "workspace.deliveries.record_attempt", WorkspaceDeliveryRecordAttemptRequest{DeliveryID: "pd-1", LastError: "target offline"})
+	if err == nil {
+		t.Fatalf("workspace.deliveries.record_attempt returned nil error, want missing next_attempt_at")
+	}
+}
+
 func TestWorkspaceEventSubscriptionAutoDispatchesDeliveryAndCompleteAcks(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()

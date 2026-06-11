@@ -51,7 +51,7 @@ func (s *Store) CreateWorkspaceTimer(ctx context.Context, timer WorkspaceTimer) 
 	if timer.UpdatedAt.IsZero() {
 		timer.UpdatedAt = timer.CreatedAt
 	}
-	if err := s.sqlcQueries().CreateWorkspaceTimer(ctx, dbsqlc.CreateWorkspaceTimerParams{TimerID: timer.TimerID, WorkspaceID: timer.WorkspaceID, OwnerSessionID: timer.OwnerSessionID, SubscriptionID: timer.SubscriptionID, SubjectType: timer.SubjectType, SubjectID: timer.SubjectID, Purpose: timer.Purpose, Status: timer.Status, FireAt: timer.FireAt.UTC().Format(time.RFC3339Nano), PayloadJson: timer.PayloadJSON, FiredEventID: timer.FiredEventID, CreatedAt: timer.CreatedAt.UTC().Format(time.RFC3339Nano), UpdatedAt: timer.UpdatedAt.UTC().Format(time.RFC3339Nano)}); err != nil {
+	if err := s.sqlcQueries().CreateWorkspaceTimer(ctx, dbsqlc.CreateWorkspaceTimerParams{TimerID: timer.TimerID, WorkspaceID: timer.WorkspaceID, OwnerSessionID: timer.OwnerSessionID, SubscriptionID: optionalString(timer.SubscriptionID), SubjectType: timer.SubjectType, SubjectID: timer.SubjectID, Purpose: timer.Purpose, Status: timer.Status, FireAt: timer.FireAt.UTC().Format(time.RFC3339Nano), PayloadJson: timer.PayloadJSON, FiredEventID: timer.FiredEventID, CreatedAt: timer.CreatedAt.UTC().Format(time.RFC3339Nano), UpdatedAt: timer.UpdatedAt.UTC().Format(time.RFC3339Nano)}); err != nil {
 		return WorkspaceTimer{}, fmt.Errorf("create workspace timer %q: %w", timer.TimerID, err)
 	}
 	return timer, nil
@@ -221,7 +221,11 @@ func workspaceTimerFromSQLC(row dbsqlc.WorkspaceTimer) WorkspaceTimer {
 	fireAt, _ := time.Parse(time.RFC3339Nano, row.FireAt)
 	createdAt, _ := time.Parse(time.RFC3339Nano, row.CreatedAt)
 	updatedAt, _ := time.Parse(time.RFC3339Nano, row.UpdatedAt)
-	return WorkspaceTimer{TimerID: row.TimerID, WorkspaceID: row.WorkspaceID, OwnerSessionID: row.OwnerSessionID, SubscriptionID: row.SubscriptionID, SubjectType: row.SubjectType, SubjectID: row.SubjectID, Purpose: row.Purpose, Status: row.Status, FireAt: fireAt, PayloadJSON: row.PayloadJson, FiredEventID: row.FiredEventID, CreatedAt: createdAt, UpdatedAt: updatedAt}
+	subscriptionID := ""
+	if row.SubscriptionID != nil {
+		subscriptionID = *row.SubscriptionID
+	}
+	return WorkspaceTimer{TimerID: row.TimerID, WorkspaceID: row.WorkspaceID, OwnerSessionID: row.OwnerSessionID, SubscriptionID: subscriptionID, SubjectType: row.SubjectType, SubjectID: row.SubjectID, Purpose: row.Purpose, Status: row.Status, FireAt: fireAt, PayloadJSON: row.PayloadJson, FiredEventID: row.FiredEventID, CreatedAt: createdAt, UpdatedAt: updatedAt}
 }
 
 func workspaceTimerPayloadRef(timerID string) string {
