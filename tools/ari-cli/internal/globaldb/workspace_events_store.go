@@ -449,8 +449,8 @@ func newEventSubscriptionID() string {
 
 func randomID(prefix string) string {
 	var bytes [16]byte
-	if _, err := rand.Read(bytes[:]); err == nil {
-		return prefix + "_" + hex.EncodeToString(bytes[:])
+	if _, err := rand.Read(bytes[:]); err != nil {
+		panic(fmt.Sprintf("crypto/rand.Read failed: %v", err))
 	}
-	return fmt.Sprintf("%s_%d", prefix, time.Now().UnixNano())
+	return prefix + "_" + hex.EncodeToString(bytes[:])
 }

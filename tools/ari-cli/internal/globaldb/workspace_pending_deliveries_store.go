@@ -112,6 +112,32 @@ func (s *Store) ListDuePendingDeliveries(ctx context.Context, now time.Time, lim
 	return deliveries, nil
 }
 
+func (s *Store) ListDuePendingDeliveriesForScope(ctx context.Context, now time.Time, workspaceID, ownerSessionID string, limit int) ([]PendingDelivery, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		return nil, fmt.Errorf("%w: workspace id is required", ErrInvalidInput)
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if err := s.failExpiredPendingDeliveries(ctx, now); err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	formatted := now.UTC().Format(time.RFC3339Nano)
+	rows, err := s.sqlcQueries().ListDuePendingDeliveriesForScope(ctx, dbsqlc.ListDuePendingDeliveriesForScopeParams{WorkspaceID: workspaceID, OwnerSessionID: strings.TrimSpace(ownerSessionID), NextAttemptAt: &formatted, DeadlineAt: &formatted, Limit: int64(limit)})
+	if err != nil {
+		return nil, fmt.Errorf("list scoped due pending deliveries: %w", err)
+	}
+	deliveries := make([]PendingDelivery, 0, len(rows))
+	for _, row := range rows {
+		deliveries = append(deliveries, pendingDeliveryFromSQLC(row))
+	}
+	return deliveries, nil
+}
+
 func (s *Store) failExpiredPendingDeliveries(ctx context.Context, now time.Time) error {
 	formatted := now.UTC().Format(time.RFC3339Nano)
 	rows, err := s.sqlcQueries().ListExpiredPendingDeliveries(ctx, dbsqlc.ListExpiredPendingDeliveriesParams{DeadlineAt: &formatted})
@@ -459,7 +485,9 @@ func pendingDeliveryFromSQLC(row dbsqlc.PendingDelivery) PendingDelivery {
 	createdAt, _ := time.Parse(time.RFC3339Nano, row.CreatedAt)
 	updatedAt, _ := time.Parse(time.RFC3339Nano, row.UpdatedAt)
 	var eventIDs []string
-	_ = json.Unmarshal([]byte(row.EventIdsJson), &eventIDs)
+	if err := json.Unmarshal([]byte(row.EventIdsJson), &eventIDs); err != nil {
+		eventIDs = []string{}
+	}
 	return PendingDelivery{DeliveryID: row.DeliveryID, WorkspaceID: row.WorkspaceID, SubscriptionID: row.SubscriptionID, TargetType: row.TargetType, TargetID: row.TargetID, DeliveryPolicyJSON: row.DeliveryPolicyJson, EventIDs: eventIDs, Status: row.Status, Attempts: row.Attempts, NextAttemptAt: parseOptionalTime(row.NextAttemptAt), DeadlineAt: parseOptionalTime(row.DeadlineAt), LastError: row.LastError, CreatedAt: createdAt, UpdatedAt: updatedAt, TerminalAt: parseOptionalTime(row.TerminalAt)}
 }
 

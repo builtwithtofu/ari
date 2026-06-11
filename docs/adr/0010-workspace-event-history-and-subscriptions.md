@@ -37,7 +37,7 @@ Workspace event history is the root primitive for durable Ari coordination and c
   - **Activity-style retries:** retry policy for non-deterministic side effects such as harness calls, adapter delivery attempts, commands, and external probes. Attempts, failures, backoff, terminal success, and terminal failure are observable Ari facts.
   - **Cancellation:** cooperative cancellation requests and outcomes for sessions, calls, timers, subscriptions, fanout members, and delivery attempts. Cancellation is recorded and propagated through daemon-owned scopes.
   - **Pending deliveries:** durable work items derived from subscription matches. A pending delivery records the target, delivery policy, event references, attempts, errors, deadline, and terminal outcome.
-  - **Ack/cursor state:** durable per-subscription or per-consumer read position and acknowledgement state so consumers can resume, deduplicate, and avoid repeated delivery after reconnect.
+  - **Ack/cursor state:** durable per-subscription or per-consumer read position and acknowledgement state, so consumers can resume, deduplicate, and avoid repeated delivery after reconnect.
 - Per-session run logs remain the normalized transcript/evidence surface for harness content. Workspace events should link to run-log items, final responses, context excerpts, and other artifacts rather than duplicating every large payload inline.
 
 ## Consequences
@@ -47,7 +47,7 @@ Workspace event history is the root primitive for durable Ari coordination and c
 - Orchestrator-style workflows can process partial results without blocking on all workers, while still supporting explicit `wait all` or timeout policies.
 - Timeouts and idle/needs-input signals become durable facts visible to humans and agents, not transient tool-call return values only.
 - Ari needs an event type catalog and payload contracts before expanding the schema broadly.
-- Ari needs acknowledgement/read-position behavior for durable subscriptions so agents do not repeatedly consume the same events after reconnect.
+- Ari needs acknowledgement/read-position behavior for durable subscriptions, so agents do not repeatedly consume the same events after reconnect.
 - The event catalog and subscription contract should be broad enough to cover the primitive set above before Ari grows MCP push, richer fanout composition, idle detection, or cross-harness wake/resume behavior.
 - Adapters need an explicit capability contract for which delivery policies they support, including whether and how they can wake or resume a session with a subscription event.
 - MCP tool/resource/schema design should be derived from daemon operations and workspace event contracts, not provider-specific harness behavior.

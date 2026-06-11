@@ -53,7 +53,7 @@ Workspace-scoped runtime state may include:
 - approvals, blockers, idle state, completions, and other attention signals;
 - final responses and shareable artifacts.
 
-Inbox, fanout status, attention, status, and timeline are projections over workspace event history and its linked artifacts, not independent sources of truth. Events do not leak across workspaces.
+Inbox, fanout status, attention, workspace status, and timeline are projections over workspace event history and its linked artifacts, not independent sources of truth. Events do not leak across workspaces.
 
 Not every runtime fact must be displayed by every client. A GUI may compose a few daemon calls into a dashboard, while the CLI may expose lower-level commands for inspection and automation.
 

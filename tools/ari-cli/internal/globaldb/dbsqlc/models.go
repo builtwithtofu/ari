@@ -380,6 +380,11 @@ type WorkspaceEvent struct {
 	CreatedAt         string `json:"created_at"`
 }
 
+type WorkspaceEventSequence struct {
+	WorkspaceID  string `json:"workspace_id"`
+	NextSequence int64  `json:"next_sequence"`
+}
+
 type WorkspaceFolder struct {
 	WorkspaceID string `json:"workspace_id"`
 	FolderPath  string `json:"folder_path"`

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -142,11 +143,13 @@ func TestAriWorkspaceEventsNextToolBoundedWaitReturnsEventAppendedDuringWait(t *
 		err      error
 	}
 	resultC := make(chan callResult, 1)
+	readyC := make(chan struct{})
 	go func() {
+		close(readyC)
 		response, err := callMethodResult[AriToolCallResponse](registry, "ari.tool.call", AriToolCallRequest{Name: "ari.workspace.events.next", Scope: scope, Input: map[string]any{"subscription_id": "sub-tool-wait", "min_events": 1, "timeout_ms": 2000}})
 		resultC <- callResult{response: response, err: err}
 	}()
-	time.Sleep(25 * time.Millisecond)
+	<-readyC
 	created := callMethod[WorkspaceEventResponse](t, registry, "workspace.events.append", WorkspaceEventAppendRequest{EventID: "we-tool-wait", WorkspaceID: "ws-1", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-wait"})
 
 	select {
@@ -237,6 +240,12 @@ func TestAriWorkspaceDeliveryToolsInspectScopedPendingDeliveries(t *testing.T) {
 	if _, err := store.CreateEventSubscription(ctx, globaldb.EventSubscription{SubscriptionID: "sub-delivery-tool", WorkspaceID: "ws-1", OwnerSessionID: "run-1", FilterJSON: `{"event_types":["worker.completed"]}`, DeliveryTargetType: "harness_session", DeliveryTargetID: "run-1", DeliveryPolicyJSON: `{"channel":"visible_prompt_turn","max_attempts":3}`, CreatedAt: base, UpdatedAt: base}); err != nil {
 		t.Fatalf("CreateEventSubscription returned error: %v", err)
 	}
+	for i := 0; i < 125; i++ {
+		subscriptionID := fmt.Sprintf("sub-other-owner-%03d", i)
+		if _, err := store.CreateEventSubscription(ctx, globaldb.EventSubscription{SubscriptionID: subscriptionID, WorkspaceID: "ws-1", OwnerSessionID: "other-run", FilterJSON: `{"event_types":["worker.completed"]}`, DeliveryTargetType: "harness_session", DeliveryTargetID: "other-run", CreatedAt: base.Add(time.Duration(i) * time.Millisecond), UpdatedAt: base}); err != nil {
+			t.Fatalf("CreateEventSubscription %s returned error: %v", subscriptionID, err)
+		}
+	}
 	completed, err := store.AppendWorkspaceEvent(ctx, globaldb.WorkspaceEvent{EventID: "we-delivery-tool", WorkspaceID: "ws-1", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-run", ProducerType: "session", ProducerID: "worker-run", CreatedAt: base.Add(time.Second)})
 	if err != nil {
 		t.Fatalf("AppendWorkspaceEvent returned error: %v", err)
@@ -265,6 +274,27 @@ func TestAriWorkspaceDeliveryToolsInspectScopedPendingDeliveries(t *testing.T) {
 	deliveries, ok := due.Output["deliveries"].([]map[string]any)
 	if !ok || len(deliveries) != 1 || deliveries[0]["delivery_id"] != deliveryID || deliveries[0]["subscription_id"] != "sub-delivery-tool" {
 		t.Fatalf("deliveries.list_due output = %#v, want scoped pending delivery", due.Output["deliveries"])
+	}
+}
+
+func TestAriWorkspaceTimerToolsRejectBlankOwnerMismatch(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	fireAt := time.Now().UTC().Add(time.Hour)
+	if _, err := store.CreateWorkspaceTimer(ctx, globaldb.WorkspaceTimer{TimerID: "timer-system", WorkspaceID: "ws-1", FireAt: fireAt}); err != nil {
+		t.Fatalf("CreateWorkspaceTimer returned error: %v", err)
+	}
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	scope := AriToolScope{SourceRunID: "run-1", WorkspaceID: "ws-1", ProfileID: "agent-1", ProfileName: "executor", WithinDefaultScope: true}
+
+	_, err := callMethodResult[AriToolCallResponse](registry, "ari.tool.call", AriToolCallRequest{Name: "ari.workspace.timers.cancel", Scope: scope, Input: map[string]any{"timer_id": "timer-system"}})
+	if err == nil {
+		t.Fatalf("timers.cancel returned nil error, want timer scope mismatch")
 	}
 }
 

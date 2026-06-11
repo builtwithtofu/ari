@@ -462,6 +462,30 @@ func TestHarnessSessionResponseFromStoreExposesProviderModeMetadata(t *testing.T
 	}
 }
 
+func TestClaudeWorkspaceDeliveryTurnRedactsDurableIDs(t *testing.T) {
+	turn := claudeWorkspaceDeliveryTurn(WorkspaceDeliveryAttempt{Delivery: globaldb.PendingDelivery{DeliveryID: "pd-secret", WorkspaceID: "ws-1", SubscriptionID: "sub-1", EventIDs: []string{"we-secret"}}})
+
+	if strings.Contains(turn, "pd-secret") || strings.Contains(turn, "we-secret") || strings.Contains(turn, "delivery_id") || strings.Contains(turn, "event_ids") {
+		t.Fatalf("Claude delivery turn leaked durable ids: %s", turn)
+	}
+	if !strings.Contains(turn, `"event_count":1`) {
+		t.Fatalf("Claude delivery turn = %s, want redacted event_count", turn)
+	}
+}
+
+func TestParseClaudeManagedPTYDeliveryOutputAcceptsLargeLines(t *testing.T) {
+	largeError := strings.Repeat("x", 128*1024)
+	output := []byte(`{"channel":"managed_pty","status":"failed","error":"` + largeError + `"}` + "\n")
+
+	result, err := parseClaudeManagedPTYDeliveryOutput(output)
+	if err != nil {
+		t.Fatalf("parseClaudeManagedPTYDeliveryOutput returned error: %v", err)
+	}
+	if result.Status != WorkspaceDeliveryAttemptFailed || result.LastError != largeError {
+		t.Fatalf("result = %#v, want failed with large error", result)
+	}
+}
+
 func TestClaudeSessionLogsAndAttachUsePersistedProviderID(t *testing.T) {
 	t.Setenv(EnvClaudeExecutable, "/opt/agents/claude")
 	store := newCommandMethodTestStore(t)

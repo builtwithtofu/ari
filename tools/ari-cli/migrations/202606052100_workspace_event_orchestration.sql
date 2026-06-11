@@ -30,6 +30,12 @@ CREATE INDEX IF NOT EXISTS workspace_events_correlation_idx
   ON workspace_events(workspace_id, correlation_id, sequence ASC)
   WHERE correlation_id != '';
 
+CREATE TABLE IF NOT EXISTS workspace_event_sequences (
+  workspace_id TEXT PRIMARY KEY,
+  next_sequence INTEGER NOT NULL,
+  FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS inbox_items (
   inbox_item_id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,
@@ -96,7 +102,7 @@ CREATE TABLE IF NOT EXISTS workspace_timers (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
-  FOREIGN KEY(subscription_id) REFERENCES event_subscriptions(subscription_id) ON DELETE SET DEFAULT
+  FOREIGN KEY(subscription_id) REFERENCES event_subscriptions(subscription_id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS workspace_timers_due_idx

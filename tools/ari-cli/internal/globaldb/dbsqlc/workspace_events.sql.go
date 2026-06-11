@@ -312,9 +312,11 @@ func (q *Queries) ListWorkspaceEventsAfterSequence(ctx context.Context, arg List
 }
 
 const nextWorkspaceEventSequence = `-- name: NextWorkspaceEventSequence :one
-SELECT COALESCE(MAX(sequence), 0) + 1
-FROM workspace_events
-WHERE workspace_id = ?
+INSERT INTO workspace_event_sequences (workspace_id, next_sequence)
+VALUES (?, 1)
+ON CONFLICT(workspace_id) DO UPDATE SET
+  next_sequence = next_sequence + 1
+RETURNING next_sequence
 `
 
 type NextWorkspaceEventSequenceParams struct {
@@ -323,9 +325,9 @@ type NextWorkspaceEventSequenceParams struct {
 
 func (q *Queries) NextWorkspaceEventSequence(ctx context.Context, arg NextWorkspaceEventSequenceParams) (int64, error) {
 	row := q.db.QueryRowContext(ctx, nextWorkspaceEventSequence, arg.WorkspaceID)
-	var column_1 int64
-	err := row.Scan(&column_1)
-	return column_1, err
+	var next_sequence int64
+	err := row.Scan(&next_sequence)
+	return next_sequence, err
 }
 
 const updateEventSubscriptionCursor = `-- name: UpdateEventSubscriptionCursor :execrows

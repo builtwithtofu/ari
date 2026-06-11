@@ -1000,15 +1000,11 @@ func ariWorkspaceDeliveriesListDue(ctx context.Context, store *globaldb.Store, s
 	if limit <= 0 {
 		limit = 100
 	}
-	storeLimit := limit * 4
-	if storeLimit < 100 {
-		storeLimit = 100
-	}
-	due, err := store.ListDuePendingDeliveries(ctx, now, storeLimit)
+	due, err := store.ListDuePendingDeliveriesForScope(ctx, now, strings.TrimSpace(scope.WorkspaceID), strings.TrimSpace(scope.SourceRunID), limit)
 	if err != nil {
 		return AriToolCallResponse{}, workspaceDeliveryRPCError(err)
 	}
-	scoped := make([]globaldb.PendingDelivery, 0, len(due))
+	scoped := make([]globaldb.PendingDelivery, 0, limit)
 	for _, delivery := range due {
 		visible, err := ariPendingDeliveryVisibleToScope(ctx, store, scope, delivery)
 		if err != nil {
@@ -1064,7 +1060,7 @@ func scopedAriWorkspaceTimer(ctx context.Context, store *globaldb.Store, scope A
 		return globaldb.WorkspaceTimer{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "timer_scope_mismatch", "timer_id": timer.TimerID, "workspace_id": strings.TrimSpace(scope.WorkspaceID), "timer_workspace_id": timer.WorkspaceID})
 	}
 	ownerSessionID := strings.TrimSpace(timer.OwnerSessionID)
-	if ownerSessionID != "" && ownerSessionID != strings.TrimSpace(scope.SourceRunID) {
+	if ownerSessionID != strings.TrimSpace(scope.SourceRunID) {
 		return globaldb.WorkspaceTimer{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "timer_scope_mismatch", "timer_id": timer.TimerID, "owner_session_id": ownerSessionID, "scope_source_run_id": strings.TrimSpace(scope.SourceRunID)})
 	}
 	return timer, nil

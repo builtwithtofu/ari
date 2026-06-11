@@ -3,6 +3,8 @@ package globaldb
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -98,6 +100,46 @@ func TestWorkspaceEventValidation(t *testing.T) {
 				t.Fatalf("AppendWorkspaceEvent returned nil error, want validation failure")
 			}
 		})
+	}
+}
+
+func TestWorkspaceEventSequenceAllocationIsConcurrentSafe(t *testing.T) {
+	store := newGlobalDBTestStore(t, "workspace-events-concurrent-sequences")
+	ctx := context.Background()
+	if err := store.CreateWorkspace(ctx, "ws-concurrent", "ws-concurrent", t.TempDir(), "manual", "auto"); err != nil {
+		t.Fatalf("CreateWorkspace returned error: %v", err)
+	}
+
+	const count = 25
+	var wg sync.WaitGroup
+	errs := make(chan error, count)
+	for i := 0; i < count; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: fmt.Sprintf("we-concurrent-%02d", i), WorkspaceID: "ws-concurrent", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: fmt.Sprintf("worker-%02d", i)})
+			errs <- err
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("AppendWorkspaceEvent concurrent returned error: %v", err)
+		}
+	}
+
+	events, err := store.ListWorkspaceEventsAfterSequence(ctx, "ws-concurrent", 0, count)
+	if err != nil {
+		t.Fatalf("ListWorkspaceEventsAfterSequence returned error: %v", err)
+	}
+	if len(events) != count {
+		t.Fatalf("events len = %d, want %d", len(events), count)
+	}
+	for i, event := range events {
+		if event.Sequence != int64(i+1) {
+			t.Fatalf("event[%d].Sequence = %d, want %d", i, event.Sequence, i+1)
+		}
 	}
 }
 

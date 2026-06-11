@@ -96,15 +96,20 @@ func (s *Store) FireDueWorkspaceTimers(ctx context.Context, now time.Time, limit
 		return nil, err
 	}
 	fired := make([]WorkspaceTimer, 0, len(due))
+	var fireErrs []string
 	for _, timer := range due {
 		updated, err := s.FireWorkspaceTimer(ctx, timer.TimerID)
 		if errors.Is(err, ErrNotFound) {
 			continue
 		}
 		if err != nil {
-			return nil, err
+			fireErrs = append(fireErrs, err.Error())
+			continue
 		}
 		fired = append(fired, updated)
+	}
+	if len(fireErrs) > 0 {
+		return fired, fmt.Errorf("fire due workspace timers: %s", strings.Join(fireErrs, "; "))
 	}
 	return fired, nil
 }

@@ -55,6 +55,17 @@ func TestCodexExecutorMapsAppServerNotifications(t *testing.T) {
 	}
 }
 
+func TestCodexWorkspaceDeliveryTurnRedactsDurableIDs(t *testing.T) {
+	turn := codexWorkspaceDeliveryTurn(WorkspaceDeliveryAttempt{Delivery: globaldb.PendingDelivery{DeliveryID: "pd-secret", WorkspaceID: "ws-1", SubscriptionID: "sub-1", EventIDs: []string{"we-secret"}}})
+
+	if strings.Contains(turn, "pd-secret") || strings.Contains(turn, "we-secret") || strings.Contains(turn, "delivery_id") || strings.Contains(turn, "event_ids") {
+		t.Fatalf("Codex delivery turn leaked durable ids: %s", turn)
+	}
+	if !strings.Contains(turn, `"event_count":1`) {
+		t.Fatalf("Codex delivery turn = %s, want redacted event_count", turn)
+	}
+}
+
 func TestCodexExecutorMapsProfilePromptToThreadInstructions(t *testing.T) {
 	transport := newFakeCodexTransport([]codexNotification{
 		{Method: "thread/started", Params: mustRawJSON(t, `{"thread":{"id":"thr_123"}}`)},

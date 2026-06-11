@@ -1,7 +1,9 @@
 -- name: NextWorkspaceEventSequence :one
-SELECT COALESCE(MAX(sequence), 0) + 1
-FROM workspace_events
-WHERE workspace_id = ?;
+INSERT INTO workspace_event_sequences (workspace_id, next_sequence)
+VALUES (?, 1)
+ON CONFLICT(workspace_id) DO UPDATE SET
+  next_sequence = next_sequence + 1
+RETURNING next_sequence;
 
 -- name: CreateWorkspaceEvent :exec
 INSERT INTO workspace_events (

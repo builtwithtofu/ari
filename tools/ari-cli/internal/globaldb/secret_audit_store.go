@@ -61,7 +61,10 @@ func (s *Store) ListSecretAuditEvents(ctx context.Context, limit int) ([]SecretA
 	}
 	events := make([]SecretAuditEvent, 0, len(rows))
 	for _, row := range rows {
-		createdAt, _ := time.Parse(time.RFC3339Nano, row.CreatedAt)
+		createdAt, parseErr := time.Parse(time.RFC3339Nano, row.CreatedAt)
+		if parseErr != nil {
+			return nil, fmt.Errorf("parse secret audit created_at %q: %w", row.CreatedAt, parseErr)
+		}
 		events = append(events, SecretAuditEvent{EventID: row.EventID, EventType: row.EventType, SubjectType: row.SubjectType, SubjectID: row.SubjectID, PayloadJSON: row.PayloadJson, CreatedAt: createdAt})
 	}
 	return events, nil

@@ -492,17 +492,15 @@ func codexWorkspaceDeliveryTurnStartRequest(attempt WorkspaceDeliveryAttempt) (s
 
 func codexWorkspaceDeliveryTurn(attempt WorkspaceDeliveryAttempt) string {
 	payload := struct {
-		Kind           string   `json:"kind"`
-		DeliveryID     string   `json:"delivery_id"`
-		WorkspaceID    string   `json:"workspace_id"`
-		SubscriptionID string   `json:"subscription_id"`
-		EventIDs       []string `json:"event_ids"`
+		Kind           string `json:"kind"`
+		WorkspaceID    string `json:"workspace_id"`
+		SubscriptionID string `json:"subscription_id"`
+		EventCount     int    `json:"event_count"`
 	}{
 		Kind:           "ari.workspace_delivery",
-		DeliveryID:     strings.TrimSpace(attempt.Delivery.DeliveryID),
 		WorkspaceID:    strings.TrimSpace(attempt.Delivery.WorkspaceID),
 		SubscriptionID: strings.TrimSpace(attempt.Delivery.SubscriptionID),
-		EventIDs:       append([]string(nil), attempt.Delivery.EventIDs...),
+		EventCount:     len(attempt.Delivery.EventIDs),
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {

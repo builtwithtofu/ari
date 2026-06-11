@@ -259,11 +259,13 @@ func TestOrchestratorWakesOnWatchedSessionIdle(t *testing.T) {
 		err      error
 	}
 	wokeC := make(chan wakeResult, 1)
+	waitStarted := make(chan struct{})
 	go func() {
+		close(waitStarted)
 		response, err := callMethodResult[AriToolCallResponse](registry, "ari.tool.call", AriToolCallRequest{Name: "ari.workspace.events.next", Scope: scope, Input: map[string]any{"subscription_id": "sub-wake-idle", "min_events": 1, "timeout_ms": 5000}})
 		wokeC <- wakeResult{response: response, err: err}
 	}()
-	time.Sleep(25 * time.Millisecond)
+	<-waitStarted
 	close(release)
 
 	select {

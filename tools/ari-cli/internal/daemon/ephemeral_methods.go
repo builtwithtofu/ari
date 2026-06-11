@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -72,7 +73,9 @@ func markFanoutMemberForWorkerSession(ctx context.Context, store *globaldb.Store
 	if eventType == "" {
 		return
 	}
-	_ = appendFanoutWorkerWorkspaceEvent(ctx, store, member, eventType, workerSessionID, replyAgentMessageID, finalResponseID, status == "failed")
+	if err := appendFanoutWorkerWorkspaceEvent(ctx, store, member, eventType, workerSessionID, replyAgentMessageID, finalResponseID, status == "failed"); err != nil {
+		log.Printf("append fanout worker workspace event failed: worker_session_id=%s fanout_member_id=%s event_type=%s status=%s error=%v", workerSessionID, member.FanoutMemberID, eventType, status, err)
+	}
 }
 
 func ephemeralSessionStatus(ctx context.Context, store *globaldb.Store, sessionID string) string {
