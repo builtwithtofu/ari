@@ -107,6 +107,38 @@ func TestCodexExecutorAdvertisesFinalResponseCapability(t *testing.T) {
 	}
 }
 
+func TestCodexExecutorStartsAgainstFakeAppServerEngine(t *testing.T) {
+	fake := buildFakeHarnessExecutable(t)
+	stateDir := t.TempDir()
+	t.Setenv(fakeharness.EnvHarness, "codex")
+	t.Setenv(fakeharness.EnvMode, "authenticated")
+	t.Setenv(fakeharness.EnvStateDir, stateDir)
+	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
+
+	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: fake, Cwd: t.TempDir()})
+	first, err := StartExecutorRunResult(context.Background(), executor, packet, "", Profile{Name: "executor", Harness: HarnessNameCodex, InvocationClass: HarnessInvocationSticky})
+	if err != nil {
+		t.Fatalf("first StartExecutorRunResult returned error: %v", err)
+	}
+	if first.SessionRef.Persistence != HarnessSessionPersistent || first.SessionRef.ResumeMode != HarnessResumeJSONRPC {
+		t.Fatalf("session ref = %#v, want persistent json_rpc facts from real subprocess boundary", first.SessionRef)
+	}
+	if first.FinalResponse == nil || !strings.Contains(first.FinalResponse.Text, "fake codex response (turn 1)") {
+		t.Fatalf("final response = %#v, want fake codex turn 1 text", first.FinalResponse)
+	}
+
+	// A second run against the same fake state reuses the provider thread and
+	// proves session state carried across process invocations.
+	again := NewCodexExecutorForTest(codexExecutorOptions{Executable: fake, Cwd: t.TempDir()})
+	second, err := StartExecutorRunResult(context.Background(), again, packet, "", Profile{Name: "executor", Harness: HarnessNameCodex, InvocationClass: HarnessInvocationSticky})
+	if err != nil {
+		t.Fatalf("second StartExecutorRunResult returned error: %v", err)
+	}
+	if second.FinalResponse == nil || !strings.Contains(second.FinalResponse.Text, "(turn 2)") {
+		t.Fatalf("final response = %#v, want fake codex turn 2 text proving state carryover", second.FinalResponse)
+	}
+}
+
 func TestCodexExecutorAttemptsAppServerDeliveryAgainstFakeHarness(t *testing.T) {
 	fake := buildFakeHarnessExecutable(t)
 	recordPath := t.TempDir() + "/delivery-record.jsonl"

@@ -8,14 +8,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
-	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 const (
@@ -23,6 +23,10 @@ const (
 	EnvMode     = "ARI_FAKE_HARNESS_MODE"
 	EnvRecord   = "ARI_FAKE_HARNESS_RECORD"
 	EnvSentinel = "ARI_FAKE_HARNESS_SENTINEL"
+	// EnvStateDir enables stateful fake sessions: each run appends a turn to
+	// `<state>/<harness>/sessions/<id>.jsonl` so resume flags can be proven
+	// to reattach instead of silently starting over.
+	EnvStateDir = "ARI_FAKE_HARNESS_STATE_DIR"
 )
 
 type Invocation struct {
@@ -39,6 +43,34 @@ type Runner struct {
 	Stdout io.Writer
 	Stderr io.Writer
 	Env    []string
+}
+
+// runModes is the parsed ARI_FAKE_HARNESS_MODE value. The mode env accepts a
+// comma-separated list so behavior modes can be combined with output
+// modifiers, e.g. `authenticated,stream-incremental`.
+type runModes struct {
+	behavior          string
+	streamIncremental bool
+	exitCode          *int
+}
+
+func parseModes(raw string) runModes {
+	modes := runModes{behavior: "authenticated"}
+	for _, entry := range strings.Split(raw, ",") {
+		entry = strings.TrimSpace(entry)
+		switch {
+		case entry == "":
+		case entry == "stream-incremental":
+			modes.streamIncremental = true
+		case strings.HasPrefix(entry, "exit-code:"):
+			if code, err := strconv.Atoi(strings.TrimPrefix(entry, "exit-code:")); err == nil {
+				modes.exitCode = &code
+			}
+		default:
+			modes.behavior = entry
+		}
+	}
+	return modes
 }
 
 func (r Runner) Run(argv []string) int {
@@ -59,205 +91,139 @@ func (r Runner) Run(argv []string) int {
 	if harness == "" {
 		harness = harnessFromArgv(argv)
 	}
-	mode := strings.TrimSpace(env[EnvMode])
-	if mode == "" {
-		mode = "authenticated"
-	}
+	modes := parseModes(env[EnvMode])
 	args := []string(nil)
 	if len(argv) > 1 {
 		args = append(args, argv[1:]...)
 	}
-	stdin := ""
-	if shouldReadStdin(mode, args) {
-		stdin = readAvailable(r.Stdin)
-	}
-	if sentinel := env[EnvSentinel]; sentinel != "" && (strings.Contains(stdin, sentinel) || containsArg(args, sentinel)) {
+	sentinel := env[EnvSentinel]
+	if sentinel != "" && containsArg(args, sentinel) {
 		_, _ = fmt.Fprintln(r.Stderr, "fake harness sentinel leak trap: sentinel observed in process input")
 		return 86
 	}
-	inv := Invocation{Harness: harness, Mode: mode, Args: args, Env: safeEnv(env), Projection: projectionSummary(env), Stdin: stdinSummary(stdin)}
+	interactive := isInteractiveInvocation(harness, args, modes.behavior)
+	stdin := ""
+	if !interactive && shouldReadStdin(modes.behavior, args) {
+		stdin = readAvailable(r.Stdin)
+	}
+	if sentinel != "" && strings.Contains(stdin, sentinel) {
+		_, _ = fmt.Fprintln(r.Stderr, "fake harness sentinel leak trap: sentinel observed in process input")
+		return 86
+	}
+	inv := Invocation{Harness: harness, Mode: strings.TrimSpace(env[EnvMode]), Args: args, Env: safeEnv(env), Projection: projectionSummary(env), Stdin: stdinSummary(stdin)}
+	if inv.Mode == "" {
+		inv.Mode = "authenticated"
+	}
 	if err := recordInvocation(env[EnvRecord], inv); err != nil {
 		_, _ = fmt.Fprintf(r.Stderr, "fake harness record: %v\n", err)
 		return 1
 	}
-	switch mode {
+	out := newLineSink(r.Stdout, modes.streamIncremental)
+	run := personaRun{
+		harness:  harness,
+		args:     args,
+		stdin:    stdin,
+		stdinRaw: r.Stdin,
+		out:      out,
+		stderr:   r.Stderr,
+		sentinel: sentinel,
+		state:    newSessionStore(env[EnvStateDir]),
+		env:      env,
+	}
+	code := dispatch(run, modes)
+	if modes.exitCode != nil {
+		return *modes.exitCode
+	}
+	return code
+}
+
+func dispatch(run personaRun, modes runModes) int {
+	switch modes.behavior {
 	case "auth-required":
-		return authRequired(r.Stdout, harness)
+		return authRequired(run.out, run.harness)
 	case "delivery-claude-pty":
-		return deliveryClaudePTY(r.Stdout, stdin)
+		return deliveryClaudePTY(run.out, run.stdin)
 	case "delivery-codex-app-server":
-		return deliveryCodexAppServer(r.Stdout, stdin)
+		return deliveryCodexAppServer(run.out, run.stdin)
 	case "malformed", "unknown-output":
-		_, _ = fmt.Fprintln(r.Stdout, "{not-json")
+		run.out.line("{not-json")
 		return 0
 	case "logout-success":
-		_, _ = fmt.Fprintln(r.Stdout, "logged out")
+		run.out.line("logged out")
 		return 0
 	case "oauth-start":
-		return oauthStart(r.Stdout, harness)
+		return oauthStart(run.out, run.harness)
+	case "hang":
+		return hangUntilSignal()
+	case "exit-rate-limit":
+		run.out.line(`{"type":"error","error":{"type":"rate_limit_error","message":"fake rate limit"},"retryable":true}`)
+		return 1
+	case "partial-failure":
+		return partialFailure(run)
+	case "auth-expired-midrun":
+		return authExpiredMidrun(run)
 	default:
-		return authenticated(r.Stdout, harness, args)
+		return authenticated(run)
 	}
 }
 
-func deliveryClaudePTY(w io.Writer, stdin string) int {
-	if strings.TrimSpace(stdin) == "" {
-		writeLine(w, `{"channel":"managed_pty","status":"failed","error":"empty_input"}`)
-		return 2
-	}
-	inputHash := shortHash(stdin)
-	_, _ = fmt.Fprintf(w, `{"channel":"managed_pty","status":"admitted","input_hash":"%s"}`+"\n", inputHash)
-	_, _ = fmt.Fprintf(w, `{"channel":"managed_pty","status":"completed","input_hash":"%s","output":"fake claude pty response"}`+"\n", inputHash)
-	return 0
+// hangUntilSignal blocks until SIGTERM/SIGINT so timeout and cancellation
+// paths can be exercised against a real process.
+func hangUntilSignal() int {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	<-ctx.Done()
+	return 143
 }
 
-func deliveryCodexAppServer(w io.Writer, stdin string) int {
-	if !strings.Contains(stdin, "turn/start") {
-		writeLine(w, `{"jsonrpc":"2.0","error":{"code":-32600,"message":"expected turn/start"}}`)
-		return 2
-	}
-	writeLine(w, `{"jsonrpc":"2.0","id":1,"result":{"turn":{"id":"fake-codex-turn"}}}`)
-	writeLine(w, `{"method":"turn/completed","params":{"turn_id":"fake-codex-turn","status":"completed"}}`)
-	return 0
+// lineSink writes whole output lines, optionally one OS write at a time with
+// short pauses so consumers are exercised against partial-stream reads.
+type lineSink struct {
+	w           io.Writer
+	incremental bool
 }
 
-func authenticated(w io.Writer, harness string, args []string) int {
-	if len(args) >= 2 && args[0] == "login" && args[1] == "--device-auth" {
-		return oauthStart(w, harness)
+func newLineSink(w io.Writer, incremental bool) *lineSink {
+	return &lineSink{w: w, incremental: incremental}
+}
+
+func (s *lineSink) line(line string) {
+	_, _ = fmt.Fprintln(s.w, line)
+	if s.incremental {
+		if flusher, ok := s.w.(interface{ Flush() }); ok {
+			flusher.Flush()
+		}
+		if syncer, ok := s.w.(interface{ Sync() error }); ok {
+			_ = syncer.Sync()
+		}
+		time.Sleep(2 * time.Millisecond)
 	}
-	if len(args) >= 2 && args[0] == "auth" && args[1] == "logout" {
-		writeLine(w, "logged out")
-		return 0
-	}
+}
+
+func (s *lineSink) linef(format string, args ...any) {
+	s.line(fmt.Sprintf(format, args...))
+}
+
+func authRequired(w *lineSink, harness string) int {
 	switch harness {
 	case "claude":
-		if len(args) >= 2 && args[0] == "auth" && args[1] == "status" {
-			writeLine(w, `{"authenticated":true}`)
-			return 0
-		}
-		writeLine(w, `{"result":"fake claude response","session_id":"fake-claude-session","usage":{"input_tokens":1,"output_tokens":1}}`)
-	case "codex":
-		if len(args) >= 2 && args[0] == "login" && args[1] == "status" {
-			writeLine(w, "Logged in")
-			return 0
-		}
-		writeLine(w, `{"jsonrpc":"2.0","id":1,"result":{}}`)
-	case "opencode":
-		if len(args) >= 2 && args[0] == "auth" && args[1] == "list" {
-			writeLine(w, `[{"provider":"anthropic","authenticated":true}]`)
-			return 0
-		}
-		if len(args) >= 1 && args[0] == "serve" {
-			return serveOpenCode(w)
-		}
-		writeLine(w, `{"type":"session.status","properties":{"sessionID":"fake-opencode-session"}}`)
-		writeLine(w, `{"type":"message.part.updated","properties":{"part":{"sessionID":"fake-opencode-session","type":"text","text":"fake opencode response"}}}`)
-		writeLine(w, `{"type":"message.updated","properties":{"info":{"sessionID":"fake-opencode-session","tokens":{"input":1,"output":1}}}}`)
+		w.line(`{"authenticated":false}`)
+	case "pi":
+		w.line("No API key configured for provider anthropic")
 	default:
-		writeLine(w, `{"ok":true}`)
-	}
-	return 0
-}
-
-func writeLine(w io.Writer, line string) {
-	_, _ = fmt.Fprintln(w, line)
-}
-
-func authRequired(w io.Writer, harness string) int {
-	if harness == "claude" {
-		writeLine(w, `{"authenticated":false}`)
-	} else {
-		writeLine(w, "not authenticated")
+		w.line("not authenticated")
 	}
 	return 1
 }
 
-func oauthStart(w io.Writer, harness string) int {
+func oauthStart(w *lineSink, harness string) int {
 	switch harness {
-	case "codex":
-		writeLine(w, "Open https://example.invalid/device and enter code FAKE-CODE")
+	case "codex", "grok":
+		w.line("Open https://example.invalid/device and enter code FAKE-CODE")
 	default:
-		_, _ = fmt.Fprintf(w, "%s auth URL: https://example.invalid/oauth/start\n", harness)
+		w.linef("%s auth URL: https://example.invalid/oauth/start", harness)
 	}
 	return 0
-}
-
-func serveOpenCode(w io.Writer) int {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		_, _ = fmt.Fprintf(w, "listen failed: %v\n", err)
-		return 1
-	}
-	defer func() { _ = listener.Close() }()
-	mux := http.NewServeMux()
-	mux.HandleFunc("/provider", func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{"connected":["anthropic"]}`) })
-	mux.HandleFunc("/provider/auth", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, `{"anthropic":[{"type":"oauth","label":"browser"}]}`)
-	})
-	server := &http.Server{Handler: mux}
-	_, _ = fmt.Fprintf(w, "http://%s\n", listener.Addr().String())
-	if flusher, ok := w.(interface{ Flush() }); ok {
-		flusher.Flush()
-	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	go func() {
-		<-ctx.Done()
-		_ = server.Close()
-	}()
-	if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
-		_, _ = fmt.Fprintf(w, "serve failed: %v\n", err)
-		return 1
-	}
-	return 0
-}
-
-type OpenCodePromptDelivery struct {
-	SessionID      string `json:"session_id"`
-	PromptID       string `json:"prompt_id"`
-	Delivery       string `json:"delivery"`
-	IdempotencyKey string `json:"idempotency_key"`
-	TextHash       string `json:"text_hash"`
-}
-
-func OpenCodeDeliveryHandler(record func(OpenCodePromptDelivery)) http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/session/", func(w http.ResponseWriter, r *http.Request) {
-		trimmed := strings.TrimPrefix(r.URL.Path, "/api/session/")
-		parts := strings.Split(trimmed, "/")
-		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" {
-			http.NotFound(w, r)
-			return
-		}
-		sessionID := parts[0]
-		switch {
-		case r.Method == http.MethodPost && parts[1] == "prompt":
-			var body struct {
-				Text           string `json:"text"`
-				Delivery       string `json:"delivery"`
-				IdempotencyKey string `json:"idempotency_key"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			if strings.TrimSpace(body.Delivery) == "" {
-				body.Delivery = "queue"
-			}
-			delivery := OpenCodePromptDelivery{SessionID: sessionID, PromptID: "fake-opencode-prompt", Delivery: body.Delivery, IdempotencyKey: body.IdempotencyKey, TextHash: shortHash(body.Text)}
-			if record != nil {
-				record(delivery)
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]string{"session_id": delivery.SessionID, "prompt_id": delivery.PromptID, "status": "queued"})
-		case r.Method == http.MethodGet && parts[1] == "events":
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{"events": []map[string]string{{"type": "prompt.completed", "session_id": sessionID, "prompt_id": "fake-opencode-prompt"}, {"type": "session.idle", "session_id": sessionID, "prompt_id": "fake-opencode-prompt"}}})
-		default:
-			http.NotFound(w, r)
-		}
-	})
-	return mux
 }
 
 func envMap(env []string) map[string]string {
@@ -293,8 +259,56 @@ func containsArg(args []string, s string) bool {
 	return false
 }
 
-func shouldReadStdin(mode string, args []string) bool {
-	if mode == "delivery-claude-pty" || mode == "delivery-codex-app-server" {
+// isInteractiveInvocation reports whether this invocation speaks an
+// interactive line protocol on stdin/stdout (RPC engines). Interactive
+// invocations must not pre-read stdin to EOF: residents block until close.
+func isInteractiveInvocation(harness string, args []string, behavior string) bool {
+	if behavior != "authenticated" {
+		return false
+	}
+	switch harness {
+	case "codex":
+		return containsExactArg(args, "app-server")
+	case "pi":
+		return hasFlagValue(args, "--mode", "rpc")
+	case "grok":
+		return len(args) >= 2 && args[0] == "agent" && args[1] == "stdio"
+	default:
+		return false
+	}
+}
+
+func containsExactArg(args []string, want string) bool {
+	for _, a := range args {
+		if a == want {
+			return true
+		}
+	}
+	return false
+}
+
+func hasFlagValue(args []string, flag, value string) bool {
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == flag && args[i+1] == value {
+			return true
+		}
+	}
+	return false
+}
+
+func flagValue(args []string, names ...string) (string, bool) {
+	for i := 0; i < len(args); i++ {
+		for _, name := range names {
+			if args[i] == name && i+1 < len(args) {
+				return args[i+1], true
+			}
+		}
+	}
+	return "", false
+}
+
+func shouldReadStdin(behavior string, args []string) bool {
+	if behavior == "delivery-claude-pty" || behavior == "delivery-codex-app-server" {
 		return true
 	}
 	for i := 0; i < len(args)-1; i++ {
@@ -318,7 +332,7 @@ func stdinSummary(s string) string {
 }
 
 func safeEnv(env map[string]string) map[string]string {
-	keys := []string{"HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", EnvHarness, EnvMode}
+	keys := []string{"HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "GROK_CONFIG_DIR", EnvHarness, EnvMode, EnvStateDir}
 	out := map[string]string{}
 	for _, k := range keys {
 		if v := strings.TrimSpace(env[k]); v != "" {
@@ -330,14 +344,15 @@ func safeEnv(env map[string]string) map[string]string {
 
 func projectionSummary(env map[string]string) map[string]string {
 	out := map[string]string{}
-	for _, k := range []string{"CLAUDE_CONFIG_DIR", "CODEX_HOME", "OPENCODE_AUTH_CONTENT"} {
+	for _, k := range []string{"CLAUDE_CONFIG_DIR", "CODEX_HOME", "GROK_CONFIG_DIR"} {
 		if v, ok := env[k]; ok && strings.TrimSpace(v) != "" {
-			if k == "OPENCODE_AUTH_CONTENT" {
-				sum := sha256.Sum256([]byte(v))
-				out[k] = "present sha256:" + hex.EncodeToString(sum[:8])
-			} else {
-				out[k] = v
-			}
+			out[k] = v
+		}
+	}
+	for _, k := range []string{"OPENCODE_AUTH_CONTENT", "ANTHROPIC_API_KEY", "XAI_API_KEY"} {
+		if v, ok := env[k]; ok && strings.TrimSpace(v) != "" {
+			sum := sha256.Sum256([]byte(v))
+			out[k] = "present sha256:" + hex.EncodeToString(sum[:8])
 		}
 	}
 	return out

@@ -97,6 +97,25 @@ func TestOpenCodeExecutorAttemptsServerPromptDeliveryAgainstFakeHandler(t *testi
 	}
 }
 
+func TestOpenCodeExecutorDeliversThroughManagedServeProcess(t *testing.T) {
+	// No DeliveryServerURL configured: the adapter must start a bounded fake
+	// `opencode serve` process itself, deliver, and stop it afterwards.
+	fake := buildFakeHarnessExecutable(t)
+	t.Setenv(fakeharness.EnvHarness, "opencode")
+	t.Setenv(fakeharness.EnvMode, "authenticated")
+	executor := NewOpenCodeExecutorForTest(opencodeExecutorOptions{Executable: fake, Cwd: t.TempDir()})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(cancel)
+	result, err := executor.AttemptWorkspaceDelivery(ctx, WorkspaceDeliveryAttempt{Delivery: globaldb.PendingDelivery{DeliveryID: "pd-opencode", WorkspaceID: "ws-1", SubscriptionID: "sub-1", TargetType: "harness_session", TargetID: "sess_123", EventIDs: []string{"we-1"}, Status: "attempted", Attempts: 1}})
+	if err != nil {
+		t.Fatalf("AttemptWorkspaceDelivery returned error: %v", err)
+	}
+	if result.Status != WorkspaceDeliveryAttemptCompleted || result.LastError != "" {
+		t.Fatalf("delivery result = %#v, want completed delivery through managed serve process", result)
+	}
+}
+
 func TestOpenCodeDeliveryHTTPClientHasTimeout(t *testing.T) {
 	if openCodeDeliveryHTTPClient == nil || openCodeDeliveryHTTPClient.Timeout <= 0 {
 		t.Fatalf("openCodeDeliveryHTTPClient = %#v, want explicit timeout", openCodeDeliveryHTTPClient)
