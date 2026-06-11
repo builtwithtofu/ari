@@ -137,6 +137,9 @@ func (s *Store) FireWorkspaceTimer(ctx context.Context, timerID string) (Workspa
 		if err := createWorkspaceEventWithQueries(ctx, queries, &event); err != nil {
 			return err
 		}
+		if err := createPendingDeliveriesForWorkspaceEvent(ctx, queries, event); err != nil {
+			return err
+		}
 		now := time.Now().UTC()
 		rows, err := queries.MarkWorkspaceTimerFired(ctx, dbsqlc.MarkWorkspaceTimerFiredParams{FiredEventID: event.EventID, UpdatedAt: now.Format(time.RFC3339Nano), TimerID: timer.TimerID})
 		if err != nil {

@@ -94,11 +94,14 @@ func (s *Store) ListDuePendingDeliveries(ctx context.Context, now time.Time, lim
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
+	if err := s.failExpiredPendingDeliveries(ctx, now); err != nil {
+		return nil, err
+	}
 	if limit <= 0 {
 		limit = 100
 	}
 	formatted := now.UTC().Format(time.RFC3339Nano)
-	rows, err := s.sqlcQueries().ListDuePendingDeliveries(ctx, dbsqlc.ListDuePendingDeliveriesParams{NextAttemptAt: &formatted, Limit: int64(limit)})
+	rows, err := s.sqlcQueries().ListDuePendingDeliveries(ctx, dbsqlc.ListDuePendingDeliveriesParams{NextAttemptAt: &formatted, DeadlineAt: &formatted, Limit: int64(limit)})
 	if err != nil {
 		return nil, fmt.Errorf("list due pending deliveries: %w", err)
 	}
@@ -107,6 +110,21 @@ func (s *Store) ListDuePendingDeliveries(ctx context.Context, now time.Time, lim
 		deliveries = append(deliveries, pendingDeliveryFromSQLC(row))
 	}
 	return deliveries, nil
+}
+
+func (s *Store) failExpiredPendingDeliveries(ctx context.Context, now time.Time) error {
+	formatted := now.UTC().Format(time.RFC3339Nano)
+	rows, err := s.sqlcQueries().ListExpiredPendingDeliveries(ctx, dbsqlc.ListExpiredPendingDeliveriesParams{DeadlineAt: &formatted})
+	if err != nil {
+		return fmt.Errorf("list expired pending deliveries: %w", err)
+	}
+	for _, row := range rows {
+		delivery := pendingDeliveryFromSQLC(row)
+		if _, err := s.FailPendingDelivery(ctx, delivery.DeliveryID, "delivery deadline exceeded"); err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) RecordPendingDeliveryAttempt(ctx context.Context, deliveryID string, nextAttemptAt *time.Time, lastError string) (PendingDelivery, error) {
@@ -136,7 +154,7 @@ func (s *Store) ClaimDuePendingDeliveryAttempt(ctx context.Context, deliveryID s
 	formatted := now.UTC().Format(time.RFC3339Nano)
 	var delivery PendingDelivery
 	if err := s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
-		rows, err := queries.ClaimDuePendingDeliveryAttempt(ctx, dbsqlc.ClaimDuePendingDeliveryAttemptParams{UpdatedAt: formatted, DeliveryID: deliveryID, NextAttemptAt: &formatted})
+		rows, err := queries.ClaimDuePendingDeliveryAttempt(ctx, dbsqlc.ClaimDuePendingDeliveryAttemptParams{UpdatedAt: formatted, DeliveryID: deliveryID, NextAttemptAt: &formatted, DeadlineAt: &formatted})
 		if err != nil {
 			return fmt.Errorf("claim pending delivery attempt %q: %w", deliveryID, err)
 		}
@@ -215,26 +233,48 @@ func (s *Store) CompletePendingDelivery(ctx context.Context, deliveryID string) 
 }
 
 func ackSubscriptionForCompletedDelivery(ctx context.Context, queries *dbsqlc.Queries, delivery PendingDelivery, updatedAt string) error {
-	var maxSequence int64
-	for _, eventID := range delivery.EventIDs {
-		row, err := queries.GetWorkspaceEvent(ctx, dbsqlc.GetWorkspaceEventParams{EventID: eventID})
+	subscription, err := subscriptionByIDWithQueries(ctx, queries, delivery.SubscriptionID)
+	if err != nil {
+		return err
+	}
+	filter, err := parseEventSubscriptionFilter(subscription.FilterJSON)
+	if err != nil {
+		return fmt.Errorf("parse event subscription filter %q: %w", subscription.SubscriptionID, err)
+	}
+	sequence := subscription.CursorSequence
+	ackSequence := subscription.CursorSequence
+	for {
+		events, err := listWorkspaceEventsAfterSequenceWithQueries(ctx, queries, subscription.WorkspaceID, sequence, 100)
 		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if len(events) == 0 {
+			break
+		}
+		for _, event := range events {
+			sequence = event.Sequence
+			if !filter.matches(event) {
 				continue
 			}
-			return fmt.Errorf("get delivered workspace event %q: %w", eventID, err)
+			completed, err := pendingDeliveryForSubscriptionEventIsCompleted(ctx, queries, subscription.SubscriptionID, event.EventID)
+			if err != nil {
+				return err
+			}
+			if !completed {
+				goto updateCursor
+			}
+			ackSequence = event.Sequence
 		}
-		if row.WorkspaceID != delivery.WorkspaceID {
-			continue
-		}
-		if row.Sequence > maxSequence {
-			maxSequence = row.Sequence
+		if len(events) < 100 {
+			break
 		}
 	}
-	if maxSequence == 0 {
+
+updateCursor:
+	if ackSequence == subscription.CursorSequence {
 		return nil
 	}
-	rows, err := queries.UpdateEventSubscriptionCursor(ctx, dbsqlc.UpdateEventSubscriptionCursorParams{CursorSequence: maxSequence, CursorSequence_2: maxSequence, AckSequence: maxSequence, AckSequence_2: maxSequence, UpdatedAt: updatedAt, SubscriptionID: delivery.SubscriptionID})
+	rows, err := queries.UpdateEventSubscriptionCursor(ctx, dbsqlc.UpdateEventSubscriptionCursorParams{CursorSequence: ackSequence, CursorSequence_2: ackSequence, AckSequence: ackSequence, AckSequence_2: ackSequence, UpdatedAt: updatedAt, SubscriptionID: delivery.SubscriptionID})
 	if err != nil {
 		return fmt.Errorf("ack event subscription %q for delivery %q: %w", delivery.SubscriptionID, delivery.DeliveryID, err)
 	}
@@ -242,6 +282,57 @@ func ackSubscriptionForCompletedDelivery(ctx context.Context, queries *dbsqlc.Qu
 		return ErrNotFound
 	}
 	return nil
+}
+
+func pendingDeliveryForSubscriptionEventIsCompleted(ctx context.Context, queries *dbsqlc.Queries, subscriptionID, eventID string) (bool, error) {
+	deliveryID := pendingDeliveryIDForSubscriptionEvent(subscriptionID, eventID)
+	row, err := queries.GetPendingDelivery(ctx, dbsqlc.GetPendingDeliveryParams{DeliveryID: deliveryID})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("get pending delivery %q: %w", deliveryID, err)
+	}
+	return row.Status == pendingDeliveryStatusCompleted, nil
+}
+
+func listWorkspaceEventsAfterSequenceWithQueries(ctx context.Context, queries *dbsqlc.Queries, workspaceID string, afterSequence int64, limit int) ([]WorkspaceEvent, error) {
+	rows, err := queries.ListWorkspaceEventsAfterSequence(ctx, dbsqlc.ListWorkspaceEventsAfterSequenceParams{WorkspaceID: workspaceID, Sequence: afterSequence, Limit: int64(limit)})
+	if err != nil {
+		return nil, fmt.Errorf("list workspace events for %q after %d: %w", workspaceID, afterSequence, err)
+	}
+	return workspaceEventsFromSQLC(rows), nil
+}
+
+func failPendingDeliveriesForSubscriptionWithQueries(ctx context.Context, queries *dbsqlc.Queries, subscriptionID, lastError string, now time.Time) error {
+	rows, err := queries.ListPendingDeliveriesForSubscription(ctx, dbsqlc.ListPendingDeliveriesForSubscriptionParams{SubscriptionID: subscriptionID})
+	if err != nil {
+		return fmt.Errorf("list pending deliveries for subscription %q: %w", subscriptionID, err)
+	}
+	formatted := now.UTC().Format(time.RFC3339Nano)
+	for _, row := range rows {
+		delivery := pendingDeliveryFromSQLC(row)
+		if err := failPendingDeliveryWithQueries(ctx, queries, delivery.DeliveryID, lastError, formatted); err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
+	}
+	return nil
+}
+
+func failPendingDeliveryWithQueries(ctx context.Context, queries *dbsqlc.Queries, deliveryID, lastError, formattedNow string) error {
+	rows, err := queries.FailPendingDelivery(ctx, dbsqlc.FailPendingDeliveryParams{LastError: strings.TrimSpace(lastError), UpdatedAt: formattedNow, TerminalAt: &formattedNow, DeliveryID: deliveryID})
+	if err != nil {
+		return fmt.Errorf("fail pending delivery %q: %w", deliveryID, err)
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	row, err := queries.GetPendingDelivery(ctx, dbsqlc.GetPendingDeliveryParams{DeliveryID: deliveryID})
+	if err != nil {
+		return fmt.Errorf("get failed pending delivery %q: %w", deliveryID, err)
+	}
+	delivery := pendingDeliveryFromSQLC(row)
+	return appendPendingDeliveryEventWithQueries(ctx, queries, delivery, pendingDeliveryEventFailed, "failed", delivery.LastError, nil)
 }
 
 func (s *Store) FailPendingDelivery(ctx context.Context, deliveryID, lastError string) (PendingDelivery, error) {

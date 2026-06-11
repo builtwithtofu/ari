@@ -50,6 +50,32 @@ func TestWorkspaceTimerWorkerLoopFiresDueTimers(t *testing.T) {
 	}
 }
 
+func TestWorkspaceTimerFireCreatesPendingDeliveryForSubscription(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	base := time.Date(2026, 6, 11, 17, 0, 0, 0, time.UTC)
+	if _, err := store.CreateEventSubscription(ctx, globaldb.EventSubscription{SubscriptionID: "sub-timer-delivery", WorkspaceID: "ws-1", OwnerSessionID: "run-1", FilterJSON: `{"event_types":["timer.fired"]}`, DeliveryTargetType: "harness_session", DeliveryTargetID: "run-1", DeliveryPolicyJSON: `{"channel":"visible_prompt_turn"}`, CreatedAt: base, UpdatedAt: base}); err != nil {
+		t.Fatalf("CreateEventSubscription returned error: %v", err)
+	}
+	timer, err := store.CreateWorkspaceTimer(ctx, globaldb.WorkspaceTimer{TimerID: "timer-delivery", WorkspaceID: "ws-1", OwnerSessionID: "run-1", Purpose: "wake", FireAt: base})
+	if err != nil {
+		t.Fatalf("CreateWorkspaceTimer returned error: %v", err)
+	}
+
+	fired, err := store.FireWorkspaceTimer(ctx, timer.TimerID)
+	if err != nil {
+		t.Fatalf("FireWorkspaceTimer returned error: %v", err)
+	}
+	delivery, err := store.GetPendingDelivery(ctx, "pd-sub-timer-delivery-"+fired.FiredEventID)
+	if err != nil {
+		t.Fatalf("GetPendingDelivery for fired timer event returned error: %v", err)
+	}
+	if delivery.Status != "pending" || len(delivery.EventIDs) != 1 || delivery.EventIDs[0] != fired.FiredEventID {
+		t.Fatalf("timer pending delivery = %#v, want pending delivery for fired event", delivery)
+	}
+}
+
 // A transient store failure must not kill the durable due-work loops: state
 // lives in the database, so the next tick retries the same work.
 func TestWorkspaceDeliveryWorkerLoopContinuesAfterStoreErrors(t *testing.T) {

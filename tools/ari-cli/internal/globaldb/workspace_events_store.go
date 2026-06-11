@@ -89,6 +89,9 @@ func (s *Store) AppendWorkspaceEvent(ctx context.Context, event AppendWorkspaceE
 }
 
 func createPendingDeliveriesForWorkspaceEvent(ctx context.Context, queries *dbsqlc.Queries, event WorkspaceEvent) error {
+	if strings.HasPrefix(event.EventType, "delivery.") {
+		return nil
+	}
 	rows, err := queries.ListActiveEventSubscriptionsByWorkspace(ctx, dbsqlc.ListActiveEventSubscriptionsByWorkspaceParams{WorkspaceID: event.WorkspaceID})
 	if err != nil {
 		return fmt.Errorf("list active event subscriptions for %q: %w", event.WorkspaceID, err)
@@ -96,6 +99,9 @@ func createPendingDeliveriesForWorkspaceEvent(ctx context.Context, queries *dbsq
 	for _, row := range rows {
 		subscription := eventSubscriptionFromSQLC(row)
 		if strings.TrimSpace(subscription.DeliveryTargetType) == "" || strings.TrimSpace(subscription.DeliveryTargetID) == "" {
+			continue
+		}
+		if subscription.TimeoutAt != nil && !subscription.TimeoutAt.After(event.CreatedAt) {
 			continue
 		}
 		if event.Sequence <= subscription.CursorSequence {
@@ -256,22 +262,39 @@ func (s *Store) CancelEventSubscription(ctx context.Context, subscriptionID stri
 	if subscriptionID == "" {
 		return EventSubscription{}, fmt.Errorf("%w: subscription id is required", ErrInvalidInput)
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	rows, err := s.sqlcQueries().CancelEventSubscription(ctx, dbsqlc.CancelEventSubscriptionParams{UpdatedAt: now, SubscriptionID: subscriptionID})
-	if err != nil {
-		return EventSubscription{}, fmt.Errorf("cancel event subscription %q: %w", subscriptionID, err)
-	}
-	if rows == 0 {
-		subscription, getErr := s.GetEventSubscription(ctx, subscriptionID)
-		if getErr != nil {
-			return EventSubscription{}, getErr
+	now := time.Now().UTC()
+	formatted := now.Format(time.RFC3339Nano)
+	if err := s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
+		rows, err := queries.CancelEventSubscription(ctx, dbsqlc.CancelEventSubscriptionParams{UpdatedAt: formatted, SubscriptionID: subscriptionID})
+		if err != nil {
+			return fmt.Errorf("cancel event subscription %q: %w", subscriptionID, err)
 		}
-		if subscription.Status == eventSubscriptionStatusCanceled {
-			return subscription, nil
+		if rows == 0 {
+			subscription, getErr := subscriptionByIDWithQueries(ctx, queries, subscriptionID)
+			if getErr != nil {
+				return getErr
+			}
+			if subscription.Status == eventSubscriptionStatusCanceled {
+				return nil
+			}
+			return ErrNotFound
 		}
-		return EventSubscription{}, ErrNotFound
+		return failPendingDeliveriesForSubscriptionWithQueries(ctx, queries, subscriptionID, "event subscription canceled", now)
+	}); err != nil {
+		return EventSubscription{}, err
 	}
 	return s.GetEventSubscription(ctx, subscriptionID)
+}
+
+func subscriptionByIDWithQueries(ctx context.Context, queries *dbsqlc.Queries, subscriptionID string) (EventSubscription, error) {
+	row, err := queries.GetEventSubscription(ctx, dbsqlc.GetEventSubscriptionParams{SubscriptionID: subscriptionID})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return EventSubscription{}, ErrNotFound
+		}
+		return EventSubscription{}, fmt.Errorf("get event subscription %q: %w", subscriptionID, err)
+	}
+	return eventSubscriptionFromSQLC(row), nil
 }
 
 func normalizeWorkspaceEvent(event WorkspaceEvent) WorkspaceEvent {

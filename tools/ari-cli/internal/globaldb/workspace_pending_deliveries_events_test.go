@@ -150,3 +150,34 @@ func TestFailPendingDeliveryEmitsAttentionEventAtomically(t *testing.T) {
 		t.Fatalf("fail payload = %#v, want terminal error recorded", failPayload)
 	}
 }
+
+func TestDeliveryLifecycleEventsDoNotCreateRecursiveDeliveries(t *testing.T) {
+	store := newGlobalDBTestStore(t, "pending-delivery-no-recursion")
+	ctx := context.Background()
+	base := time.Date(2026, 6, 11, 14, 0, 0, 0, time.UTC)
+
+	if err := store.CreateWorkspace(ctx, "ws-no-recursion", "ws-no-recursion", t.TempDir(), "manual", "auto"); err != nil {
+		t.Fatalf("CreateWorkspace returned error: %v", err)
+	}
+	if _, err := store.CreateEventSubscription(ctx, EventSubscription{SubscriptionID: "sub-no-recursion", WorkspaceID: "ws-no-recursion", OwnerSessionID: "orch-no-recursion", FilterJSON: `{}`, DeliveryTargetType: "harness_session", DeliveryTargetID: "orch-no-recursion", DeliveryPolicyJSON: `{"channel":"visible_prompt_turn"}`, CreatedAt: base, UpdatedAt: base}); err != nil {
+		t.Fatalf("CreateEventSubscription returned error: %v", err)
+	}
+	if _, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-no-recursion", WorkspaceID: "ws-no-recursion", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-no-recursion", ProducerType: "session", ProducerID: "worker-no-recursion", CreatedAt: base.Add(time.Second)}); err != nil {
+		t.Fatalf("AppendWorkspaceEvent returned error: %v", err)
+	}
+	due, err := store.ListDuePendingDeliveries(ctx, base.Add(time.Minute), 10)
+	if err != nil || len(due) != 1 {
+		t.Fatalf("ListDuePendingDeliveries before claim = %#v err=%v, want one original delivery", due, err)
+	}
+	if _, err := store.ClaimDuePendingDeliveryAttempt(ctx, due[0].DeliveryID, base.Add(time.Minute)); err != nil {
+		t.Fatalf("ClaimDuePendingDeliveryAttempt returned error: %v", err)
+	}
+
+	due, err = store.ListDuePendingDeliveries(ctx, base.Add(2*time.Minute), 10)
+	if err != nil {
+		t.Fatalf("ListDuePendingDeliveries after delivery event returned error: %v", err)
+	}
+	if len(due) != 0 {
+		t.Fatalf("due deliveries after delivery.attempted = %#v, want no recursive delivery lifecycle work", due)
+	}
+}

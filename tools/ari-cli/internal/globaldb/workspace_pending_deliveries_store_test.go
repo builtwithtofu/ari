@@ -100,3 +100,84 @@ func TestPendingDeliveryAttemptLifecycleControlsSubscriptionAck(t *testing.T) {
 		})
 	}
 }
+
+func TestCompletedDeliveryAcksOnlyContiguousDeliveredEvents(t *testing.T) {
+	store := newGlobalDBTestStore(t, "pending-delivery-contiguous-ack")
+	ctx := context.Background()
+	base := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)
+
+	if err := store.CreateWorkspace(ctx, "ws-contiguous-ack", "ws-contiguous-ack", t.TempDir(), "manual", "auto"); err != nil {
+		t.Fatalf("CreateWorkspace returned error: %v", err)
+	}
+	if _, err := store.CreateEventSubscription(ctx, EventSubscription{SubscriptionID: "sub-contiguous-ack", WorkspaceID: "ws-contiguous-ack", OwnerSessionID: "orch-contiguous-ack", FilterJSON: `{"event_types":["worker.completed"]}`, DeliveryTargetType: "harness_session", DeliveryTargetID: "orch-contiguous-ack", DeliveryPolicyJSON: `{"channel":"visible_prompt_turn","max_attempts":3}`, CreatedAt: base, UpdatedAt: base}); err != nil {
+		t.Fatalf("CreateEventSubscription returned error: %v", err)
+	}
+	first, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-contiguous-first", WorkspaceID: "ws-contiguous-ack", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-first", ProducerType: "session", ProducerID: "worker-first", CreatedAt: base.Add(time.Second)})
+	if err != nil {
+		t.Fatalf("AppendWorkspaceEvent first returned error: %v", err)
+	}
+	second, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-contiguous-second", WorkspaceID: "ws-contiguous-ack", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-second", ProducerType: "session", ProducerID: "worker-second", CreatedAt: base.Add(2 * time.Second)})
+	if err != nil {
+		t.Fatalf("AppendWorkspaceEvent second returned error: %v", err)
+	}
+
+	secondDelivery, err := store.GetPendingDelivery(ctx, pendingDeliveryIDForSubscriptionEvent("sub-contiguous-ack", second.EventID))
+	if err != nil {
+		t.Fatalf("GetPendingDelivery second returned error: %v", err)
+	}
+	if _, err := store.ClaimDuePendingDeliveryAttempt(ctx, secondDelivery.DeliveryID, base.Add(time.Minute)); err != nil {
+		t.Fatalf("ClaimDuePendingDeliveryAttempt second returned error: %v", err)
+	}
+	if _, err := store.CompletePendingDelivery(ctx, secondDelivery.DeliveryID); err != nil {
+		t.Fatalf("CompletePendingDelivery second returned error: %v", err)
+	}
+
+	subscription, err := store.GetEventSubscription(ctx, "sub-contiguous-ack")
+	if err != nil {
+		t.Fatalf("GetEventSubscription returned error: %v", err)
+	}
+	if subscription.CursorSequence != 0 || subscription.AckSequence != 0 {
+		t.Fatalf("subscription cursor/ack after second completion = %d/%d, want 0/0 until first event is delivered", subscription.CursorSequence, subscription.AckSequence)
+	}
+	unread, err := store.ListEventSubscriptionEvents(ctx, "sub-contiguous-ack", 10)
+	if err != nil {
+		t.Fatalf("ListEventSubscriptionEvents returned error: %v", err)
+	}
+	if len(unread) != 2 || unread[0].EventID != first.EventID || unread[1].EventID != second.EventID {
+		t.Fatalf("unread events after out-of-order completion = %#v, want both original events", unread)
+	}
+}
+
+func TestOverdueDeliveriesAreFailedBeforeDueSelection(t *testing.T) {
+	store := newGlobalDBTestStore(t, "pending-delivery-deadline")
+	ctx := context.Background()
+	base := time.Date(2026, 6, 11, 13, 0, 0, 0, time.UTC)
+
+	if err := store.CreateWorkspace(ctx, "ws-deadline", "ws-deadline", t.TempDir(), "manual", "auto"); err != nil {
+		t.Fatalf("CreateWorkspace returned error: %v", err)
+	}
+	if _, err := store.CreateEventSubscription(ctx, EventSubscription{SubscriptionID: "sub-deadline", WorkspaceID: "ws-deadline", OwnerSessionID: "orch-deadline", FilterJSON: `{}`, DeliveryTargetType: "harness_session", DeliveryTargetID: "orch-deadline", CreatedAt: base, UpdatedAt: base}); err != nil {
+		t.Fatalf("CreateEventSubscription returned error: %v", err)
+	}
+	deadline := base.Add(time.Minute)
+	nextAttempt := base.Add(30 * time.Second)
+	delivery, err := store.CreatePendingDelivery(ctx, PendingDelivery{DeliveryID: "pd-deadline", WorkspaceID: "ws-deadline", SubscriptionID: "sub-deadline", TargetType: "harness_session", TargetID: "orch-deadline", EventIDs: []string{"we-deadline"}, NextAttemptAt: &nextAttempt, DeadlineAt: &deadline, CreatedAt: base, UpdatedAt: base})
+	if err != nil {
+		t.Fatalf("CreatePendingDelivery returned error: %v", err)
+	}
+
+	due, err := store.ListDuePendingDeliveries(ctx, base.Add(2*time.Minute), 10)
+	if err != nil {
+		t.Fatalf("ListDuePendingDeliveries returned error: %v", err)
+	}
+	if len(due) != 0 {
+		t.Fatalf("due deliveries after deadline = %#v, want none", due)
+	}
+	stored, err := store.GetPendingDelivery(ctx, delivery.DeliveryID)
+	if err != nil {
+		t.Fatalf("GetPendingDelivery returned error: %v", err)
+	}
+	if stored.Status != pendingDeliveryStatusFailed || stored.TerminalAt == nil || stored.LastError == "" {
+		t.Fatalf("overdue delivery = %#v, want terminal failure before dispatch", stored)
+	}
+}

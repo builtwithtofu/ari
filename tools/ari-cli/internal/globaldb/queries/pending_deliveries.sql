@@ -23,11 +23,30 @@ FROM pending_deliveries
 WHERE delivery_id = ?;
 
 -- name: ListDuePendingDeliveries :many
+SELECT pd.delivery_id, pd.workspace_id, pd.subscription_id, pd.target_type, pd.target_id, pd.delivery_policy_json, pd.event_ids_json, pd.status, pd.attempts, pd.next_attempt_at, pd.deadline_at, pd.last_error, pd.created_at, pd.updated_at, pd.terminal_at
+FROM pending_deliveries pd
+JOIN event_subscriptions es ON es.subscription_id = pd.subscription_id
+WHERE pd.status = 'pending'
+  AND es.status = 'active'
+  AND pd.next_attempt_at IS NOT NULL
+  AND pd.next_attempt_at <= ?
+  AND (pd.deadline_at IS NULL OR pd.deadline_at > ?)
+ORDER BY pd.next_attempt_at ASC, pd.created_at ASC, pd.delivery_id ASC
+LIMIT ?;
+
+-- name: ListExpiredPendingDeliveries :many
 SELECT delivery_id, workspace_id, subscription_id, target_type, target_id, delivery_policy_json, event_ids_json, status, attempts, next_attempt_at, deadline_at, last_error, created_at, updated_at, terminal_at
 FROM pending_deliveries
-WHERE status = 'pending' AND next_attempt_at IS NOT NULL AND next_attempt_at <= ?
-ORDER BY next_attempt_at ASC, created_at ASC, delivery_id ASC
-LIMIT ?;
+WHERE status = 'pending'
+  AND deadline_at IS NOT NULL
+  AND deadline_at <= ?
+ORDER BY deadline_at ASC, created_at ASC, delivery_id ASC;
+
+-- name: ListPendingDeliveriesForSubscription :many
+SELECT delivery_id, workspace_id, subscription_id, target_type, target_id, delivery_policy_json, event_ids_json, status, attempts, next_attempt_at, deadline_at, last_error, created_at, updated_at, terminal_at
+FROM pending_deliveries
+WHERE subscription_id = ? AND status IN ('pending', 'attempted')
+ORDER BY created_at ASC, delivery_id ASC;
 
 -- name: RecordPendingDeliveryAttempt :execrows
 UPDATE pending_deliveries
@@ -47,7 +66,9 @@ SET status = 'attempted',
 WHERE delivery_id = ?
   AND status = 'pending'
   AND next_attempt_at IS NOT NULL
-  AND next_attempt_at <= ?;
+  AND next_attempt_at <= ?
+  AND (deadline_at IS NULL OR deadline_at > ?)
+  AND EXISTS (SELECT 1 FROM event_subscriptions es WHERE es.subscription_id = pending_deliveries.subscription_id AND es.status = 'active');
 
 -- name: SchedulePendingDeliveryRetry :execrows
 UPDATE pending_deliveries

@@ -101,6 +101,68 @@ func TestWorkspaceEventValidation(t *testing.T) {
 	}
 }
 
+func TestCancelEventSubscriptionFailsPendingDeliveries(t *testing.T) {
+	store := newGlobalDBTestStore(t, "workspace-events-cancel-deliveries")
+	ctx := context.Background()
+	base := time.Date(2026, 6, 11, 15, 0, 0, 0, time.UTC)
+
+	if err := store.CreateWorkspace(ctx, "ws-cancel-deliveries", "ws-cancel-deliveries", t.TempDir(), "manual", "auto"); err != nil {
+		t.Fatalf("CreateWorkspace returned error: %v", err)
+	}
+	if _, err := store.CreateEventSubscription(ctx, EventSubscription{SubscriptionID: "sub-cancel-deliveries", WorkspaceID: "ws-cancel-deliveries", OwnerSessionID: "orch-cancel", FilterJSON: `{}`, DeliveryTargetType: "harness_session", DeliveryTargetID: "orch-cancel", CreatedAt: base, UpdatedAt: base}); err != nil {
+		t.Fatalf("CreateEventSubscription returned error: %v", err)
+	}
+	if _, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-cancel-deliveries", WorkspaceID: "ws-cancel-deliveries", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-cancel", CreatedAt: base.Add(time.Second)}); err != nil {
+		t.Fatalf("AppendWorkspaceEvent returned error: %v", err)
+	}
+	delivery, err := store.GetPendingDelivery(ctx, pendingDeliveryIDForSubscriptionEvent("sub-cancel-deliveries", "we-cancel-deliveries"))
+	if err != nil {
+		t.Fatalf("GetPendingDelivery returned error: %v", err)
+	}
+
+	if _, err := store.CancelEventSubscription(ctx, "sub-cancel-deliveries"); err != nil {
+		t.Fatalf("CancelEventSubscription returned error: %v", err)
+	}
+	due, err := store.ListDuePendingDeliveries(ctx, base.Add(time.Minute), 10)
+	if err != nil {
+		t.Fatalf("ListDuePendingDeliveries returned error: %v", err)
+	}
+	if len(due) != 0 {
+		t.Fatalf("due deliveries after subscription cancel = %#v, want none", due)
+	}
+	stored, err := store.GetPendingDelivery(ctx, delivery.DeliveryID)
+	if err != nil {
+		t.Fatalf("GetPendingDelivery after cancel returned error: %v", err)
+	}
+	if stored.Status != pendingDeliveryStatusFailed || stored.TerminalAt == nil {
+		t.Fatalf("pending delivery after subscription cancel = %#v, want terminal failure", stored)
+	}
+}
+
+func TestTimedOutSubscriptionsDoNotCreateDeliveries(t *testing.T) {
+	store := newGlobalDBTestStore(t, "workspace-events-timeout-deliveries")
+	ctx := context.Background()
+	base := time.Date(2026, 6, 11, 16, 0, 0, 0, time.UTC)
+
+	if err := store.CreateWorkspace(ctx, "ws-timeout-deliveries", "ws-timeout-deliveries", t.TempDir(), "manual", "auto"); err != nil {
+		t.Fatalf("CreateWorkspace returned error: %v", err)
+	}
+	timeoutAt := base.Add(time.Minute)
+	if _, err := store.CreateEventSubscription(ctx, EventSubscription{SubscriptionID: "sub-timeout-deliveries", WorkspaceID: "ws-timeout-deliveries", OwnerSessionID: "orch-timeout", FilterJSON: `{}`, DeliveryTargetType: "harness_session", DeliveryTargetID: "orch-timeout", TimeoutAt: &timeoutAt, CreatedAt: base, UpdatedAt: base}); err != nil {
+		t.Fatalf("CreateEventSubscription returned error: %v", err)
+	}
+	if _, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-timeout-deliveries", WorkspaceID: "ws-timeout-deliveries", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-timeout", CreatedAt: base.Add(2 * time.Minute)}); err != nil {
+		t.Fatalf("AppendWorkspaceEvent returned error: %v", err)
+	}
+	due, err := store.ListDuePendingDeliveries(ctx, base.Add(3*time.Minute), 10)
+	if err != nil {
+		t.Fatalf("ListDuePendingDeliveries returned error: %v", err)
+	}
+	if len(due) != 0 {
+		t.Fatalf("due deliveries after subscription timeout = %#v, want none", due)
+	}
+}
+
 func mustMarshalJSON(t *testing.T, value any) string {
 	t.Helper()
 	encoded, err := json.Marshal(value)

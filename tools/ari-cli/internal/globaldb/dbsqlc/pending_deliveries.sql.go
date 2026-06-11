@@ -20,16 +20,24 @@ WHERE delivery_id = ?
   AND status = 'pending'
   AND next_attempt_at IS NOT NULL
   AND next_attempt_at <= ?
+  AND (deadline_at IS NULL OR deadline_at > ?)
+  AND EXISTS (SELECT 1 FROM event_subscriptions es WHERE es.subscription_id = pending_deliveries.subscription_id AND es.status = 'active')
 `
 
 type ClaimDuePendingDeliveryAttemptParams struct {
 	UpdatedAt     string  `json:"updated_at"`
 	DeliveryID    string  `json:"delivery_id"`
 	NextAttemptAt *string `json:"next_attempt_at"`
+	DeadlineAt    *string `json:"deadline_at"`
 }
 
 func (q *Queries) ClaimDuePendingDeliveryAttempt(ctx context.Context, arg ClaimDuePendingDeliveryAttemptParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, claimDuePendingDeliveryAttempt, arg.UpdatedAt, arg.DeliveryID, arg.NextAttemptAt)
+	result, err := q.db.ExecContext(ctx, claimDuePendingDeliveryAttempt,
+		arg.UpdatedAt,
+		arg.DeliveryID,
+		arg.NextAttemptAt,
+		arg.DeadlineAt,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -180,20 +188,128 @@ func (q *Queries) GetPendingDelivery(ctx context.Context, arg GetPendingDelivery
 }
 
 const listDuePendingDeliveries = `-- name: ListDuePendingDeliveries :many
-SELECT delivery_id, workspace_id, subscription_id, target_type, target_id, delivery_policy_json, event_ids_json, status, attempts, next_attempt_at, deadline_at, last_error, created_at, updated_at, terminal_at
-FROM pending_deliveries
-WHERE status = 'pending' AND next_attempt_at IS NOT NULL AND next_attempt_at <= ?
-ORDER BY next_attempt_at ASC, created_at ASC, delivery_id ASC
+SELECT pd.delivery_id, pd.workspace_id, pd.subscription_id, pd.target_type, pd.target_id, pd.delivery_policy_json, pd.event_ids_json, pd.status, pd.attempts, pd.next_attempt_at, pd.deadline_at, pd.last_error, pd.created_at, pd.updated_at, pd.terminal_at
+FROM pending_deliveries pd
+JOIN event_subscriptions es ON es.subscription_id = pd.subscription_id
+WHERE pd.status = 'pending'
+  AND es.status = 'active'
+  AND pd.next_attempt_at IS NOT NULL
+  AND pd.next_attempt_at <= ?
+  AND (pd.deadline_at IS NULL OR pd.deadline_at > ?)
+ORDER BY pd.next_attempt_at ASC, pd.created_at ASC, pd.delivery_id ASC
 LIMIT ?
 `
 
 type ListDuePendingDeliveriesParams struct {
 	NextAttemptAt *string `json:"next_attempt_at"`
+	DeadlineAt    *string `json:"deadline_at"`
 	Limit         int64   `json:"limit"`
 }
 
 func (q *Queries) ListDuePendingDeliveries(ctx context.Context, arg ListDuePendingDeliveriesParams) ([]PendingDelivery, error) {
-	rows, err := q.db.QueryContext(ctx, listDuePendingDeliveries, arg.NextAttemptAt, arg.Limit)
+	rows, err := q.db.QueryContext(ctx, listDuePendingDeliveries, arg.NextAttemptAt, arg.DeadlineAt, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PendingDelivery{}
+	for rows.Next() {
+		var i PendingDelivery
+		if err := rows.Scan(
+			&i.DeliveryID,
+			&i.WorkspaceID,
+			&i.SubscriptionID,
+			&i.TargetType,
+			&i.TargetID,
+			&i.DeliveryPolicyJson,
+			&i.EventIdsJson,
+			&i.Status,
+			&i.Attempts,
+			&i.NextAttemptAt,
+			&i.DeadlineAt,
+			&i.LastError,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.TerminalAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listExpiredPendingDeliveries = `-- name: ListExpiredPendingDeliveries :many
+SELECT delivery_id, workspace_id, subscription_id, target_type, target_id, delivery_policy_json, event_ids_json, status, attempts, next_attempt_at, deadline_at, last_error, created_at, updated_at, terminal_at
+FROM pending_deliveries
+WHERE status = 'pending'
+  AND deadline_at IS NOT NULL
+  AND deadline_at <= ?
+ORDER BY deadline_at ASC, created_at ASC, delivery_id ASC
+`
+
+type ListExpiredPendingDeliveriesParams struct {
+	DeadlineAt *string `json:"deadline_at"`
+}
+
+func (q *Queries) ListExpiredPendingDeliveries(ctx context.Context, arg ListExpiredPendingDeliveriesParams) ([]PendingDelivery, error) {
+	rows, err := q.db.QueryContext(ctx, listExpiredPendingDeliveries, arg.DeadlineAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PendingDelivery{}
+	for rows.Next() {
+		var i PendingDelivery
+		if err := rows.Scan(
+			&i.DeliveryID,
+			&i.WorkspaceID,
+			&i.SubscriptionID,
+			&i.TargetType,
+			&i.TargetID,
+			&i.DeliveryPolicyJson,
+			&i.EventIdsJson,
+			&i.Status,
+			&i.Attempts,
+			&i.NextAttemptAt,
+			&i.DeadlineAt,
+			&i.LastError,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.TerminalAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPendingDeliveriesForSubscription = `-- name: ListPendingDeliveriesForSubscription :many
+SELECT delivery_id, workspace_id, subscription_id, target_type, target_id, delivery_policy_json, event_ids_json, status, attempts, next_attempt_at, deadline_at, last_error, created_at, updated_at, terminal_at
+FROM pending_deliveries
+WHERE subscription_id = ? AND status IN ('pending', 'attempted')
+ORDER BY created_at ASC, delivery_id ASC
+`
+
+type ListPendingDeliveriesForSubscriptionParams struct {
+	SubscriptionID string `json:"subscription_id"`
+}
+
+func (q *Queries) ListPendingDeliveriesForSubscription(ctx context.Context, arg ListPendingDeliveriesForSubscriptionParams) ([]PendingDelivery, error) {
+	rows, err := q.db.QueryContext(ctx, listPendingDeliveriesForSubscription, arg.SubscriptionID)
 	if err != nil {
 		return nil, err
 	}
