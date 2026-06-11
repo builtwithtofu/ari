@@ -861,8 +861,7 @@ func TestAriFanoutStatusReadsLatestWorkerStateFromWorkspaceEvents(t *testing.T) 
 	if member["status"] != "completed" || member["reply_agent_message_id"] != "reply-worker" || member["final_response_id"] != "fr-worker" {
 		t.Fatalf("event-backed member = %#v, want latest terminal event evidence", member)
 	}
-	workspaceStatus := callMethod[WorkspaceStatusResponse](t, registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-1"})
-	assertProjectedFanoutMemberStatuses(t, workspaceStatus.FanoutMembers, map[string]string{"worker-profile": "completed"})
+	workspaceStatus := waitForProjectedFanoutMemberStatuses(t, registry, "ws-1", map[string]string{"worker-profile": "completed"})
 	if workspaceStatus.FanoutMembers[0].ReplyAgentMessageID != "reply-worker" || workspaceStatus.FanoutMembers[0].FinalResponseID != "fr-worker" {
 		t.Fatalf("workspace fanout members = %#v, want terminal event evidence", workspaceStatus.FanoutMembers)
 	}

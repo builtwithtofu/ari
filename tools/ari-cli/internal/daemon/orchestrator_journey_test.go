@@ -143,8 +143,7 @@ func TestOrchestratorJourneyFanoutPartialResultsAndCoherentProjections(t *testin
 		}
 		finalResponseIDs[profileID], _ = member["final_response_id"].(string)
 	}
-	workspaceStatus := callMethod[WorkspaceStatusResponse](t, registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-1"})
-	assertProjectedFanoutMemberStatuses(t, workspaceStatus.FanoutMembers, map[string]string{"journey-worker-a": "completed", "journey-worker-b": "completed", "journey-worker-c": "completed"})
+	workspaceStatus := waitForProjectedFanoutMemberStatuses(t, registry, "ws-1", map[string]string{"journey-worker-a": "completed", "journey-worker-b": "completed", "journey-worker-c": "completed"})
 	for _, member := range workspaceStatus.FanoutMembers {
 		if member.FinalResponseID != finalResponseIDs[member.TargetProfileID] {
 			t.Fatalf("workspace status member = %#v, want final response %q from fanout status", member, finalResponseIDs[member.TargetProfileID])
