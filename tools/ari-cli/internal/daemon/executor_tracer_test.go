@@ -1382,7 +1382,7 @@ func TestProfileRunPersistsFinalResponseArtifact(t *testing.T) {
 	if len(runs) != 1 || runs[0].SessionID != runResp.Run.HarnessSessionID || runs[0].WorkspaceID != "ws-1" || runs[0].Harness != "test-harness" || runs[0].Status != "completed" {
 		t.Fatalf("agent runs = %#v, want normalized persisted harness run", runs)
 	}
-	if runs[0].ProviderSessionID != runResp.Run.ProviderSessionID || runs[0].ProviderRunID != runResp.Run.ProviderRunID || runs[0].CWD != primaryFolder || !strings.Contains(runs[0].FolderScopeJSON, primaryFolder) || !strings.Contains(runs[0].ProviderMetadataJSON, `"resume_mode":"none"`) || !strings.Contains(runs[0].ProviderMetadataJSON, `"provider_session_id"`) || !strings.Contains(runs[0].ContextPayloadIDsJSON, "ctx_123") {
+	if runs[0].ProviderSessionID != runResp.Run.ProviderSessionID || runs[0].ProviderRunID != runResp.Run.ProviderRunID || runs[0].CWD != primaryFolder || !strings.Contains(runs[0].FolderScopeJSON, primaryFolder) || !strings.Contains(runs[0].ProviderMetadataJSON, `"resume_mode":"unknown"`) || !strings.Contains(runs[0].ProviderMetadataJSON, `"provider_session_id"`) || !strings.Contains(runs[0].ContextPayloadIDsJSON, "ctx_123") {
 		t.Fatalf("agent run metadata = %#v, want provider session and context/session metadata", runs[0])
 	}
 	messages, err := store.TailRunLogMessages(context.Background(), runResp.Run.HarnessSessionID, 2)
