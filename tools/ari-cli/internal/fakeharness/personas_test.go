@@ -147,7 +147,7 @@ func TestPiRPCEngineAnswersPromptAndState(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d stderr=%q", code, stderr)
 	}
-	for _, want := range []string{`"command":"prompt","success":true,"id":"req-1"`, `"type":"agent_end"`, `"command":"get_state"`, `"sessionName":"fake-pi-session"`, `"command":"switch_session"`, `"id":"req-2"`} {
+	for _, want := range []string{`"command":"prompt","success":true,"id":"req-1"`, `"type":"agent_end"`, `"command":"get_state"`, `"sessionId":"fake-pi-session"`, `"command":"switch_session"`, `"id":"req-2"`} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("stdout %q missing %q", stdout, want)
 		}

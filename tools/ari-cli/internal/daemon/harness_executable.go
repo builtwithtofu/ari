@@ -9,6 +9,8 @@ const (
 	EnvCodexExecutable    = "ARI_CODEX_EXECUTABLE"
 	EnvClaudeExecutable   = "ARI_CLAUDE_EXECUTABLE"
 	EnvOpenCodeExecutable = "ARI_OPENCODE_EXECUTABLE"
+	EnvPiExecutable       = "ARI_PI_EXECUTABLE"
+	EnvGrokExecutable     = "ARI_GROK_EXECUTABLE"
 )
 
 func harnessExecutable(defaultName, envName string) string {

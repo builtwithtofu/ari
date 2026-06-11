@@ -90,7 +90,9 @@ func codexAppServerEngine(run personaRun) int {
 // set_model), responses plus agent/message/turn events on stdout.
 func piRPCEngine(run personaRun) int {
 	sessionID := "fake-pi-session"
-	if value, ok := flagValue(run.args, "--session"); ok && strings.TrimSpace(value) != "" {
+	if value, ok := flagValue(run.args, "--session-id"); ok && strings.TrimSpace(value) != "" {
+		sessionID = strings.TrimSpace(value)
+	} else if value, ok := flagValue(run.args, "--session"); ok && strings.TrimSpace(value) != "" {
 		sessionID = piSessionIDFromRef(value)
 	}
 	return engineLoop(run, func(line []byte) bool {
@@ -126,7 +128,8 @@ func piRPCEngine(run personaRun) int {
 			run.out.linef(`{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":%q}]},"toolResults":[]}`, text)
 			run.out.linef(`{"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"text","text":%q}]}]}`, text)
 		case "get_state":
-			respond("get_state", fmt.Sprintf(`"data":{"model":{"provider":"anthropic","modelId":"fake-pi-model"},"isStreaming":false,"sessionPath":%q,"sessionName":%q}`, run.state.sessionPath(run.harness, sessionID), sessionID))
+			// Mirrors real pi 0.79 get_state: model object, sessionId, counters.
+			respond("get_state", fmt.Sprintf(`"data":{"model":{"id":"fake-pi-model","provider":"anthropic"},"thinkingLevel":"off","isStreaming":false,"isCompacting":false,"sessionId":%q,"messageCount":%d}`, sessionID, run.state.turnCount(run.harness, sessionID)))
 		case "get_session_stats":
 			respond("get_session_stats", fmt.Sprintf(`"data":{"turns":%d,"usage":{"input":1,"output":1}}`, run.state.turnCount(run.harness, sessionID)))
 		case "new_session":

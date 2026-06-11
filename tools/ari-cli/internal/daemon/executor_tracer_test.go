@@ -1268,7 +1268,7 @@ func TestOpenCodeAuthSlotRemoveDeletesAriOwnedSecret(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAuthSlot returned error: %v", err)
 	}
-	secretID, err := opencodeProjectionSecretID(stored.MetadataJSON)
+	secretID, err := slotProjectionSecretID(HarnessNameOpenCode, stored.MetadataJSON)
 	if err != nil {
 		t.Fatalf("projection ref missing: %v", err)
 	}

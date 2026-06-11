@@ -130,10 +130,14 @@ func piSessionFromArgs(run personaRun) (sessionID string, ephemeral bool) {
 	if containsExactArg(run.args, "--no-session") {
 		return "fake-pi-ephemeral", true
 	}
+	if value, ok := flagValue(run.args, "--session-id"); ok && strings.TrimSpace(value) != "" {
+		// --session-id uses the exact project session id, creating it if missing.
+		return strings.TrimSpace(value), false
+	}
 	if value, ok := flagValue(run.args, "--session"); ok && strings.TrimSpace(value) != "" {
 		return piSessionIDFromRef(value), false
 	}
-	if containsExactArg(run.args, "-c") {
+	if containsExactArg(run.args, "-c") || containsExactArg(run.args, "--continue") {
 		if latest := run.state.latestSession(run.harness); latest != "" {
 			return latest, false
 		}
