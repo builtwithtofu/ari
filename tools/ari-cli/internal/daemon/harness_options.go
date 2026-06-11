@@ -45,7 +45,7 @@ func requestedInvocationMode(options []HarnessOption) (HarnessInvocationMode, bo
 func harnessOptionsFromProfile(profile Profile) ([]HarnessOption, error) {
 	harness := strings.TrimSpace(profile.Harness)
 	switch harness {
-	case HarnessNameClaude, HarnessNameCodex, HarnessNameOpenCode, HarnessNamePi:
+	case HarnessNameClaude, HarnessNameCodex, HarnessNameOpenCode, HarnessNamePi, HarnessNameGrok:
 		mode, ok, err := invocationModeFromSettings(profile.Defaults, harness)
 		if err != nil {
 			return nil, err

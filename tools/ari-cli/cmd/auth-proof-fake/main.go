@@ -70,6 +70,9 @@ func run() error {
 	if err := runAri(proof, "profile", "create", "proof-pi", "--workspace-id", workspaceID, "--harness", "pi", "--prompt", "proof", "--invocation-class", "sticky"); err != nil {
 		return fmt.Errorf("create pi proof profile: %w", err)
 	}
+	if err := runAri(proof, "profile", "create", "proof-grok", "--workspace-id", workspaceID, "--harness", "grok", "--prompt", "proof", "--invocation-class", "sticky"); err != nil {
+		return fmt.Errorf("create grok proof profile: %w", err)
+	}
 
 	checks := []struct {
 		name  string
@@ -77,14 +80,16 @@ func run() error {
 		args  []string
 		want  []string
 	}{
-		{name: "doctor", args: []string{"auth", "doctor", "--discover-methods", "--detailed"}, want: []string{"claude", "codex", "opencode", "pi"}},
-		{name: "status", args: []string{"auth", "status"}, want: []string{"claude", "codex", "opencode", "pi", "authenticated"}},
+		{name: "doctor", args: []string{"auth", "doctor", "--discover-methods", "--detailed"}, want: []string{"claude", "codex", "opencode", "pi", "grok"}},
+		{name: "status", args: []string{"auth", "status"}, want: []string{"claude", "codex", "opencode", "pi", "grok", "authenticated"}},
 		{name: "codex-device-login", stdin: "2\n", args: []string{"auth", "login", "--harness", "codex", "--name", "proof"}, want: []string{"auth_in_progress", "FAKE-CODE"}},
+		{name: "grok-device-login", stdin: "2\n", args: []string{"auth", "login", "--harness", "grok", "--name", "proof"}, want: []string{"auth_in_progress", "FAKE-CODE"}},
 		{name: "claude-console-login", stdin: "2\n", args: []string{"auth", "login", "--harness", "claude", "--name", "proof"}, want: []string{"authenticated"}},
 		{name: "claude-logout", args: []string{"auth", "logout", "--harness", "claude", "--name", "proof"}, want: []string{"auth_required"}},
 		{name: "opencode-auth-methods", args: []string{"api", "auth.provider_methods", "--params", `{"harness":"opencode"}`}, want: []string{"anthropic", "browser"}},
 		{name: "opencode-session", args: []string{"session", "start", "proof-opencode", "--workspace", workspaceID, "--session", "proof-opencode", "--message", "hello"}, want: []string{"Session started: proof-opencode"}},
 		{name: "pi-session", args: []string{"session", "start", "proof-pi", "--workspace", workspaceID, "--session", "proof-pi", "--message", "hello"}, want: []string{"Session started: proof-pi"}},
+		{name: "grok-session", args: []string{"session", "start", "proof-grok", "--workspace", workspaceID, "--session", "proof-grok", "--message", "hello"}, want: []string{"Session started: proof-grok"}},
 	}
 	for _, check := range checks {
 		out, err := runAriWithInput(proof, check.stdin, check.args...)
@@ -148,7 +153,7 @@ func setupProofEnv() (proofEnv, func(), error) {
 		cleanup()
 		return proofEnv{}, nil, fmt.Errorf("build fake harness: %w: %s", err, out)
 	}
-	fakes := map[string]string{"claude": "fake-claude", "codex": "fake-codex", "opencode": "fake-opencode", "pi": "fake-pi"}
+	fakes := map[string]string{"claude": "fake-claude", "codex": "fake-codex", "opencode": "fake-opencode", "pi": "fake-pi", "grok": "fake-grok"}
 	for _, link := range fakes {
 		if err := os.Symlink(fake, filepath.Join(tmp, link)); err != nil {
 			cleanup()
@@ -165,7 +170,9 @@ func setupProofEnv() (proofEnv, func(), error) {
 		"ARI_CODEX_EXECUTABLE="+filepath.Join(tmp, fakes["codex"]),
 		"ARI_OPENCODE_EXECUTABLE="+filepath.Join(tmp, fakes["opencode"]),
 		"ARI_PI_EXECUTABLE="+filepath.Join(tmp, fakes["pi"]),
+		"ARI_GROK_EXECUTABLE="+filepath.Join(tmp, fakes["grok"]),
 		"ANTHROPIC_API_KEY=fake-proof-key",
+		"XAI_API_KEY=fake-proof-key",
 		"ARI_FAKE_HARNESS_RECORD="+record,
 		"ARI_FAKE_HARNESS_SENTINEL="+sentinel,
 		"HOME="+filepath.Join(tmp, "home"),
@@ -291,7 +298,7 @@ func assertRecordSafe(record string) error {
 			found["OPENCODE_AUTH_CONTENT"] = true
 		}
 	}
-	for _, want := range []string{"claude", "codex", "opencode", "pi", "CODEX_HOME", "CLAUDE_CONFIG_DIR"} {
+	for _, want := range []string{"claude", "codex", "opencode", "pi", "grok", "CODEX_HOME", "CLAUDE_CONFIG_DIR"} {
 		if !found[want] {
 			return fmt.Errorf("proof record missing %q", want)
 		}

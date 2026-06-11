@@ -12,8 +12,12 @@ import (
 // supported adapter must declare and prove. Adding a harness to the registry
 // means adding one row here.
 type harnessAdapterContractCase struct {
-	name               string
-	describer          HarnessDescriber
+	name      string
+	describer HarnessDescriber
+	// capabilities overrides the shared runtime capability expectation for
+	// harnesses that honestly cannot declare a shared capability (e.g. grok
+	// headless output has no token usage). Empty means the full shared set.
+	capabilities       []HarnessCapability
 	observation        []HarnessObservationCapability
 	delivery           []HarnessDeliveryCapability
 	invocationModes    []HarnessInvocationMode
@@ -164,13 +168,49 @@ func harnessAdapterContractCases() []harnessAdapterContractCase {
 			wantResumeMode:  HarnessResumeJSONRPC,
 			wantCursorKey:   "session_id",
 		},
+		{
+			name:               HarnessNameGrok,
+			describer:          NewGrokExecutorForTest(grokExecutorOptions{Executable: "grok", Cwd: "/repo"}),
+			capabilities:       grokRuntimeCapabilities(),
+			observation:        []HarnessObservationCapability{HarnessObservationEventStream},
+			delivery:           []HarnessDeliveryCapability{HarnessDeliveryVisiblePromptTurn},
+			invocationModes:    []HarnessInvocationMode{HarnessInvocationModeHeadless},
+			statusCheck:        HarnessAuthSupportPartial,
+			login:              HarnessAuthSupportSupported,
+			loginMethods:       []string{"browser", "device_code", "api_key"},
+			logout:             HarnessAuthSupportSupported,
+			namedSlotStatus:    HarnessAuthSupportSupported,
+			namedSlotExecution: HarnessAuthSupportSupported,
+			slotScope:          "grok_home",
+			riskLabels:         []string{"provider_owned", "native_config_root_isolation"},
+			caveats:            []string{"grok_named_slots_use_per_slot_grok_home", "auth_json_presence_status_only", "no_headless_token_usage"},
+			startCall: func(t *testing.T) HarnessCallResult {
+				t.Helper()
+				runner := &fakeGrokRunner{output: []byte(strings.Join([]string{
+					`{"type":"text","data":"done"}`,
+					`{"type":"end","stopReason":"EndTurn","sessionId":"grok-sess-1","requestId":"req-1"}`,
+				}, "\n"))}
+				executor := NewGrokExecutorForTest(grokExecutorOptions{Executable: "grok", Cwd: "/repo", RunCommand: runner.Run})
+				result, err := StartExecutorRunResult(context.Background(), executor, contractPacket, "", Profile{Name: "builder", Harness: HarnessNameGrok, InvocationClass: HarnessInvocationSticky})
+				if err != nil {
+					t.Fatalf("StartExecutorRunResult returned error: %v", err)
+				}
+				return result
+			},
+			wantPersistence: HarnessSessionPersistent,
+			wantResumeMode:  HarnessResumeCLIFlag,
+			wantCursorKey:   "session_id",
+		},
 	}
 }
 
 func TestHarnessAdapterDescriptorsAdvertiseSharedRuntimeContract(t *testing.T) {
-	required := sharedHarnessRuntimeCapabilities()
 	for _, tt := range harnessAdapterContractCases() {
 		t.Run(tt.name, func(t *testing.T) {
+			required := tt.capabilities
+			if len(required) == 0 {
+				required = sharedHarnessRuntimeCapabilities()
+			}
 			descriptor := tt.describer.Descriptor()
 			if descriptor.Name != tt.name {
 				t.Fatalf("descriptor name = %q, want %q", descriptor.Name, tt.name)

@@ -98,6 +98,7 @@ const (
 	HarnessNameClaude   = "claude"
 	HarnessNameOpenCode = "opencode"
 	HarnessNamePi       = "pi"
+	HarnessNameGrok     = "grok"
 	HarnessNamePTY      = "pty"
 )
 
@@ -1048,7 +1049,7 @@ func (d *Daemon) harnessAuthDiagnose(ctx context.Context, store *globaldb.Store,
 }
 
 func providerAuthHarnesses() []string {
-	return []string{HarnessNameClaude, HarnessNameCodex, HarnessNameOpenCode, HarnessNamePi}
+	return []string{HarnessNameClaude, HarnessNameCodex, HarnessNameOpenCode, HarnessNamePi, HarnessNameGrok}
 }
 
 func authProviderMethodDiagnostic(ctx context.Context, executor Executor, discover bool) HarnessAuthProviderMethodDiagnostic {
