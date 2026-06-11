@@ -14,12 +14,46 @@ type HarnessInvocationMode string
 const (
 	HarnessInvocationModeHeadless   HarnessInvocationMode = "headless"
 	HarnessInvocationModeBackground HarnessInvocationMode = "background"
+	HarnessInvocationModeServer     HarnessInvocationMode = "server"
 )
 
+// invocationModeOption is the harness-neutral invocation mode request. Adapters
+// consume it directly and the call envelope validates it against the adapter
+// descriptor before Start is invoked.
+type invocationModeOption struct {
+	mode HarnessInvocationMode
+}
+
+func (invocationModeOption) harnessOption() {}
+
+func WithInvocationMode(mode HarnessInvocationMode) HarnessOption {
+	return invocationModeOption{mode: mode}
+}
+
+func requestedInvocationMode(options []HarnessOption) (HarnessInvocationMode, bool) {
+	mode := HarnessInvocationMode("")
+	found := false
+	for _, option := range options {
+		if typed, ok := option.(invocationModeOption); ok {
+			mode = typed.mode
+			found = true
+		}
+	}
+	return mode, found
+}
+
 func harnessOptionsFromProfile(profile Profile) ([]HarnessOption, error) {
-	switch strings.TrimSpace(profile.Harness) {
-	case HarnessNameClaude:
-		return claudeOptionsFromSettings(profile.Defaults)
+	harness := strings.TrimSpace(profile.Harness)
+	switch harness {
+	case HarnessNameClaude, HarnessNameCodex, HarnessNameOpenCode:
+		mode, ok, err := invocationModeFromSettings(profile.Defaults, harness)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, nil
+		}
+		return []HarnessOption{WithInvocationMode(mode)}, nil
 	default:
 		return nil, nil
 	}
@@ -48,6 +82,8 @@ func invocationModeFromSettings(settings map[string]any, harness string) (Harnes
 		return HarnessInvocationModeHeadless, true, nil
 	case HarnessInvocationModeBackground:
 		return HarnessInvocationModeBackground, true, nil
+	case HarnessInvocationModeServer:
+		return HarnessInvocationModeServer, true, nil
 	default:
 		return "", false, fmt.Errorf("unsupported invocation_mode %q", mode)
 	}

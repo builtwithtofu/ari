@@ -330,7 +330,17 @@ type HarnessAdapterDescriptor struct {
 	Capabilities            []HarnessCapability
 	ObservationCapabilities []HarnessObservationCapability
 	DeliveryCapabilities    []HarnessDeliveryCapability
+	InvocationModes         []HarnessInvocationMode
 	Auth                    HarnessAuthDescriptor
+}
+
+func harnessInvocationModesContain(modes []HarnessInvocationMode, target HarnessInvocationMode) bool {
+	for _, mode := range modes {
+		if mode == target {
+			return true
+		}
+	}
+	return false
 }
 
 type HarnessAuthDescriptor struct {
@@ -544,7 +554,10 @@ func StartHarnessCallResult(ctx context.Context, executor Executor, call Harness
 	if err := validateHarnessCallEnvelope(call); err != nil {
 		return HarnessCallResult{}, err
 	}
-	run, items, err := startHarnessCallAfterCapabilityCheck(ctx, executor, call, descriptor)
+	if mode, ok := requestedInvocationMode(call.Options); ok && !harnessInvocationModesContain(descriptor.InvocationModes, mode) {
+		return HarnessCallResult{}, &HarnessValidationError{Message: fmt.Sprintf("invocation mode %q is not supported by harness %s", mode, descriptor.Name), Field: "invocation_mode"}
+	}
+	run, items, providerRun, err := startHarnessCallAfterCapabilityCheck(ctx, executor, call, descriptor)
 	if err != nil {
 		return HarnessCallResult{}, err
 	}
@@ -557,18 +570,35 @@ func StartHarnessCallResult(ctx context.Context, executor Executor, call Harness
 		CallID:         call.CallID,
 		Status:         harnessCallStatusFromHarnessSession(run),
 		HarnessSession: run,
-		SessionRef: HarnessSessionRef{
-			AriSessionID:           run.HarnessSessionID,
-			ProviderSessionID:      run.ProviderSessionID,
-			ProviderCanUseClientID: HarnessUnknown,
-			Persistence:            HarnessSessionUnknown,
-			ResumeMode:             HarnessResumeNone,
-		},
-		Items:         items,
-		Events:        harnessRuntimeEventsFromItems(run, items),
-		FinalResponse: harnessFinalResponseFromItems(run, descriptor, items),
-		Telemetry:     harnessTelemetryFromItems(call, items),
+		SessionRef:     harnessSessionRefFromExecutorRun(run, providerRun),
+		Items:          items,
+		Events:         harnessRuntimeEventsFromItems(run, items),
+		FinalResponse:  harnessFinalResponseFromItems(run, descriptor, items),
+		Telemetry:      harnessTelemetryFromItems(call, items),
 	}, nil
+}
+
+// harnessSessionRefFromExecutorRun builds the session ref from what the adapter
+// reported on Start. Adapters that do not report persistence or resume facts
+// surface as unknown rather than a fabricated "none".
+func harnessSessionRefFromExecutorRun(run HarnessSession, providerRun ExecutorRun) HarnessSessionRef {
+	persistence := providerRun.Persistence
+	if persistence == "" {
+		persistence = HarnessSessionUnknown
+	}
+	resumeMode := providerRun.ResumeMode
+	if resumeMode == "" {
+		resumeMode = HarnessResumeUnknown
+	}
+	return HarnessSessionRef{
+		AriSessionID:           run.HarnessSessionID,
+		ProviderSessionID:      run.ProviderSessionID,
+		ProviderThreadID:       strings.TrimSpace(providerRun.ProviderThreadID),
+		ResumeCursor:           providerRun.ResumeCursor,
+		ProviderCanUseClientID: HarnessUnknown,
+		Persistence:            persistence,
+		ResumeMode:             resumeMode,
+	}
 }
 
 func harnessTelemetryFromItems(call HarnessCall, items []TimelineItem) HarnessTelemetrySeed {
@@ -797,18 +827,18 @@ func trimOrDefault(value, fallback string) string {
 	return value
 }
 
-func startHarnessCallAfterCapabilityCheck(ctx context.Context, executor Executor, call HarnessCall, descriptor HarnessAdapterDescriptor) (HarnessSession, []TimelineItem, error) {
+func startHarnessCallAfterCapabilityCheck(ctx context.Context, executor Executor, call HarnessCall, descriptor HarnessAdapterDescriptor) (HarnessSession, []TimelineItem, ExecutorRun, error) {
 	ariRunID := strings.TrimSpace(call.AriSessionID)
 	if ariRunID == "" {
 		var err error
 		ariRunID, err = newAriULID()
 		if err != nil {
-			return HarnessSession{}, nil, err
+			return HarnessSession{}, nil, ExecutorRun{}, err
 		}
 	}
 	providerRun, err := executor.Start(ctx, ExecutorStartRequest{WorkspaceID: call.WorkspaceID, RunID: ariRunID, SessionID: ariRunID, ContextPacket: string(call.Input), SourceProfileID: call.SourceProfileID, Model: call.Model, Prompt: call.Prompt, AuthSlotID: call.AuthSlotID, AuthProjection: call.AuthProjection, InvocationClass: call.InvocationClass, Options: call.Options})
 	if err != nil {
-		return HarnessSession{}, nil, err
+		return HarnessSession{}, nil, ExecutorRun{}, err
 	}
 	providerSessionID := strings.TrimSpace(providerRun.SessionID)
 	if providerSessionID == "" {
@@ -835,7 +865,7 @@ func startHarnessCallAfterCapabilityCheck(ctx context.Context, executor Executor
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 			_ = executor.Stop(context.Background(), providerSessionID)
 		}
-		return HarnessSession{}, nil, err
+		return HarnessSession{}, nil, ExecutorRun{}, err
 	}
 	invocationMode, usageBucket := harnessModeMetadataFromItems(items)
 	agentSession := HarnessSession{
@@ -871,7 +901,7 @@ func startHarnessCallAfterCapabilityCheck(ctx context.Context, executor Executor
 			}
 		}
 	}
-	return agentSession, items, nil
+	return agentSession, items, providerRun, nil
 }
 
 func missingHarnessCapabilities(required, available []HarnessCapability) []HarnessCapability {

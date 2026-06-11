@@ -103,15 +103,14 @@ func TestOpenCodeDeliveryHTTPClientHasTimeout(t *testing.T) {
 	}
 }
 
-func TestOpenCodeExecutorAdvertisesDeliveryOnlyWithServerURL(t *testing.T) {
-	withoutServer := NewOpenCodeExecutorForTest(opencodeExecutorOptions{})
-	if got := withoutServer.Descriptor().DeliveryCapabilities; len(got) != 0 {
-		t.Fatalf("delivery capabilities without server = %#v, want none", got)
-	}
-
-	withServer := NewOpenCodeExecutorForTest(opencodeExecutorOptions{DeliveryServerURL: "http://127.0.0.1:3000"})
-	if got := withServer.Descriptor().DeliveryCapabilities; len(got) != 1 || got[0] != HarnessDeliveryVisiblePromptTurn {
-		t.Fatalf("delivery capabilities with server = %#v, want visible prompt turn", got)
+func TestOpenCodeExecutorAlwaysAdvertisesPromptTurnDelivery(t *testing.T) {
+	// Delivery no longer depends on a pre-configured server URL: attempts
+	// without one start a bounded `opencode serve` process themselves.
+	for _, options := range []opencodeExecutorOptions{{}, {DeliveryServerURL: "http://127.0.0.1:3000"}} {
+		executor := NewOpenCodeExecutorForTest(options)
+		if got := executor.Descriptor().DeliveryCapabilities; len(got) != 1 || got[0] != HarnessDeliveryVisiblePromptTurn {
+			t.Fatalf("delivery capabilities (server url %q) = %#v, want visible prompt turn", options.DeliveryServerURL, got)
+		}
 	}
 }
 

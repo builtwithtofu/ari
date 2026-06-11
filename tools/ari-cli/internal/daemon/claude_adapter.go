@@ -8,9 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -26,29 +24,6 @@ type claudeExecutorOptions struct {
 	RunCommand     claudeCommandRunner
 	RunDelivery    claudeCommandRunner
 	RunAuthCommand claudeAuthCommandRunner
-}
-
-type claudeOption struct {
-	apply func(*claudeExecutorOptions)
-}
-
-func (claudeOption) harnessOption() {}
-
-func ClaudeWithInvocationMode(mode HarnessInvocationMode) HarnessOption {
-	return claudeOption{apply: func(options *claudeExecutorOptions) {
-		options.InvocationMode = mode
-	}}
-}
-
-func claudeOptionsFromSettings(settings map[string]any) ([]HarnessOption, error) {
-	mode, ok, err := invocationModeFromSettings(settings, HarnessNameClaude)
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		return nil, nil
-	}
-	return []HarnessOption{ClaudeWithInvocationMode(mode)}, nil
 }
 
 type commandRunResult struct {
@@ -113,19 +88,7 @@ func (options claudeExecutorOptions) withClaudeAuthSlotProjection(authSlotID str
 }
 
 func claudeAuthSlotHome(authSlotID string) (string, error) {
-	configRoot, err := os.UserConfigDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve claude auth slot home root: %w", err)
-	}
-	safeSlotID := safeAuthSlotPathComponent(authSlotID)
-	if safeSlotID == "" {
-		return "", fmt.Errorf("claude auth slot id is required")
-	}
-	home := filepath.Join(configRoot, "ari", "auth-slots", HarnessNameClaude, safeSlotID)
-	if err := os.MkdirAll(home, 0o700); err != nil {
-		return "", fmt.Errorf("create claude auth slot home: %w", err)
-	}
-	return home, nil
+	return harnessAuthSlotHome(HarnessNameClaude, authSlotID, "")
 }
 
 func (e *ClaudeExecutor) AuthStatus(ctx context.Context, slot HarnessAuthSlot) (HarnessAuthStatus, error) {
@@ -179,6 +142,7 @@ func (e *ClaudeExecutor) Descriptor() HarnessAdapterDescriptor {
 		Capabilities:            sharedHarnessRuntimeCapabilities(),
 		ObservationCapabilities: []HarnessObservationCapability{HarnessObservationUnsupported},
 		DeliveryCapabilities:    []HarnessDeliveryCapability{HarnessDeliveryVisiblePromptTurn},
+		InvocationModes:         []HarnessInvocationMode{HarnessInvocationModeHeadless, HarnessInvocationModeBackground},
 		Auth: HarnessAuthDescriptor{
 			StatusCheck:        HarnessAuthSupportSupported,
 			Login:              HarnessAuthSupportPartial,
@@ -207,11 +171,15 @@ func (e *ClaudeExecutor) Start(ctx context.Context, req ExecutorStartRequest) (E
 	}
 	options := e.options
 	for _, option := range req.Options {
-		claudeOpt, ok := option.(claudeOption)
-		if !ok {
+		switch typed := option.(type) {
+		case invocationModeOption:
+			options.InvocationMode = typed.mode
+		default:
 			return ExecutorRun{}, fmt.Errorf("unsupported claude option %T", option)
 		}
-		claudeOpt.apply(&options)
+	}
+	if !harnessInvocationModesContain(e.Descriptor().InvocationModes, options.InvocationMode) {
+		return ExecutorRun{}, &HarnessValidationError{Message: fmt.Sprintf("invocation mode %q is not supported by harness %s", options.InvocationMode, HarnessNameClaude), Field: "invocation_mode"}
 	}
 	if strings.TrimSpace(req.Model) != "" {
 		options.Model = strings.TrimSpace(req.Model)
@@ -239,7 +207,17 @@ func (e *ClaudeExecutor) Start(ctx context.Context, req ExecutorStartRequest) (E
 	e.runs[sessionID] = items
 	e.deliveryOptions[sessionID] = options
 	e.mu.Unlock()
-	return ExecutorRun{RunID: sessionID, SessionID: sessionID, Executor: HarnessNameClaude, ProviderSessionID: sessionID, ProviderRunID: sessionID, ExitCode: commandResult.ExitCode, ProcessSample: commandResult.ProcessSample, CapabilityNames: harnessCapabilitiesToStrings(e.Descriptor().Capabilities)}, nil
+	run := ExecutorRun{RunID: sessionID, SessionID: sessionID, Executor: HarnessNameClaude, ProviderSessionID: sessionID, ProviderRunID: sessionID, ExitCode: commandResult.ExitCode, ProcessSample: commandResult.ProcessSample, CapabilityNames: harnessCapabilitiesToStrings(e.Descriptor().Capabilities), Persistence: HarnessSessionEphemeral, ResumeMode: HarnessResumeNone}
+	if options.InvocationMode == HarnessInvocationModeBackground {
+		// Background sessions stay alive provider-side; later turns reattach
+		// via the provider session id on the CLI.
+		run.Persistence = HarnessSessionPersistent
+		run.ResumeMode = HarnessResumeCLIFlag
+		if cursor, err := json.Marshal(map[string]string{"session_id": sessionID}); err == nil {
+			run.ResumeCursor = cursor
+		}
+	}
+	return run, nil
 }
 
 func (e *ClaudeExecutor) Items(ctx context.Context, runID string) ([]TimelineItem, error) {

@@ -7,14 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
-	"sync/atomic"
-	"time"
 )
 
 type codexExecutorOptions struct {
@@ -41,11 +37,6 @@ type codexTransport interface {
 	PID() int
 	ProcessSample(context.Context) *ProcessMetricsSample
 	Close() error
-}
-
-type codexNotification struct {
-	Method string          `json:"method"`
-	Params json.RawMessage `json:"params,omitempty"`
 }
 
 type CodexExecutor struct {
@@ -99,23 +90,7 @@ func (options codexExecutorOptions) withCodexAuthSlotProjection(authSlotID strin
 }
 
 func (options codexExecutorOptions) codexAuthSlotHome(authSlotID string) (string, error) {
-	root := strings.TrimSpace(options.AuthHomeRoot)
-	if root == "" {
-		configRoot, err := os.UserConfigDir()
-		if err != nil {
-			return "", fmt.Errorf("resolve codex auth slot home root: %w", err)
-		}
-		root = filepath.Join(configRoot, "ari", "auth-slots", HarnessNameCodex)
-	}
-	safeSlotID := safeAuthSlotPathComponent(authSlotID)
-	if safeSlotID == "" {
-		return "", fmt.Errorf("codex auth slot id is required")
-	}
-	home := filepath.Join(root, safeSlotID)
-	if err := os.MkdirAll(home, 0o700); err != nil {
-		return "", fmt.Errorf("create codex auth slot home: %w", err)
-	}
-	return home, nil
+	return harnessAuthSlotHome(HarnessNameCodex, authSlotID, options.AuthHomeRoot)
 }
 
 func safeAuthSlotPathComponent(value string) string {
@@ -331,6 +306,7 @@ func (e *CodexExecutor) Descriptor() HarnessAdapterDescriptor {
 		Capabilities:            sharedHarnessRuntimeCapabilities(),
 		ObservationCapabilities: []HarnessObservationCapability{HarnessObservationEventStream},
 		DeliveryCapabilities:    []HarnessDeliveryCapability{HarnessDeliveryVisiblePromptTurn},
+		InvocationModes:         []HarnessInvocationMode{HarnessInvocationModeServer},
 		Auth: HarnessAuthDescriptor{
 			StatusCheck:        HarnessAuthSupportSupported,
 			Login:              HarnessAuthSupportSupported,
@@ -356,6 +332,16 @@ func (e *CodexExecutor) Start(ctx context.Context, req ExecutorStartRequest) (Ex
 	workspaceID := strings.TrimSpace(req.WorkspaceID)
 	if workspaceID == "" {
 		return ExecutorRun{}, fmt.Errorf("workspace id is required")
+	}
+	for _, option := range req.Options {
+		switch typed := option.(type) {
+		case invocationModeOption:
+			if typed.mode != HarnessInvocationModeServer {
+				return ExecutorRun{}, &HarnessValidationError{Message: fmt.Sprintf("invocation mode %q is not supported by harness %s", typed.mode, HarnessNameCodex), Field: "invocation_mode"}
+			}
+		default:
+			return ExecutorRun{}, fmt.Errorf("unsupported codex option %T", option)
+		}
 	}
 	options := e.options
 	options.AuthProjection = req.AuthProjection
@@ -405,7 +391,11 @@ func (e *CodexExecutor) Start(ctx context.Context, req ExecutorStartRequest) (Ex
 	if providerRunID == "" {
 		providerRunID = threadID
 	}
-	return ExecutorRun{RunID: threadID, SessionID: threadID, Executor: HarnessNameCodex, ProviderSessionID: threadID, ProviderRunID: providerRunID, PID: transport.PID(), ProcessSample: transport.ProcessSample(ctx), CapabilityNames: harnessCapabilitiesToStrings(e.Descriptor().Capabilities)}, nil
+	run := ExecutorRun{RunID: threadID, SessionID: threadID, Executor: HarnessNameCodex, ProviderSessionID: threadID, ProviderRunID: providerRunID, ProviderThreadID: threadID, PID: transport.PID(), ProcessSample: transport.ProcessSample(ctx), CapabilityNames: harnessCapabilitiesToStrings(e.Descriptor().Capabilities), Persistence: HarnessSessionPersistent, ResumeMode: HarnessResumeJSONRPC}
+	if cursor, err := json.Marshal(map[string]string{"thread_id": threadID}); err == nil {
+		run.ResumeCursor = cursor
+	}
+	return run, nil
 }
 
 func (e *CodexExecutor) Items(ctx context.Context, runID string) ([]TimelineItem, error) {
@@ -695,203 +685,18 @@ func runCodexAppServerDeliveryCommand(ctx context.Context, options codexExecutor
 	return result, nil
 }
 
-type codexStdioTransport struct {
-	cmd           *exec.Cmd
-	stdin         io.WriteCloser
-	notifications chan codexNotification
-	responses     map[int64]chan codexRPCMessage
-	mu            sync.Mutex
-	nextID        int64
-	closed        chan struct{}
-	closeOnce     sync.Once
+// codexNotification and codexRPCMessage are the codex-facing names for the
+// shared JSONL RPC transport types.
+type (
+	codexNotification = harnessRPCNotification
+	codexRPCMessage   = harnessRPCMessage
+)
+
+func newCodexStdioTransport(cmd *exec.Cmd, stdin io.WriteCloser, stdout io.Reader, stderr io.Reader, notificationCap int) *jsonlRPCTransport {
+	return newJSONLRPCTransport(HarnessNameCodex, cmd, stdin, stdout, stderr, notificationCap, codexNotificationIsTerminal)
 }
 
-type codexRPCMessage struct {
-	ID     *int64          `json:"id,omitempty"`
-	Method string          `json:"method,omitempty"`
-	Params json.RawMessage `json:"params,omitempty"`
-	Result json.RawMessage `json:"result,omitempty"`
-	Error  *codexRPCError  `json:"error,omitempty"`
-}
-
-type codexRPCError struct {
-	Code    int             `json:"code"`
-	Message string          `json:"message"`
-	Data    json.RawMessage `json:"data,omitempty"`
-}
-
-func newCodexStdioTransport(cmd *exec.Cmd, stdin io.WriteCloser, stdout io.Reader, stderr io.Reader, notificationCap int) *codexStdioTransport {
-	transport := &codexStdioTransport{cmd: cmd, stdin: stdin, notifications: make(chan codexNotification, notificationCap), responses: make(map[int64]chan codexRPCMessage), closed: make(chan struct{})}
-	go transport.readMessages(stdout)
-	go func() { _, _ = io.Copy(io.Discard, stderr) }()
-	return transport
-}
-
-func (t *codexStdioTransport) PID() int {
-	if t == nil || t.cmd == nil || t.cmd.Process == nil {
-		return 0
-	}
-	return t.cmd.Process.Pid
-}
-
-func (t *codexStdioTransport) ProcessSample(ctx context.Context) *ProcessMetricsSample {
-	pid := t.PID()
-	if pid <= 0 {
-		return nil
-	}
-	sample := sampleLinuxProcessMetrics(ctx, HarnessSession{PID: pid})
-	return &sample
-}
-
-func (t *codexStdioTransport) Call(ctx context.Context, method string, params any, result any) error {
-	id := atomic.AddInt64(&t.nextID, 1)
-	responseCh := make(chan codexRPCMessage, 1)
-	t.mu.Lock()
-	t.responses[id] = responseCh
-	t.mu.Unlock()
-	defer func() {
-		t.mu.Lock()
-		delete(t.responses, id)
-		t.mu.Unlock()
-	}()
-	message := map[string]any{"id": id, "method": method}
-	if params != nil {
-		message["params"] = params
-	}
-	encoded, err := json.Marshal(message)
-	if err != nil {
-		return fmt.Errorf("encode codex %s request: %w", method, err)
-	}
-	if _, err := t.stdin.Write(append(encoded, '\n')); err != nil {
-		return fmt.Errorf("write codex %s request: %w", method, err)
-	}
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-t.closed:
-		select {
-		case response := <-responseCh:
-			return decodeCodexCallResponse(method, response, result)
-		default:
-		}
-		return fmt.Errorf("codex app-server closed before %s response", method)
-	case response := <-responseCh:
-		return decodeCodexCallResponse(method, response, result)
-	}
-}
-
-func decodeCodexCallResponse(method string, response codexRPCMessage, result any) error {
-	if response.Error != nil {
-		return fmt.Errorf("codex %s error %d: %s", method, response.Error.Code, response.Error.Message)
-	}
-	if result == nil || len(response.Result) == 0 {
-		return nil
-	}
-	if err := json.Unmarshal(response.Result, result); err != nil {
-		return fmt.Errorf("decode codex %s response: %w", method, err)
-	}
-	return nil
-}
-
-func (t *codexStdioTransport) Notify(ctx context.Context, method string, params any) error {
-	message := map[string]any{"method": method}
-	if params != nil {
-		message["params"] = params
-	}
-	encoded, err := json.Marshal(message)
-	if err != nil {
-		return fmt.Errorf("encode codex %s notification: %w", method, err)
-	}
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-t.closed:
-		return fmt.Errorf("codex app-server closed before %s notification", method)
-	default:
-	}
-	if _, err := t.stdin.Write(append(encoded, '\n')); err != nil {
-		return fmt.Errorf("write codex %s notification: %w", method, err)
-	}
-	return nil
-}
-
-func (t *codexStdioTransport) Notifications() <-chan codexNotification {
-	return t.notifications
-}
-
-func (t *codexStdioTransport) Close() error {
-	var err error
-	t.closeOnce.Do(func() {
-		_ = t.stdin.Close()
-		if t.cmd != nil && t.cmd.Process != nil {
-			err = t.cmd.Process.Kill()
-		}
-		if t.cmd != nil {
-			_, _ = waitWithTimeout(t.cmd, 2*time.Second)
-		}
-		close(t.closed)
-	})
-	return err
-}
-
-func waitWithTimeout(cmd *exec.Cmd, timeout time.Duration) (struct{}, error) {
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-	select {
-	case err := <-done:
-		return struct{}{}, err
-	case <-time.After(timeout):
-		return struct{}{}, fmt.Errorf("process did not exit within %s", timeout)
-	}
-}
-
-func (t *codexStdioTransport) readMessages(stdout io.Reader) {
-	defer func() {
-		close(t.notifications)
-		t.closeOnce.Do(func() { close(t.closed) })
-	}()
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
-	for scanner.Scan() {
-		var message codexRPCMessage
-		if err := json.Unmarshal(scanner.Bytes(), &message); err != nil {
-			continue
-		}
-		if message.ID != nil {
-			t.mu.Lock()
-			responseCh := t.responses[*message.ID]
-			t.mu.Unlock()
-			if responseCh != nil {
-				responseCh <- message
-			}
-			continue
-		}
-		if strings.TrimSpace(message.Method) != "" {
-			t.deliverNotification(codexNotification{Method: message.Method, Params: message.Params})
-		}
-	}
-}
-
-func (t *codexStdioTransport) deliverNotification(notification codexNotification) {
-	select {
-	case t.notifications <- notification:
-		return
-	default:
-	}
-	if !codexNotificationIsTerminal(notification) {
-		return
-	}
-	select {
-	case <-t.notifications:
-	default:
-	}
-	select {
-	case t.notifications <- notification:
-	default:
-	}
-}
-
-func codexNotificationIsTerminal(notification codexNotification) bool {
+func codexNotificationIsTerminal(notification harnessRPCNotification) bool {
 	switch strings.TrimSpace(notification.Method) {
 	case "turn/completed", "error":
 		return true

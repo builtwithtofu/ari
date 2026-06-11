@@ -36,7 +36,7 @@ func TestClaudeStartCarriesAuthProjectionToCommandOptions(t *testing.T) {
 	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunCommand: runner.Run})
 	projection := HarnessAuthProjectionPlan{Owner: HarnessAuthProjectionOwnerNative, Kind: HarnessAuthProjectionConfigRoot, Env: map[string]string{"CLAUDE_CONFIG_DIR": "/tmp/ari/claude-work"}}
 
-	_, err := executor.Start(context.Background(), ExecutorStartRequest{WorkspaceID: "ws-1", ContextPacket: `{"context_packet_id":"ctx_123"}`, Options: []HarnessOption{ClaudeWithInvocationMode(HarnessInvocationModeHeadless)}, AuthProjection: projection})
+	_, err := executor.Start(context.Background(), ExecutorStartRequest{WorkspaceID: "ws-1", ContextPacket: `{"context_packet_id":"ctx_123"}`, Options: []HarnessOption{WithInvocationMode(HarnessInvocationModeHeadless)}, AuthProjection: projection})
 	if err != nil {
 		t.Fatalf("Start returned error: %v", err)
 	}

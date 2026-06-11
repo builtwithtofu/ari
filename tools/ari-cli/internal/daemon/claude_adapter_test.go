@@ -77,7 +77,7 @@ func TestClaudeExecutorUsesRequestPromptAsReplacementSystemPrompt(t *testing.T) 
 		Model:         "opus",
 		Prompt:        "Session-specific behavior",
 		ContextPacket: `{"context_packet_id":"ctx_123","task":"visible task"}`,
-		Options:       []HarnessOption{ClaudeWithInvocationMode(HarnessInvocationModeHeadless)},
+		Options:       []HarnessOption{WithInvocationMode(HarnessInvocationModeHeadless)},
 	})
 	if err != nil {
 		t.Fatalf("Start returned error: %v", err)
@@ -116,7 +116,7 @@ func TestClaudeBackgroundInvocationOmitsEmptyPromptArgument(t *testing.T) {
 	runner := &fakeClaudeRunner{output: []byte(`backgrounded · 7c5dcf5d`)}
 	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunCommand: runner.Run})
 
-	_, err := executor.Start(context.Background(), ExecutorStartRequest{WorkspaceID: "ws-1", Options: []HarnessOption{ClaudeWithInvocationMode(HarnessInvocationModeBackground)}})
+	_, err := executor.Start(context.Background(), ExecutorStartRequest{WorkspaceID: "ws-1", Options: []HarnessOption{WithInvocationMode(HarnessInvocationModeBackground)}})
 	if err != nil {
 		t.Fatalf("Start returned error: %v", err)
 	}
@@ -199,7 +199,7 @@ func TestClaudeExecutorUsesTypedBackgroundOption(t *testing.T) {
 		Model:         "opus",
 		Prompt:        "Act as the reviewer",
 		ContextPacket: `{"context_packet_id":"ctx_123","task":"visible task"}`,
-		Options:       []HarnessOption{ClaudeWithInvocationMode(HarnessInvocationModeBackground)},
+		Options:       []HarnessOption{WithInvocationMode(HarnessInvocationModeBackground)},
 	})
 	if err != nil {
 		t.Fatalf("Start returned error: %v", err)
@@ -258,54 +258,46 @@ func stringSliceContains(values []string, target string) bool {
 	return false
 }
 
-func TestClaudeOptionsFromSettingsUseNormalizedAndNativeInvocationModes(t *testing.T) {
-	options, err := claudeOptionsFromSettings(nil)
+func TestHarnessOptionsFromProfileUseNormalizedAndNativeInvocationModes(t *testing.T) {
+	options, err := harnessOptionsFromProfile(Profile{Harness: HarnessNameClaude})
 	if err != nil {
-		t.Fatalf("claudeOptionsFromSettings returned error: %v", err)
+		t.Fatalf("harnessOptionsFromProfile returned error: %v", err)
 	}
 	if len(options) != 0 {
 		t.Fatalf("options = %#v, want no explicit option when settings omit invocation_mode", options)
 	}
 
-	options, err = claudeOptionsFromSettings(map[string]any{"invocation_mode": "background"})
+	options, err = harnessOptionsFromProfile(Profile{Harness: HarnessNameClaude, Defaults: map[string]any{"invocation_mode": "background"}})
 	if err != nil {
-		t.Fatalf("claudeOptionsFromSettings returned error: %v", err)
+		t.Fatalf("harnessOptionsFromProfile returned error: %v", err)
 	}
-	resolved := claudeExecutorOptions{}
-	for _, option := range options {
-		option.(claudeOption).apply(&resolved)
-	}
-	if resolved.InvocationMode != HarnessInvocationModeBackground {
-		t.Fatalf("resolved mode = %q, want background", resolved.InvocationMode)
+	if mode, ok := requestedInvocationMode(options); !ok || mode != HarnessInvocationModeBackground {
+		t.Fatalf("resolved mode = %q (set=%t), want background", mode, ok)
 	}
 
-	options, err = claudeOptionsFromSettings(map[string]any{"invocation_mode": "background", "claude": map[string]any{"invocation_mode": "headless"}})
+	options, err = harnessOptionsFromProfile(Profile{Harness: HarnessNameClaude, Defaults: map[string]any{"invocation_mode": "background", "claude": map[string]any{"invocation_mode": "headless"}}})
 	if err != nil {
-		t.Fatalf("claudeOptionsFromSettings returned error: %v", err)
+		t.Fatalf("harnessOptionsFromProfile returned error: %v", err)
 	}
-	resolved = claudeExecutorOptions{InvocationMode: HarnessInvocationModeBackground}
-	for _, option := range options {
-		option.(claudeOption).apply(&resolved)
-	}
-	if resolved.InvocationMode != HarnessInvocationModeHeadless {
-		t.Fatalf("resolved mode = %q, want native Claude override to headless", resolved.InvocationMode)
+	if mode, ok := requestedInvocationMode(options); !ok || mode != HarnessInvocationModeHeadless {
+		t.Fatalf("resolved mode = %q (set=%t), want native Claude override to headless", mode, ok)
 	}
 }
 
-func TestClaudeOptionsFromSettingsRejectUnsupportedInvocationMode(t *testing.T) {
-	_, err := claudeOptionsFromSettings(map[string]any{"invocation_mode": "telepathy"})
+func TestHarnessOptionsFromProfileRejectUnsupportedInvocationMode(t *testing.T) {
+	_, err := harnessOptionsFromProfile(Profile{Harness: HarnessNameClaude, Defaults: map[string]any{"invocation_mode": "telepathy"}})
 	if err == nil || !strings.Contains(err.Error(), "unsupported invocation_mode") {
 		t.Fatalf("error = %v, want unsupported invocation mode", err)
 	}
 }
 
-func TestClaudeOptionsFromSettingsRejectMalformedSettings(t *testing.T) {
-	_, err := claudeOptionsFromSettings(map[string]any{"invocation_mode": 123})
+func TestHarnessOptionsFromProfileRejectMalformedSettings(t *testing.T) {
+	_, err := harnessOptionsFromProfile(Profile{Harness: HarnessNameClaude, Defaults: map[string]any{"invocation_mode": 123}})
 	if err == nil || !strings.Contains(err.Error(), "invocation_mode must be a string") {
 		t.Fatalf("error = %v, want non-string invocation mode error", err)
 	}
 
-	_, err = claudeOptionsFromSettings(map[string]any{"claude": "background"})
+	_, err = harnessOptionsFromProfile(Profile{Harness: HarnessNameClaude, Defaults: map[string]any{"claude": "background"}})
 	if err == nil || !strings.Contains(err.Error(), "claude must be an object") {
 		t.Fatalf("error = %v, want malformed native settings error", err)
 	}
@@ -329,7 +321,7 @@ func TestClaudeStartProjectsNamedSlotConfigDir(t *testing.T) {
 	runner := &fakeClaudeRunner{output: []byte(`{"result":"Done","session_id":"550e8400-e29b-41d4-a716-446655440000"}`)}
 	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunCommand: runner.Run})
 
-	_, err := executor.Start(context.Background(), ExecutorStartRequest{WorkspaceID: "ws-1", AuthSlotID: "claude-work", ContextPacket: `{"context_packet_id":"ctx_123"}`, Options: []HarnessOption{ClaudeWithInvocationMode(HarnessInvocationModeHeadless)}})
+	_, err := executor.Start(context.Background(), ExecutorStartRequest{WorkspaceID: "ws-1", AuthSlotID: "claude-work", ContextPacket: `{"context_packet_id":"ctx_123"}`, Options: []HarnessOption{WithInvocationMode(HarnessInvocationModeHeadless)}})
 	if err != nil {
 		t.Fatalf("Start returned error: %v", err)
 	}
@@ -347,7 +339,7 @@ func TestClaudeDefaultStartKeepsImplicitEnvInheritance(t *testing.T) {
 	runner := &fakeClaudeRunner{output: []byte(`{"result":"Done","session_id":"550e8400-e29b-41d4-a716-446655440000"}`)}
 	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunCommand: runner.Run})
 
-	_, err := executor.Start(context.Background(), ExecutorStartRequest{WorkspaceID: "ws-1", ContextPacket: `{"context_packet_id":"ctx_123"}`, Options: []HarnessOption{ClaudeWithInvocationMode(HarnessInvocationModeHeadless)}})
+	_, err := executor.Start(context.Background(), ExecutorStartRequest{WorkspaceID: "ws-1", ContextPacket: `{"context_packet_id":"ctx_123"}`, Options: []HarnessOption{WithInvocationMode(HarnessInvocationModeHeadless)}})
 	if err != nil {
 		t.Fatalf("Start returned error: %v", err)
 	}
@@ -465,12 +457,9 @@ func TestHarnessSessionDefaultsCanOverrideInvocationModeWithoutDuplicatingProfil
 	if err != nil {
 		t.Fatalf("harnessOptionsFromProfile returned error: %v", err)
 	}
-	resolved := claudeExecutorOptions{}
-	for _, option := range options {
-		option.(claudeOption).apply(&resolved)
-	}
-	if resolved.InvocationMode != HarnessInvocationModeBackground || profile.Prompt != "Review" {
-		t.Fatalf("profile = %#v resolved = %#v, want same profile prompt with per-run background mode", profile, resolved)
+	mode, ok := requestedInvocationMode(options)
+	if !ok || mode != HarnessInvocationModeBackground || profile.Prompt != "Review" {
+		t.Fatalf("profile = %#v mode = %q (set=%t), want same profile prompt with per-run background mode", profile, mode, ok)
 	}
 }
 
