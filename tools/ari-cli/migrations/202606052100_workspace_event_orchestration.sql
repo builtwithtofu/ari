@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS workspace_events (
   attention_required INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
+  UNIQUE(workspace_id, event_id),
   UNIQUE(workspace_id, sequence)
 );
 
@@ -53,7 +54,8 @@ CREATE TABLE IF NOT EXISTS inbox_items (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
-  FOREIGN KEY(workspace_event_id) REFERENCES workspace_events(event_id) ON DELETE CASCADE
+  FOREIGN KEY(workspace_id, workspace_event_id)
+    REFERENCES workspace_events(workspace_id, event_id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS inbox_items_session_status_idx
@@ -78,7 +80,8 @@ CREATE TABLE IF NOT EXISTS event_subscriptions (
   timeout_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+  FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
+  UNIQUE(workspace_id, subscription_id)
 );
 
 CREATE INDEX IF NOT EXISTS event_subscriptions_workspace_owner_idx
@@ -102,7 +105,8 @@ CREATE TABLE IF NOT EXISTS workspace_timers (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
-  FOREIGN KEY(subscription_id) REFERENCES event_subscriptions(subscription_id) ON DELETE CASCADE
+  FOREIGN KEY(workspace_id, subscription_id)
+    REFERENCES event_subscriptions(workspace_id, subscription_id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS workspace_timers_due_idx
@@ -126,7 +130,8 @@ CREATE TABLE IF NOT EXISTS pending_deliveries (
   updated_at TEXT NOT NULL,
   terminal_at TEXT,
   FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
-  FOREIGN KEY(subscription_id) REFERENCES event_subscriptions(subscription_id) ON DELETE CASCADE
+  FOREIGN KEY(workspace_id, subscription_id)
+    REFERENCES event_subscriptions(workspace_id, subscription_id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS pending_deliveries_due_idx

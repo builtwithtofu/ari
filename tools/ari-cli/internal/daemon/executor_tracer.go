@@ -2015,13 +2015,15 @@ func (d *Daemon) startHarnessSession(ctx context.Context, store *globaldb.Store,
 	}
 	run := result.HarnessSession
 	items := result.Items
-	if run.Status == "running" {
-		_, cancel := context.WithCancel(context.Background())
-		d.registerActiveHarnessRun(run.WorkspaceID, run.HarnessSessionID, run.ProviderSessionID, executor, cancel)
-	}
 	d.recordExecutorRun(run, items)
 	if err := newHarnessLifecycle(store).persistNewStickyResult(ctx, result, primaryFolder, profile...); err != nil {
 		return HarnessSessionStartResponse{}, err
+	}
+	if run.Status == "running" {
+		_, cancel := context.WithCancel(context.Background())
+		d.registerActiveHarnessRun(run.WorkspaceID, run.HarnessSessionID, run.ProviderSessionID, executor, cancel)
+	} else if run.Status == "completed" && activeHarnessDeclaresDeliveryCapability(executor, HarnessDeliveryVisiblePromptTurn) {
+		d.registerHarnessDeliveryTarget(run.WorkspaceID, run.HarnessSessionID, run.ProviderSessionID, executor)
 	}
 	return HarnessSessionStartResponse{Run: run, Items: items}, nil
 }

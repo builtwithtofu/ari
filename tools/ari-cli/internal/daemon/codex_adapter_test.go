@@ -143,6 +143,54 @@ func TestCodexExecutorAttemptsAppServerDeliveryAgainstFakeHarness(t *testing.T) 
 	}
 }
 
+func TestCodexExecutorReusesSessionAuthProjectionForDelivery(t *testing.T) {
+	transport := newFakeCodexTransport([]codexNotification{{Method: "turn/completed", Params: mustRawJSON(t, `{"threadId":"thr_123","turn":{"id":"turn_456","status":"completed"}}`)}})
+	var deliveryProjection HarnessAuthProjectionPlan
+	var deliveryRequest string
+	executor := NewCodexExecutorForTest(codexExecutorOptions{
+		Executable:     "codex",
+		Cwd:            "/repo",
+		StartTransport: fakeCodexStarter(transport),
+		AuthProjection: HarnessAuthProjectionPlan{Owner: HarnessAuthProjectionOwnerNative, Kind: HarnessAuthProjectionConfigRoot, Env: map[string]string{"CODEX_HOME": "/tmp/default-codex"}},
+		RunDelivery: func(ctx context.Context, opts codexExecutorOptions, request string) (commandRunResult, error) {
+			_ = ctx
+			deliveryProjection = opts.AuthProjection
+			deliveryRequest = request
+			return commandRunResult{Output: []byte(`{"id":1,"result":{}}
+{"id":2,"result":{}}
+{"method":"turn/completed","params":{"threadId":"thr_123","turn":{"id":"turn_456","status":"completed"}}}
+`)}, nil
+		},
+	})
+	projection := HarnessAuthProjectionPlan{Owner: HarnessAuthProjectionOwnerNative, Kind: HarnessAuthProjectionConfigRoot, Env: map[string]string{"CODEX_HOME": "/tmp/session-codex"}}
+	if _, err := executor.Start(context.Background(), ExecutorStartRequest{WorkspaceID: "ws-1", AuthProjection: projection, ContextPacket: `{"context_packet_id":"ctx_123"}`}); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+
+	if _, err := executor.AttemptWorkspaceDelivery(context.Background(), WorkspaceDeliveryAttempt{Delivery: globaldb.PendingDelivery{DeliveryID: "pd-codex-auth", WorkspaceID: "ws-1", SubscriptionID: "sub-1", TargetType: "harness_session", TargetID: "thr_123", EventIDs: []string{"we-1"}, Status: "attempted", Attempts: 1}}); err != nil {
+		t.Fatalf("AttemptWorkspaceDelivery returned error: %v", err)
+	}
+	if deliveryProjection.Env["CODEX_HOME"] != projection.Env["CODEX_HOME"] {
+		t.Fatalf("delivery auth projection = %#v, want session projection %#v", deliveryProjection, projection)
+	}
+	if !strings.Contains(deliveryRequest, `"method":"initialize"`) || !strings.Contains(deliveryRequest, `"method":"initialized"`) || !strings.Contains(deliveryRequest, `"method":"turn/start"`) {
+		t.Fatalf("delivery request = %q, want app-server initialization handshake before turn", deliveryRequest)
+	}
+}
+
+func TestCodexWorkspaceDeliveryAppServerRequestInitializesBeforeTurn(t *testing.T) {
+	request, err := codexWorkspaceDeliveryAppServerRequest(WorkspaceDeliveryAttempt{Delivery: globaldb.PendingDelivery{DeliveryID: "pd-codex", WorkspaceID: "ws-1", SubscriptionID: "sub-1", TargetID: "thr_123", EventIDs: []string{"we-1"}}})
+	if err != nil {
+		t.Fatalf("codexWorkspaceDeliveryAppServerRequest returned error: %v", err)
+	}
+	initializeAt := strings.Index(request, `"method":"initialize"`)
+	initializedAt := strings.Index(request, `"method":"initialized"`)
+	turnAt := strings.Index(request, `"method":"turn/start"`)
+	if initializeAt < 0 || initializedAt < 0 || turnAt < 0 || initializeAt >= initializedAt || initializedAt >= turnAt {
+		t.Fatalf("delivery request = %q, want initialize then initialized before turn/start", request)
+	}
+}
+
 func TestCodexStdioTransportReadsLargeNotificationLines(t *testing.T) {
 	largeText := strings.Repeat("x", 128*1024)
 	params, err := json.Marshal(map[string]any{"item": map[string]string{"id": "large", "type": "agent_message", "text": largeText}})

@@ -21,7 +21,12 @@ WHERE delivery_id = ?
   AND next_attempt_at IS NOT NULL
   AND next_attempt_at <= ?
   AND (deadline_at IS NULL OR deadline_at > ?)
-  AND EXISTS (SELECT 1 FROM event_subscriptions es WHERE es.subscription_id = pending_deliveries.subscription_id AND es.status = 'active')
+  AND EXISTS (
+    SELECT 1
+    FROM event_subscriptions es
+    WHERE es.subscription_id = pending_deliveries.subscription_id
+      AND es.status = 'active'
+  )
 `
 
 type ClaimDuePendingDeliveryAttemptParams struct {

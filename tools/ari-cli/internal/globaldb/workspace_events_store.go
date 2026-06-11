@@ -268,6 +268,9 @@ func (s *Store) ListEventSubscriptionEvents(ctx context.Context, subscriptionID 
 		}
 		for _, event := range events {
 			sequence = event.Sequence
+			if subscription.TimeoutAt != nil && !subscription.TimeoutAt.After(event.CreatedAt) {
+				continue
+			}
 			if filter.matches(event) {
 				matched = append(matched, event)
 				if len(matched) == limit {

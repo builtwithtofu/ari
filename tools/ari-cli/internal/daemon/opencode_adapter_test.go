@@ -88,6 +88,19 @@ func TestOpenCodeExecutorAttemptsServerPromptDeliveryAgainstFakeHandler(t *testi
 	if recorded.SessionID != "sess_123" || recorded.IdempotencyKey != "pd-opencode" || recorded.Delivery != "queue" || recorded.TextHash == "" {
 		t.Fatalf("recorded prompt = %#v, want queued idempotent prompt for target session", recorded)
 	}
+	text := opencodeWorkspaceDeliveryText(WorkspaceDeliveryAttempt{Delivery: globaldb.PendingDelivery{DeliveryID: "pd-opencode", WorkspaceID: "ws-1", SubscriptionID: "sub-1", EventIDs: []string{"we-1"}}})
+	if strings.Contains(text, "pd-opencode") || strings.Contains(text, "we-1") || strings.Contains(text, "delivery_id") || strings.Contains(text, "event_ids") {
+		t.Fatalf("OpenCode delivery text leaked durable ids: %s", text)
+	}
+	if !strings.Contains(text, `"event_count":1`) {
+		t.Fatalf("OpenCode delivery text = %s, want redacted event_count", text)
+	}
+}
+
+func TestOpenCodeDeliveryHTTPClientHasTimeout(t *testing.T) {
+	if openCodeDeliveryHTTPClient == nil || openCodeDeliveryHTTPClient.Timeout <= 0 {
+		t.Fatalf("openCodeDeliveryHTTPClient = %#v, want explicit timeout", openCodeDeliveryHTTPClient)
+	}
 }
 
 func TestOpenCodeExecutorAdvertisesDeliveryOnlyWithServerURL(t *testing.T) {

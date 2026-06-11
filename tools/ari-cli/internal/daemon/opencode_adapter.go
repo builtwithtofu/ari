@@ -230,6 +230,8 @@ type openCodeDeliveryPromptResponse struct {
 	Status    string `json:"status"`
 }
 
+var openCodeDeliveryHTTPClient = &http.Client{Timeout: 30 * time.Second}
+
 func postOpenCodeDeliveryPrompt(ctx context.Context, serverURL, sessionID string, attempt WorkspaceDeliveryAttempt) (openCodeDeliveryPromptResponse, error) {
 	body, err := json.Marshal(map[string]string{"text": opencodeWorkspaceDeliveryText(attempt), "delivery": "queue", "idempotency_key": strings.TrimSpace(attempt.Delivery.DeliveryID)})
 	if err != nil {
@@ -241,7 +243,7 @@ func postOpenCodeDeliveryPrompt(ctx context.Context, serverURL, sessionID string
 		return openCodeDeliveryPromptResponse{}, err
 	}
 	request.Header.Set("Content-Type", "application/json")
-	response, err := http.DefaultClient.Do(request)
+	response, err := openCodeDeliveryHTTPClient.Do(request)
 	if err != nil {
 		return openCodeDeliveryPromptResponse{}, err
 	}
@@ -261,17 +263,15 @@ func postOpenCodeDeliveryPrompt(ctx context.Context, serverURL, sessionID string
 
 func opencodeWorkspaceDeliveryText(attempt WorkspaceDeliveryAttempt) string {
 	payload := struct {
-		Kind           string   `json:"kind"`
-		DeliveryID     string   `json:"delivery_id"`
-		WorkspaceID    string   `json:"workspace_id"`
-		SubscriptionID string   `json:"subscription_id"`
-		EventIDs       []string `json:"event_ids"`
+		Kind           string `json:"kind"`
+		WorkspaceID    string `json:"workspace_id"`
+		SubscriptionID string `json:"subscription_id"`
+		EventCount     int    `json:"event_count"`
 	}{
 		Kind:           "ari.workspace_delivery",
-		DeliveryID:     strings.TrimSpace(attempt.Delivery.DeliveryID),
 		WorkspaceID:    strings.TrimSpace(attempt.Delivery.WorkspaceID),
 		SubscriptionID: strings.TrimSpace(attempt.Delivery.SubscriptionID),
-		EventIDs:       append([]string(nil), attempt.Delivery.EventIDs...),
+		EventCount:     len(attempt.Delivery.EventIDs),
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -286,7 +286,7 @@ func fetchOpenCodeDeliveryCompletion(ctx context.Context, serverURL, sessionID, 
 	if err != nil {
 		return WorkspaceDeliveryAttemptResult{}, err
 	}
-	response, err := http.DefaultClient.Do(request)
+	response, err := openCodeDeliveryHTTPClient.Do(request)
 	if err != nil {
 		return WorkspaceDeliveryAttemptResult{}, err
 	}

@@ -49,9 +49,10 @@ type codexNotification struct {
 }
 
 type CodexExecutor struct {
-	options codexExecutorOptions
-	mu      sync.Mutex
-	runs    map[string][]TimelineItem
+	options         codexExecutorOptions
+	mu              sync.Mutex
+	runs            map[string][]TimelineItem
+	deliveryOptions map[string]codexExecutorOptions
 }
 
 func NewCodexExecutor(cwd string) *CodexExecutor {
@@ -78,7 +79,7 @@ func newCodexExecutor(options codexExecutorOptions) *CodexExecutor {
 	if options.NotificationCap <= 0 {
 		options.NotificationCap = 64
 	}
-	return &CodexExecutor{options: options, runs: map[string][]TimelineItem{}}
+	return &CodexExecutor{options: options, runs: map[string][]TimelineItem{}, deliveryOptions: map[string]codexExecutorOptions{}}
 }
 
 func (options codexExecutorOptions) withCodexAuthSlotProjection(authSlotID string) (codexExecutorOptions, error) {
@@ -398,6 +399,7 @@ func (e *CodexExecutor) Start(ctx context.Context, req ExecutorStartRequest) (Ex
 	}
 	e.mu.Lock()
 	e.runs[threadID] = items
+	e.deliveryOptions[threadID] = options
 	e.mu.Unlock()
 	providerRunID := turnID
 	if providerRunID == "" {
@@ -436,11 +438,19 @@ func (e *CodexExecutor) AttemptWorkspaceDelivery(ctx context.Context, attempt Wo
 	if strings.TrimSpace(attempt.Delivery.DeliveryID) == "" || len(attempt.Delivery.EventIDs) == 0 {
 		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("delivery id and event ids are required")
 	}
-	request, err := codexWorkspaceDeliveryTurnStartRequest(attempt)
+	request, err := codexWorkspaceDeliveryAppServerRequest(attempt)
 	if err != nil {
 		return WorkspaceDeliveryAttemptResult{}, err
 	}
-	commandResult, commandErr := e.options.RunDelivery(ctx, e.options, request)
+	deliveryOptions := e.options
+	if threadID := strings.TrimSpace(attempt.Delivery.TargetID); threadID != "" {
+		e.mu.Lock()
+		if options, ok := e.deliveryOptions[threadID]; ok {
+			deliveryOptions = options
+		}
+		e.mu.Unlock()
+	}
+	commandResult, commandErr := deliveryOptions.RunDelivery(ctx, deliveryOptions, request)
 	deliveryResult, parseErr := parseCodexAppServerDeliveryOutput(commandResult.Output)
 	if parseErr == nil {
 		return deliveryResult, nil
@@ -469,25 +479,37 @@ func codexPromptFromRequest(req ExecutorStartRequest) string {
 	return strings.TrimSpace(req.ContextPacket)
 }
 
-func codexWorkspaceDeliveryTurnStartRequest(attempt WorkspaceDeliveryAttempt) (string, error) {
+func codexWorkspaceDeliveryAppServerRequest(attempt WorkspaceDeliveryAttempt) (string, error) {
 	threadID := strings.TrimSpace(attempt.Delivery.TargetID)
 	if threadID == "" {
 		threadID = strings.TrimSpace(attempt.Delivery.SubscriptionID)
 	}
-	request := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "turn/start",
-		"params": map[string]any{
-			"threadId": threadID,
-			"input":    []map[string]string{{"type": "text", "text": codexWorkspaceDeliveryTurn(attempt)}},
+	messages := []map[string]any{
+		{
+			"id":     1,
+			"method": "initialize",
+			"params": map[string]any{"clientInfo": map[string]string{"name": "ari", "title": "Ari", "version": "0.1.0"}},
+		},
+		{"method": "initialized"},
+		{
+			"id":     2,
+			"method": "turn/start",
+			"params": map[string]any{
+				"threadId": threadID,
+				"input":    []map[string]string{{"type": "text", "text": codexWorkspaceDeliveryTurn(attempt)}},
+			},
 		},
 	}
-	encoded, err := json.Marshal(request)
-	if err != nil {
-		return "", fmt.Errorf("encode codex delivery turn/start: %w", err)
+	var out strings.Builder
+	for _, message := range messages {
+		encoded, err := json.Marshal(message)
+		if err != nil {
+			return "", fmt.Errorf("encode codex delivery app-server request: %w", err)
+		}
+		out.Write(encoded)
+		out.WriteByte('\n')
 	}
-	return string(encoded) + "\n", nil
+	return out.String(), nil
 }
 
 func codexWorkspaceDeliveryTurn(attempt WorkspaceDeliveryAttempt) string {

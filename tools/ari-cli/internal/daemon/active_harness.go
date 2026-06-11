@@ -14,6 +14,7 @@ type activeHarnessRun struct {
 	providerSessionID string
 	executor          Executor
 	cancel            context.CancelFunc
+	stopOnSuspend     bool
 	once              sync.Once
 }
 
@@ -63,6 +64,14 @@ func (e *trackedHarnessExecutor) Items(ctx context.Context, sessionID string) ([
 }
 
 func (d *Daemon) registerActiveHarnessRun(workspaceID, sessionID, providerSessionID string, executor Executor, cancel context.CancelFunc) func() {
+	return d.registerHarnessRun(workspaceID, sessionID, providerSessionID, executor, cancel, true)
+}
+
+func (d *Daemon) registerHarnessDeliveryTarget(workspaceID, sessionID, providerSessionID string, executor Executor) func() {
+	return d.registerHarnessRun(workspaceID, sessionID, providerSessionID, executor, nil, false)
+}
+
+func (d *Daemon) registerHarnessRun(workspaceID, sessionID, providerSessionID string, executor Executor, cancel context.CancelFunc, stopOnSuspend bool) func() {
 	if d == nil || executor == nil {
 		return func() {}
 	}
@@ -70,7 +79,7 @@ func (d *Daemon) registerActiveHarnessRun(workspaceID, sessionID, providerSessio
 	if sessionID == "" {
 		return func() {}
 	}
-	run := &activeHarnessRun{workspaceID: strings.TrimSpace(workspaceID), sessionID: sessionID, providerSessionID: strings.TrimSpace(providerSessionID), executor: executor, cancel: cancel}
+	run := &activeHarnessRun{workspaceID: strings.TrimSpace(workspaceID), sessionID: sessionID, providerSessionID: strings.TrimSpace(providerSessionID), executor: executor, cancel: cancel, stopOnSuspend: stopOnSuspend}
 	d.activeHarnessMu.Lock()
 	d.activeHarnesses[sessionID] = run
 	d.activeHarnessMu.Unlock()
@@ -93,8 +102,10 @@ func (d *Daemon) stopActiveHarnessesForWorkspace(ctx context.Context, store *glo
 	activeSessionIDs := make(map[string]struct{}, len(d.activeHarnesses))
 	for _, run := range d.activeHarnesses {
 		if run.workspaceID == workspaceID {
-			runs = append(runs, run)
-			activeSessionIDs[run.sessionID] = struct{}{}
+			if run.stopOnSuspend {
+				runs = append(runs, run)
+				activeSessionIDs[run.sessionID] = struct{}{}
+			}
 		}
 	}
 	d.activeHarnessMu.Unlock()

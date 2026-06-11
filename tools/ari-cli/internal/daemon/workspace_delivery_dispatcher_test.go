@@ -11,7 +11,7 @@ import (
 
 func TestHarnessWorkspaceDeliveryDispatcherRoutesActiveHarnessSession(t *testing.T) {
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	executor := &recordingHarnessDeliveryExecutor{result: WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptCompleted}}
+	executor := &recordingHarnessDeliveryExecutor{result: WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptCompleted}, items: []TimelineItem{{ID: "sticky-delivery:completed", Kind: "lifecycle", Status: "completed"}}}
 	unregister := d.registerActiveHarnessRun("ws-delivery", "ari-session", "provider-session", executor, func() {})
 	t.Cleanup(unregister)
 	dispatcher := newHarnessWorkspaceDeliveryDispatcher(d)
@@ -49,7 +49,7 @@ func TestStartHarnessSessionRegistersStickyDeliveryTarget(t *testing.T) {
 		t.Fatalf("AddFolder returned error: %v", err)
 	}
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	executor := &recordingHarnessDeliveryExecutor{result: WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptCompleted}}
+	executor := &recordingHarnessDeliveryExecutor{result: WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptCompleted}, items: []TimelineItem{{ID: "sticky-delivery:completed", Kind: "lifecycle", Status: "completed"}}}
 	if err := d.harnessRegistry.Register("sticky-delivery", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		return executor, nil
 	}); err != nil {
@@ -68,12 +68,18 @@ func TestStartHarnessSessionRegistersStickyDeliveryTarget(t *testing.T) {
 	if result.Status != WorkspaceDeliveryAttemptCompleted {
 		t.Fatalf("AttemptWorkspaceDelivery status = %s error=%q, want completed", result.Status, result.LastError)
 	}
+	d.stopActiveHarnessesForWorkspace(ctx, store, "ws-1")
+	if executor.StopCount() != 0 {
+		t.Fatalf("executor stop count = %d, want completed delivery target not stopped on suspend", executor.StopCount())
+	}
 }
 
 type recordingHarnessDeliveryExecutor struct {
 	mu       sync.Mutex
 	result   WorkspaceDeliveryAttemptResult
+	items    []TimelineItem
 	attempts []WorkspaceDeliveryAttempt
+	stops    int
 }
 
 func (e *recordingHarnessDeliveryExecutor) Descriptor() HarnessAdapterDescriptor {
@@ -85,10 +91,13 @@ func (e *recordingHarnessDeliveryExecutor) Start(_ context.Context, req Executor
 }
 
 func (e *recordingHarnessDeliveryExecutor) Items(context.Context, string) ([]TimelineItem, error) {
-	return nil, nil
+	return append([]TimelineItem(nil), e.items...), nil
 }
 
 func (e *recordingHarnessDeliveryExecutor) Stop(context.Context, string) error {
+	e.mu.Lock()
+	e.stops++
+	e.mu.Unlock()
 	return nil
 }
 
@@ -97,6 +106,12 @@ func (e *recordingHarnessDeliveryExecutor) AttemptWorkspaceDelivery(_ context.Co
 	e.attempts = append(e.attempts, attempt)
 	e.mu.Unlock()
 	return e.result, nil
+}
+
+func (e *recordingHarnessDeliveryExecutor) StopCount() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.stops
 }
 
 func (e *recordingHarnessDeliveryExecutor) Attempts() []WorkspaceDeliveryAttempt {

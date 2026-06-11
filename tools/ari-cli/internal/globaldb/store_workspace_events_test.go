@@ -163,6 +163,37 @@ func TestWorkspaceEventTimestampParseFailuresSurface(t *testing.T) {
 	}
 }
 
+func TestWorkspaceEventSchemaEnforcesWorkspaceScopedReferences(t *testing.T) {
+	store := newGlobalDBTestStore(t, "workspace-events-scoped-fks")
+	ctx := context.Background()
+	base := time.Date(2026, 6, 11, 17, 0, 0, 0, time.UTC)
+	if _, err := store.db.ExecContext(ctx, `PRAGMA foreign_keys = ON`); err != nil {
+		t.Fatalf("enable foreign keys: %v", err)
+	}
+
+	for _, workspaceID := range []string{"ws-fk-a", "ws-fk-b"} {
+		if err := store.CreateWorkspace(ctx, workspaceID, workspaceID, t.TempDir(), "manual", "auto"); err != nil {
+			t.Fatalf("CreateWorkspace %s returned error: %v", workspaceID, err)
+		}
+	}
+	if _, err := store.CreateEventSubscription(ctx, EventSubscription{SubscriptionID: "sub-fk", WorkspaceID: "ws-fk-a", OwnerSessionID: "orch-fk", FilterJSON: `{}`, CreatedAt: base, UpdatedAt: base}); err != nil {
+		t.Fatalf("CreateEventSubscription returned error: %v", err)
+	}
+	if _, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-fk", WorkspaceID: "ws-fk-a", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-fk", CreatedAt: base}); err != nil {
+		t.Fatalf("AppendWorkspaceEvent returned error: %v", err)
+	}
+
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO pending_deliveries (delivery_id, workspace_id, subscription_id, target_type, target_id, event_ids_json, created_at, updated_at) VALUES ('pd-cross-fk', 'ws-fk-b', 'sub-fk', 'harness_session', 'orch-fk', '[]', ?, ?)`, base.Format(time.RFC3339Nano), base.Format(time.RFC3339Nano)); err == nil {
+		t.Fatalf("cross-workspace pending delivery insert succeeded, want FK failure")
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO workspace_timers (timer_id, workspace_id, subscription_id, fire_at, created_at, updated_at) VALUES ('timer-cross-fk', 'ws-fk-b', 'sub-fk', ?, ?, ?)`, base.Format(time.RFC3339Nano), base.Format(time.RFC3339Nano), base.Format(time.RFC3339Nano)); err == nil {
+		t.Fatalf("cross-workspace timer insert succeeded, want FK failure")
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO inbox_items (inbox_item_id, workspace_id, source_session_id, workspace_event_id, event_type, kind, created_at, updated_at) VALUES ('inbox-cross-fk', 'ws-fk-b', 'orch-fk', 'we-fk', 'worker.completed', 'workspace_event', ?, ?)`, base.Format(time.RFC3339Nano), base.Format(time.RFC3339Nano)); err == nil {
+		t.Fatalf("cross-workspace inbox item insert succeeded, want FK failure")
+	}
+}
+
 func TestWorkspaceEventSequenceAllocationIsConcurrentSafe(t *testing.T) {
 	store := newGlobalDBTestStore(t, "workspace-events-concurrent-sequences")
 	ctx := context.Background()
@@ -262,6 +293,13 @@ func TestTimedOutSubscriptionsDoNotCreateDeliveries(t *testing.T) {
 	}
 	if len(due) != 0 {
 		t.Fatalf("due deliveries after subscription timeout = %#v, want none", due)
+	}
+	matches, err := store.ListEventSubscriptionEvents(ctx, "sub-timeout-deliveries", 10)
+	if err != nil {
+		t.Fatalf("ListEventSubscriptionEvents returned error: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("subscription events after timeout = %#v, want none", matches)
 	}
 }
 

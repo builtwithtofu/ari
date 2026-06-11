@@ -291,10 +291,31 @@ func TestAriWorkspaceTimerToolsRejectBlankOwnerMismatch(t *testing.T) {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 	scope := AriToolScope{SourceRunID: "run-1", WorkspaceID: "ws-1", ProfileID: "agent-1", ProfileName: "executor", WithinDefaultScope: true}
+	got := callMethod[AriToolCallResponse](t, registry, "ari.tool.call", AriToolCallRequest{Name: "ari.workspace.timers.get", Scope: scope, Input: map[string]any{"timer_id": "timer-system"}})
+	if got.Status != "ok" || got.Output["timer_id"] != "timer-system" {
+		t.Fatalf("timers.get returned %#v, want same-workspace daemon-owned timer", got)
+	}
 
 	_, err := callMethodResult[AriToolCallResponse](registry, "ari.tool.call", AriToolCallRequest{Name: "ari.workspace.timers.cancel", Scope: scope, Input: map[string]any{"timer_id": "timer-system"}})
 	if err == nil {
 		t.Fatalf("timers.cancel returned nil error, want timer scope mismatch")
+	}
+}
+
+func TestAriWorkspaceDeliveriesListDueRejectsOversizedLimit(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	scope := AriToolScope{SourceRunID: "run-1", WorkspaceID: "ws-1", ProfileID: "agent-1", ProfileName: "executor", WithinDefaultScope: true}
+
+	_, err := callMethodResult[AriToolCallResponse](registry, "ari.tool.call", AriToolCallRequest{Name: "ari.workspace.deliveries.list_due", Scope: scope, Input: map[string]any{"limit": ariWorkspaceDeliveriesListDueMaxLimit + 1}})
+	if err == nil {
+		t.Fatalf("deliveries.list_due returned nil error, want oversized limit rejection")
 	}
 }
 
