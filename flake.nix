@@ -22,6 +22,7 @@
             gofumpt
             just
             git
+            jujutsu
             nixpkgs-fmt
             sqlc
             sqlite

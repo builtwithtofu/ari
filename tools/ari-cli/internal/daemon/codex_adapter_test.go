@@ -6,9 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/fakeharness"
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
 )
 
 func TestCodexExecutorMapsAppServerNotifications(t *testing.T) {
@@ -51,6 +55,17 @@ func TestCodexExecutorMapsAppServerNotifications(t *testing.T) {
 	}
 }
 
+func TestCodexWorkspaceDeliveryTurnRedactsDurableIDs(t *testing.T) {
+	turn := codexWorkspaceDeliveryTurn(WorkspaceDeliveryAttempt{Delivery: globaldb.PendingDelivery{DeliveryID: "pd-secret", WorkspaceID: "ws-1", SubscriptionID: "sub-1", EventIDs: []string{"we-secret"}}})
+
+	if strings.Contains(turn, "pd-secret") || strings.Contains(turn, "we-secret") || strings.Contains(turn, "delivery_id") || strings.Contains(turn, "event_ids") {
+		t.Fatalf("Codex delivery turn leaked durable ids: %s", turn)
+	}
+	if !strings.Contains(turn, `"event_count":1`) {
+		t.Fatalf("Codex delivery turn = %s, want redacted event_count", turn)
+	}
+}
+
 func TestCodexExecutorMapsProfilePromptToThreadInstructions(t *testing.T) {
 	transport := newFakeCodexTransport([]codexNotification{
 		{Method: "thread/started", Params: mustRawJSON(t, `{"thread":{"id":"thr_123"}}`)},
@@ -89,6 +104,113 @@ func TestCodexExecutorAdvertisesFinalResponseCapability(t *testing.T) {
 	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo", StartTransport: fakeCodexStarter(newFakeCodexTransport(nil))})
 	if !harnessCapabilitiesContain(executor.Descriptor().Capabilities, HarnessCapabilityFinalResponse) {
 		t.Fatalf("codex capabilities = %#v, want final_response", executor.Descriptor().Capabilities)
+	}
+}
+
+func TestCodexExecutorAttemptsAppServerDeliveryAgainstFakeHarness(t *testing.T) {
+	fake := buildFakeHarnessExecutable(t)
+	recordPath := t.TempDir() + "/delivery-record.jsonl"
+	t.Setenv(fakeharness.EnvHarness, "codex")
+	t.Setenv(fakeharness.EnvMode, "delivery-codex-app-server")
+	t.Setenv(fakeharness.EnvRecord, recordPath)
+	executor := NewCodexExecutorForTest(codexExecutorOptions{Executable: fake, Cwd: t.TempDir()})
+
+	result, err := executor.AttemptWorkspaceDelivery(context.Background(), WorkspaceDeliveryAttempt{Delivery: globaldb.PendingDelivery{DeliveryID: "pd-codex", WorkspaceID: "ws-1", SubscriptionID: "sub-1", TargetType: "harness_session", TargetID: "codex-thread", EventIDs: []string{"we-1"}, Status: "attempted", Attempts: 1}})
+	if err != nil {
+		t.Fatalf("AttemptWorkspaceDelivery returned error: %v", err)
+	}
+	if result.Status != WorkspaceDeliveryAttemptCompleted || result.LastError != "" {
+		t.Fatalf("delivery result = %#v, want completed fake app-server delivery", result)
+	}
+
+	data, err := os.ReadFile(recordPath)
+	if err != nil {
+		t.Fatalf("ReadFile record returned error: %v", err)
+	}
+	invocations, err := fakeharness.DecodeInvocations(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("DecodeInvocations returned error: %v", err)
+	}
+	if len(invocations) != 1 {
+		t.Fatalf("invocations = %#v, want one fake harness delivery invocation", invocations)
+	}
+	invocation := invocations[0]
+	if invocation.Harness != "codex" || invocation.Mode != "delivery-codex-app-server" || strings.Join(invocation.Args, " ") != "app-server" {
+		t.Fatalf("invocation = %#v, want codex app-server fake delivery", invocation)
+	}
+	if invocation.Stdin == "" || strings.Contains(invocation.Stdin, "we-1") || strings.Contains(invocation.Stdin, "pd-codex") {
+		t.Fatalf("invocation stdin summary = %q, want hashed app-server input without raw event ids", invocation.Stdin)
+	}
+}
+
+func TestCodexExecutorReusesSessionAuthProjectionForDelivery(t *testing.T) {
+	transport := newFakeCodexTransport([]codexNotification{{Method: "turn/completed", Params: mustRawJSON(t, `{"threadId":"thr_123","turn":{"id":"turn_456","status":"completed"}}`)}})
+	var deliveryProjection HarnessAuthProjectionPlan
+	var deliveryRequest string
+	executor := NewCodexExecutorForTest(codexExecutorOptions{
+		Executable:     "codex",
+		Cwd:            "/repo",
+		StartTransport: fakeCodexStarter(transport),
+		AuthProjection: HarnessAuthProjectionPlan{Owner: HarnessAuthProjectionOwnerNative, Kind: HarnessAuthProjectionConfigRoot, Env: map[string]string{"CODEX_HOME": "/tmp/default-codex"}},
+		RunDelivery: func(ctx context.Context, opts codexExecutorOptions, request string) (commandRunResult, error) {
+			_ = ctx
+			deliveryProjection = opts.AuthProjection
+			deliveryRequest = request
+			return commandRunResult{Output: []byte(`{"id":1,"result":{}}
+{"id":2,"result":{}}
+{"method":"turn/completed","params":{"threadId":"thr_123","turn":{"id":"turn_456","status":"completed"}}}
+`)}, nil
+		},
+	})
+	projection := HarnessAuthProjectionPlan{Owner: HarnessAuthProjectionOwnerNative, Kind: HarnessAuthProjectionConfigRoot, Env: map[string]string{"CODEX_HOME": "/tmp/session-codex"}}
+	if _, err := executor.Start(context.Background(), ExecutorStartRequest{WorkspaceID: "ws-1", AuthProjection: projection, ContextPacket: `{"context_packet_id":"ctx_123"}`}); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+
+	if _, err := executor.AttemptWorkspaceDelivery(context.Background(), WorkspaceDeliveryAttempt{Delivery: globaldb.PendingDelivery{DeliveryID: "pd-codex-auth", WorkspaceID: "ws-1", SubscriptionID: "sub-1", TargetType: "harness_session", TargetID: "thr_123", EventIDs: []string{"we-1"}, Status: "attempted", Attempts: 1}}); err != nil {
+		t.Fatalf("AttemptWorkspaceDelivery returned error: %v", err)
+	}
+	if deliveryProjection.Env["CODEX_HOME"] != projection.Env["CODEX_HOME"] {
+		t.Fatalf("delivery auth projection = %#v, want session projection %#v", deliveryProjection, projection)
+	}
+	if !strings.Contains(deliveryRequest, `"method":"initialize"`) || !strings.Contains(deliveryRequest, `"method":"initialized"`) || !strings.Contains(deliveryRequest, `"method":"turn/start"`) {
+		t.Fatalf("delivery request = %q, want app-server initialization handshake before turn", deliveryRequest)
+	}
+}
+
+func TestCodexWorkspaceDeliveryAppServerRequestInitializesBeforeTurn(t *testing.T) {
+	request, err := codexWorkspaceDeliveryAppServerRequest(WorkspaceDeliveryAttempt{Delivery: globaldb.PendingDelivery{DeliveryID: "pd-codex", WorkspaceID: "ws-1", SubscriptionID: "sub-1", TargetID: "thr_123", EventIDs: []string{"we-1"}}})
+	if err != nil {
+		t.Fatalf("codexWorkspaceDeliveryAppServerRequest returned error: %v", err)
+	}
+	initializeAt := strings.Index(request, `"method":"initialize"`)
+	initializedAt := strings.Index(request, `"method":"initialized"`)
+	turnAt := strings.Index(request, `"method":"turn/start"`)
+	if initializeAt < 0 || initializedAt < 0 || turnAt < 0 || initializeAt >= initializedAt || initializedAt >= turnAt {
+		t.Fatalf("delivery request = %q, want initialize then initialized before turn/start", request)
+	}
+}
+
+func TestCodexWorkspaceDeliveryAppServerRequestRequiresTargetThread(t *testing.T) {
+	request, err := codexWorkspaceDeliveryAppServerRequest(WorkspaceDeliveryAttempt{Delivery: globaldb.PendingDelivery{DeliveryID: "pd-codex", WorkspaceID: "ws-1", SubscriptionID: "sub-1", EventIDs: []string{"we-1"}}})
+	if err == nil {
+		t.Fatalf("codexWorkspaceDeliveryAppServerRequest returned nil error and request %q, want missing target thread error", request)
+	}
+}
+
+func TestCodexWorkspaceDeliveryRejectsMissingTargetThreadBeforeRunDelivery(t *testing.T) {
+	runDeliveryCalled := false
+	executor := NewCodexExecutorForTest(codexExecutorOptions{RunDelivery: func(ctx context.Context, opts codexExecutorOptions, input string) (commandRunResult, error) {
+		runDeliveryCalled = true
+		return commandRunResult{}, nil
+	}})
+
+	_, err := executor.AttemptWorkspaceDelivery(context.Background(), WorkspaceDeliveryAttempt{Delivery: globaldb.PendingDelivery{DeliveryID: "pd-codex", WorkspaceID: "ws-1", SubscriptionID: "sub-1", EventIDs: []string{"we-1"}}})
+	if err == nil {
+		t.Fatalf("AttemptWorkspaceDelivery returned nil error, want missing target thread error")
+	}
+	if runDeliveryCalled {
+		t.Fatalf("RunDelivery was called for delivery without target thread id")
 	}
 }
 

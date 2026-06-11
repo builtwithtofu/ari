@@ -37,8 +37,7 @@ func TestJourneyStickyFlowFanoutUsesFakeHarnessExecutableBoundary(t *testing.T) 
 	}
 	waitForFinalResponseContains(t, j.ctx, j.store, "fg-fake-exec-c"+stableRuntimeAgentIDSegment("researcher")+"-run", "fake claude response")
 	waitForFinalResponseContains(t, j.ctx, j.store, "fg-fake-exec-c"+stableRuntimeAgentIDSegment("reviewer")+"-run", "fake claude response")
-	status := callMethod[WorkspaceStatusResponse](t, j.registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-1"})
-	assertProjectedFanoutMemberStatuses(t, status.FanoutMembers, map[string]string{"researcher": "completed", "reviewer": "completed"})
+	status := waitForProjectedFanoutMemberStatuses(t, j.registry, "ws-1", map[string]string{"researcher": "completed", "reviewer": "completed"})
 	assertStickyInboxKinds(t, status.StickyInbox, map[string]string{"fg-fake-exec-mresearcher": "worker_completed", "fg-fake-exec-mreviewer": "worker_completed"})
 	record, err := os.ReadFile(recordPath)
 	if err != nil {
@@ -125,8 +124,7 @@ func TestJourneyStickyFlowFanoutSuspendResumeAndInbox(t *testing.T) {
 	}
 	waitForFinalResponseText(t, j.ctx, j.store, "fg-journey-c"+stableRuntimeAgentIDSegment("good-worker")+"-run", "good result")
 	waitForFinalResponseContains(t, j.ctx, j.store, "fg-journey-c"+stableRuntimeAgentIDSegment("bad-worker")+"-run", "items failed")
-	status := callMethod[WorkspaceStatusResponse](t, j.registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-1"})
-	assertProjectedFanoutMemberStatuses(t, status.FanoutMembers, map[string]string{"good-worker": "completed", "bad-worker": "failed", "slow-worker": "running"})
+	status := waitForProjectedFanoutMemberStatuses(t, j.registry, "ws-1", map[string]string{"good-worker": "completed", "bad-worker": "failed", "slow-worker": "running"})
 	assertStickyInboxKinds(t, status.StickyInbox, map[string]string{"fg-journey-mgood-worker": "worker_completed", "fg-journey-mbad-worker": "worker_failed"})
 
 	_ = callMethod[WorkspaceStatusResponse](t, j.registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-2"})
@@ -140,11 +138,11 @@ func TestJourneyStickyFlowFanoutSuspendResumeAndInbox(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("slow worker was not stopped on workspace suspend")
 	}
-	events, err := j.store.ListDaemonEventsAfter(j.ctx, "", 20)
+	events, err := j.store.ListWorkspaceEventsAfterSequence(j.ctx, "ws-1", 0, 200)
 	if err != nil {
-		t.Fatalf("ListDaemonEventsAfter returned error: %v", err)
+		t.Fatalf("ListWorkspaceEventsAfterSequence returned error: %v", err)
 	}
-	assertDaemonEvent(t, events, "fg-journey-c"+stableRuntimeAgentIDSegment("slow-worker")+"-run", daemonEventSessionCompleted, false)
+	assertSessionWorkspaceEvent(t, events, "fg-journey-c"+stableRuntimeAgentIDSegment("slow-worker")+"-run", workspaceEventSessionStopped, false)
 	status = callMethod[WorkspaceStatusResponse](t, j.registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-1"})
 	assertProjectedFanoutMemberStatuses(t, status.FanoutMembers, map[string]string{"slow-worker": "stopped"})
 	assertStickyInboxKinds(t, status.StickyInbox, map[string]string{"fg-journey-mslow-worker": "worker_stopped"})
@@ -213,8 +211,7 @@ func TestJourneyStickyOrchestratorFanoutLoopThroughAriTools(t *testing.T) {
 	assertFanoutToolMemberStatuses(t, statusTool, map[string]string{"good-worker": "completed", "bad-worker": "failed", "slow-worker": "running"})
 	inboxTool := callMethod[AriToolCallResponse](t, j.registry, "ari.tool.call", AriToolCallRequest{Name: "ari.inbox.list", Scope: scope, Input: map[string]any{"unread_only": true}})
 	assertAriToolInboxKinds(t, inboxTool, map[string]string{"fg-tool-journey-mgood-worker": "worker_completed", "fg-tool-journey-mbad-worker": "worker_failed"})
-	status := callMethod[WorkspaceStatusResponse](t, j.registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-1"})
-	assertProjectedFanoutMemberStatuses(t, status.FanoutMembers, map[string]string{"good-worker": "completed", "bad-worker": "failed", "slow-worker": "running"})
+	status := waitForProjectedFanoutMemberStatuses(t, j.registry, "ws-1", map[string]string{"good-worker": "completed", "bad-worker": "failed", "slow-worker": "running"})
 	assertStickyInboxKinds(t, status.StickyInbox, map[string]string{"fg-tool-journey-mgood-worker": "worker_completed", "fg-tool-journey-mbad-worker": "worker_failed"})
 
 	suspended := callMethod[WorkspaceSuspendResponse](t, j.registry, "workspace.suspend", WorkspaceSuspendRequest{WorkspaceID: "ws-1"})
@@ -262,33 +259,35 @@ func TestJourneyWorkspaceSuspendDoesNotFailContextCancelledFanoutWorker(t *testi
 	}
 	workerSessionID := "fg-context-cancel-c" + stableRuntimeAgentIDSegment("slow-worker") + "-run"
 	assertHarnessSessionStatusEventually(t, j.ctx, j.store, workerSessionID, "stopped", time.Second)
-	events, err := j.store.ListDaemonEventsAfter(j.ctx, "", 20)
+	events, err := j.store.ListWorkspaceEventsAfterSequence(j.ctx, "ws-1", 0, 200)
 	if err != nil {
-		t.Fatalf("ListDaemonEventsAfter returned error: %v", err)
+		t.Fatalf("ListWorkspaceEventsAfterSequence returned error: %v", err)
 	}
-	if hasDaemonEvent(t, events, workerSessionID, daemonEventSessionFailed) {
-		t.Fatalf("daemon events = %#v, want no failed event for intentionally stopped worker", events)
+	if hasSessionWorkspaceEvent(events, workerSessionID, workspaceEventSessionFailed) {
+		t.Fatalf("workspace events = %#v, want no failed event for intentionally stopped worker", events)
 	}
-	assertDaemonEvent(t, events, workerSessionID, daemonEventSessionCompleted, false)
+	assertSessionWorkspaceEvent(t, events, workerSessionID, workspaceEventSessionStopped, false)
 }
 
-func assertDaemonEvent(t *testing.T, events []globaldb.DaemonEvent, sessionID, eventType string, attentionRequired bool) {
+// assertSessionWorkspaceEvent asserts the session's terminal fact in
+// workspace event history (subject_type harness_session).
+func assertSessionWorkspaceEvent(t *testing.T, events []globaldb.WorkspaceEvent, sessionID, eventType string, attentionRequired bool) {
 	t.Helper()
 	for _, event := range events {
-		if event.SessionID == sessionID {
-			if event.EventType != eventType || event.AttentionRequired != attentionRequired {
-				t.Fatalf("daemon event for %s = %#v, want type %q attention=%v", sessionID, event, eventType, attentionRequired)
-			}
-			return
+		if event.SubjectID != sessionID || event.EventType != eventType {
+			continue
 		}
+		if event.SubjectType != workspaceEventSubjectHarnessSession || event.AttentionRequired != attentionRequired {
+			t.Fatalf("workspace event for %s = %#v, want harness_session subject attention=%v", sessionID, event, attentionRequired)
+		}
+		return
 	}
-	t.Fatalf("daemon events = %#v, want event for session %s", events, sessionID)
+	t.Fatalf("workspace events = %#v, want %s event for session %s", events, eventType, sessionID)
 }
 
-func hasDaemonEvent(t *testing.T, events []globaldb.DaemonEvent, sessionID, eventType string) bool {
-	t.Helper()
+func hasSessionWorkspaceEvent(events []globaldb.WorkspaceEvent, sessionID, eventType string) bool {
 	for _, event := range events {
-		if event.SessionID == sessionID && event.EventType == eventType {
+		if event.SubjectID == sessionID && event.EventType == eventType {
 			return true
 		}
 	}

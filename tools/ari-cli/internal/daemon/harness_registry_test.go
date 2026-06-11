@@ -63,6 +63,25 @@ func TestHarnessRegistryResolvesDescriptorWithoutConstructingExecutor(t *testing
 	}
 }
 
+func TestHarnessRegistryStoresObservationDeliveryOnlyDescriptor(t *testing.T) {
+	registry := NewHarnessRegistry()
+	factory := func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		return nil, nil
+	}
+	descriptor := HarnessAdapterDescriptor{
+		ObservationCapabilities: []HarnessObservationCapability{HarnessObservationEventStream},
+		DeliveryCapabilities:    []HarnessDeliveryCapability{HarnessDeliveryVisiblePromptTurn},
+	}
+	if err := registry.RegisterWithDescriptor("streaming", factory, descriptor); err != nil {
+		t.Fatalf("RegisterWithDescriptor returned error: %v", err)
+	}
+
+	got, ok := registry.ResolveDescriptor("streaming")
+	if !ok || got.Name != "streaming" || !harnessObservationCapabilitiesContain(got.ObservationCapabilities, HarnessObservationEventStream) || !harnessDeliveryCapabilitiesContain(got.DeliveryCapabilities, HarnessDeliveryVisiblePromptTurn) {
+		t.Fatalf("ResolveDescriptor returned %#v ok=%v, want observation/delivery descriptor", got, ok)
+	}
+}
+
 func TestDefaultHarnessRegistryProvidesProviderAuthDescriptors(t *testing.T) {
 	registry := NewDefaultHarnessRegistry()
 	for _, harness := range []string{HarnessNameClaude, HarnessNameCodex, HarnessNameOpenCode} {

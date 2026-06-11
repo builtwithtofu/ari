@@ -110,22 +110,53 @@ type ContextExcerptItem struct {
 	CopiedPartsJson  string `json:"copied_parts_json"`
 }
 
-type DaemonEvent struct {
-	EventID            string  `json:"event_id"`
-	WorkspaceID        *string `json:"workspace_id"`
-	SessionID          *string `json:"session_id"`
-	EventType          string  `json:"event_type"`
-	SubjectType        string  `json:"subject_type"`
-	SubjectID          string  `json:"subject_id"`
-	PayloadJson        string  `json:"payload_json"`
-	AttentionRequired  int64   `json:"attention_required"`
-	AttentionClearedAt *string `json:"attention_cleared_at"`
-	CreatedAt          string  `json:"created_at"`
-}
-
 type DaemonMetum struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
+}
+
+type EventSubscription struct {
+	SubscriptionID          string  `json:"subscription_id"`
+	WorkspaceID             string  `json:"workspace_id"`
+	OwnerSessionID          string  `json:"owner_session_id"`
+	Name                    string  `json:"name"`
+	FilterJson              string  `json:"filter_json"`
+	DeliveryTargetType      string  `json:"delivery_target_type"`
+	DeliveryTargetID        string  `json:"delivery_target_id"`
+	DeliveryPolicyJson      string  `json:"delivery_policy_json"`
+	CursorSequence          int64   `json:"cursor_sequence"`
+	AckSequence             int64   `json:"ack_sequence"`
+	Status                  string  `json:"status"`
+	CompletionConditionJson string  `json:"completion_condition_json"`
+	TimeoutAt               *string `json:"timeout_at"`
+	CreatedAt               string  `json:"created_at"`
+	UpdatedAt               string  `json:"updated_at"`
+}
+
+type FanoutGroup struct {
+	FanoutGroupID         string `json:"fanout_group_id"`
+	WorkspaceID           string `json:"workspace_id"`
+	SourceSessionID       string `json:"source_session_id"`
+	SourceAgentID         string `json:"source_agent_id"`
+	RequestAgentMessageID string `json:"request_agent_message_id"`
+	Status                string `json:"status"`
+	Body                  string `json:"body"`
+	CreatedAt             string `json:"created_at"`
+	UpdatedAt             string `json:"updated_at"`
+}
+
+type FanoutMember struct {
+	FanoutMemberID        string `json:"fanout_member_id"`
+	FanoutGroupID         string `json:"fanout_group_id"`
+	WorkspaceID           string `json:"workspace_id"`
+	WorkerSessionID       string `json:"worker_session_id"`
+	TargetProfileID       string `json:"target_profile_id"`
+	RequestAgentMessageID string `json:"request_agent_message_id"`
+	ReplyAgentMessageID   string `json:"reply_agent_message_id"`
+	FinalResponseID       string `json:"final_response_id"`
+	Status                string `json:"status"`
+	CreatedAt             string `json:"created_at"`
+	UpdatedAt             string `json:"updated_at"`
 }
 
 type FinalResponse struct {
@@ -213,6 +244,24 @@ type HarnessSessionTelemetry struct {
 	UpdatedAt               string  `json:"updated_at"`
 }
 
+type InboxItem struct {
+	InboxItemID       string `json:"inbox_item_id"`
+	WorkspaceID       string `json:"workspace_id"`
+	SourceSessionID   string `json:"source_session_id"`
+	WorkspaceEventID  string `json:"workspace_event_id"`
+	EventType         string `json:"event_type"`
+	FanoutGroupID     string `json:"fanout_group_id"`
+	FanoutMemberID    string `json:"fanout_member_id"`
+	WorkerSessionID   string `json:"worker_session_id"`
+	FinalResponseID   string `json:"final_response_id"`
+	Kind              string `json:"kind"`
+	Status            string `json:"status"`
+	AttentionRequired int64  `json:"attention_required"`
+	Summary           string `json:"summary"`
+	CreatedAt         string `json:"created_at"`
+	UpdatedAt         string `json:"updated_at"`
+}
+
 type OperationRecord struct {
 	OperationID           string  `json:"operation_id"`
 	WorkspaceID           *string `json:"workspace_id"`
@@ -230,6 +279,24 @@ type OperationRecord struct {
 	PayloadHash           string  `json:"payload_hash"`
 	PayloadSnapshotJson   string  `json:"payload_snapshot_json"`
 	CreatedAt             string  `json:"created_at"`
+}
+
+type PendingDelivery struct {
+	DeliveryID         string  `json:"delivery_id"`
+	WorkspaceID        string  `json:"workspace_id"`
+	SubscriptionID     string  `json:"subscription_id"`
+	TargetType         string  `json:"target_type"`
+	TargetID           string  `json:"target_id"`
+	DeliveryPolicyJson string  `json:"delivery_policy_json"`
+	EventIdsJson       string  `json:"event_ids_json"`
+	Status             string  `json:"status"`
+	Attempts           int64   `json:"attempts"`
+	NextAttemptAt      *string `json:"next_attempt_at"`
+	DeadlineAt         *string `json:"deadline_at"`
+	LastError          string  `json:"last_error"`
+	CreatedAt          string  `json:"created_at"`
+	UpdatedAt          string  `json:"updated_at"`
+	TerminalAt         *string `json:"terminal_at"`
 }
 
 type RunLogMessage struct {
@@ -266,6 +333,15 @@ type RunLogMessagePart struct {
 	RawJson    string `json:"raw_json"`
 }
 
+type SecretAuditEvent struct {
+	EventID     string `json:"event_id"`
+	EventType   string `json:"event_type"`
+	SubjectType string `json:"subject_type"`
+	SubjectID   string `json:"subject_id"`
+	PayloadJson string `json:"payload_json"`
+	CreatedAt   string `json:"created_at"`
+}
+
 type Workspace struct {
 	WorkspaceID   string `json:"workspace_id"`
 	Name          string `json:"name"`
@@ -287,10 +363,48 @@ type WorkspaceCommandDefinition struct {
 	UpdatedAt   string `json:"updated_at"`
 }
 
+type WorkspaceEvent struct {
+	EventID           string `json:"event_id"`
+	WorkspaceID       string `json:"workspace_id"`
+	Sequence          int64  `json:"sequence"`
+	EventType         string `json:"event_type"`
+	SubjectType       string `json:"subject_type"`
+	SubjectID         string `json:"subject_id"`
+	ProducerType      string `json:"producer_type"`
+	ProducerID        string `json:"producer_id"`
+	CorrelationID     string `json:"correlation_id"`
+	CausationID       string `json:"causation_id"`
+	PayloadJson       string `json:"payload_json"`
+	PayloadRefJson    string `json:"payload_ref_json"`
+	AttentionRequired int64  `json:"attention_required"`
+	CreatedAt         string `json:"created_at"`
+}
+
+type WorkspaceEventSequence struct {
+	WorkspaceID  string `json:"workspace_id"`
+	NextSequence int64  `json:"next_sequence"`
+}
+
 type WorkspaceFolder struct {
 	WorkspaceID string `json:"workspace_id"`
 	FolderPath  string `json:"folder_path"`
 	VcsType     string `json:"vcs_type"`
 	IsPrimary   int64  `json:"is_primary"`
 	AddedAt     string `json:"added_at"`
+}
+
+type WorkspaceTimer struct {
+	TimerID        string  `json:"timer_id"`
+	WorkspaceID    string  `json:"workspace_id"`
+	OwnerSessionID string  `json:"owner_session_id"`
+	SubscriptionID *string `json:"subscription_id"`
+	SubjectType    string  `json:"subject_type"`
+	SubjectID      string  `json:"subject_id"`
+	Purpose        string  `json:"purpose"`
+	Status         string  `json:"status"`
+	FireAt         string  `json:"fire_at"`
+	PayloadJson    string  `json:"payload_json"`
+	FiredEventID   string  `json:"fired_event_id"`
+	CreatedAt      string  `json:"created_at"`
+	UpdatedAt      string  `json:"updated_at"`
 }

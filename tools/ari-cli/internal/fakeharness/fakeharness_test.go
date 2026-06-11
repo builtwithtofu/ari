@@ -2,6 +2,9 @@ package fakeharness
 
 import (
 	"bytes"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -91,5 +94,86 @@ func TestSafeEnvDoesNotRecordSensitiveAmbientAuth(t *testing.T) {
 	}
 	if env["OPENCODE_AUTH_CONTENT"] != "" || env["ANTHROPIC_API_KEY"] != "" {
 		t.Fatalf("safe env leaked sensitive keys: %#v", env)
+	}
+}
+
+func TestRunnerProvidesDeliveryProofSurfaces(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	record := dir + "/delivery-invocations.jsonl"
+	cases := []struct {
+		name, harness, mode string
+		args                []string
+		stdin               string
+		want                []string
+	}{
+		{name: "claude managed pty", harness: "claude", mode: "delivery-claude-pty", args: []string{"managed-pty"}, stdin: "visible task for claude\n", want: []string{`"channel":"managed_pty"`, `"status":"completed"`}},
+		{name: "codex app server", harness: "codex", mode: "delivery-codex-app-server", args: []string{"app-server"}, stdin: `{"jsonrpc":"2.0","id":1,"method":"turn/start","params":{"prompt":"visible task for codex"}}`, want: []string{`"method":"turn/completed"`, `"turn_id":"fake-codex-turn"`}},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := Runner{Stdin: strings.NewReader(tc.stdin), Stdout: &stdout, Stderr: &stderr, Env: []string{EnvHarness + "=" + tc.harness, EnvMode + "=" + tc.mode, EnvRecord + "=" + record}}.Run(append([]string{"fake-" + tc.harness}, tc.args...))
+			if code != 0 {
+				t.Fatalf("exit code = %d, stderr %s", code, stderr.String())
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(stdout.String(), want) {
+					t.Fatalf("stdout %q does not contain %q", stdout.String(), want)
+				}
+			}
+		})
+	}
+	data, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invocations, err := DecodeInvocations(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(invocations) != len(cases) {
+		t.Fatalf("recorded %d invocations, want %d", len(invocations), len(cases))
+	}
+	for _, inv := range invocations {
+		if inv.Stdin == "" || strings.Contains(inv.Stdin, "visible task") {
+			t.Fatalf("invocation stdin summary = %q, want hashed non-raw prompt", inv.Stdin)
+		}
+	}
+}
+
+func TestOpenCodeDeliveryHandlerAcceptsPromptAndExposesCompletionEvent(t *testing.T) {
+	t.Parallel()
+	var recorded OpenCodePromptDelivery
+	server := httptest.NewServer(OpenCodeDeliveryHandler(func(delivery OpenCodePromptDelivery) {
+		recorded = delivery
+	}))
+	t.Cleanup(server.Close)
+
+	response, err := http.Post(server.URL+"/api/session/sess_123/prompt", "application/json", strings.NewReader(`{"text":"visible task for opencode","delivery":"queue","idempotency_key":"pd-1"}`))
+	if err != nil {
+		t.Fatalf("post prompt returned error: %v", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("ReadAll prompt response returned error: %v", err)
+	}
+	if response.StatusCode != http.StatusOK || !strings.Contains(string(body), `"status":"queued"`) || recorded.SessionID != "sess_123" || recorded.IdempotencyKey != "pd-1" || recorded.Delivery != "queue" {
+		t.Fatalf("prompt response status=%d body=%s recorded=%#v", response.StatusCode, body, recorded)
+	}
+
+	events, err := http.Get(server.URL + "/api/session/sess_123/events")
+	if err != nil {
+		t.Fatalf("get events returned error: %v", err)
+	}
+	defer func() { _ = events.Body.Close() }()
+	eventsBody, err := io.ReadAll(events.Body)
+	if err != nil {
+		t.Fatalf("ReadAll events returned error: %v", err)
+	}
+	if events.StatusCode != http.StatusOK || !strings.Contains(string(eventsBody), `"type":"session.idle"`) || !strings.Contains(string(eventsBody), `"prompt_id":"fake-opencode-prompt"`) {
+		t.Fatalf("events response status=%d body=%s", events.StatusCode, eventsBody)
 	}
 }

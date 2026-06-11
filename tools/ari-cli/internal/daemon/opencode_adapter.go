@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os/exec"
 	"regexp"
 	"slices"
@@ -18,12 +19,13 @@ import (
 )
 
 type opencodeExecutorOptions struct {
-	Executable     string
-	Cwd            string
-	Model          string
-	AuthProjection HarnessAuthProjectionPlan
-	RunCommand     opencodeCommandRunner
-	RunAuthCommand opencodeAuthCommandRunner
+	Executable        string
+	Cwd               string
+	Model             string
+	AuthProjection    HarnessAuthProjectionPlan
+	DeliveryServerURL string
+	RunCommand        opencodeCommandRunner
+	RunAuthCommand    opencodeAuthCommandRunner
 }
 
 type (
@@ -100,7 +102,28 @@ func (e *OpenCodeExecutor) AuthLogout(ctx context.Context, slot HarnessAuthSlot)
 }
 
 func (e *OpenCodeExecutor) Descriptor() HarnessAdapterDescriptor {
-	return HarnessAdapterDescriptor{Name: HarnessNameOpenCode, Capabilities: []HarnessCapability{HarnessCapabilityHarnessSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems, HarnessCapabilityFinalResponse, HarnessCapabilityMeasuredTokenTelemetry}, Auth: HarnessAuthDescriptor{StatusCheck: HarnessAuthSupportSupported, Login: HarnessAuthSupportPartial, LoginMethods: []string{"opencode_interactive"}, Logout: HarnessAuthSupportSupported, NamedSlotStatus: HarnessAuthSupportPartial, NamedSlotExecution: HarnessAuthSupportSupported, SlotScope: "ari_auth_content", CredentialOwner: HarnessCredentialOwnerProvider, RiskLabels: []string{"provider_owned", "provider_hint_matching", "ari_projected_auth_content", "env_projection_downgrade_risk"}, Caveats: []string{"provider_hint_status", "provider_methods_discovery_is_optional", "named_execution_requires_ari_secret_grant"}}}
+	deliveryCapabilities := []HarnessDeliveryCapability{}
+	if e != nil && strings.TrimSpace(e.options.DeliveryServerURL) != "" {
+		deliveryCapabilities = []HarnessDeliveryCapability{HarnessDeliveryVisiblePromptTurn}
+	}
+	return HarnessAdapterDescriptor{
+		Name:                    HarnessNameOpenCode,
+		Capabilities:            sharedHarnessRuntimeCapabilities(),
+		ObservationCapabilities: []HarnessObservationCapability{HarnessObservationUnsupported},
+		DeliveryCapabilities:    deliveryCapabilities,
+		Auth: HarnessAuthDescriptor{
+			StatusCheck:        HarnessAuthSupportSupported,
+			Login:              HarnessAuthSupportPartial,
+			LoginMethods:       []string{"opencode_interactive"},
+			Logout:             HarnessAuthSupportSupported,
+			NamedSlotStatus:    HarnessAuthSupportPartial,
+			NamedSlotExecution: HarnessAuthSupportSupported,
+			SlotScope:          "ari_auth_content",
+			CredentialOwner:    HarnessCredentialOwnerProvider,
+			RiskLabels:         []string{"provider_owned", "provider_hint_matching", "ari_projected_auth_content", "env_projection_downgrade_risk"},
+			Caveats:            []string{"provider_hint_status", "provider_methods_discovery_is_optional", "named_execution_requires_ari_secret_grant"},
+		},
+	}
 }
 
 func (e *OpenCodeExecutor) AuthProviderMethods(ctx context.Context) (HarnessAuthProviderMethodsResponse, error) {
@@ -173,6 +196,124 @@ func (e *OpenCodeExecutor) Stop(ctx context.Context, runID string) error {
 	_ = ctx
 	_ = runID
 	return nil
+}
+
+func (e *OpenCodeExecutor) AttemptWorkspaceDelivery(ctx context.Context, attempt WorkspaceDeliveryAttempt) (WorkspaceDeliveryAttemptResult, error) {
+	if ctx == nil {
+		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("context is required")
+	}
+	if e == nil {
+		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("executor is required")
+	}
+	serverURL := strings.TrimRight(strings.TrimSpace(e.options.DeliveryServerURL), "/")
+	if serverURL == "" {
+		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("opencode delivery server url is required")
+	}
+	sessionID := strings.TrimSpace(attempt.Delivery.TargetID)
+	if sessionID == "" || strings.TrimSpace(attempt.Delivery.DeliveryID) == "" || len(attempt.Delivery.EventIDs) == 0 {
+		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("delivery target session, delivery id, and event ids are required")
+	}
+	prompt, err := postOpenCodeDeliveryPrompt(ctx, serverURL, sessionID, attempt)
+	if err != nil {
+		return WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptRetry, LastError: err.Error()}, err
+	}
+	result, err := fetchOpenCodeDeliveryCompletion(ctx, serverURL, sessionID, prompt.PromptID)
+	if err != nil {
+		return WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptRetry, LastError: err.Error()}, err
+	}
+	return result, nil
+}
+
+type openCodeDeliveryPromptResponse struct {
+	SessionID string `json:"session_id"`
+	PromptID  string `json:"prompt_id"`
+	Status    string `json:"status"`
+}
+
+var openCodeDeliveryHTTPClient = &http.Client{Timeout: 30 * time.Second}
+
+func postOpenCodeDeliveryPrompt(ctx context.Context, serverURL, sessionID string, attempt WorkspaceDeliveryAttempt) (openCodeDeliveryPromptResponse, error) {
+	body, err := json.Marshal(map[string]string{"text": opencodeWorkspaceDeliveryText(attempt), "delivery": "queue", "idempotency_key": strings.TrimSpace(attempt.Delivery.DeliveryID)})
+	if err != nil {
+		return openCodeDeliveryPromptResponse{}, fmt.Errorf("encode opencode delivery prompt: %w", err)
+	}
+	endpoint := serverURL + "/api/session/" + url.PathEscape(sessionID) + "/prompt"
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return openCodeDeliveryPromptResponse{}, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := openCodeDeliveryHTTPClient.Do(request)
+	if err != nil {
+		return openCodeDeliveryPromptResponse{}, err
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusOK {
+		return openCodeDeliveryPromptResponse{}, fmt.Errorf("opencode prompt delivery returned HTTP %d", response.StatusCode)
+	}
+	var prompt openCodeDeliveryPromptResponse
+	if err := json.NewDecoder(response.Body).Decode(&prompt); err != nil {
+		return openCodeDeliveryPromptResponse{}, fmt.Errorf("decode opencode prompt delivery response: %w", err)
+	}
+	if strings.TrimSpace(prompt.PromptID) == "" {
+		return openCodeDeliveryPromptResponse{}, fmt.Errorf("opencode prompt delivery response missing prompt id")
+	}
+	return prompt, nil
+}
+
+func opencodeWorkspaceDeliveryText(attempt WorkspaceDeliveryAttempt) string {
+	payload := struct {
+		Kind           string `json:"kind"`
+		WorkspaceID    string `json:"workspace_id"`
+		SubscriptionID string `json:"subscription_id"`
+		EventCount     int    `json:"event_count"`
+	}{
+		Kind:           "ari.workspace_delivery",
+		WorkspaceID:    strings.TrimSpace(attempt.Delivery.WorkspaceID),
+		SubscriptionID: strings.TrimSpace(attempt.Delivery.SubscriptionID),
+		EventCount:     len(attempt.Delivery.EventIDs),
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Sprintf("Ari workspace delivery %s", strings.TrimSpace(attempt.Delivery.DeliveryID))
+	}
+	return string(encoded)
+}
+
+func fetchOpenCodeDeliveryCompletion(ctx context.Context, serverURL, sessionID, promptID string) (WorkspaceDeliveryAttemptResult, error) {
+	endpoint := serverURL + "/api/session/" + url.PathEscape(sessionID) + "/events"
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return WorkspaceDeliveryAttemptResult{}, err
+	}
+	response, err := openCodeDeliveryHTTPClient.Do(request)
+	if err != nil {
+		return WorkspaceDeliveryAttemptResult{}, err
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusOK {
+		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("opencode delivery events returned HTTP %d", response.StatusCode)
+	}
+	var payload struct {
+		Events []struct {
+			Type      string `json:"type"`
+			SessionID string `json:"session_id"`
+			PromptID  string `json:"prompt_id"`
+		} `json:"events"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("decode opencode delivery events: %w", err)
+	}
+	for _, event := range payload.Events {
+		if strings.TrimSpace(event.PromptID) != strings.TrimSpace(promptID) {
+			continue
+		}
+		switch strings.TrimSpace(event.Type) {
+		case "prompt.completed", "session.idle":
+			return WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptCompleted}, nil
+		}
+	}
+	return WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptRetry, LastError: "opencode prompt delivery admitted without completion event"}, nil
 }
 
 type opencodeParsedEvents struct {

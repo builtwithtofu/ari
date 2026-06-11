@@ -84,6 +84,28 @@ Future harnesses:
 - A harness should declare which invocation modes it supports, such as headless call, background session, or interactive attach, and which typed options configure those modes.
 - If no native system/developer instruction channel exists, adding the harness requires a separate decision about whether Ari should support a weaker visible-input fallback.
 
+### Supported harness delivery constraints
+
+Ari supports delivery adapters for Claude Code, Codex, and OpenCode only. SoloTerm is prior art for process supervision, not a supported harness.
+
+Architectural constraints:
+
+- Ari's daemon database and workspace event history are the source of truth.
+- Delivery starts from Ari records: workspace events, subscriptions, pending deliveries, retry state, cursor state, and acknowledgements.
+- Harness APIs, prompt queues, PTYs, and background sessions are adapter channels only. They must not become Ari's durable queue.
+- A write/admission signal from a harness is an attempted delivery, not completion. Ari marks delivery terminal only after a completion signal or adapter-classified failure.
+- Provider-native IDs, sessions, runs, threads, turns, and logs are metadata for traceability, resume, attach, and reconciliation.
+- Subscription-backed delivery must keep task/context as visible user work. It must not hide user work inside system prompts.
+- Claude Code subscription delivery must not use `claude -p`, `--print`, or stdin pipe print mode.
+
+| Harness | Primary channel | Completion signal | Fallback | Hard constraints |
+|---|---|---|---|---|
+| OpenCode | Server/API prompt delivery to an existing session, with Ari-generated idempotency and Ari-selected steer/queue policy. | Prompt response proves admission. OpenCode events, idle/step events, or message/context reconciliation prove completion. | CLI/generated agent config only when API delivery is unavailable and the input remains visible task content. | OpenCode prompt queues/events are not Ari's durable queue. Do not rely on an unavailable wait endpoint as completion proof. |
+| Codex | App-server JSON-RPC: resume/start thread, then `turn/start`; use `turn/steer` only for intentional same-turn steering with the expected turn id. | `turn/completed` is terminal. `turn/start` only proves acceptance. | `codex exec resume` for weaker one-shot delivery when app-server is unavailable. | Do not call provider APIs directly. Do not treat item/progress events as terminal delivery completion. |
+| Claude Code | Ari-managed native `claude` process attached to a daemon-owned PTY. Ari sends visible user turns only at safe idle/input boundaries and records terminal output. | Managed-process state, terminal/output markers, idle/readiness detection, or adapter-classified terminal outcome. Terminal write success is not completion. | `claude --bg <prompt>` for detached background startup when Ari does not need a PTY handle. Agent SDK only by explicit non-`-p` decision. | No print mode. No raw input while Claude is busy, awaiting unsafe permission input, or in an unknown screen state. Managed PTY requires safe input framing, output capture, restart/attach, and deterministic tests. |
+
+Adapters must report Ari outcomes: pending, attempted, completed, failed, retryable, acknowledged, and canceled.
+
 ### Normalization rules
 
 - Adapters convert provider output into Ari run-log items with stable kinds and status values.

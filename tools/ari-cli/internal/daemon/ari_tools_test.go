@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,7 +29,7 @@ func TestAriToolSchemaExposesStarterToolsAndScopeMetadata(t *testing.T) {
 	for _, tool := range resp.Tools {
 		got[tool.Name] = tool
 	}
-	for _, name := range []string{"ari.defaults.get", "ari.defaults.set", "ari.profile.draft", "ari.profile.save", "ari.self_check", "ari.run.explain_latest", "ari.session.fanout", "ari.fanout.status", "ari.inbox.list"} {
+	for _, name := range []string{"ari.defaults.get", "ari.defaults.set", "ari.profile.draft", "ari.profile.save", "ari.self_check", "ari.run.explain_latest", "ari.session.fanout", "ari.fanout.status", "ari.inbox.list", "ari.inbox.count", "ari.inbox.mark_read", "ari.workspace.events.next", "ari.workspace.events.ack", "ari.workspace.signals.send", "ari.workspace.timers.create", "ari.workspace.timers.get", "ari.workspace.timers.cancel", "ari.workspace.deliveries.get", "ari.workspace.deliveries.list_due"} {
 		tool, ok := got[name]
 		if !ok {
 			t.Fatalf("missing tool %q in %#v", name, resp.Tools)
@@ -37,13 +38,13 @@ func TestAriToolSchemaExposesStarterToolsAndScopeMetadata(t *testing.T) {
 			t.Fatalf("tool %q missing scope metadata contract: %#v", name, tool)
 		}
 	}
-	if !got["ari.defaults.set"].ApprovalRequired || got["ari.defaults.get"].ApprovalRequired || got["ari.session.fanout"].ApprovalRequired || got["ari.fanout.status"].ApprovalRequired || got["ari.inbox.list"].ApprovalRequired {
+	if !got["ari.defaults.set"].ApprovalRequired || got["ari.defaults.get"].ApprovalRequired || got["ari.session.fanout"].ApprovalRequired || got["ari.fanout.status"].ApprovalRequired || got["ari.inbox.list"].ApprovalRequired || got["ari.inbox.count"].ApprovalRequired || got["ari.inbox.mark_read"].ApprovalRequired || got["ari.workspace.events.next"].ApprovalRequired || got["ari.workspace.events.ack"].ApprovalRequired || got["ari.workspace.signals.send"].ApprovalRequired || got["ari.workspace.timers.create"].ApprovalRequired || got["ari.workspace.timers.get"].ApprovalRequired || got["ari.workspace.timers.cancel"].ApprovalRequired || got["ari.workspace.deliveries.get"].ApprovalRequired || got["ari.workspace.deliveries.list_due"].ApprovalRequired {
 		t.Fatalf("unexpected approval flags: %#v", got)
 	}
-	if got["ari.defaults.get"].OperationKind != daemonOperationKindReadOnly || got["ari.defaults.set"].OperationKind != daemonOperationKindMutating || got["ari.session.fanout"].OperationKind != daemonOperationKindMutating || got["ari.fanout.status"].OperationKind != daemonOperationKindReadOnly || got["ari.inbox.list"].OperationKind != daemonOperationKindReadOnly {
+	if got["ari.defaults.get"].OperationKind != daemonOperationKindReadOnly || got["ari.defaults.set"].OperationKind != daemonOperationKindMutating || got["ari.session.fanout"].OperationKind != daemonOperationKindMutating || got["ari.fanout.status"].OperationKind != daemonOperationKindReadOnly || got["ari.inbox.list"].OperationKind != daemonOperationKindReadOnly || got["ari.inbox.count"].OperationKind != daemonOperationKindReadOnly || got["ari.inbox.mark_read"].OperationKind != daemonOperationKindMutating || got["ari.workspace.events.next"].OperationKind != daemonOperationKindReadOnly || got["ari.workspace.events.ack"].OperationKind != daemonOperationKindMutating || got["ari.workspace.signals.send"].OperationKind != daemonOperationKindMutating || got["ari.workspace.timers.create"].OperationKind != daemonOperationKindMutating || got["ari.workspace.timers.get"].OperationKind != daemonOperationKindReadOnly || got["ari.workspace.timers.cancel"].OperationKind != daemonOperationKindMutating || got["ari.workspace.deliveries.get"].OperationKind != daemonOperationKindReadOnly || got["ari.workspace.deliveries.list_due"].OperationKind != daemonOperationKindReadOnly {
 		t.Fatalf("unexpected operation kinds: defaults.get=%#v defaults.set=%#v", got["ari.defaults.get"], got["ari.defaults.set"])
 	}
-	if !got["ari.fanout.status"].ReadOnly || !got["ari.inbox.list"].ReadOnly || got["ari.session.fanout"].ReadOnly {
+	if !got["ari.fanout.status"].ReadOnly || !got["ari.inbox.list"].ReadOnly || !got["ari.inbox.count"].ReadOnly || !got["ari.workspace.events.next"].ReadOnly || !got["ari.workspace.timers.get"].ReadOnly || !got["ari.workspace.deliveries.get"].ReadOnly || !got["ari.workspace.deliveries.list_due"].ReadOnly || got["ari.workspace.events.ack"].ReadOnly || got["ari.workspace.signals.send"].ReadOnly || got["ari.workspace.timers.create"].ReadOnly || got["ari.workspace.timers.cancel"].ReadOnly || got["ari.inbox.mark_read"].ReadOnly || got["ari.session.fanout"].ReadOnly {
 		t.Fatalf("unexpected read-only flags: fanout=%#v status=%#v inbox=%#v", got["ari.session.fanout"], got["ari.fanout.status"], got["ari.inbox.list"])
 	}
 	if len(got["ari.defaults.get"].TrustChoices) != 0 || !containsAriToolTestString(got["ari.defaults.set"].TrustChoices, "trust_always_by_operation_type") {
@@ -66,7 +67,7 @@ func TestAriToolCatalogIsPrunedAndDoesNotExposeRawDaemonRPCs(t *testing.T) {
 	}
 
 	resp := callMethod[AriToolListResponse](t, registry, "ari.tool.list", AriToolListRequest{})
-	want := []string{"ari.defaults.get", "ari.defaults.set", "ari.profile.draft", "ari.profile.save", "ari.self_check", "ari.run.explain_latest", "ari.session.fanout", "ari.fanout.status", "ari.inbox.list"}
+	want := []string{"ari.defaults.get", "ari.defaults.set", "ari.profile.draft", "ari.profile.save", "ari.self_check", "ari.run.explain_latest", "ari.session.fanout", "ari.fanout.status", "ari.inbox.list", "ari.inbox.count", "ari.inbox.mark_read", "ari.workspace.events.next", "ari.workspace.events.ack", "ari.workspace.signals.send", "ari.workspace.timers.create", "ari.workspace.timers.get", "ari.workspace.timers.cancel", "ari.workspace.deliveries.get", "ari.workspace.deliveries.list_due"}
 	if len(resp.Tools) != len(want) {
 		t.Fatalf("tool catalog len = %d, want pruned %d: %#v", len(resp.Tools), len(want), resp.Tools)
 	}
@@ -80,6 +81,248 @@ func TestAriToolCatalogIsPrunedAndDoesNotExposeRawDaemonRPCs(t *testing.T) {
 		if tool.OperationKind != daemonOperationKindReadOnly && tool.OperationKind != daemonOperationKindMutating {
 			t.Fatalf("tool %q missing helper/MCP operation kind metadata: %#v", tool.Name, tool)
 		}
+	}
+}
+
+func TestAriWorkspaceEventsNextAndAckToolsReadDurableSubscription(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if _, err := store.CreateEventSubscription(ctx, globaldb.EventSubscription{SubscriptionID: "sub-tool-events", WorkspaceID: "ws-1", OwnerSessionID: "run-1", FilterJSON: `{"event_types":["worker.completed"]}`}); err != nil {
+		t.Fatalf("CreateEventSubscription returned error: %v", err)
+	}
+	if _, err := store.AppendWorkspaceEvent(ctx, globaldb.WorkspaceEvent{EventID: "we-tool-started", WorkspaceID: "ws-1", EventType: "worker.started", SubjectType: "harness_session", SubjectID: "worker-run", ProducerType: "session", ProducerID: "worker-run"}); err != nil {
+		t.Fatalf("AppendWorkspaceEvent started returned error: %v", err)
+	}
+	completed, err := store.AppendWorkspaceEvent(ctx, globaldb.WorkspaceEvent{EventID: "we-tool-completed", WorkspaceID: "ws-1", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-run", ProducerType: "session", ProducerID: "worker-run", CorrelationID: "fg-tool-events", PayloadJSON: `{"status":"completed"}`})
+	if err != nil {
+		t.Fatalf("AppendWorkspaceEvent completed returned error: %v", err)
+	}
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	scope := AriToolScope{SourceRunID: "run-1", WorkspaceID: "ws-1", ProfileID: "agent-1", ProfileName: "executor", WithinDefaultScope: true}
+
+	next := callMethod[AriToolCallResponse](t, registry, "ari.tool.call", AriToolCallRequest{Name: "ari.workspace.events.next", Scope: scope, Input: map[string]any{"subscription_id": "sub-tool-events", "limit": 10}})
+	if next.Status != "ok" || next.Output["subscription_id"] != "sub-tool-events" || next.Output["workspace_id"] != "ws-1" || next.Output["count"] != 1 {
+		t.Fatalf("events.next tool response = %#v, want one unread completed event", next)
+	}
+	events, ok := next.Output["events"].([]map[string]any)
+	if !ok || len(events) != 1 || events[0]["event_id"] != completed.EventID || events[0]["event_type"] != "worker.completed" || events[0]["sequence"] != completed.Sequence {
+		t.Fatalf("events.next output events = %#v, want completed workspace event", next.Output["events"])
+	}
+
+	ack := callMethod[AriToolCallResponse](t, registry, "ari.tool.call", AriToolCallRequest{Name: "ari.workspace.events.ack", Scope: scope, Input: map[string]any{"subscription_id": "sub-tool-events", "sequence": completed.Sequence}})
+	if ack.Status != "ok" || ack.Output["acked"] != true || ack.Output["subscription_id"] != "sub-tool-events" || ack.Output["cursor_sequence"] != completed.Sequence || ack.Output["ack_sequence"] != completed.Sequence {
+		t.Fatalf("events.ack tool response = %#v, want ack advanced to completed sequence", ack)
+	}
+	next = callMethod[AriToolCallResponse](t, registry, "ari.tool.call", AriToolCallRequest{Name: "ari.workspace.events.next", Scope: scope, Input: map[string]any{"subscription_id": "sub-tool-events", "limit": 10}})
+	if next.Output["count"] != 0 {
+		t.Fatalf("events.next after ack = %#v, want no unread events", next)
+	}
+}
+
+func TestAriWorkspaceEventsNextToolBoundedWaitReturnsEventAppendedDuringWait(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if _, err := store.CreateEventSubscription(ctx, globaldb.EventSubscription{SubscriptionID: "sub-tool-wait", WorkspaceID: "ws-1", OwnerSessionID: "run-1", FilterJSON: `{"event_types":["worker.completed"]}`}); err != nil {
+		t.Fatalf("CreateEventSubscription returned error: %v", err)
+	}
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	scope := AriToolScope{SourceRunID: "run-1", WorkspaceID: "ws-1", ProfileID: "agent-1", ProfileName: "executor", WithinDefaultScope: true}
+
+	type callResult struct {
+		response AriToolCallResponse
+		err      error
+	}
+	resultC := make(chan callResult, 1)
+	readyC := make(chan struct{})
+	go func() {
+		close(readyC)
+		response, err := callMethodResult[AriToolCallResponse](registry, "ari.tool.call", AriToolCallRequest{Name: "ari.workspace.events.next", Scope: scope, Input: map[string]any{"subscription_id": "sub-tool-wait", "min_events": 1, "timeout_ms": 2000}})
+		resultC <- callResult{response: response, err: err}
+	}()
+	<-readyC
+	created := callMethod[WorkspaceEventResponse](t, registry, "workspace.events.append", WorkspaceEventAppendRequest{EventID: "we-tool-wait", WorkspaceID: "ws-1", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-wait"})
+
+	select {
+	case result := <-resultC:
+		if result.err != nil {
+			t.Fatalf("events.next tool wait returned error: %v", result.err)
+		}
+		output := result.response.Output
+		events, _ := output["events"].([]map[string]any)
+		if output["wait_status"] != "ready" || output["wait_timed_out"] != false || len(events) != 1 || events[0]["event_id"] != created.EventID {
+			t.Fatalf("events.next tool wait output = %#v, want ready with the appended event", output)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("events.next tool wait did not return after matching event")
+	}
+}
+
+func TestAriWorkspaceEventsNextToolBoundedWaitTimesOut(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if _, err := store.CreateEventSubscription(ctx, globaldb.EventSubscription{SubscriptionID: "sub-tool-timeout", WorkspaceID: "ws-1", OwnerSessionID: "run-1", FilterJSON: `{"event_types":["worker.completed"]}`}); err != nil {
+		t.Fatalf("CreateEventSubscription returned error: %v", err)
+	}
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	scope := AriToolScope{SourceRunID: "run-1", WorkspaceID: "ws-1", ProfileID: "agent-1", ProfileName: "executor", WithinDefaultScope: true}
+
+	next := callMethod[AriToolCallResponse](t, registry, "ari.tool.call", AriToolCallRequest{Name: "ari.workspace.events.next", Scope: scope, Input: map[string]any{"subscription_id": "sub-tool-timeout", "min_events": 1, "timeout_ms": 50}})
+	if next.Output["wait_status"] != "timeout" || next.Output["wait_timed_out"] != true || next.Output["count"] != 0 {
+		t.Fatalf("events.next tool timeout output = %#v, want empty timeout result", next.Output)
+	}
+
+	for _, tc := range []struct {
+		name       string
+		input      map[string]any
+		wantReason string
+	}{
+		{name: "timeout above ceiling", input: map[string]any{"subscription_id": "sub-tool-timeout", "min_events": 1, "timeout_ms": 60_001}, wantReason: "invalid_wait_timeout"},
+		{name: "min_events without timeout", input: map[string]any{"subscription_id": "sub-tool-timeout", "min_events": 1}, wantReason: "missing_wait_timeout"},
+	} {
+		err := callMethodError(registry, "ari.tool.call", AriToolCallRequest{Name: "ari.workspace.events.next", Scope: scope, Input: tc.input})
+		if data := requireHandlerErrorData(t, err); data["reason"] != tc.wantReason {
+			t.Fatalf("%s error data = %#v, want reason %q", tc.name, data, tc.wantReason)
+		}
+	}
+}
+
+func TestAriWorkspaceSignalAndTimerToolsMutateWorkspacePrimitives(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	scope := AriToolScope{SourceRunID: "run-1", WorkspaceID: "ws-1", ProfileID: "agent-1", ProfileName: "executor", WithinDefaultScope: true}
+
+	signal := callMethod[AriToolCallResponse](t, registry, "ari.tool.call", AriToolCallRequest{Name: "ari.workspace.signals.send", Scope: scope, Input: map[string]any{"event_id": "signal-tool-1", "target_type": "harness_session", "target_id": "worker-run", "correlation_id": "fg-signal", "payload_json": `{"action":"continue"}`}})
+	if signal.Status != "ok" || signal.Output["event_id"] != "signal-tool-1" || signal.Output["event_type"] != "signal.sent" || signal.Output["workspace_id"] != "ws-1" || signal.Output["subject_type"] != "harness_session" || signal.Output["subject_id"] != "worker-run" || signal.Output["producer_type"] != "session" || signal.Output["producer_id"] != "run-1" {
+		t.Fatalf("signals.send tool response = %#v, want scoped signal.sent event", signal)
+	}
+
+	fireAt := time.Now().UTC().Add(time.Hour).Format(time.RFC3339Nano)
+	created := callMethod[AriToolCallResponse](t, registry, "ari.tool.call", AriToolCallRequest{Name: "ari.workspace.timers.create", Scope: scope, Input: map[string]any{"timer_id": "timer-tool-1", "subject_type": "harness_session", "subject_id": "worker-run", "purpose": "worker-timeout", "fire_at": fireAt, "payload_json": `{"reason":"timeout"}`}})
+	if created.Status != "ok" || created.Output["timer_id"] != "timer-tool-1" || created.Output["workspace_id"] != "ws-1" || created.Output["owner_session_id"] != "run-1" || created.Output["status"] != "scheduled" || created.Output["fire_at"] != fireAt {
+		t.Fatalf("timers.create tool response = %#v, want scheduled scoped timer", created)
+	}
+	got := callMethod[AriToolCallResponse](t, registry, "ari.tool.call", AriToolCallRequest{Name: "ari.workspace.timers.get", Scope: scope, Input: map[string]any{"timer_id": "timer-tool-1"}})
+	if got.Status != "ok" || got.Output["timer_id"] != "timer-tool-1" || got.Output["status"] != "scheduled" {
+		t.Fatalf("timers.get tool response = %#v, want scheduled timer", got)
+	}
+	canceled := callMethod[AriToolCallResponse](t, registry, "ari.tool.call", AriToolCallRequest{Name: "ari.workspace.timers.cancel", Scope: scope, Input: map[string]any{"timer_id": "timer-tool-1"}})
+	if canceled.Status != "ok" || canceled.Output["timer_id"] != "timer-tool-1" || canceled.Output["status"] != "canceled" {
+		t.Fatalf("timers.cancel tool response = %#v, want canceled timer", canceled)
+	}
+}
+
+func TestAriWorkspaceDeliveryToolsInspectScopedPendingDeliveries(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	base := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	if _, err := store.CreateEventSubscription(ctx, globaldb.EventSubscription{SubscriptionID: "sub-delivery-tool", WorkspaceID: "ws-1", OwnerSessionID: "run-1", FilterJSON: `{"event_types":["worker.completed"]}`, DeliveryTargetType: "harness_session", DeliveryTargetID: "run-1", DeliveryPolicyJSON: `{"channel":"visible_prompt_turn","max_attempts":3}`, CreatedAt: base, UpdatedAt: base}); err != nil {
+		t.Fatalf("CreateEventSubscription returned error: %v", err)
+	}
+	for i := 0; i < 125; i++ {
+		subscriptionID := fmt.Sprintf("sub-other-owner-%03d", i)
+		if _, err := store.CreateEventSubscription(ctx, globaldb.EventSubscription{SubscriptionID: subscriptionID, WorkspaceID: "ws-1", OwnerSessionID: "other-run", FilterJSON: `{"event_types":["worker.completed"]}`, DeliveryTargetType: "harness_session", DeliveryTargetID: "other-run", CreatedAt: base.Add(time.Duration(i) * time.Millisecond), UpdatedAt: base}); err != nil {
+			t.Fatalf("CreateEventSubscription %s returned error: %v", subscriptionID, err)
+		}
+	}
+	completed, err := store.AppendWorkspaceEvent(ctx, globaldb.WorkspaceEvent{EventID: "we-delivery-tool", WorkspaceID: "ws-1", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-run", ProducerType: "session", ProducerID: "worker-run", CreatedAt: base.Add(time.Second)})
+	if err != nil {
+		t.Fatalf("AppendWorkspaceEvent returned error: %v", err)
+	}
+	deliveryID := "pd-sub-delivery-tool-we-delivery-tool"
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	scope := AriToolScope{SourceRunID: "run-1", WorkspaceID: "ws-1", ProfileID: "agent-1", ProfileName: "executor", WithinDefaultScope: true}
+
+	got := callMethod[AriToolCallResponse](t, registry, "ari.tool.call", AriToolCallRequest{Name: "ari.workspace.deliveries.get", Scope: scope, Input: map[string]any{"delivery_id": deliveryID}})
+	if got.Status != "ok" || got.Output["delivery_id"] != deliveryID || got.Output["workspace_id"] != "ws-1" || got.Output["subscription_id"] != "sub-delivery-tool" || got.Output["target_id"] != "run-1" || got.Output["status"] != "pending" {
+		t.Fatalf("deliveries.get tool response = %#v, want scoped pending delivery", got)
+	}
+	eventIDs, ok := got.Output["event_ids"].([]string)
+	if !ok || len(eventIDs) != 1 || eventIDs[0] != completed.EventID {
+		t.Fatalf("delivery event ids = %#v, want source event id", got.Output["event_ids"])
+	}
+
+	due := callMethod[AriToolCallResponse](t, registry, "ari.tool.call", AriToolCallRequest{Name: "ari.workspace.deliveries.list_due", Scope: scope, Input: map[string]any{"now": base.Add(time.Minute).Format(time.RFC3339Nano), "limit": 10}})
+	if due.Status != "ok" || due.Output["workspace_id"] != "ws-1" || due.Output["count"] != 1 {
+		t.Fatalf("deliveries.list_due tool response = %#v, want one scoped due delivery", due)
+	}
+	deliveries, ok := due.Output["deliveries"].([]map[string]any)
+	if !ok || len(deliveries) != 1 || deliveries[0]["delivery_id"] != deliveryID || deliveries[0]["subscription_id"] != "sub-delivery-tool" {
+		t.Fatalf("deliveries.list_due output = %#v, want scoped pending delivery", due.Output["deliveries"])
+	}
+}
+
+func TestAriWorkspaceTimerToolsRejectBlankOwnerMismatch(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	fireAt := time.Now().UTC().Add(time.Hour)
+	if _, err := store.CreateWorkspaceTimer(ctx, globaldb.WorkspaceTimer{TimerID: "timer-system", WorkspaceID: "ws-1", FireAt: fireAt}); err != nil {
+		t.Fatalf("CreateWorkspaceTimer returned error: %v", err)
+	}
+	if _, err := store.CreateWorkspaceTimer(ctx, globaldb.WorkspaceTimer{TimerID: "timer-other-owner", WorkspaceID: "ws-1", OwnerSessionID: "other-run", FireAt: fireAt}); err != nil {
+		t.Fatalf("CreateWorkspaceTimer other owner returned error: %v", err)
+	}
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	scope := AriToolScope{SourceRunID: "run-1", WorkspaceID: "ws-1", ProfileID: "agent-1", ProfileName: "executor", WithinDefaultScope: true}
+	got := callMethod[AriToolCallResponse](t, registry, "ari.tool.call", AriToolCallRequest{Name: "ari.workspace.timers.get", Scope: scope, Input: map[string]any{"timer_id": "timer-system"}})
+	if got.Status != "ok" || got.Output["timer_id"] != "timer-system" {
+		t.Fatalf("timers.get returned %#v, want same-workspace daemon-owned timer", got)
+	}
+
+	_, err := callMethodResult[AriToolCallResponse](registry, "ari.tool.call", AriToolCallRequest{Name: "ari.workspace.timers.cancel", Scope: scope, Input: map[string]any{"timer_id": "timer-system"}})
+	if err == nil {
+		t.Fatalf("timers.cancel returned nil error, want timer scope mismatch")
+	}
+	_, err = callMethodResult[AriToolCallResponse](registry, "ari.tool.call", AriToolCallRequest{Name: "ari.workspace.timers.get", Scope: scope, Input: map[string]any{"timer_id": "timer-other-owner"}})
+	if err == nil {
+		t.Fatalf("timers.get returned nil error for other owner, want timer scope mismatch")
+	}
+}
+
+func TestAriWorkspaceDeliveriesListDueRejectsOversizedLimit(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	scope := AriToolScope{SourceRunID: "run-1", WorkspaceID: "ws-1", ProfileID: "agent-1", ProfileName: "executor", WithinDefaultScope: true}
+
+	_, err := callMethodResult[AriToolCallResponse](registry, "ari.tool.call", AriToolCallRequest{Name: "ari.workspace.deliveries.list_due", Scope: scope, Input: map[string]any{"limit": ariWorkspaceDeliveriesListDueMaxLimit + 1}})
+	if err == nil {
+		t.Fatalf("deliveries.list_due returned nil error, want oversized limit rejection")
 	}
 }
 
@@ -286,9 +529,9 @@ func TestAriSessionFanoutToolWaitTimeoutDoesNotCancelWorkersOrCreateWorkerTimeou
 	if len(stored) != 1 || stored[0].Status != "running" {
 		t.Fatalf("stored members = %#v, want wait timeout not to cancel or fail worker", stored)
 	}
-	inbox, err := store.ListStickyInboxItems(ctx, "ws-1", "run-1")
+	inbox, err := store.ListInboxItems(ctx, "ws-1", "run-1")
 	if err != nil {
-		t.Fatalf("ListStickyInboxItems returned error: %v", err)
+		t.Fatalf("ListInboxItems returned error: %v", err)
 	}
 	for _, item := range inbox {
 		if item.Kind == "worker_timed_out" {
@@ -482,25 +725,41 @@ func TestAriFanoutStatusAndInboxListToolsReadDurableWorkerOutcomes(t *testing.T)
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
-	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "worker-1", WorkspaceID: "ws-1", Name: "one", Harness: "done-fanout-harness", Model: "model-1", Prompt: "one"}); err != nil {
-		t.Fatalf("CreateHarnessSessionConfig first returned error: %v", err)
+	if err := store.CreateFanoutGroup(ctx, globaldb.FanoutGroup{FanoutGroupID: "fg-read", WorkspaceID: "ws-1", SourceSessionID: "run-1", SourceAgentID: "agent-1", RequestAgentMessageID: "request-root", Body: "fan out"}); err != nil {
+		t.Fatalf("CreateFanoutGroup returned error: %v", err)
 	}
-	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "worker-2", WorkspaceID: "ws-1", Name: "two", Harness: "done-fanout-harness", Model: "model-1", Prompt: "two"}); err != nil {
-		t.Fatalf("CreateHarnessSessionConfig second returned error: %v", err)
+	for _, worker := range []struct {
+		profileID       string
+		profileName     string
+		memberID        string
+		workerSessionID string
+		requestID       string
+		replyID         string
+		finalResponseID string
+	}{
+		{profileID: "worker-1", profileName: "one", memberID: "fg-read-mworker-1", workerSessionID: "fg-read-cworker-1-run", requestID: "request-worker-1", replyID: "reply-worker-1", finalResponseID: "fr-worker-1"},
+		{profileID: "worker-2", profileName: "two", memberID: "fg-read-mworker-2", workerSessionID: "fg-read-cworker-2-run", requestID: "request-worker-2", replyID: "reply-worker-2", finalResponseID: "fr-worker-2"},
+	} {
+		if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: worker.profileID, WorkspaceID: "ws-1", Name: worker.profileName, Harness: "done-fanout-harness", Model: "model-1", Prompt: worker.profileName}); err != nil {
+			t.Fatalf("CreateHarnessSessionConfig %s returned error: %v", worker.profileID, err)
+		}
+		if err := store.CreateHarnessSession(ctx, globaldb.HarnessSession{SessionID: worker.workerSessionID, WorkspaceID: "ws-1", AgentID: worker.profileID, Harness: "done-fanout-harness", Model: "model-1", Status: "completed", Usage: globaldb.HarnessSessionUsageEphemeral, SourceSessionID: "run-1", SourceAgentID: "agent-1", CWD: t.TempDir()}); err != nil {
+			t.Fatalf("CreateHarnessSession %s returned error: %v", worker.workerSessionID, err)
+		}
+		member := globaldb.FanoutMember{FanoutMemberID: worker.memberID, FanoutGroupID: "fg-read", WorkspaceID: "ws-1", WorkerSessionID: worker.workerSessionID, TargetProfileID: worker.profileID, RequestAgentMessageID: worker.requestID, Status: "running"}
+		if err := store.UpsertFinalResponse(ctx, globaldb.FinalResponse{FinalResponseID: worker.finalResponseID, HarnessSessionID: worker.workerSessionID, WorkspaceID: "ws-1", TaskID: "task-" + worker.profileID, ContextPacketID: "ctx-" + worker.profileID, ProfileID: worker.profileID, Status: "completed", Text: "answer"}); err != nil {
+			t.Fatalf("UpsertFinalResponse %s returned error: %v", worker.finalResponseID, err)
+		}
+		if err := appendFanoutWorkerWorkspaceEvent(ctx, store, member, workspaceEventWorkerCompleted, worker.workerSessionID, worker.replyID, worker.finalResponseID, false); err != nil {
+			t.Fatalf("appendFanoutWorkerWorkspaceEvent %s returned error: %v", worker.workerSessionID, err)
+		}
 	}
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
-	d.setHarnessFactoryForTest("done-fanout-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
-		_ = req
-		_ = primaryFolder
-		_ = sink
-		return newFakeHarness("done-fanout-harness", []TimelineItem{{Kind: "agent_text", Text: "answer"}}), nil
-	})
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
 	scope := AriToolScope{SourceRunID: "run-1", WorkspaceID: "ws-1", ProfileID: "agent-1", ProfileName: "executor", WithinDefaultScope: true}
-	_ = callMethod[AriToolCallResponse](t, registry, "ari.tool.call", AriToolCallRequest{Name: "ari.session.fanout", Scope: scope, Input: map[string]any{"target_profile_ids": []string{"worker-1", "worker-2"}, "body": "fan out", "fanout_group_id": "fg-read", "wait": map[string]any{"mode": "all", "timeout_ms": 1000}}})
 
 	status := callMethod[AriToolCallResponse](t, registry, "ari.tool.call", AriToolCallRequest{Name: "ari.fanout.status", Scope: scope, Input: map[string]any{"fanout_group_id": "fg-read", "source_session_id": "run-1"}})
 	if status.Status != "ok" || status.Output["fanout_group_id"] != "fg-read" || status.Output["workspace_id"] != "ws-1" || status.Output["source_session_id"] != "run-1" || status.Output["status"] != "completed" {
@@ -522,9 +781,89 @@ func TestAriFanoutStatusAndInboxListToolsReadDurableWorkerOutcomes(t *testing.T)
 		t.Fatalf("inbox items = %#v, want two structured worker outcome items", inbox.Output["items"])
 	}
 	for _, item := range items {
-		if item["kind"] != "worker_completed" || item["status"] != "unread" || item["fanout_group_id"] != "fg-read" || item["fanout_member_id"] == "" || item["worker_session_id"] == "" || item["final_response_id"] == "" {
+		if item["kind"] != "worker_completed" || item["status"] != "unread" || item["fanout_group_id"] != "fg-read" || item["fanout_member_id"] == "" || item["worker_session_id"] == "" || item["final_response_id"] == "" || item["workspace_event_id"] == "" || item["event_type"] != workspaceEventWorkerCompleted || item["attention_required"] != false {
 			t.Fatalf("inbox item = %#v, want unread evidence-linked worker_completed", item)
 		}
+	}
+
+	count := callMethod[AriToolCallResponse](t, registry, "ari.tool.call", AriToolCallRequest{Name: "ari.inbox.count", Scope: scope, Input: map[string]any{"source_session_id": "run-1"}})
+	if count.Status != "ok" || count.Output["total_count"] != 2 || count.Output["unread_count"] != 2 || count.Output["read_count"] != 0 {
+		t.Fatalf("inbox count = %#v, want 2 unread projected items", count)
+	}
+	readItem := items[0]
+	readItemID, _ := readItem["inbox_item_id"].(string)
+	readWorkerSessionID, _ := readItem["worker_session_id"].(string)
+	readFinalResponseID, _ := readItem["final_response_id"].(string)
+	marked := callMethod[AriToolCallResponse](t, registry, "ari.tool.call", AriToolCallRequest{Name: "ari.inbox.mark_read", Scope: scope, Input: map[string]any{"source_session_id": "run-1", "inbox_item_ids": []string{readItemID}}})
+	if marked.Status != "ok" || marked.Output["marked_count"] != 1 {
+		t.Fatalf("mark read response = %#v, want one item marked read", marked)
+	}
+	unread := callMethod[AriToolCallResponse](t, registry, "ari.tool.call", AriToolCallRequest{Name: "ari.inbox.list", Scope: scope, Input: map[string]any{"source_session_id": "run-1", "unread_only": true}})
+	unreadItems, ok := unread.Output["items"].([]map[string]any)
+	if !ok || len(unreadItems) != 1 || unreadItems[0]["inbox_item_id"] == readItemID {
+		t.Fatalf("unread inbox after mark_read = %#v, want only the unmarked item", unread.Output["items"])
+	}
+	count = callMethod[AriToolCallResponse](t, registry, "ari.tool.call", AriToolCallRequest{Name: "ari.inbox.count", Scope: scope, Input: map[string]any{"source_session_id": "run-1"}})
+	if count.Output["total_count"] != 2 || count.Output["unread_count"] != 1 || count.Output["read_count"] != 1 {
+		t.Fatalf("inbox count after mark_read = %#v, want one unread and one read", count)
+	}
+	member, err := store.GetFanoutMemberByWorkerSession(ctx, readWorkerSessionID)
+	if err != nil {
+		t.Fatalf("GetFanoutMemberByWorkerSession returned error: %v", err)
+	}
+	if err := appendFanoutWorkerWorkspaceEvent(ctx, store, member, workspaceEventWorkerCompleted, readWorkerSessionID, "reply-after-read", readFinalResponseID, false); err != nil {
+		t.Fatalf("appendFanoutWorkerWorkspaceEvent after mark_read returned error: %v", err)
+	}
+	all := callMethod[AriToolCallResponse](t, registry, "ari.tool.call", AriToolCallRequest{Name: "ari.inbox.list", Scope: scope, Input: map[string]any{"source_session_id": "run-1"}})
+	allItems, ok := all.Output["items"].([]map[string]any)
+	if !ok || len(allItems) != 2 {
+		t.Fatalf("all inbox items after reprojection = %#v, want two items", all.Output["items"])
+	}
+	var projectedRead map[string]any
+	for _, item := range allItems {
+		if item["inbox_item_id"] == readItemID {
+			projectedRead = item
+			break
+		}
+	}
+	if projectedRead["status"] != "read" || projectedRead["workspace_event_id"] == readItem["workspace_event_id"] {
+		t.Fatalf("reprojected read item = %#v, want read state preserved and event evidence refreshed", projectedRead)
+	}
+}
+
+func TestAriFanoutStatusReadsLatestWorkerStateFromWorkspaceEvents(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateFanoutGroup(ctx, globaldb.FanoutGroup{FanoutGroupID: "fg-events-status", WorkspaceID: "ws-1", SourceSessionID: "run-1", SourceAgentID: "agent-1", RequestAgentMessageID: "request-root", Body: "fan out"}); err != nil {
+		t.Fatalf("CreateFanoutGroup returned error: %v", err)
+	}
+	seedMember := globaldb.FanoutMember{FanoutMemberID: "fg-events-status-mworker", FanoutGroupID: "fg-events-status", WorkspaceID: "ws-1", WorkerSessionID: "worker-run-1", TargetProfileID: "worker-profile", RequestAgentMessageID: "request-worker", Status: "running"}
+	if err := appendFanoutWorkerWorkspaceEvent(ctx, store, seedMember, workspaceEventWorkerStarted, "run-1", "request-worker", "", false); err != nil {
+		t.Fatalf("appendFanoutWorkerWorkspaceEvent started returned error: %v", err)
+	}
+	if err := appendFanoutWorkerWorkspaceEvent(ctx, store, seedMember, workspaceEventWorkerCompleted, "worker-run-1", "reply-worker", "fr-worker", false); err != nil {
+		t.Fatalf("appendFanoutWorkerWorkspaceEvent completed returned error: %v", err)
+	}
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	scope := AriToolScope{SourceRunID: "run-1", WorkspaceID: "ws-1", ProfileID: "agent-1", ProfileName: "executor", WithinDefaultScope: true}
+
+	status := callMethod[AriToolCallResponse](t, registry, "ari.tool.call", AriToolCallRequest{Name: "ari.fanout.status", Scope: scope, Input: map[string]any{"fanout_group_id": "fg-events-status", "source_session_id": "run-1"}})
+	if status.Status != "ok" || status.Output["status"] != "completed" {
+		t.Fatalf("fanout status response = %#v, want event-backed completed status", status)
+	}
+	members := fanoutToolMembersForTest(t, status)
+	member := members["worker-profile"]
+	if member["status"] != "completed" || member["reply_agent_message_id"] != "reply-worker" || member["final_response_id"] != "fr-worker" {
+		t.Fatalf("event-backed member = %#v, want latest terminal event evidence", member)
+	}
+	workspaceStatus := waitForProjectedFanoutMemberStatuses(t, registry, "ws-1", map[string]string{"worker-profile": "completed"})
+	if workspaceStatus.FanoutMembers[0].ReplyAgentMessageID != "reply-worker" || workspaceStatus.FanoutMembers[0].FinalResponseID != "fr-worker" {
+		t.Fatalf("workspace fanout members = %#v, want terminal event evidence", workspaceStatus.FanoutMembers)
 	}
 }
 
@@ -555,6 +894,14 @@ func TestAriFanoutStatusAndInboxListToolsRejectOutOfScopeReads(t *testing.T) {
 	inboxMismatchErr := callMethodError(registry, "ari.tool.call", AriToolCallRequest{Name: "ari.inbox.list", Scope: scope, Input: map[string]any{"source_session_id": "other-run"}})
 	if data := requireHandlerErrorData(t, inboxMismatchErr); data["reason"] != "source_scope_mismatch" {
 		t.Fatalf("inbox mismatch error data = %#v", data)
+	}
+	countMismatchErr := callMethodError(registry, "ari.tool.call", AriToolCallRequest{Name: "ari.inbox.count", Scope: scope, Input: map[string]any{"source_session_id": "other-run"}})
+	if data := requireHandlerErrorData(t, countMismatchErr); data["reason"] != "source_scope_mismatch" {
+		t.Fatalf("inbox count mismatch error data = %#v", data)
+	}
+	markMismatchErr := callMethodError(registry, "ari.tool.call", AriToolCallRequest{Name: "ari.inbox.mark_read", Scope: scope, Input: map[string]any{"source_session_id": "other-run", "inbox_item_ids": []string{"inbox-other"}}})
+	if data := requireHandlerErrorData(t, markMismatchErr); data["reason"] != "source_scope_mismatch" {
+		t.Fatalf("inbox mark_read mismatch error data = %#v", data)
 	}
 }
 

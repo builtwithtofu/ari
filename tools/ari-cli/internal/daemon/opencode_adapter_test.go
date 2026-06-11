@@ -6,9 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/fakeharness"
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
 )
 
 func TestOpenCodeExecutorMapsJSONEvents(t *testing.T) {
@@ -63,6 +67,51 @@ func TestOpenCodeExecutorIncludesProfilePromptInVisibleRunInput(t *testing.T) {
 	}
 	if !strings.Contains(runner.prompt, "ctx_123") {
 		t.Fatalf("opencode prompt = %q, want context packet visible in user payload", runner.prompt)
+	}
+}
+
+func TestOpenCodeExecutorAttemptsServerPromptDeliveryAgainstFakeHandler(t *testing.T) {
+	var recorded fakeharness.OpenCodePromptDelivery
+	server := httptest.NewServer(fakeharness.OpenCodeDeliveryHandler(func(delivery fakeharness.OpenCodePromptDelivery) {
+		recorded = delivery
+	}))
+	t.Cleanup(server.Close)
+	executor := NewOpenCodeExecutorForTest(opencodeExecutorOptions{DeliveryServerURL: server.URL})
+
+	result, err := executor.AttemptWorkspaceDelivery(context.Background(), WorkspaceDeliveryAttempt{Delivery: globaldb.PendingDelivery{DeliveryID: "pd-opencode", WorkspaceID: "ws-1", SubscriptionID: "sub-1", TargetType: "harness_session", TargetID: "sess_123", EventIDs: []string{"we-1"}, Status: "attempted", Attempts: 1}})
+	if err != nil {
+		t.Fatalf("AttemptWorkspaceDelivery returned error: %v", err)
+	}
+	if result.Status != WorkspaceDeliveryAttemptCompleted || result.LastError != "" {
+		t.Fatalf("delivery result = %#v, want completed fake server prompt delivery", result)
+	}
+	if recorded.SessionID != "sess_123" || recorded.IdempotencyKey != "pd-opencode" || recorded.Delivery != "queue" || recorded.TextHash == "" {
+		t.Fatalf("recorded prompt = %#v, want queued idempotent prompt for target session", recorded)
+	}
+	text := opencodeWorkspaceDeliveryText(WorkspaceDeliveryAttempt{Delivery: globaldb.PendingDelivery{DeliveryID: "pd-opencode", WorkspaceID: "ws-1", SubscriptionID: "sub-1", EventIDs: []string{"we-1"}}})
+	if strings.Contains(text, "pd-opencode") || strings.Contains(text, "we-1") || strings.Contains(text, "delivery_id") || strings.Contains(text, "event_ids") {
+		t.Fatalf("OpenCode delivery text leaked durable ids: %s", text)
+	}
+	if !strings.Contains(text, `"event_count":1`) {
+		t.Fatalf("OpenCode delivery text = %s, want redacted event_count", text)
+	}
+}
+
+func TestOpenCodeDeliveryHTTPClientHasTimeout(t *testing.T) {
+	if openCodeDeliveryHTTPClient == nil || openCodeDeliveryHTTPClient.Timeout <= 0 {
+		t.Fatalf("openCodeDeliveryHTTPClient = %#v, want explicit timeout", openCodeDeliveryHTTPClient)
+	}
+}
+
+func TestOpenCodeExecutorAdvertisesDeliveryOnlyWithServerURL(t *testing.T) {
+	withoutServer := NewOpenCodeExecutorForTest(opencodeExecutorOptions{})
+	if got := withoutServer.Descriptor().DeliveryCapabilities; len(got) != 0 {
+		t.Fatalf("delivery capabilities without server = %#v, want none", got)
+	}
+
+	withServer := NewOpenCodeExecutorForTest(opencodeExecutorOptions{DeliveryServerURL: "http://127.0.0.1:3000"})
+	if got := withServer.Descriptor().DeliveryCapabilities; len(got) != 1 || got[0] != HarnessDeliveryVisiblePromptTurn {
+		t.Fatalf("delivery capabilities with server = %#v, want visible prompt turn", got)
 	}
 }
 

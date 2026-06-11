@@ -1,12 +1,15 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"os"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/fakeharness"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
 )
@@ -121,6 +124,69 @@ func TestClaudeBackgroundInvocationOmitsEmptyPromptArgument(t *testing.T) {
 		if arg == "" {
 			t.Fatalf("claude args = %#v, want no empty positional prompt", runner.args)
 		}
+	}
+}
+
+func TestClaudeExecutorAttemptsManagedPTYDeliveryAgainstFakeHarness(t *testing.T) {
+	fake := buildFakeHarnessExecutable(t)
+	recordPath := t.TempDir() + "/delivery-record.jsonl"
+	t.Setenv(fakeharness.EnvHarness, "claude")
+	t.Setenv(fakeharness.EnvMode, "delivery-claude-pty")
+	t.Setenv(fakeharness.EnvRecord, recordPath)
+	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: fake, Cwd: t.TempDir()})
+
+	result, err := executor.AttemptWorkspaceDelivery(context.Background(), WorkspaceDeliveryAttempt{Delivery: globaldb.PendingDelivery{DeliveryID: "pd-claude", WorkspaceID: "ws-1", SubscriptionID: "sub-1", TargetType: "harness_session", TargetID: "claude-session", EventIDs: []string{"we-1"}, Status: "attempted", Attempts: 1}})
+	if err != nil {
+		t.Fatalf("AttemptWorkspaceDelivery returned error: %v", err)
+	}
+	if result.Status != WorkspaceDeliveryAttemptCompleted || result.LastError != "" {
+		t.Fatalf("delivery result = %#v, want completed fake managed PTY delivery", result)
+	}
+
+	data, err := os.ReadFile(recordPath)
+	if err != nil {
+		t.Fatalf("ReadFile record returned error: %v", err)
+	}
+	invocations, err := fakeharness.DecodeInvocations(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("DecodeInvocations returned error: %v", err)
+	}
+	if len(invocations) != 1 {
+		t.Fatalf("invocations = %#v, want one fake harness delivery invocation", invocations)
+	}
+	invocation := invocations[0]
+	if invocation.Harness != "claude" || invocation.Mode != "delivery-claude-pty" || strings.Join(invocation.Args, " ") != "managed-pty" {
+		t.Fatalf("invocation = %#v, want claude managed-pty fake delivery", invocation)
+	}
+	if invocation.Stdin == "" || strings.Contains(invocation.Stdin, "we-1") || strings.Contains(invocation.Stdin, "pd-claude") {
+		t.Fatalf("invocation stdin summary = %q, want hashed visible turn without raw event ids", invocation.Stdin)
+	}
+}
+
+func TestClaudeExecutorReusesSessionAuthProjectionForDelivery(t *testing.T) {
+	startRunner := &fakeClaudeRunner{output: []byte(`Started background session 550e8400-e29b-41d4-a716-446655440001`)}
+	var deliveryProjection HarnessAuthProjectionPlan
+	executor := NewClaudeExecutorForTest(claudeExecutorOptions{
+		Executable: "claude",
+		Cwd:        "/repo",
+		RunCommand: startRunner.Run,
+		RunDelivery: func(ctx context.Context, opts claudeExecutorOptions, prompt string) (commandRunResult, error) {
+			_ = ctx
+			_ = prompt
+			deliveryProjection = opts.AuthProjection
+			return commandRunResult{Output: []byte(`{"channel":"managed_pty","status":"completed"}`)}, nil
+		},
+	})
+	projection := HarnessAuthProjectionPlan{Owner: HarnessAuthProjectionOwnerNative, Kind: HarnessAuthProjectionConfigRoot, Env: map[string]string{"CLAUDE_CONFIG_DIR": "/tmp/ari-claude-slot"}}
+	if _, err := executor.Start(context.Background(), ExecutorStartRequest{WorkspaceID: "ws-1", AuthProjection: projection, ContextPacket: `{"context_packet_id":"ctx_123"}`}); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+
+	if _, err := executor.AttemptWorkspaceDelivery(context.Background(), WorkspaceDeliveryAttempt{Delivery: globaldb.PendingDelivery{DeliveryID: "pd-claude-auth", WorkspaceID: "ws-1", SubscriptionID: "sub-1", TargetType: "harness_session", TargetID: "550e8400-e29b-41d4-a716-446655440001", EventIDs: []string{"we-1"}, Status: "attempted", Attempts: 1}}); err != nil {
+		t.Fatalf("AttemptWorkspaceDelivery returned error: %v", err)
+	}
+	if deliveryProjection.Kind != projection.Kind || deliveryProjection.Env["CLAUDE_CONFIG_DIR"] != projection.Env["CLAUDE_CONFIG_DIR"] {
+		t.Fatalf("delivery auth projection = %#v, want session projection %#v", deliveryProjection, projection)
 	}
 }
 
@@ -420,6 +486,30 @@ func TestHarnessSessionResponseFromStoreExposesProviderModeMetadata(t *testing.T
 
 	if session.ProviderSessionID != "550e8400-e29b-41d4-a716-446655440000" || session.InvocationMode != "background" || session.UsageBucket != "subscription" {
 		t.Fatalf("session = %#v, want show/list response with provider id and mode metadata", session)
+	}
+}
+
+func TestClaudeWorkspaceDeliveryTurnRedactsDurableIDs(t *testing.T) {
+	turn := claudeWorkspaceDeliveryTurn(WorkspaceDeliveryAttempt{Delivery: globaldb.PendingDelivery{DeliveryID: "pd-secret", WorkspaceID: "ws-1", SubscriptionID: "sub-1", EventIDs: []string{"we-secret"}}})
+
+	if strings.Contains(turn, "pd-secret") || strings.Contains(turn, "we-secret") || strings.Contains(turn, "delivery_id") || strings.Contains(turn, "event_ids") {
+		t.Fatalf("Claude delivery turn leaked durable ids: %s", turn)
+	}
+	if !strings.Contains(turn, `"event_count":1`) {
+		t.Fatalf("Claude delivery turn = %s, want redacted event_count", turn)
+	}
+}
+
+func TestParseClaudeManagedPTYDeliveryOutputAcceptsLargeLines(t *testing.T) {
+	largeError := strings.Repeat("x", 128*1024)
+	output := []byte(`{"channel":"managed_pty","status":"failed","error":"` + largeError + `"}` + "\n")
+
+	result, err := parseClaudeManagedPTYDeliveryOutput(output)
+	if err != nil {
+		t.Fatalf("parseClaudeManagedPTYDeliveryOutput returned error: %v", err)
+	}
+	if result.Status != WorkspaceDeliveryAttemptFailed || result.LastError != largeError {
+		t.Fatalf("result = %#v, want failed with large error", result)
 	}
 }
 

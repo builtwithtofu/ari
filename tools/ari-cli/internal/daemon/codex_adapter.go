@@ -23,12 +23,14 @@ type codexExecutorOptions struct {
 	AuthHomeRoot    string
 	AuthProjection  HarnessAuthProjectionPlan
 	StartTransport  codexTransportStarter
+	RunDelivery     codexCommandRunner
 	RunAuthCommand  codexAuthCommandRunner
 	NotificationCap int
 }
 
 type (
 	codexTransportStarter  func(context.Context, codexExecutorOptions) (codexTransport, error)
+	codexCommandRunner     func(context.Context, codexExecutorOptions, string) (commandRunResult, error)
 	codexAuthCommandRunner func(context.Context, codexExecutorOptions, []string) (commandRunResult, error)
 )
 
@@ -47,9 +49,10 @@ type codexNotification struct {
 }
 
 type CodexExecutor struct {
-	options codexExecutorOptions
-	mu      sync.Mutex
-	runs    map[string][]TimelineItem
+	options         codexExecutorOptions
+	mu              sync.Mutex
+	runs            map[string][]TimelineItem
+	deliveryOptions map[string]codexExecutorOptions
 }
 
 func NewCodexExecutor(cwd string) *CodexExecutor {
@@ -67,13 +70,16 @@ func newCodexExecutor(options codexExecutorOptions) *CodexExecutor {
 	if options.StartTransport == nil {
 		options.StartTransport = startCodexAppServerTransport
 	}
+	if options.RunDelivery == nil {
+		options.RunDelivery = runCodexAppServerDeliveryCommand
+	}
 	if options.RunAuthCommand == nil {
 		options.RunAuthCommand = runCodexAuthCommand
 	}
 	if options.NotificationCap <= 0 {
 		options.NotificationCap = 64
 	}
-	return &CodexExecutor{options: options, runs: map[string][]TimelineItem{}}
+	return &CodexExecutor{options: options, runs: map[string][]TimelineItem{}, deliveryOptions: map[string]codexExecutorOptions{}}
 }
 
 func (options codexExecutorOptions) withCodexAuthSlotProjection(authSlotID string) (codexExecutorOptions, error) {
@@ -320,7 +326,24 @@ func (e *CodexExecutor) AuthLogout(ctx context.Context, slot HarnessAuthSlot) (H
 }
 
 func (e *CodexExecutor) Descriptor() HarnessAdapterDescriptor {
-	return HarnessAdapterDescriptor{Name: HarnessNameCodex, Capabilities: []HarnessCapability{HarnessCapabilityHarnessSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems, HarnessCapabilityFinalResponse, HarnessCapabilityMeasuredTokenTelemetry}, Auth: HarnessAuthDescriptor{StatusCheck: HarnessAuthSupportSupported, Login: HarnessAuthSupportSupported, LoginMethods: []string{"browser", "device_code", "api_key"}, Logout: HarnessAuthSupportSupported, NamedSlotStatus: HarnessAuthSupportSupported, NamedSlotExecution: HarnessAuthSupportSupported, SlotScope: "codex_home", CredentialOwner: HarnessCredentialOwnerProvider, RiskLabels: []string{"provider_owned", "native_config_root_isolation"}, Caveats: []string{"codex_named_slots_use_per_slot_codex_home"}}}
+	return HarnessAdapterDescriptor{
+		Name:                    HarnessNameCodex,
+		Capabilities:            sharedHarnessRuntimeCapabilities(),
+		ObservationCapabilities: []HarnessObservationCapability{HarnessObservationEventStream},
+		DeliveryCapabilities:    []HarnessDeliveryCapability{HarnessDeliveryVisiblePromptTurn},
+		Auth: HarnessAuthDescriptor{
+			StatusCheck:        HarnessAuthSupportSupported,
+			Login:              HarnessAuthSupportSupported,
+			LoginMethods:       []string{"browser", "device_code", "api_key"},
+			Logout:             HarnessAuthSupportSupported,
+			NamedSlotStatus:    HarnessAuthSupportSupported,
+			NamedSlotExecution: HarnessAuthSupportSupported,
+			SlotScope:          "codex_home",
+			CredentialOwner:    HarnessCredentialOwnerProvider,
+			RiskLabels:         []string{"provider_owned", "native_config_root_isolation"},
+			Caveats:            []string{"codex_named_slots_use_per_slot_codex_home"},
+		},
+	}
 }
 
 func (e *CodexExecutor) Start(ctx context.Context, req ExecutorStartRequest) (ExecutorRun, error) {
@@ -376,6 +399,7 @@ func (e *CodexExecutor) Start(ctx context.Context, req ExecutorStartRequest) (Ex
 	}
 	e.mu.Lock()
 	e.runs[threadID] = items
+	e.deliveryOptions[threadID] = options
 	e.mu.Unlock()
 	providerRunID := turnID
 	if providerRunID == "" {
@@ -404,6 +428,39 @@ func (e *CodexExecutor) Stop(ctx context.Context, runID string) error {
 	return nil
 }
 
+func (e *CodexExecutor) AttemptWorkspaceDelivery(ctx context.Context, attempt WorkspaceDeliveryAttempt) (WorkspaceDeliveryAttemptResult, error) {
+	if ctx == nil {
+		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("context is required")
+	}
+	if e == nil {
+		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("executor is required")
+	}
+	if strings.TrimSpace(attempt.Delivery.TargetID) == "" || strings.TrimSpace(attempt.Delivery.DeliveryID) == "" || len(attempt.Delivery.EventIDs) == 0 {
+		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("delivery target thread id, delivery id, and event ids are required")
+	}
+	request, err := codexWorkspaceDeliveryAppServerRequest(attempt)
+	if err != nil {
+		return WorkspaceDeliveryAttemptResult{}, err
+	}
+	deliveryOptions := e.options
+	if threadID := strings.TrimSpace(attempt.Delivery.TargetID); threadID != "" {
+		e.mu.Lock()
+		if options, ok := e.deliveryOptions[threadID]; ok {
+			deliveryOptions = options
+		}
+		e.mu.Unlock()
+	}
+	commandResult, commandErr := deliveryOptions.RunDelivery(ctx, deliveryOptions, request)
+	deliveryResult, parseErr := parseCodexAppServerDeliveryOutput(commandResult.Output)
+	if parseErr == nil {
+		return deliveryResult, nil
+	}
+	if commandErr != nil {
+		return WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptRetry, LastError: commandErr.Error()}, commandErr
+	}
+	return WorkspaceDeliveryAttemptResult{}, parseErr
+}
+
 type codexInitializeResult struct{}
 
 type codexThreadStartResult struct {
@@ -420,6 +477,95 @@ type codexTurnStartResult struct {
 
 func codexPromptFromRequest(req ExecutorStartRequest) string {
 	return strings.TrimSpace(req.ContextPacket)
+}
+
+func codexWorkspaceDeliveryAppServerRequest(attempt WorkspaceDeliveryAttempt) (string, error) {
+	threadID := strings.TrimSpace(attempt.Delivery.TargetID)
+	if threadID == "" {
+		return "", fmt.Errorf("delivery target thread id is required")
+	}
+	messages := []map[string]any{
+		{
+			"id":     1,
+			"method": "initialize",
+			"params": map[string]any{"clientInfo": map[string]string{"name": "ari", "title": "Ari", "version": "0.1.0"}},
+		},
+		{"method": "initialized"},
+		{
+			"id":     2,
+			"method": "turn/start",
+			"params": map[string]any{
+				"threadId": threadID,
+				"input":    []map[string]string{{"type": "text", "text": codexWorkspaceDeliveryTurn(attempt)}},
+			},
+		},
+	}
+	var out strings.Builder
+	for _, message := range messages {
+		encoded, err := json.Marshal(message)
+		if err != nil {
+			return "", fmt.Errorf("encode codex delivery app-server request: %w", err)
+		}
+		out.Write(encoded)
+		out.WriteByte('\n')
+	}
+	return out.String(), nil
+}
+
+func codexWorkspaceDeliveryTurn(attempt WorkspaceDeliveryAttempt) string {
+	payload := struct {
+		Kind           string `json:"kind"`
+		WorkspaceID    string `json:"workspace_id"`
+		SubscriptionID string `json:"subscription_id"`
+		EventCount     int    `json:"event_count"`
+	}{
+		Kind:           "ari.workspace_delivery",
+		WorkspaceID:    strings.TrimSpace(attempt.Delivery.WorkspaceID),
+		SubscriptionID: strings.TrimSpace(attempt.Delivery.SubscriptionID),
+		EventCount:     len(attempt.Delivery.EventIDs),
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Sprintf("Ari workspace delivery %s", strings.TrimSpace(attempt.Delivery.DeliveryID))
+	}
+	return string(encoded)
+}
+
+func parseCodexAppServerDeliveryOutput(output []byte) (WorkspaceDeliveryAttemptResult, error) {
+	scanner := bufio.NewScanner(strings.NewReader(strings.TrimSpace(string(output))))
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	admitted := false
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var message codexRPCMessage
+		if err := json.Unmarshal([]byte(line), &message); err != nil {
+			continue
+		}
+		if message.Error != nil {
+			lastError := strings.TrimSpace(message.Error.Message)
+			if lastError == "" {
+				lastError = "codex app-server delivery failed"
+			}
+			return WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptFailed, LastError: lastError}, nil
+		}
+		if message.ID != nil && len(message.Result) > 0 {
+			admitted = true
+			continue
+		}
+		if strings.TrimSpace(message.Method) == "turn/completed" {
+			return WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptCompleted}, nil
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("scan codex app-server delivery output: %w", err)
+	}
+	if admitted {
+		return WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptRetry, LastError: "codex app-server delivery admitted without completion signal"}, nil
+	}
+	return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("codex app-server delivery output did not include a terminal event")
 }
 
 func collectCodexTimelineItems(ctx context.Context, notifications <-chan codexNotification, workspaceID, threadID, turnID string) ([]TimelineItem, error) {
@@ -513,6 +659,40 @@ func startCodexAppServerTransport(ctx context.Context, options codexExecutorOpti
 	}
 	transport := newCodexStdioTransport(cmd, stdin, stdout, stderr, options.NotificationCap)
 	return transport, nil
+}
+
+func runCodexAppServerDeliveryCommand(ctx context.Context, options codexExecutorOptions, request string) (commandRunResult, error) {
+	executable := strings.TrimSpace(options.Executable)
+	if executable == "" {
+		executable = "codex"
+	}
+	path, err := exec.LookPath(executable)
+	if err != nil {
+		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameCodex, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+	}
+	cmd := exec.CommandContext(ctx, path, "app-server")
+	cmd.Dir = strings.TrimSpace(options.Cwd)
+	cmd.Env = commandEnvWithProjection(options.AuthProjection)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return commandRunResult{}, fmt.Errorf("open codex delivery stdin: %w", err)
+	}
+	var output strings.Builder
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	if err := cmd.Start(); err != nil {
+		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameCodex, Reason: "start_failed", Executable: executable, Probe: executable + " app-server", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: true}
+	}
+	_, _ = io.WriteString(stdin, request)
+	_ = stdin.Close()
+	sample := sampleLinuxProcessMetrics(ctx, HarnessSession{PID: cmd.Process.Pid})
+	err = cmd.Wait()
+	exitCode := cmd.ProcessState.ExitCode()
+	result := commandRunResult{Output: []byte(output.String()), ProcessSample: &sample, ExitCode: &exitCode}
+	if err != nil {
+		return result, fmt.Errorf("run codex app-server delivery: %w", err)
+	}
+	return result, nil
 }
 
 type codexStdioTransport struct {

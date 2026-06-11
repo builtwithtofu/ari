@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -84,6 +85,16 @@ var ariTools = []AriToolSchema{
 	{Name: "ari.session.fanout", Description: "Launch one or more ephemeral worker profiles from a scoped sticky source session", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), OperationKind: daemonOperationKindMutating},
 	{Name: "ari.fanout.status", Description: "Read durable fanout group and member status", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ReadOnly: true, OperationKind: daemonOperationKindReadOnly},
 	{Name: "ari.inbox.list", Description: "List durable sticky-session inbox items", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ReadOnly: true, OperationKind: daemonOperationKindReadOnly},
+	{Name: "ari.inbox.count", Description: "Count durable sticky-session inbox items by read state", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ReadOnly: true, OperationKind: daemonOperationKindReadOnly},
+	{Name: "ari.inbox.mark_read", Description: "Mark durable sticky-session inbox items read", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), OperationKind: daemonOperationKindMutating},
+	{Name: "ari.workspace.events.next", Description: "Read unread events from a durable workspace event subscription, optionally blocking until min_events arrive within timeout_ms (max 60000)", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ReadOnly: true, OperationKind: daemonOperationKindReadOnly},
+	{Name: "ari.workspace.events.ack", Description: "Advance a durable workspace event subscription cursor", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), OperationKind: daemonOperationKindMutating},
+	{Name: "ari.workspace.signals.send", Description: "Send a workspace-scoped signal event from the scoped source session", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), OperationKind: daemonOperationKindMutating},
+	{Name: "ari.workspace.timers.create", Description: "Create a durable workspace timer owned by the scoped source session", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), OperationKind: daemonOperationKindMutating},
+	{Name: "ari.workspace.timers.get", Description: "Read a durable workspace timer", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ReadOnly: true, OperationKind: daemonOperationKindReadOnly},
+	{Name: "ari.workspace.timers.cancel", Description: "Cancel a durable workspace timer owned by the scoped source session", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), OperationKind: daemonOperationKindMutating},
+	{Name: "ari.workspace.deliveries.get", Description: "Read a pending workspace event delivery", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ReadOnly: true, OperationKind: daemonOperationKindReadOnly},
+	{Name: "ari.workspace.deliveries.list_due", Description: "List due pending workspace event deliveries", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ReadOnly: true, OperationKind: daemonOperationKindReadOnly},
 }
 
 func ariToolScopeFields() []string {
@@ -191,6 +202,76 @@ func (d *Daemon) callAriTool(ctx context.Context, store *globaldb.Store, req Ari
 		return ariFanoutStatus(ctx, store, req.Scope, req.Input)
 	case "ari.inbox.list":
 		return ariInboxList(ctx, store, req.Scope, req.Input)
+	case "ari.inbox.count":
+		return ariInboxCount(ctx, store, req.Scope, req.Input)
+	case "ari.inbox.mark_read":
+		var response AriToolCallResponse
+		requestHash, err := HashAriToolRequest(name, req.Input)
+		if err != nil {
+			return AriToolCallResponse{}, err
+		}
+		_, err = recordDaemonOperation(ctx, store, daemonOperationRecordOptions{WorkspaceID: req.Scope.WorkspaceID, OperationType: "ari_inbox_mark_read", OperationKind: daemonOperationKindMutating, Actor: req.Scope.ProfileName, Source: daemonOperationSourceTool, Scope: globaldb.OperationScopeWorkspace, RequestSummary: "mark Ari inbox items read from helper tool", TrustDecision: "scoped_source_session", RollbackData: map[string]string{"scope": "runtime_inbox", "rollback": "not_supported_for_read_lifecycle"}, PayloadSnapshot: map[string]string{"tool": name, "workspace_id": req.Scope.WorkspaceID, "source_run_id": req.Scope.SourceRunID, "request_hash": requestHash}}, func(ctx context.Context) error {
+			var err error
+			response, err = ariInboxMarkRead(ctx, store, req.Scope, req.Input)
+			return err
+		})
+		return response, err
+	case "ari.workspace.events.next":
+		return ariWorkspaceEventsNext(ctx, store, req.Scope, req.Input)
+	case "ari.workspace.events.ack":
+		var response AriToolCallResponse
+		requestHash, err := HashAriToolRequest(name, req.Input)
+		if err != nil {
+			return AriToolCallResponse{}, err
+		}
+		_, err = recordDaemonOperation(ctx, store, daemonOperationRecordOptions{WorkspaceID: req.Scope.WorkspaceID, OperationType: "ari_workspace_events_ack", OperationKind: daemonOperationKindMutating, Actor: req.Scope.ProfileName, Source: daemonOperationSourceTool, Scope: globaldb.OperationScopeWorkspace, RequestSummary: "ack Ari workspace event subscription from helper tool", TrustDecision: "scoped_source_session", RollbackData: map[string]string{"scope": "workspace_event_subscription", "rollback": "not_supported_for_read_lifecycle"}, PayloadSnapshot: map[string]string{"tool": name, "workspace_id": req.Scope.WorkspaceID, "source_run_id": req.Scope.SourceRunID, "request_hash": requestHash}}, func(ctx context.Context) error {
+			var err error
+			response, err = ariWorkspaceEventsAck(ctx, store, req.Scope, req.Input)
+			return err
+		})
+		return response, err
+	case "ari.workspace.signals.send":
+		var response AriToolCallResponse
+		requestHash, err := HashAriToolRequest(name, req.Input)
+		if err != nil {
+			return AriToolCallResponse{}, err
+		}
+		_, err = recordDaemonOperation(ctx, store, daemonOperationRecordOptions{WorkspaceID: req.Scope.WorkspaceID, OperationType: "ari_workspace_signals_send", OperationKind: daemonOperationKindMutating, Actor: req.Scope.ProfileName, Source: daemonOperationSourceTool, Scope: globaldb.OperationScopeWorkspace, RequestSummary: "send Ari workspace signal from helper tool", TrustDecision: "scoped_source_session", RollbackData: map[string]string{"scope": "workspace_event_history", "rollback": "append_only_signal_not_reverted"}, PayloadSnapshot: map[string]string{"tool": name, "workspace_id": req.Scope.WorkspaceID, "source_run_id": req.Scope.SourceRunID, "request_hash": requestHash}}, func(ctx context.Context) error {
+			var err error
+			response, err = ariWorkspaceSignalSend(ctx, store, req.Scope, req.Input)
+			return err
+		})
+		return response, err
+	case "ari.workspace.timers.create":
+		var response AriToolCallResponse
+		requestHash, err := HashAriToolRequest(name, req.Input)
+		if err != nil {
+			return AriToolCallResponse{}, err
+		}
+		_, err = recordDaemonOperation(ctx, store, daemonOperationRecordOptions{WorkspaceID: req.Scope.WorkspaceID, OperationType: "ari_workspace_timers_create", OperationKind: daemonOperationKindMutating, Actor: req.Scope.ProfileName, Source: daemonOperationSourceTool, Scope: globaldb.OperationScopeWorkspace, RequestSummary: "create Ari workspace timer from helper tool", TrustDecision: "scoped_source_session", RollbackData: map[string]string{"scope": "workspace_timer", "rollback": "cancel_timer_when_scheduled"}, PayloadSnapshot: map[string]string{"tool": name, "workspace_id": req.Scope.WorkspaceID, "source_run_id": req.Scope.SourceRunID, "request_hash": requestHash}}, func(ctx context.Context) error {
+			var err error
+			response, err = ariWorkspaceTimerCreate(ctx, store, req.Scope, req.Input)
+			return err
+		})
+		return response, err
+	case "ari.workspace.timers.get":
+		return ariWorkspaceTimerGet(ctx, store, req.Scope, req.Input)
+	case "ari.workspace.timers.cancel":
+		var response AriToolCallResponse
+		requestHash, err := HashAriToolRequest(name, req.Input)
+		if err != nil {
+			return AriToolCallResponse{}, err
+		}
+		_, err = recordDaemonOperation(ctx, store, daemonOperationRecordOptions{WorkspaceID: req.Scope.WorkspaceID, OperationType: "ari_workspace_timers_cancel", OperationKind: daemonOperationKindMutating, Actor: req.Scope.ProfileName, Source: daemonOperationSourceTool, Scope: globaldb.OperationScopeWorkspace, RequestSummary: "cancel Ari workspace timer from helper tool", TrustDecision: "scoped_source_session", RollbackData: map[string]string{"scope": "workspace_timer", "rollback": "not_supported_for_timer_cancellation"}, PayloadSnapshot: map[string]string{"tool": name, "workspace_id": req.Scope.WorkspaceID, "source_run_id": req.Scope.SourceRunID, "request_hash": requestHash}}, func(ctx context.Context) error {
+			var err error
+			response, err = ariWorkspaceTimerCancel(ctx, store, req.Scope, req.Input)
+			return err
+		})
+		return response, err
+	case "ari.workspace.deliveries.get":
+		return ariWorkspaceDeliveryGet(ctx, store, req.Scope, req.Input)
+	case "ari.workspace.deliveries.list_due":
+		return ariWorkspaceDeliveriesListDue(ctx, store, req.Scope, req.Input)
 	default:
 		return AriToolCallResponse{}, ariToolError("unknown_tool", "unknown Ari tool")
 	}
@@ -574,7 +655,15 @@ func ariFanoutMembersFromResponse(fanout AgentMessageSendResponse) []map[string]
 }
 
 func ariFanoutMembersFromStore(ctx context.Context, store *globaldb.Store, groupID string) ([]map[string]any, error) {
-	stored, err := store.ListFanoutMembers(ctx, groupID)
+	group, err := store.GetFanoutGroup(ctx, groupID)
+	if err != nil {
+		return nil, err
+	}
+	return ariFanoutMembersForGroup(ctx, store, group)
+}
+
+func ariFanoutMembersForGroup(ctx context.Context, store *globaldb.Store, group globaldb.FanoutGroup) ([]map[string]any, error) {
+	stored, err := fanoutMemberProjectionForGroup(ctx, store, group)
 	if err != nil {
 		return nil, err
 	}
@@ -664,7 +753,7 @@ func ariFanoutStatus(ctx context.Context, store *globaldb.Store, scope AriToolSc
 	if err := validateFanoutReadScope(scope, group, stringValue(body, "source_session_id")); err != nil {
 		return AriToolCallResponse{}, err
 	}
-	members, err := ariFanoutMembersFromStore(ctx, store, group.FanoutGroupID)
+	members, err := ariFanoutMembersForGroup(ctx, store, group)
 	if err != nil {
 		return AriToolCallResponse{}, err
 	}
@@ -676,14 +765,11 @@ func ariInboxList(ctx context.Context, store *globaldb.Store, scope AriToolScope
 	if err != nil {
 		return AriToolCallResponse{}, err
 	}
-	sourceSessionID := stringValue(body, "source_session_id")
-	if sourceSessionID == "" {
-		sourceSessionID = strings.TrimSpace(scope.SourceRunID)
+	sourceSessionID, err := scopedAriInboxSourceSessionID(scope, stringValue(body, "source_session_id"))
+	if err != nil {
+		return AriToolCallResponse{}, err
 	}
-	if sourceSessionID != strings.TrimSpace(scope.SourceRunID) {
-		return AriToolCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "source_scope_mismatch", "source_session_id": sourceSessionID, "scope_source_run_id": strings.TrimSpace(scope.SourceRunID)})
-	}
-	items, err := store.ListStickyInboxItems(ctx, scope.WorkspaceID, sourceSessionID)
+	items, err := store.ListInboxItems(ctx, scope.WorkspaceID, sourceSessionID)
 	if err != nil {
 		return AriToolCallResponse{}, err
 	}
@@ -693,9 +779,386 @@ func ariInboxList(ctx context.Context, store *globaldb.Store, scope AriToolScope
 		if unreadOnly && item.Status != "unread" {
 			continue
 		}
-		outputItems = append(outputItems, map[string]any{"inbox_item_id": item.InboxItemID, "workspace_id": item.WorkspaceID, "source_session_id": item.TargetSessionID, "fanout_group_id": item.FanoutGroupID, "fanout_member_id": item.FanoutMemberID, "worker_session_id": item.WorkerSessionID, "final_response_id": item.FinalResponseID, "kind": item.Kind, "status": item.Status, "summary": item.Summary, "created_at": item.CreatedAt, "updated_at": item.UpdatedAt})
+		outputItems = append(outputItems, ariInboxItemOutput(item))
 	}
 	return AriToolCallResponse{Status: "ok", Output: map[string]any{"workspace_id": scope.WorkspaceID, "source_session_id": sourceSessionID, "items": outputItems}}, nil
+}
+
+func ariInboxCount(ctx context.Context, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
+	body, err := inputMap(input)
+	if err != nil {
+		return AriToolCallResponse{}, err
+	}
+	sourceSessionID, err := scopedAriInboxSourceSessionID(scope, stringValue(body, "source_session_id"))
+	if err != nil {
+		return AriToolCallResponse{}, err
+	}
+	counts, err := store.CountInboxItems(ctx, scope.WorkspaceID, sourceSessionID)
+	if err != nil {
+		return AriToolCallResponse{}, err
+	}
+	return AriToolCallResponse{Status: "ok", Output: map[string]any{"workspace_id": scope.WorkspaceID, "source_session_id": sourceSessionID, "total_count": int(counts.TotalCount), "unread_count": int(counts.UnreadCount), "read_count": int(counts.ReadCount)}}, nil
+}
+
+func ariInboxMarkRead(ctx context.Context, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
+	body, err := inputMap(input)
+	if err != nil {
+		return AriToolCallResponse{}, err
+	}
+	sourceSessionID, err := scopedAriInboxSourceSessionID(scope, stringValue(body, "source_session_id"))
+	if err != nil {
+		return AriToolCallResponse{}, err
+	}
+	inboxItemIDs, err := stringSliceValue(body, "inbox_item_ids")
+	if err != nil {
+		return AriToolCallResponse{}, err
+	}
+	if len(inboxItemIDs) == 0 {
+		return AriToolCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "missing_required_fields", "missing_field": "inbox_item_ids"})
+	}
+	marked, err := store.MarkInboxItemsRead(ctx, scope.WorkspaceID, sourceSessionID, inboxItemIDs)
+	if err != nil {
+		return AriToolCallResponse{}, err
+	}
+	return AriToolCallResponse{Status: "ok", Output: map[string]any{"workspace_id": scope.WorkspaceID, "source_session_id": sourceSessionID, "marked_count": int(marked)}}, nil
+}
+
+// ariToolsEventsNextMaxTimeoutMS bounds how long an agent tool call may hold
+// a server-side event wait.
+const ariToolsEventsNextMaxTimeoutMS = 60_000
+
+func ariWorkspaceEventsNext(ctx context.Context, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
+	body, err := inputMap(input)
+	if err != nil {
+		return AriToolCallResponse{}, err
+	}
+	subscription, err := scopedAriWorkspaceEventSubscription(ctx, store, scope, stringValue(body, "subscription_id"))
+	if err != nil {
+		return AriToolCallResponse{}, err
+	}
+	limit, err := optionalNonNegativeIntValue(body, "limit")
+	if err != nil {
+		return AriToolCallResponse{}, err
+	}
+	minEvents, err := optionalNonNegativeIntValue(body, "min_events")
+	if err != nil {
+		return AriToolCallResponse{}, err
+	}
+	timeoutMS, err := optionalNonNegativeIntValue(body, "timeout_ms")
+	if err != nil {
+		return AriToolCallResponse{}, err
+	}
+	if timeoutMS > ariToolsEventsNextMaxTimeoutMS {
+		return AriToolCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "invalid_wait_timeout", "timeout_ms": timeoutMS, "max_timeout_ms": ariToolsEventsNextMaxTimeoutMS})
+	}
+	if minEvents > 0 && timeoutMS <= 0 {
+		return AriToolCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "missing_wait_timeout", "min_events": minEvents})
+	}
+	response, err := workspaceEventsNext(ctx, store, WorkspaceEventsNextRequest{SubscriptionID: subscription.SubscriptionID, Limit: limit, MinEvents: minEvents, TimeoutMS: timeoutMS})
+	if err != nil {
+		return AriToolCallResponse{}, err
+	}
+	events := make([]map[string]any, 0, len(response.Events))
+	for _, event := range response.Events {
+		events = append(events, ariWorkspaceEventResponseOutput(event))
+	}
+	output := map[string]any{"subscription_id": subscription.SubscriptionID, "workspace_id": subscription.WorkspaceID, "owner_session_id": subscription.OwnerSessionID, "count": len(events), "events": events}
+	if minEvents > 0 {
+		output["wait_status"] = response.WaitStatus
+		output["wait_timed_out"] = response.WaitTimedOut
+	}
+	return AriToolCallResponse{Status: "ok", Output: output}, nil
+}
+
+func ariWorkspaceEventResponseOutput(event WorkspaceEventResponse) map[string]any {
+	return map[string]any{"event_id": event.EventID, "workspace_id": event.WorkspaceID, "sequence": event.Sequence, "event_type": event.EventType, "subject_type": event.SubjectType, "subject_id": event.SubjectID, "producer_type": event.ProducerType, "producer_id": event.ProducerID, "correlation_id": event.CorrelationID, "causation_id": event.CausationID, "payload_json": event.PayloadJSON, "payload_ref_json": event.PayloadRefJSON, "attention_required": event.AttentionRequired, "created_at": event.CreatedAt}
+}
+
+func ariWorkspaceEventsAck(ctx context.Context, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
+	body, err := inputMap(input)
+	if err != nil {
+		return AriToolCallResponse{}, err
+	}
+	subscription, err := scopedAriWorkspaceEventSubscription(ctx, store, scope, stringValue(body, "subscription_id"))
+	if err != nil {
+		return AriToolCallResponse{}, err
+	}
+	sequence, ok, err := optionalNonNegativeInt64Value(body, "sequence")
+	if err != nil {
+		return AriToolCallResponse{}, err
+	}
+	if !ok {
+		return AriToolCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "missing_required_fields", "missing_field": "sequence"})
+	}
+	if err := store.AckEventSubscription(ctx, subscription.SubscriptionID, sequence); err != nil {
+		return AriToolCallResponse{}, workspaceEventRPCError(err)
+	}
+	acked, err := store.GetEventSubscription(ctx, subscription.SubscriptionID)
+	if err != nil {
+		return AriToolCallResponse{}, workspaceEventRPCError(err)
+	}
+	return AriToolCallResponse{Status: "ok", Output: map[string]any{"acked": true, "subscription_id": acked.SubscriptionID, "workspace_id": acked.WorkspaceID, "owner_session_id": acked.OwnerSessionID, "cursor_sequence": acked.CursorSequence, "ack_sequence": acked.AckSequence, "status": acked.Status}}, nil
+}
+
+func ariWorkspaceSignalSend(ctx context.Context, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
+	body, err := inputMap(input)
+	if err != nil {
+		return AriToolCallResponse{}, err
+	}
+	targetType := stringValue(body, "target_type")
+	targetID := stringValue(body, "target_id")
+	if targetType == "" || targetID == "" {
+		missing := "target_type"
+		if targetType != "" {
+			missing = "target_id"
+		}
+		return AriToolCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "missing_required_fields", "missing_field": missing})
+	}
+	event, err := store.AppendWorkspaceEvent(ctx, globaldb.WorkspaceEvent{EventID: stringValue(body, "event_id"), WorkspaceID: scope.WorkspaceID, EventType: "signal.sent", SubjectType: targetType, SubjectID: targetID, ProducerType: workspaceEventProducerSession, ProducerID: strings.TrimSpace(scope.SourceRunID), CorrelationID: stringValue(body, "correlation_id"), CausationID: stringValue(body, "causation_id"), PayloadJSON: stringValue(body, "payload_json")})
+	if err != nil {
+		return AriToolCallResponse{}, workspaceEventRPCError(err)
+	}
+	return AriToolCallResponse{Status: "ok", Output: ariWorkspaceEventOutput(event)}, nil
+}
+
+func ariWorkspaceTimerCreate(ctx context.Context, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
+	body, err := inputMap(input)
+	if err != nil {
+		return AriToolCallResponse{}, err
+	}
+	fireAtRaw := stringValue(body, "fire_at")
+	if fireAtRaw == "" {
+		return AriToolCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "missing_required_fields", "missing_field": "fire_at"})
+	}
+	fireAt, err := parseWorkspaceTimerTime(fireAtRaw, "invalid_fire_at")
+	if err != nil {
+		return AriToolCallResponse{}, err
+	}
+	timer, err := store.CreateWorkspaceTimer(ctx, globaldb.WorkspaceTimer{TimerID: stringValue(body, "timer_id"), WorkspaceID: scope.WorkspaceID, OwnerSessionID: strings.TrimSpace(scope.SourceRunID), SubscriptionID: stringValue(body, "subscription_id"), SubjectType: stringValue(body, "subject_type"), SubjectID: stringValue(body, "subject_id"), Purpose: stringValue(body, "purpose"), FireAt: fireAt, PayloadJSON: stringValue(body, "payload_json")})
+	if err != nil {
+		return AriToolCallResponse{}, workspaceTimerRPCError(err)
+	}
+	return AriToolCallResponse{Status: "ok", Output: ariWorkspaceTimerOutput(timer)}, nil
+}
+
+func ariWorkspaceTimerGet(ctx context.Context, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
+	body, err := inputMap(input)
+	if err != nil {
+		return AriToolCallResponse{}, err
+	}
+	timer, err := scopedAriWorkspaceTimer(ctx, store, scope, stringValue(body, "timer_id"), true)
+	if err != nil {
+		return AriToolCallResponse{}, err
+	}
+	return AriToolCallResponse{Status: "ok", Output: ariWorkspaceTimerOutput(timer)}, nil
+}
+
+func ariWorkspaceTimerCancel(ctx context.Context, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
+	body, err := inputMap(input)
+	if err != nil {
+		return AriToolCallResponse{}, err
+	}
+	timer, err := scopedAriWorkspaceTimer(ctx, store, scope, stringValue(body, "timer_id"), false)
+	if err != nil {
+		return AriToolCallResponse{}, err
+	}
+	canceled, err := store.CancelWorkspaceTimer(ctx, timer.TimerID)
+	if err != nil {
+		return AriToolCallResponse{}, workspaceTimerRPCError(err)
+	}
+	return AriToolCallResponse{Status: "ok", Output: ariWorkspaceTimerOutput(canceled)}, nil
+}
+
+func ariWorkspaceDeliveryGet(ctx context.Context, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
+	body, err := inputMap(input)
+	if err != nil {
+		return AriToolCallResponse{}, err
+	}
+	delivery, err := scopedAriWorkspaceDelivery(ctx, store, scope, stringValue(body, "delivery_id"))
+	if err != nil {
+		return AriToolCallResponse{}, err
+	}
+	return AriToolCallResponse{Status: "ok", Output: ariWorkspaceDeliveryOutput(delivery)}, nil
+}
+
+func ariWorkspaceDeliveriesListDue(ctx context.Context, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
+	body, err := inputMap(input)
+	if err != nil {
+		return AriToolCallResponse{}, err
+	}
+	now := time.Now().UTC()
+	if rawNow := stringValue(body, "now"); rawNow != "" {
+		now, err = parseWorkspaceTimerTime(rawNow, "invalid_now")
+		if err != nil {
+			return AriToolCallResponse{}, err
+		}
+	}
+	limit, err := optionalNonNegativeIntValue(body, "limit")
+	if err != nil {
+		return AriToolCallResponse{}, err
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > ariWorkspaceDeliveriesListDueMaxLimit {
+		return AriToolCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "invalid_limit", "limit": limit, "max_limit": ariWorkspaceDeliveriesListDueMaxLimit})
+	}
+	due, err := store.ListDuePendingDeliveriesForScope(ctx, now, strings.TrimSpace(scope.WorkspaceID), strings.TrimSpace(scope.SourceRunID), limit)
+	if err != nil {
+		return AriToolCallResponse{}, workspaceDeliveryRPCError(err)
+	}
+	scoped := make([]globaldb.PendingDelivery, 0, limit)
+	for _, delivery := range due {
+		visible, err := ariPendingDeliveryVisibleToScope(ctx, store, scope, delivery)
+		if err != nil {
+			return AriToolCallResponse{}, err
+		}
+		if !visible {
+			continue
+		}
+		scoped = append(scoped, delivery)
+		if len(scoped) == limit {
+			break
+		}
+	}
+	return AriToolCallResponse{Status: "ok", Output: map[string]any{"workspace_id": strings.TrimSpace(scope.WorkspaceID), "count": len(scoped), "deliveries": ariWorkspaceDeliveryOutputs(scoped)}}, nil
+}
+
+func scopedAriWorkspaceEventSubscription(ctx context.Context, store *globaldb.Store, scope AriToolScope, subscriptionID string) (globaldb.EventSubscription, error) {
+	subscriptionID = strings.TrimSpace(subscriptionID)
+	if subscriptionID == "" {
+		return globaldb.EventSubscription{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "missing_required_fields", "missing_field": "subscription_id"})
+	}
+	subscription, err := store.GetEventSubscription(ctx, subscriptionID)
+	if err != nil {
+		if errors.Is(err, globaldb.ErrNotFound) {
+			return globaldb.EventSubscription{}, rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "unknown_event_subscription", "subscription_id": subscriptionID})
+		}
+		return globaldb.EventSubscription{}, err
+	}
+	if subscription.WorkspaceID != strings.TrimSpace(scope.WorkspaceID) {
+		return globaldb.EventSubscription{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "subscription_scope_mismatch", "subscription_id": subscription.SubscriptionID, "workspace_id": strings.TrimSpace(scope.WorkspaceID), "subscription_workspace_id": subscription.WorkspaceID})
+	}
+	ownerSessionID := strings.TrimSpace(subscription.OwnerSessionID)
+	if ownerSessionID != "" && ownerSessionID != strings.TrimSpace(scope.SourceRunID) {
+		return globaldb.EventSubscription{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "subscription_scope_mismatch", "subscription_id": subscription.SubscriptionID, "owner_session_id": ownerSessionID, "scope_source_run_id": strings.TrimSpace(scope.SourceRunID)})
+	}
+	return subscription, nil
+}
+
+func ariWorkspaceEventOutput(event globaldb.WorkspaceEvent) map[string]any {
+	return map[string]any{"event_id": event.EventID, "workspace_id": event.WorkspaceID, "sequence": event.Sequence, "event_type": event.EventType, "subject_type": event.SubjectType, "subject_id": event.SubjectID, "producer_type": event.ProducerType, "producer_id": event.ProducerID, "correlation_id": event.CorrelationID, "causation_id": event.CausationID, "payload_json": event.PayloadJSON, "payload_ref_json": event.PayloadRefJSON, "attention_required": event.AttentionRequired, "created_at": event.CreatedAt.UTC().Format(time.RFC3339Nano)}
+}
+
+const ariWorkspaceDeliveriesListDueMaxLimit = 1000
+
+func scopedAriWorkspaceTimer(ctx context.Context, store *globaldb.Store, scope AriToolScope, timerID string, allowBlankOwner bool) (globaldb.WorkspaceTimer, error) {
+	timerID = strings.TrimSpace(timerID)
+	if timerID == "" {
+		return globaldb.WorkspaceTimer{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "missing_required_fields", "missing_field": "timer_id"})
+	}
+	timer, err := store.GetWorkspaceTimer(ctx, timerID)
+	if err != nil {
+		return globaldb.WorkspaceTimer{}, workspaceTimerRPCError(err)
+	}
+	if timer.WorkspaceID != strings.TrimSpace(scope.WorkspaceID) {
+		return globaldb.WorkspaceTimer{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "timer_scope_mismatch", "timer_id": timer.TimerID, "workspace_id": strings.TrimSpace(scope.WorkspaceID), "timer_workspace_id": timer.WorkspaceID})
+	}
+	ownerSessionID := strings.TrimSpace(timer.OwnerSessionID)
+	scopeSourceRunID := strings.TrimSpace(scope.SourceRunID)
+	if ownerSessionID == "" && allowBlankOwner {
+		return timer, nil
+	}
+	if ownerSessionID != scopeSourceRunID {
+		return globaldb.WorkspaceTimer{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "timer_scope_mismatch", "timer_id": timer.TimerID, "owner_session_id": ownerSessionID, "scope_source_run_id": strings.TrimSpace(scope.SourceRunID)})
+	}
+	return timer, nil
+}
+
+func ariWorkspaceTimerOutput(timer globaldb.WorkspaceTimer) map[string]any {
+	return map[string]any{"timer_id": timer.TimerID, "workspace_id": timer.WorkspaceID, "owner_session_id": timer.OwnerSessionID, "subscription_id": timer.SubscriptionID, "subject_type": timer.SubjectType, "subject_id": timer.SubjectID, "purpose": timer.Purpose, "status": timer.Status, "fire_at": timer.FireAt.UTC().Format(time.RFC3339Nano), "payload_json": timer.PayloadJSON, "fired_event_id": timer.FiredEventID, "created_at": timer.CreatedAt.UTC().Format(time.RFC3339Nano), "updated_at": timer.UpdatedAt.UTC().Format(time.RFC3339Nano)}
+}
+
+func scopedAriWorkspaceDelivery(ctx context.Context, store *globaldb.Store, scope AriToolScope, deliveryID string) (globaldb.PendingDelivery, error) {
+	deliveryID = strings.TrimSpace(deliveryID)
+	if deliveryID == "" {
+		return globaldb.PendingDelivery{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "missing_required_fields", "missing_field": "delivery_id"})
+	}
+	delivery, err := store.GetPendingDelivery(ctx, deliveryID)
+	if err != nil {
+		return globaldb.PendingDelivery{}, workspaceDeliveryRPCError(err)
+	}
+	visible, err := ariPendingDeliveryVisibleToScope(ctx, store, scope, delivery)
+	if err != nil {
+		return globaldb.PendingDelivery{}, err
+	}
+	if !visible {
+		return globaldb.PendingDelivery{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "delivery_scope_mismatch", "delivery_id": delivery.DeliveryID, "workspace_id": strings.TrimSpace(scope.WorkspaceID), "delivery_workspace_id": delivery.WorkspaceID})
+	}
+	return delivery, nil
+}
+
+func ariPendingDeliveryVisibleToScope(ctx context.Context, store *globaldb.Store, scope AriToolScope, delivery globaldb.PendingDelivery) (bool, error) {
+	if delivery.WorkspaceID != strings.TrimSpace(scope.WorkspaceID) {
+		return false, nil
+	}
+	subscriptionID := strings.TrimSpace(delivery.SubscriptionID)
+	if subscriptionID == "" {
+		return true, nil
+	}
+	subscription, err := store.GetEventSubscription(ctx, subscriptionID)
+	if err != nil {
+		if errors.Is(err, globaldb.ErrNotFound) {
+			return true, nil
+		}
+		return false, err
+	}
+	ownerSessionID := strings.TrimSpace(subscription.OwnerSessionID)
+	return ownerSessionID == "" || ownerSessionID == strings.TrimSpace(scope.SourceRunID), nil
+}
+
+func ariWorkspaceDeliveryOutputs(deliveries []globaldb.PendingDelivery) []map[string]any {
+	outputs := make([]map[string]any, 0, len(deliveries))
+	for _, delivery := range deliveries {
+		outputs = append(outputs, ariWorkspaceDeliveryOutput(delivery))
+	}
+	return outputs
+}
+
+func ariWorkspaceDeliveryOutput(delivery globaldb.PendingDelivery) map[string]any {
+	output := map[string]any{"delivery_id": delivery.DeliveryID, "workspace_id": delivery.WorkspaceID, "subscription_id": delivery.SubscriptionID, "target_type": delivery.TargetType, "target_id": delivery.TargetID, "delivery_policy_json": delivery.DeliveryPolicyJSON, "event_ids": append([]string(nil), delivery.EventIDs...), "status": delivery.Status, "attempts": delivery.Attempts, "last_error": delivery.LastError, "created_at": delivery.CreatedAt.UTC().Format(time.RFC3339Nano), "updated_at": delivery.UpdatedAt.UTC().Format(time.RFC3339Nano)}
+	if delivery.NextAttemptAt != nil {
+		output["next_attempt_at"] = delivery.NextAttemptAt.UTC().Format(time.RFC3339Nano)
+	}
+	if delivery.DeadlineAt != nil {
+		output["deadline_at"] = delivery.DeadlineAt.UTC().Format(time.RFC3339Nano)
+	}
+	if delivery.TerminalAt != nil {
+		output["terminal_at"] = delivery.TerminalAt.UTC().Format(time.RFC3339Nano)
+	}
+	return output
+}
+
+func scopedAriInboxSourceSessionID(scope AriToolScope, inputSourceSessionID string) (string, error) {
+	sourceSessionID := strings.TrimSpace(inputSourceSessionID)
+	if sourceSessionID == "" {
+		sourceSessionID = strings.TrimSpace(scope.SourceRunID)
+	}
+	if sourceSessionID != strings.TrimSpace(scope.SourceRunID) {
+		return "", rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "source_scope_mismatch", "source_session_id": sourceSessionID, "scope_source_run_id": strings.TrimSpace(scope.SourceRunID)})
+	}
+	return sourceSessionID, nil
+}
+
+func ariInboxItemOutput(item globaldb.InboxItem) map[string]any {
+	return map[string]any{"inbox_item_id": item.InboxItemID, "workspace_id": item.WorkspaceID, "source_session_id": item.SourceSessionID, "workspace_event_id": item.WorkspaceEventID, "event_type": item.EventType, "fanout_group_id": item.FanoutGroupID, "fanout_member_id": item.FanoutMemberID, "worker_session_id": item.WorkerSessionID, "final_response_id": item.FinalResponseID, "kind": item.Kind, "status": item.Status, "attention_required": item.AttentionRequired, "summary": item.Summary, "created_at": formatAriInboxTime(item.CreatedAt), "updated_at": formatAriInboxTime(item.UpdatedAt)}
+}
+
+func formatAriInboxTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.UTC().Format(time.RFC3339Nano)
 }
 
 func validateFanoutReadScope(scope AriToolScope, group globaldb.FanoutGroup, inputSourceSessionID string) error {
@@ -826,6 +1289,45 @@ func boolValue(values map[string]any, key string) bool {
 		return typed
 	}
 	return strings.EqualFold(strings.TrimSpace(fmt.Sprint(value)), "true")
+}
+
+func optionalNonNegativeIntValue(values map[string]any, key string) (int, error) {
+	value, ok, err := optionalNonNegativeInt64Value(values, key)
+	if err != nil || !ok {
+		return 0, err
+	}
+	return int(value), nil
+}
+
+func optionalNonNegativeInt64Value(values map[string]any, key string) (int64, bool, error) {
+	value, ok := values[key]
+	if !ok || value == nil {
+		return 0, false, nil
+	}
+	var parsed int64
+	switch typed := value.(type) {
+	case int:
+		parsed = int64(typed)
+	case int64:
+		parsed = typed
+	case float64:
+		parsed = int64(typed)
+		if float64(parsed) != typed {
+			return 0, true, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "invalid_integer", "field": key})
+		}
+	case string:
+		var err error
+		parsed, err = strconv.ParseInt(strings.TrimSpace(typed), 10, 64)
+		if err != nil {
+			return 0, true, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "invalid_integer", "field": key})
+		}
+	default:
+		return 0, true, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "invalid_integer", "field": key})
+	}
+	if parsed < 0 {
+		return 0, true, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "invalid_integer", "field": key})
+	}
+	return parsed, true, nil
 }
 
 func stringSliceValue(values map[string]any, key string) ([]string, error) {

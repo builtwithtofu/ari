@@ -205,6 +205,8 @@ func (d *Daemon) Start(ctx context.Context) error {
 			cancel()
 		}
 	}()
+	d.startWorkspaceDeliveryWorker(store)
+	d.startWorkspaceTimerWorker(store)
 
 	defer func() {
 		startupSucceeded = true

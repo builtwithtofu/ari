@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -23,6 +24,7 @@ type claudeExecutorOptions struct {
 	InvocationMode HarnessInvocationMode
 	AuthProjection HarnessAuthProjectionPlan
 	RunCommand     claudeCommandRunner
+	RunDelivery    claudeCommandRunner
 	RunAuthCommand claudeAuthCommandRunner
 }
 
@@ -61,9 +63,10 @@ type (
 )
 
 type ClaudeExecutor struct {
-	options claudeExecutorOptions
-	mu      sync.Mutex
-	runs    map[string][]TimelineItem
+	options         claudeExecutorOptions
+	mu              sync.Mutex
+	runs            map[string][]TimelineItem
+	deliveryOptions map[string]claudeExecutorOptions
 }
 
 func NewClaudeExecutor(cwd string) *ClaudeExecutor {
@@ -84,10 +87,13 @@ func newClaudeExecutor(options claudeExecutorOptions) *ClaudeExecutor {
 	if options.RunCommand == nil {
 		options.RunCommand = runClaudeCommand
 	}
+	if options.RunDelivery == nil {
+		options.RunDelivery = runClaudeManagedPTYDeliveryCommand
+	}
 	if options.RunAuthCommand == nil {
 		options.RunAuthCommand = runClaudeAuthCommand
 	}
-	return &ClaudeExecutor{options: options, runs: map[string][]TimelineItem{}}
+	return &ClaudeExecutor{options: options, runs: map[string][]TimelineItem{}, deliveryOptions: map[string]claudeExecutorOptions{}}
 }
 
 func (options claudeExecutorOptions) withClaudeAuthSlotProjection(authSlotID string) (claudeExecutorOptions, error) {
@@ -168,7 +174,24 @@ func (e *ClaudeExecutor) AuthLogout(ctx context.Context, slot HarnessAuthSlot) (
 }
 
 func (e *ClaudeExecutor) Descriptor() HarnessAdapterDescriptor {
-	return HarnessAdapterDescriptor{Name: HarnessNameClaude, Capabilities: []HarnessCapability{HarnessCapabilityHarnessSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems, HarnessCapabilityFinalResponse, HarnessCapabilityMeasuredTokenTelemetry}, Auth: HarnessAuthDescriptor{StatusCheck: HarnessAuthSupportSupported, Login: HarnessAuthSupportPartial, LoginMethods: []string{"browser", "console", "api_key"}, Logout: HarnessAuthSupportSupported, NamedSlotStatus: HarnessAuthSupportPartial, NamedSlotExecution: HarnessAuthSupportPartial, SlotScope: "claude_config_dir", CredentialOwner: HarnessCredentialOwnerProvider, RiskLabels: []string{"provider_owned", "client_side_login", "native_config_root_isolation", "keychain_slot_isolation_risk"}, Caveats: []string{"client_side_login", "claude_named_slots_use_per_slot_config_dir", "macos_keychain_limits_named_slot_isolation"}}}
+	return HarnessAdapterDescriptor{
+		Name:                    HarnessNameClaude,
+		Capabilities:            sharedHarnessRuntimeCapabilities(),
+		ObservationCapabilities: []HarnessObservationCapability{HarnessObservationUnsupported},
+		DeliveryCapabilities:    []HarnessDeliveryCapability{HarnessDeliveryVisiblePromptTurn},
+		Auth: HarnessAuthDescriptor{
+			StatusCheck:        HarnessAuthSupportSupported,
+			Login:              HarnessAuthSupportPartial,
+			LoginMethods:       []string{"browser", "console", "api_key"},
+			Logout:             HarnessAuthSupportSupported,
+			NamedSlotStatus:    HarnessAuthSupportPartial,
+			NamedSlotExecution: HarnessAuthSupportPartial,
+			SlotScope:          "claude_config_dir",
+			CredentialOwner:    HarnessCredentialOwnerProvider,
+			RiskLabels:         []string{"provider_owned", "client_side_login", "native_config_root_isolation", "keychain_slot_isolation_risk"},
+			Caveats:            []string{"client_side_login", "claude_named_slots_use_per_slot_config_dir", "macos_keychain_limits_named_slot_isolation"},
+		},
+	}
 }
 
 func (e *ClaudeExecutor) Start(ctx context.Context, req ExecutorStartRequest) (ExecutorRun, error) {
@@ -214,6 +237,7 @@ func (e *ClaudeExecutor) Start(ctx context.Context, req ExecutorStartRequest) (E
 	items := claudeTimelineItemsFromResult(workspaceID, sessionID, result, options.InvocationMode)
 	e.mu.Lock()
 	e.runs[sessionID] = items
+	e.deliveryOptions[sessionID] = options
 	e.mu.Unlock()
 	return ExecutorRun{RunID: sessionID, SessionID: sessionID, Executor: HarnessNameClaude, ProviderSessionID: sessionID, ProviderRunID: sessionID, ExitCode: commandResult.ExitCode, ProcessSample: commandResult.ProcessSample, CapabilityNames: harnessCapabilitiesToStrings(e.Descriptor().Capabilities)}, nil
 }
@@ -236,6 +260,98 @@ func (e *ClaudeExecutor) Stop(ctx context.Context, runID string) error {
 	_ = ctx
 	_ = runID
 	return nil
+}
+
+func (e *ClaudeExecutor) AttemptWorkspaceDelivery(ctx context.Context, attempt WorkspaceDeliveryAttempt) (WorkspaceDeliveryAttemptResult, error) {
+	if ctx == nil {
+		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("context is required")
+	}
+	if e == nil {
+		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("executor is required")
+	}
+	if strings.TrimSpace(attempt.Delivery.DeliveryID) == "" || len(attempt.Delivery.EventIDs) == 0 {
+		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("delivery id and event ids are required")
+	}
+	deliveryOptions := e.options
+	if sessionID := strings.TrimSpace(attempt.Delivery.TargetID); sessionID != "" {
+		e.mu.Lock()
+		if options, ok := e.deliveryOptions[sessionID]; ok {
+			deliveryOptions = options
+		}
+		e.mu.Unlock()
+	}
+	commandResult, commandErr := deliveryOptions.RunDelivery(ctx, deliveryOptions, claudeWorkspaceDeliveryTurn(attempt))
+	deliveryResult, parseErr := parseClaudeManagedPTYDeliveryOutput(commandResult.Output)
+	if parseErr == nil {
+		return deliveryResult, nil
+	}
+	if commandErr != nil {
+		return WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptRetry, LastError: commandErr.Error()}, commandErr
+	}
+	return WorkspaceDeliveryAttemptResult{}, parseErr
+}
+
+func claudeWorkspaceDeliveryTurn(attempt WorkspaceDeliveryAttempt) string {
+	payload := struct {
+		Kind           string `json:"kind"`
+		WorkspaceID    string `json:"workspace_id"`
+		SubscriptionID string `json:"subscription_id"`
+		EventCount     int    `json:"event_count"`
+	}{
+		Kind:           "ari.workspace_delivery",
+		WorkspaceID:    strings.TrimSpace(attempt.Delivery.WorkspaceID),
+		SubscriptionID: strings.TrimSpace(attempt.Delivery.SubscriptionID),
+		EventCount:     len(attempt.Delivery.EventIDs),
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Sprintf("Ari workspace delivery %s", strings.TrimSpace(attempt.Delivery.DeliveryID))
+	}
+	return string(encoded) + "\n"
+}
+
+type claudeManagedPTYDeliveryEvent struct {
+	Channel string `json:"channel"`
+	Status  string `json:"status"`
+	Error   string `json:"error,omitempty"`
+}
+
+func parseClaudeManagedPTYDeliveryOutput(output []byte) (WorkspaceDeliveryAttemptResult, error) {
+	scanner := bufio.NewScanner(bytes.NewReader(output))
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	admitted := false
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		var event claudeManagedPTYDeliveryEvent
+		if err := json.Unmarshal(line, &event); err != nil {
+			continue
+		}
+		if event.Channel != "managed_pty" {
+			continue
+		}
+		switch strings.TrimSpace(event.Status) {
+		case "admitted":
+			admitted = true
+		case "completed":
+			return WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptCompleted}, nil
+		case "failed":
+			lastError := strings.TrimSpace(event.Error)
+			if lastError == "" {
+				lastError = "claude managed pty delivery failed"
+			}
+			return WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptFailed, LastError: lastError}, nil
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("scan claude managed pty delivery output: %w", err)
+	}
+	if admitted {
+		return WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptRetry, LastError: "claude managed pty delivery admitted without completion signal"}, nil
+	}
+	return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("claude managed pty delivery output did not include a terminal event")
 }
 
 type claudeJSONResult struct {
@@ -381,6 +497,41 @@ func runClaudeCommand(ctx context.Context, options claudeExecutorOptions, prompt
 		return commandRunResult{}, fmt.Errorf("run claude: %w", err)
 	}
 	return commandRunResult{Output: []byte(output.String()), ProcessSample: &sample, ExitCode: &exitCode}, nil
+}
+
+func runClaudeManagedPTYDeliveryCommand(ctx context.Context, options claudeExecutorOptions, turn string) (commandRunResult, error) {
+	executable := strings.TrimSpace(options.Executable)
+	if executable == "" {
+		executable = "claude"
+	}
+	path, err := exec.LookPath(executable)
+	if err != nil {
+		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+	}
+	args := []string{"managed-pty"}
+	cmd := exec.CommandContext(ctx, path, args...)
+	cmd.Dir = strings.TrimSpace(options.Cwd)
+	cmd.Env = commandEnvWithProjection(options.AuthProjection)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return commandRunResult{}, err
+	}
+	var output strings.Builder
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	if err := cmd.Start(); err != nil {
+		return commandRunResult{}, err
+	}
+	_, _ = io.WriteString(stdin, turn)
+	_ = stdin.Close()
+	sample := sampleLinuxProcessMetrics(ctx, HarnessSession{PID: cmd.Process.Pid})
+	err = cmd.Wait()
+	exitCode := cmd.ProcessState.ExitCode()
+	result := commandRunResult{Output: []byte(output.String()), ProcessSample: &sample, ExitCode: &exitCode}
+	if err != nil {
+		return result, fmt.Errorf("run claude managed pty delivery: %w", err)
+	}
+	return result, nil
 }
 
 func runClaudeAuthCommand(ctx context.Context, options claudeExecutorOptions, args []string) (commandRunResult, error) {

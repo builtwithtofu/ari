@@ -10,6 +10,15 @@ func TestHarnessAdapterDescriptorsAdvertiseSharedRuntimeContract(t *testing.T) {
 		HarnessCapabilityFinalResponse,
 		HarnessCapabilityMeasuredTokenTelemetry,
 	}
+	expectedObservation := map[string][]HarnessObservationCapability{
+		HarnessNameClaude:   {HarnessObservationUnsupported},
+		HarnessNameCodex:    {HarnessObservationEventStream},
+		HarnessNameOpenCode: {HarnessObservationUnsupported},
+	}
+	expectedDelivery := map[string][]HarnessDeliveryCapability{
+		HarnessNameClaude: {HarnessDeliveryVisiblePromptTurn},
+		HarnessNameCodex:  {HarnessDeliveryVisiblePromptTurn},
+	}
 	adapters := []HarnessDescriber{
 		NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo"}),
 		NewCodexExecutorForTest(codexExecutorOptions{Executable: "codex", Cwd: "/repo"}),
@@ -39,6 +48,16 @@ func TestHarnessAdapterDescriptorsAdvertiseSharedRuntimeContract(t *testing.T) {
 		for _, capability := range required {
 			if !harnessCapabilitiesContain(descriptor.Capabilities, capability) {
 				t.Fatalf("%s capabilities = %#v, want %s", descriptor.Name, descriptor.Capabilities, capability)
+			}
+		}
+		for _, capability := range expectedObservation[descriptor.Name] {
+			if !harnessObservationCapabilitiesContain(descriptor.ObservationCapabilities, capability) {
+				t.Fatalf("%s observation capabilities = %#v, want %s", descriptor.Name, descriptor.ObservationCapabilities, capability)
+			}
+		}
+		for _, capability := range expectedDelivery[descriptor.Name] {
+			if !harnessDeliveryCapabilitiesContain(descriptor.DeliveryCapabilities, capability) {
+				t.Fatalf("%s delivery capabilities = %#v, want %s", descriptor.Name, descriptor.DeliveryCapabilities, capability)
 			}
 		}
 	}
@@ -88,6 +107,24 @@ func TestProviderAuthDescriptorsMatchCurrentHarnessBehavior(t *testing.T) {
 }
 
 func stringsContain(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func harnessObservationCapabilitiesContain(values []HarnessObservationCapability, want HarnessObservationCapability) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func harnessDeliveryCapabilitiesContain(values []HarnessDeliveryCapability, want HarnessDeliveryCapability) bool {
 	for _, value := range values {
 		if value == want {
 			return true

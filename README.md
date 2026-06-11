@@ -19,7 +19,7 @@ Core concepts:
 - **Attachable clients**: clients render, prompt, format, and compose daemon operations for users.
 - **Attention state**: idle sessions, blockers, approvals, failed commands, completions, and questions should bubble up from runtime facts.
 
-See `docs/ep/ari-workspace-runtime.md` for the durable direction and `docs/adr/` for accepted architecture decisions.
+See `.ari/plan.lock` for the active work plan and `docs/adr/` for accepted architecture decisions.
 
 ---
 
@@ -124,7 +124,8 @@ Ari enhances existing harnesses; it does not replace Claude Code, Codex, OpenCod
 
 ## Current documentation
 
-- `docs/ep/ari-workspace-runtime.md` — product direction.
+- `.ari/plan.lock` — active work plan pointer.
+- `.ari/workspace-event-orchestration/PRD.md` — current workspace-event delivery plan.
 - `CONTEXT.md` — canonical glossary.
 - `docs/adr/0001-headless-daemon-api-authority.md` — daemon API authority.
 - `docs/adr/0002-workspace-as-runtime-unit.md` — workspace runtime unit.

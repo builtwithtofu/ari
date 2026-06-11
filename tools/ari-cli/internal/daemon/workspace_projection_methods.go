@@ -133,15 +133,18 @@ type FanoutMemberActivity struct {
 }
 
 type StickyInboxActivity struct {
-	InboxItemID     string `json:"inbox_item_id"`
-	TargetSessionID string `json:"target_session_id"`
-	FanoutGroupID   string `json:"fanout_group_id,omitempty"`
-	FanoutMemberID  string `json:"fanout_member_id,omitempty"`
-	WorkerSessionID string `json:"worker_session_id,omitempty"`
-	FinalResponseID string `json:"final_response_id,omitempty"`
-	Kind            string `json:"kind"`
-	Status          string `json:"status"`
-	Summary         string `json:"summary,omitempty"`
+	InboxItemID       string `json:"inbox_item_id"`
+	TargetSessionID   string `json:"target_session_id"`
+	WorkspaceEventID  string `json:"workspace_event_id,omitempty"`
+	EventType         string `json:"event_type,omitempty"`
+	FanoutGroupID     string `json:"fanout_group_id,omitempty"`
+	FanoutMemberID    string `json:"fanout_member_id,omitempty"`
+	WorkerSessionID   string `json:"worker_session_id,omitempty"`
+	FinalResponseID   string `json:"final_response_id,omitempty"`
+	Kind              string `json:"kind"`
+	Status            string `json:"status"`
+	AttentionRequired bool   `json:"attention_required"`
+	Summary           string `json:"summary,omitempty"`
 }
 
 type ProofResultSummary struct {
@@ -386,7 +389,7 @@ func agentSessionConfigMessages(ctx context.Context, store *globaldb.Store, work
 }
 
 func fanoutMemberActivity(ctx context.Context, store *globaldb.Store, workspaceID string) ([]FanoutMemberActivity, error) {
-	members, err := store.ListFanoutMembersByWorkspace(ctx, workspaceID)
+	members, err := fanoutMemberProjectionForWorkspace(ctx, store, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -403,12 +406,12 @@ func stickyInboxActivity(ctx context.Context, store *globaldb.Store, workspaceID
 		if session.Usage != globaldb.HarnessSessionUsageSticky {
 			continue
 		}
-		items, err := store.ListStickyInboxItems(ctx, workspaceID, session.ID)
+		items, err := store.ListInboxItems(ctx, workspaceID, session.ID)
 		if err != nil {
 			return nil, err
 		}
 		for _, item := range items {
-			out = append(out, StickyInboxActivity{InboxItemID: item.InboxItemID, TargetSessionID: item.TargetSessionID, FanoutGroupID: item.FanoutGroupID, FanoutMemberID: item.FanoutMemberID, WorkerSessionID: item.WorkerSessionID, FinalResponseID: item.FinalResponseID, Kind: item.Kind, Status: item.Status, Summary: item.Summary})
+			out = append(out, StickyInboxActivity{InboxItemID: item.InboxItemID, TargetSessionID: session.ID, WorkspaceEventID: item.WorkspaceEventID, EventType: item.EventType, FanoutGroupID: item.FanoutGroupID, FanoutMemberID: item.FanoutMemberID, WorkerSessionID: item.WorkerSessionID, FinalResponseID: item.FinalResponseID, Kind: item.Kind, Status: item.Status, AttentionRequired: item.AttentionRequired, Summary: item.Summary})
 		}
 	}
 	return out, nil

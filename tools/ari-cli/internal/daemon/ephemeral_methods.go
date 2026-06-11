@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -27,7 +28,8 @@ func (d *Daemon) callEphemeral(ctx context.Context, store *globaldb.Store, req E
 		return EphemeralCallResponse{}, err
 	}
 	if strings.TrimSpace(req.FanoutMemberID) != "" || strings.TrimSpace(req.FanoutGroupID) != "" {
-		if err := store.AddFanoutMember(ctx, globaldb.FanoutMember{FanoutMemberID: strings.TrimSpace(req.FanoutMemberID), FanoutGroupID: strings.TrimSpace(req.FanoutGroupID), WorkspaceID: setup.SourceRun.WorkspaceID, WorkerSessionID: setup.SessionID, TargetProfileID: setup.TargetAgent.AgentID, RequestAgentMessageID: requestDM.AgentMessageID, Status: "running"}); err != nil {
+		member := globaldb.FanoutMember{FanoutMemberID: strings.TrimSpace(req.FanoutMemberID), FanoutGroupID: strings.TrimSpace(req.FanoutGroupID), WorkspaceID: setup.SourceRun.WorkspaceID, WorkerSessionID: setup.SessionID, TargetProfileID: setup.TargetAgent.AgentID, RequestAgentMessageID: requestDM.AgentMessageID, Status: "running"}
+		if err := appendFanoutWorkerWorkspaceEvent(ctx, store, member, workspaceEventWorkerStarted, setup.SourceRun.SessionID, requestDM.AgentMessageID, "", false); err != nil {
 			_ = newHarnessLifecycle(store).markFailed(ctx, setup.SessionID)
 			return EphemeralCallResponse{}, err
 		}
@@ -60,11 +62,19 @@ func (d *Daemon) completeEphemeralCallAsync(ctx context.Context, store *globaldb
 }
 
 func markFanoutMemberForWorkerSession(ctx context.Context, store *globaldb.Store, workerSessionID, status, replyAgentMessageID, finalResponseID string) {
-	if err := store.UpdateFanoutMemberStatusAndInboxByWorkerSession(ctx, workerSessionID, status, replyAgentMessageID, finalResponseID, "worker "+status); err != nil && !errors.Is(err, globaldb.ErrNotFound) {
-		// Fanout member status is a projection over the worker lifecycle. The
-		// worker's harness session/final response remain the source records, so do
-		// not overwrite worker completion because projection repair failed.
+	member, err := store.GetFanoutMemberByWorkerSession(ctx, workerSessionID)
+	if err != nil {
+		// Not a fanout worker, or projection lookup failed. The worker's harness
+		// session/final response remain the source records, so do not fail worker
+		// completion over fanout projection state.
 		return
+	}
+	eventType := workspaceEventTypeForFanoutWorkerStatus(status)
+	if eventType == "" {
+		return
+	}
+	if err := appendFanoutWorkerWorkspaceEvent(ctx, store, member, eventType, workerSessionID, replyAgentMessageID, finalResponseID, status == "failed"); err != nil {
+		log.Printf("append fanout worker workspace event failed: worker_session_id=%s fanout_member_id=%s event_type=%s status=%s error=%v", workerSessionID, member.FanoutMemberID, eventType, status, err)
 	}
 }
 
@@ -350,16 +360,13 @@ func completeEphemeralCall(ctx context.Context, store *globaldb.Store, setup eph
 		replyBody = "completed"
 	}
 	if suppressReply {
-		if err := newHarnessLifecycle(store).markCompleted(ctx, setup.SessionID); err != nil {
+		links, _ := json.Marshal([]FinalResponseEvidenceLink{{Kind: "harness_session", ID: setup.SessionID}, {Kind: "agent_message", ID: requestDM.AgentMessageID}})
+		final := globaldb.FinalResponse{FinalResponseID: "fr_" + request.CallID + "-completed", HarnessSessionID: setup.SessionID, WorkspaceID: setup.SourceRun.WorkspaceID, TaskID: request.TaskID, ContextPacketID: request.ContextPacketID, ProfileID: setup.TargetAgent.AgentID, Status: "completed", Text: replyBody, EvidenceLinksJSON: string(links)}
+		if err := newHarnessLifecycle(store).markCompletedWithFinalResponse(ctx, setup.SessionID, final); err != nil {
 			return EphemeralCallResponse{}, true, err
 		}
 		storedRun, err := store.GetHarnessSession(ctx, setup.SessionID)
 		if err != nil {
-			return EphemeralCallResponse{}, false, err
-		}
-		links, _ := json.Marshal([]FinalResponseEvidenceLink{{Kind: "harness_session", ID: storedRun.SessionID}, {Kind: "agent_message", ID: requestDM.AgentMessageID}})
-		final := globaldb.FinalResponse{FinalResponseID: "fr_" + request.CallID + "-completed", HarnessSessionID: storedRun.SessionID, WorkspaceID: storedRun.WorkspaceID, TaskID: request.TaskID, ContextPacketID: request.ContextPacketID, ProfileID: storedRun.AgentID, Status: "completed", Text: replyBody, EvidenceLinksJSON: string(links)}
-		if err := store.UpsertFinalResponse(ctx, final); err != nil {
 			return EphemeralCallResponse{}, false, err
 		}
 		return EphemeralCallResponse{Run: storedRun, Request: agentMessageResponse(requestDM), FinalResponse: final}, false, nil
@@ -378,15 +385,13 @@ func completeEphemeralCall(ctx context.Context, store *globaldb.Store, setup eph
 		}
 		return EphemeralCallResponse{}, true, err
 	}
-	if err := newHarnessLifecycle(store).markCompleted(ctx, setup.SessionID); err != nil {
+	links, _ := json.Marshal([]FinalResponseEvidenceLink{{Kind: "harness_session", ID: setup.SessionID}, {Kind: "agent_message", ID: requestDM.AgentMessageID}, {Kind: "agent_message", ID: replyDM.AgentMessageID}})
+	final := globaldb.FinalResponse{FinalResponseID: "fr_" + replyID, HarnessSessionID: setup.SessionID, WorkspaceID: setup.SourceRun.WorkspaceID, TaskID: request.TaskID, ContextPacketID: request.ContextPacketID, ProfileID: setup.TargetAgent.AgentID, Status: "completed", Text: replyBody, EvidenceLinksJSON: string(links)}
+	if err := newHarnessLifecycle(store).markCompletedWithFinalResponse(ctx, setup.SessionID, final); err != nil {
 		return EphemeralCallResponse{}, true, err
 	}
 	storedRun, err := store.GetHarnessSession(ctx, setup.SessionID)
 	if err != nil {
-		return EphemeralCallResponse{}, false, err
-	}
-	links, _ := json.Marshal([]FinalResponseEvidenceLink{{Kind: "harness_session", ID: storedRun.SessionID}, {Kind: "agent_message", ID: requestDM.AgentMessageID}, {Kind: "agent_message", ID: replyDM.AgentMessageID}})
-	if err := store.UpsertFinalResponse(ctx, globaldb.FinalResponse{FinalResponseID: "fr_" + replyID, HarnessSessionID: storedRun.SessionID, WorkspaceID: storedRun.WorkspaceID, TaskID: request.TaskID, ContextPacketID: request.ContextPacketID, ProfileID: storedRun.AgentID, Status: "completed", Text: replyBody, EvidenceLinksJSON: string(links)}); err != nil {
 		return EphemeralCallResponse{}, false, err
 	}
 	return EphemeralCallResponse{Run: storedRun, Request: agentMessageResponse(requestDM), Reply: agentMessageResponse(replyDM)}, false, nil

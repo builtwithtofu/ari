@@ -12,9 +12,8 @@
 
 - Ari is the project and interface name.
 - Read `CONTEXT.md` before product planning or implementation; it is the glossary.
-- Read `docs/ep/ari-workspace-runtime.md` before product-shaping work.
+- Read the active `.ari/<topic>/PRD.md` before product-shaping work; use `.ari/plan.lock` or the user's named topic to find it.
 - Read `docs/adr/*` before implementation work. Accepted ADRs are hard constraints unless the user asks to change them.
-- Read other `docs/ep/*` only for the touched topic. EPs guide product intent; they may drift as evidence changes.
 - Ari is a durable, headless workspace runtime for LLM harnesses.
 - Workspaces are durable switchable units of work. A workspace may contain one or more folders and multiple peer harness sessions.
 - Ari enhances existing harnesses; it does not replace Claude Code, Codex, OpenCode, or future harnesses.
@@ -28,8 +27,8 @@
 ## Documentation discipline
 
 - Keep `CONTEXT.md` as glossary only.
+- Use `.ari/<topic>/PRD.md` for active work plans and product intent.
 - Use ADRs for accepted durable decisions.
-- Use EPs for product direction and intended outcomes.
 - Surface doc/code contradictions before changing governed code.
 
 ## Default validation
@@ -71,5 +70,6 @@ Avoid:
 - Ari is pre-alpha; migrations may be rewritten when it keeps the schema clean.
 - Preserve existing user databases only when the task explicitly targets upgrade/preservation behavior.
 - Use sqlc for database queries.
+- Do not hand-edit generated sqlc files under `tools/ari-cli/internal/globaldb/dbsqlc/`. Edit migrations and `internal/globaldb/queries/*.sql`, then run `nix develop -c just sqlc-generate` from repo root.
 - Use Atlas revision history as source of truth when migrations are present.
 - Run migration checks through Nix so Atlas and SQLite versions match CI.

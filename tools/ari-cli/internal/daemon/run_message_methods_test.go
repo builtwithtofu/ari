@@ -1256,8 +1256,7 @@ func TestSessionFanoutToProfilesIsolatesWorkerFailure(t *testing.T) {
 		t.Fatalf("bad final response status = %q, want failed", badFinal.Status)
 	}
 	assertFanoutMemberStatuses(t, ctx, store, "fg-failure", map[string]string{"fanout-good": "completed", "fanout-bad": "failed"})
-	status := callMethod[WorkspaceStatusResponse](t, registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-1"})
-	assertProjectedFanoutMemberStatuses(t, status.FanoutMembers, map[string]string{"fanout-good": "completed", "fanout-bad": "failed"})
+	status := waitForProjectedFanoutMemberStatuses(t, registry, "ws-1", map[string]string{"fanout-good": "completed", "fanout-bad": "failed"})
 	assertStickyInboxKinds(t, status.StickyInbox, map[string]string{"fg-failure-mfanout-good": "worker_completed", "fg-failure-mfanout-bad": "worker_failed"})
 	timeline := callMethod[WorkspaceTimelineResponse](t, registry, "workspace.timeline", WorkspaceTimelineRequest{WorkspaceID: "ws-1"})
 	assertTimelineFanoutMemberStatuses(t, timeline.Items, map[string]string{"fanout-good": "completed", "fanout-bad": "failed"})
@@ -1304,6 +1303,32 @@ func assertTimelineFanoutMemberStatuses(t *testing.T, items []TimelineItem, want
 			t.Fatalf("timeline fanout member statuses = %#v, want %s=%s", got, profileID, status)
 		}
 	}
+}
+
+func waitForProjectedFanoutMemberStatuses(t *testing.T, registry *rpc.MethodRegistry, workspaceID string, want map[string]string) WorkspaceStatusResponse {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	var status WorkspaceStatusResponse
+	for time.Now().Before(deadline) {
+		status = callMethod[WorkspaceStatusResponse](t, registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: workspaceID})
+		got := make(map[string]string, len(status.FanoutMembers))
+		for _, m := range status.FanoutMembers {
+			got[m.TargetProfileID] = m.Status
+		}
+		matched := true
+		for profileID, s := range want {
+			if got[profileID] != s {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return status
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("projected fanout member statuses for %q did not match %v; last=%#v", workspaceID, want, status.FanoutMembers)
+	return status
 }
 
 func assertFanoutMemberStatuses(t *testing.T, ctx context.Context, store *globaldb.Store, groupID string, want map[string]string) {
@@ -1817,6 +1842,11 @@ func TestCompleteEphemeralCallDoesNotMarkBackgroundReadFailureFailed(t *testing.
 	}
 }
 
+// waitForFinalResponseText and the helpers below poll store state directly:
+// they wait on arbitrary rows (final responses, session status) that have no
+// single workspace event to block on, so a bounded client poll is the
+// accepted wait. Event-shaped waits should use the server-side bounded wait
+// on workspace.events.next instead.
 func waitForFinalResponseText(t *testing.T, ctx context.Context, store *globaldb.Store, sessionID, text string) FinalResponseResponse {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
@@ -1922,8 +1952,15 @@ func (h *blockingItemsHarness) Items(ctx context.Context, sessionID string) ([]T
 
 func (h *blockingItemsHarness) Stop(ctx context.Context, sessionID string) error {
 	_ = ctx
+	// Non-blocking send: Stop can be invoked more than once (active-run stop
+	// plus persisted-session sweep, or a re-resolved harness instance under
+	// load). A second unconditional send on the buffered channel would
+	// deadlock the suspend handler; tests only need the first signal.
 	if h.stopped != nil {
-		h.stopped <- sessionID
+		select {
+		case h.stopped <- sessionID:
+		default:
+		}
 	}
 	return nil
 }

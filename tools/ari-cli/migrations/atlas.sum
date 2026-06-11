@@ -1,3 +1,6 @@
-h1:BGOINbVp8SmkGOBiRk0fIR/niklgpsZH2mmZlgaoyJg=
+h1:GLWsLUD6lEh0XD4wVE4Bkk0laHTDgC7t4D1u4UC8mto=
 202602220901_init_globaldb.sql h1:UU2ju74mNUIGWM20BtBuasiW+m22MpK3/3Ti5YSaVIk=
 202605291812_sticky_fanout_inbox.sql h1:aInQQW3NE1q8BdjIu34o7YkA5Ih8aehP1HS/qML98x4=
+202606052100_workspace_event_orchestration.sql h1:yTEW8mbqmw2nXFVePiJZruHIP9xBvQUHo6T0v6hF/Mc=
+202606102130_drop_sticky_inbox_items.sql h1:3MMAn6+TCI6Hm8ALATDSxB2HM2vWdvI5NyGjHvf5uvU=
+202606111030_secret_audit_events.sql h1:UJo7KThRuUL+xtubNrhDPIhBWVfmOkWSoynHj7HZsTU=

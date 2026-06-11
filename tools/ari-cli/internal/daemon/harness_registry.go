@@ -70,7 +70,7 @@ func (r *HarnessRegistry) RegisterWithDescriptor(name string, factory HarnessFac
 		return fmt.Errorf("harness %q is already registered", name)
 	}
 	r.factories[name] = factory
-	if descriptor.Name != "" || len(descriptor.Capabilities) > 0 || descriptor.Auth.StatusCheck != "" {
+	if harnessAdapterDescriptorHasContract(descriptor) {
 		descriptor.Name = name
 		r.descriptors[name] = descriptor
 	}
@@ -99,11 +99,19 @@ func (r *HarnessRegistry) ReplaceForTestWithDescriptor(name string, factory Harn
 		r.descriptors = make(map[string]HarnessAdapterDescriptor)
 	}
 	r.factories[name] = factory
-	if descriptor.Name != "" || len(descriptor.Capabilities) > 0 || descriptor.Auth.StatusCheck != "" {
+	if harnessAdapterDescriptorHasContract(descriptor) {
 		descriptor.Name = name
 		r.descriptors[name] = descriptor
 	}
 	return nil
+}
+
+func harnessAdapterDescriptorHasContract(descriptor HarnessAdapterDescriptor) bool {
+	return descriptor.Name != "" ||
+		len(descriptor.Capabilities) > 0 ||
+		len(descriptor.ObservationCapabilities) > 0 ||
+		len(descriptor.DeliveryCapabilities) > 0 ||
+		descriptor.Auth.StatusCheck != ""
 }
 
 func (r *HarnessRegistry) Resolve(name string) (HarnessFactory, bool) {

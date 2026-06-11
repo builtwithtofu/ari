@@ -24,7 +24,22 @@ func (l harnessLifecycle) persistNewStickyResult(ctx context.Context, result Har
 	if err := storeHarnessRunLogMessages(ctx, l.store, result, primaryFolder, profile...); err != nil {
 		return err
 	}
-	return l.persistResultArtifacts(ctx, result, profile...)
+	if err := appendHarnessRuntimeWorkspaceEvents(ctx, l.store, result.HarnessSession, result.Events); err != nil {
+		return err
+	}
+	if err := l.persistResultArtifacts(ctx, result, profile...); err != nil {
+		return err
+	}
+	// A sticky session whose turn results persisted without failing or being
+	// stopped is idle: alive and available for the next input. This covers
+	// both "completed" (final-response harnesses) and "running" (managed
+	// sessions that stay alive between turns). Ephemeral calls never take
+	// this path — they terminate.
+	switch result.HarnessSession.Status {
+	case "completed", "running":
+		return appendSessionIdleWorkspaceEvent(ctx, l.store, result.HarnessSession)
+	}
+	return nil
 }
 
 func (l harnessLifecycle) persistExistingEphemeralResult(ctx context.Context, result HarnessCallResult, profile Profile) error {
@@ -39,6 +54,9 @@ func (l harnessLifecycle) persistExistingEphemeralResult(ctx context.Context, re
 	if err := l.store.UpdateHarnessSessionProvider(ctx, run.HarnessSessionID, run.ProviderSessionID, run.ProviderRunID, string(providerMetadata)); err != nil {
 		return err
 	}
+	if err := appendHarnessRuntimeWorkspaceEvents(ctx, l.store, run, result.Events); err != nil {
+		return err
+	}
 	run = result.HarnessSession
 	sample := agentSessionProcessMetricsSampler(ctx, run)
 	if run.ProcessSample != nil {
@@ -48,22 +66,17 @@ func (l harnessLifecycle) persistExistingEphemeralResult(ctx context.Context, re
 }
 
 func (l harnessLifecycle) persistResultArtifacts(ctx context.Context, result HarnessCallResult, profile ...Profile) error {
+	finalResponseID := ""
 	if result.FinalResponse != nil {
-		if err := storeFinalResponse(ctx, l.store, result, profile...); err != nil {
+		storedID, err := storeFinalResponse(ctx, l.store, result, profile...)
+		if err != nil {
 			return err
 		}
+		finalResponseID = storedID
 	}
 	run := result.HarnessSession
-	if run.Status == "completed" || run.Status == "failed" {
-		eventType := daemonEventSessionCompleted
-		attentionRequired := false
-		if run.Status == "failed" {
-			eventType = daemonEventSessionFailed
-			attentionRequired = true
-		}
-		if err := appendDaemonEvent(ctx, l.store, globaldb.DaemonEvent{WorkspaceID: run.WorkspaceID, SessionID: run.HarnessSessionID, EventType: eventType, SubjectType: "session", SubjectID: run.HarnessSessionID, PayloadJSON: daemonEventPayload(map[string]string{"executor": run.Executor, "status": run.Status}), AttentionRequired: attentionRequired}); err != nil {
-			return err
-		}
+	if err := appendSessionTerminalEvents(ctx, l.store, run, run.Status, finalResponseID); err != nil {
+		return err
 	}
 	sample := agentSessionProcessMetricsSampler(ctx, run)
 	if run.ProcessSample != nil {
@@ -72,47 +85,66 @@ func (l harnessLifecycle) persistResultArtifacts(ctx context.Context, result Har
 	return storeHarnessSessionTelemetry(ctx, l.store, result, sample, profile...)
 }
 
-func (l harnessLifecycle) markCompleted(ctx context.Context, sessionID string) error {
-	sessionID = strings.TrimSpace(sessionID)
-	if err := l.store.UpdateHarnessSessionStatus(ctx, sessionID, "completed"); err != nil {
-		return err
-	}
-	run, err := l.store.GetHarnessSession(ctx, sessionID)
-	if err != nil {
-		return err
-	}
-	return appendDaemonEvent(ctx, l.store, globaldb.DaemonEvent{WorkspaceID: run.WorkspaceID, SessionID: sessionID, EventType: daemonEventSessionCompleted, SubjectType: "session", SubjectID: sessionID, PayloadJSON: daemonEventPayload(map[string]string{"status": "completed"})})
-}
-
 func (l harnessLifecycle) markFailed(ctx context.Context, sessionID string) error {
-	sessionID = strings.TrimSpace(sessionID)
-	if err := l.store.UpdateHarnessSessionStatus(ctx, sessionID, "failed"); err != nil {
-		return err
-	}
-	run, err := l.store.GetHarnessSession(ctx, sessionID)
-	if err != nil {
-		return err
-	}
-	return appendDaemonEvent(ctx, l.store, globaldb.DaemonEvent{WorkspaceID: run.WorkspaceID, SessionID: sessionID, EventType: daemonEventSessionFailed, SubjectType: "session", SubjectID: sessionID, PayloadJSON: daemonEventPayload(map[string]string{"status": "failed"}), AttentionRequired: true})
+	return l.markTerminal(ctx, sessionID, "failed", "")
 }
 
 func (l harnessLifecycle) markStopped(ctx context.Context, sessionID string) error {
+	return l.markTerminal(ctx, sessionID, "stopped", "")
+}
+
+// markCompletedWithFinalResponse persists the final response before the
+// terminal status/events so the session.completed workspace event always
+// carries a resolvable final_response payload ref.
+func (l harnessLifecycle) markCompletedWithFinalResponse(ctx context.Context, sessionID string, response globaldb.FinalResponse) error {
 	sessionID = strings.TrimSpace(sessionID)
-	if err := l.store.UpdateHarnessSessionStatus(ctx, sessionID, "stopped"); err != nil {
+	response.HarnessSessionID = sessionID
+	response.Status = "completed"
+	response.Text = strings.TrimSpace(response.Text)
+	if err := l.store.UpsertFinalResponse(ctx, response); err != nil {
 		return err
 	}
-	run, err := l.store.GetHarnessSession(ctx, sessionID)
-	if err != nil {
-		return err
-	}
-	return appendDaemonEvent(ctx, l.store, globaldb.DaemonEvent{WorkspaceID: run.WorkspaceID, SessionID: sessionID, EventType: daemonEventSessionCompleted, SubjectType: "session", SubjectID: sessionID, PayloadJSON: daemonEventPayload(map[string]string{"status": "stopped"}), AttentionRequired: false})
+	return l.markTerminal(ctx, sessionID, "completed", response.FinalResponseID)
 }
 
 func (l harnessLifecycle) markFailedWithFinalResponse(ctx context.Context, sessionID string, response globaldb.FinalResponse) {
 	sessionID = strings.TrimSpace(sessionID)
-	_ = l.markFailed(ctx, sessionID)
 	response.HarnessSessionID = sessionID
 	response.Status = "failed"
 	response.Text = strings.TrimSpace(response.Text)
 	_ = l.store.UpsertFinalResponse(ctx, response)
+	_ = l.markTerminal(ctx, sessionID, "failed", response.FinalResponseID)
+}
+
+func (l harnessLifecycle) markTerminal(ctx context.Context, sessionID, status, finalResponseID string) error {
+	sessionID = strings.TrimSpace(sessionID)
+	if err := l.store.UpdateHarnessSessionStatus(ctx, sessionID, status); err != nil {
+		return err
+	}
+	stored, err := l.store.GetHarnessSession(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	run := HarnessSession{HarnessSessionID: stored.SessionID, WorkspaceID: stored.WorkspaceID, Executor: stored.Harness, Status: status}
+	return appendSessionTerminalEvents(ctx, l.store, run, status, finalResponseID)
+}
+
+// appendSessionTerminalEvents is the single emission path for terminal
+// harness session facts: one workspace event in event history, the source of
+// truth for projections and subscriptions.
+func appendSessionTerminalEvents(ctx context.Context, store *globaldb.Store, run HarnessSession, status, finalResponseID string) error {
+	var workspaceEventType string
+	attentionRequired := false
+	switch status {
+	case "completed":
+		workspaceEventType = workspaceEventSessionCompleted
+	case "failed":
+		workspaceEventType = workspaceEventSessionFailed
+		attentionRequired = true
+	case "stopped":
+		workspaceEventType = workspaceEventSessionStopped
+	default:
+		return nil
+	}
+	return appendHarnessSessionWorkspaceEvent(ctx, store, run, workspaceEventType, status, finalResponseID, attentionRequired)
 }

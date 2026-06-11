@@ -612,7 +612,10 @@ func TestWorkspaceSuspendStopsRunningWorkspaceCommands(t *testing.T) {
 	stopped := make(chan struct{}, 1)
 	originalStop := stopCommandProcess
 	stopCommandProcess = func(proc *process.Process) error {
-		stopped <- struct{}{}
+		select {
+		case stopped <- struct{}{}:
+		default:
+		}
 		return originalStop(proc)
 	}
 	t.Cleanup(func() { stopCommandProcess = originalStop })
