@@ -247,7 +247,7 @@ func (s *Store) AckEventSubscription(ctx context.Context, subscriptionID string,
 		return fmt.Errorf("%w: subscription id and non-negative sequence are required", ErrInvalidInput)
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	rows, err := s.sqlcQueries().UpdateEventSubscriptionCursor(ctx, dbsqlc.UpdateEventSubscriptionCursorParams{CursorSequence: sequence, CursorSequence_2: sequence, AckSequence: sequence, AckSequence_2: sequence, UpdatedAt: now, SubscriptionID: subscriptionID})
+	rows, err := s.sqlcQueries().UpdateEventSubscriptionCursor(ctx, dbsqlc.UpdateEventSubscriptionCursorParams{CursorSequence: sequence, CursorSequence_2: sequence, AckSequence: sequence, MIN: sequence, CursorSequence_3: sequence, Column6: sequence, UpdatedAt: now, SubscriptionID: subscriptionID})
 	if err != nil {
 		return fmt.Errorf("ack event subscription %q: %w", subscriptionID, err)
 	}

@@ -92,14 +92,18 @@ func TestWorkspaceDeliveryWorkerLoopContinuesAfterStoreErrors(t *testing.T) {
 	}
 
 	dispatcher := &recordingWorkspaceDeliveryDispatcher{result: WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptCompleted}}
-	ticks := make(chan time.Time, 2)
-	ticks <- time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
-	ticks <- time.Date(2026, 6, 10, 12, 0, 1, 0, time.UTC)
-	close(ticks)
-	if err := runWorkspaceDeliveryWorkerLoop(context.Background(), store, dispatcher, ticks, 10); err != nil {
+	deliveryTicks := make(chan time.Time, 2)
+	deliveryTicks <- time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	deliveryTicks <- time.Date(2026, 6, 10, 12, 0, 1, 0, time.UTC)
+	close(deliveryTicks)
+	if err := runWorkspaceDeliveryWorkerLoop(context.Background(), store, dispatcher, deliveryTicks, 10); err != nil {
 		t.Fatalf("runWorkspaceDeliveryWorkerLoop returned error %v, want loop to outlive store errors", err)
 	}
-	if err := runWorkspaceTimerWorkerLoop(context.Background(), store, ticks, 10); err != nil {
+	timerTicks := make(chan time.Time, 2)
+	timerTicks <- time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	timerTicks <- time.Date(2026, 6, 10, 12, 0, 1, 0, time.UTC)
+	close(timerTicks)
+	if err := runWorkspaceTimerWorkerLoop(context.Background(), store, timerTicks, 10); err != nil {
 		t.Fatalf("runWorkspaceTimerWorkerLoop returned error %v, want loop to outlive store errors", err)
 	}
 }

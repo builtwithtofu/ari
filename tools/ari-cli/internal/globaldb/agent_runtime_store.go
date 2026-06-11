@@ -719,6 +719,8 @@ func sendAgentMessageWithQueries(ctx context.Context, qtx *dbsqlc.Queries, param
 		event := *params.WorkspaceEvent
 		if strings.TrimSpace(event.WorkspaceID) == "" {
 			event.WorkspaceID = source.WorkspaceID
+		} else if strings.TrimSpace(event.WorkspaceID) != source.WorkspaceID {
+			return AgentMessage{}, ErrInvalidInput
 		}
 		if strings.TrimSpace(event.SubjectID) == "" {
 			event.SubjectID = params.AgentMessageID

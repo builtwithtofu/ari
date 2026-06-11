@@ -97,6 +97,12 @@ func (s *Store) ProjectFanoutWorkerEvent(ctx context.Context, event WorkspaceEve
 	if err := validateFanoutMemberProjection(member); err != nil {
 		return WorkspaceEvent{}, err
 	}
+	if strings.TrimSpace(event.WorkspaceID) != strings.TrimSpace(member.WorkspaceID) {
+		return WorkspaceEvent{}, ErrInvalidInput
+	}
+	if strings.TrimSpace(event.CorrelationID) != "" && strings.TrimSpace(member.FanoutGroupID) != "" && strings.TrimSpace(event.CorrelationID) != strings.TrimSpace(member.FanoutGroupID) {
+		return WorkspaceEvent{}, ErrInvalidInput
+	}
 	if event.EventID == "" {
 		event.EventID = newWorkspaceEventID()
 	}
@@ -106,6 +112,9 @@ func (s *Store) ProjectFanoutWorkerEvent(ctx context.Context, event WorkspaceEve
 	var item InboxItem
 	if inboxItem != nil {
 		item = *inboxItem
+		if strings.TrimSpace(item.WorkspaceID) != strings.TrimSpace(event.WorkspaceID) {
+			return WorkspaceEvent{}, ErrInvalidInput
+		}
 		item.WorkspaceEventID = event.EventID
 		item.EventType = event.EventType
 		item.AttentionRequired = event.AttentionRequired

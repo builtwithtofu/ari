@@ -411,7 +411,7 @@ func stickyInboxActivity(ctx context.Context, store *globaldb.Store, workspaceID
 			return nil, err
 		}
 		for _, item := range items {
-			out = append(out, StickyInboxActivity{InboxItemID: item.InboxItemID, TargetSessionID: item.SourceSessionID, WorkspaceEventID: item.WorkspaceEventID, EventType: item.EventType, FanoutGroupID: item.FanoutGroupID, FanoutMemberID: item.FanoutMemberID, WorkerSessionID: item.WorkerSessionID, FinalResponseID: item.FinalResponseID, Kind: item.Kind, Status: item.Status, AttentionRequired: item.AttentionRequired, Summary: item.Summary})
+			out = append(out, StickyInboxActivity{InboxItemID: item.InboxItemID, TargetSessionID: session.ID, WorkspaceEventID: item.WorkspaceEventID, EventType: item.EventType, FanoutGroupID: item.FanoutGroupID, FanoutMemberID: item.FanoutMemberID, WorkerSessionID: item.WorkerSessionID, FinalResponseID: item.FinalResponseID, Kind: item.Kind, Status: item.Status, AttentionRequired: item.AttentionRequired, Summary: item.Summary})
 		}
 	}
 	return out, nil

@@ -375,11 +375,13 @@ func TestWorkspaceEventSubscriptionNextWaitsForMatchingEvent(t *testing.T) {
 		err      error
 	}
 	resultC := make(chan callResult, 1)
+	readyC := make(chan struct{})
 	go func() {
+		close(readyC)
 		response, err := callMethodResult[WorkspaceEventsResponse](registry, "workspace.events.next", WorkspaceEventsNextRequest{SubscriptionID: "sub-wait", Limit: 10, MinEvents: 1, TimeoutMS: 1000})
 		resultC <- callResult{response: response, err: err}
 	}()
-	time.Sleep(25 * time.Millisecond)
+	<-readyC
 	created := callMethod[WorkspaceEventResponse](t, registry, "workspace.events.append", WorkspaceEventAppendRequest{EventID: "we-wait", WorkspaceID: "ws-wait", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-wait"})
 
 	select {

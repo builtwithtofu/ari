@@ -331,18 +331,23 @@ func (q *Queries) NextWorkspaceEventSequence(ctx context.Context, arg NextWorksp
 const updateEventSubscriptionCursor = `-- name: UpdateEventSubscriptionCursor :execrows
 UPDATE event_subscriptions
 SET cursor_sequence = CASE WHEN cursor_sequence < ? THEN ? ELSE cursor_sequence END,
-    ack_sequence = CASE WHEN ack_sequence < ? THEN ? ELSE ack_sequence END,
+    ack_sequence = CASE
+      WHEN ack_sequence < ? THEN MIN(?, CASE WHEN cursor_sequence < ? THEN ? ELSE cursor_sequence END)
+      ELSE ack_sequence
+    END,
     updated_at = ?
 WHERE subscription_id = ?
 `
 
 type UpdateEventSubscriptionCursorParams struct {
-	CursorSequence   int64  `json:"cursor_sequence"`
-	CursorSequence_2 int64  `json:"cursor_sequence_2"`
-	AckSequence      int64  `json:"ack_sequence"`
-	AckSequence_2    int64  `json:"ack_sequence_2"`
-	UpdatedAt        string `json:"updated_at"`
-	SubscriptionID   string `json:"subscription_id"`
+	CursorSequence   int64       `json:"cursor_sequence"`
+	CursorSequence_2 int64       `json:"cursor_sequence_2"`
+	AckSequence      int64       `json:"ack_sequence"`
+	MIN              interface{} `json:"MIN"`
+	CursorSequence_3 int64       `json:"cursor_sequence_3"`
+	Column6          interface{} `json:"column_6"`
+	UpdatedAt        string      `json:"updated_at"`
+	SubscriptionID   string      `json:"subscription_id"`
 }
 
 func (q *Queries) UpdateEventSubscriptionCursor(ctx context.Context, arg UpdateEventSubscriptionCursorParams) (int64, error) {
@@ -350,7 +355,9 @@ func (q *Queries) UpdateEventSubscriptionCursor(ctx context.Context, arg UpdateE
 		arg.CursorSequence,
 		arg.CursorSequence_2,
 		arg.AckSequence,
-		arg.AckSequence_2,
+		arg.MIN,
+		arg.CursorSequence_3,
+		arg.Column6,
 		arg.UpdatedAt,
 		arg.SubscriptionID,
 	)

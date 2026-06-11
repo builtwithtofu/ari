@@ -66,7 +66,10 @@ ORDER BY created_at ASC, subscription_id ASC;
 -- name: UpdateEventSubscriptionCursor :execrows
 UPDATE event_subscriptions
 SET cursor_sequence = CASE WHEN cursor_sequence < ? THEN ? ELSE cursor_sequence END,
-    ack_sequence = CASE WHEN ack_sequence < ? THEN ? ELSE ack_sequence END,
+    ack_sequence = CASE
+      WHEN ack_sequence < ? THEN MIN(?, CASE WHEN cursor_sequence < ? THEN ? ELSE cursor_sequence END)
+      ELSE ack_sequence
+    END,
     updated_at = ?
 WHERE subscription_id = ?;
 

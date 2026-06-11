@@ -274,7 +274,7 @@ updateCursor:
 	if ackSequence == subscription.CursorSequence {
 		return nil
 	}
-	rows, err := queries.UpdateEventSubscriptionCursor(ctx, dbsqlc.UpdateEventSubscriptionCursorParams{CursorSequence: ackSequence, CursorSequence_2: ackSequence, AckSequence: ackSequence, AckSequence_2: ackSequence, UpdatedAt: updatedAt, SubscriptionID: delivery.SubscriptionID})
+	rows, err := queries.UpdateEventSubscriptionCursor(ctx, dbsqlc.UpdateEventSubscriptionCursorParams{CursorSequence: ackSequence, CursorSequence_2: ackSequence, AckSequence: ackSequence, MIN: ackSequence, CursorSequence_3: ackSequence, Column6: ackSequence, UpdatedAt: updatedAt, SubscriptionID: delivery.SubscriptionID})
 	if err != nil {
 		return fmt.Errorf("ack event subscription %q for delivery %q: %w", delivery.SubscriptionID, delivery.DeliveryID, err)
 	}
