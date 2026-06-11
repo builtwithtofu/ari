@@ -48,6 +48,91 @@ func TestJourneyStickyFlowFanoutUsesFakeHarnessExecutableBoundary(t *testing.T) 
 	}
 }
 
+func TestJourneyMixedHarnessFanoutAcrossAdapters(t *testing.T) {
+	j := newJourneyRuntime(t)
+	primaryFolder := t.TempDir()
+	j.seedWorkspace("ws-1", primaryFolder)
+	j.createSessionConfig("planner", "ws-1", "planner", "claude")
+	j.createHarnessSession("planner-run", "ws-1", "planner", "claude", "waiting", globaldb.HarnessSessionUsageSticky)
+	j.createSessionConfig("researcher", "ws-1", "researcher", "claude")
+	j.createSessionConfig("analyst", "ws-1", "analyst", "pi")
+	j.createSessionConfig("reviewer", "ws-1", "reviewer", "grok")
+
+	// One fake binary, persona selected per symlink basename so a single
+	// fanout group can launch three different harnesses side by side.
+	fake := buildFakeHarnessExecutable(t)
+	linkDir := t.TempDir()
+	links := map[string]string{}
+	for _, harness := range []string{"claude", "pi", "grok"} {
+		link := filepath.Join(linkDir, "fake-"+harness)
+		if err := os.Symlink(fake, link); err != nil {
+			t.Fatalf("symlink fake-%s: %v", harness, err)
+		}
+		links[harness] = link
+	}
+	recordPath := filepath.Join(t.TempDir(), "fanout-record.jsonl")
+	t.Setenv("ARI_FAKE_HARNESS", "")
+	t.Setenv("ARI_FAKE_HARNESS_RECORD", recordPath)
+	j.daemon.setHarnessFactoryForTest("claude", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = sink
+		return NewClaudeExecutorForTest(claudeExecutorOptions{Executable: links["claude"], Cwd: primaryFolder, InvocationMode: HarnessInvocationModeHeadless}), nil
+	})
+	j.daemon.setHarnessFactoryForTest("pi", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = sink
+		return NewPiExecutorForTest(piExecutorOptions{Executable: links["pi"], Cwd: primaryFolder}), nil
+	})
+	j.daemon.setHarnessFactoryForTest("grok", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = sink
+		return NewGrokExecutorForTest(grokExecutorOptions{Executable: links["grok"], Cwd: primaryFolder}), nil
+	})
+
+	fanout := callMethod[AgentMessageSendResponse](t, j.registry, "session.fanout", AgentMessageSendRequest{FanoutGroupID: "fg-mixed", SourceSessionID: "planner-run", TargetProfileIDs: []string{"researcher", "analyst", "reviewer"}, Body: "fan out across harnesses"})
+	if fanout.FanoutGroupID != "fg-mixed" || len(fanout.FanoutMembers) != 3 {
+		t.Fatalf("fanout = %#v, want three mixed-harness workers", fanout)
+	}
+	waitForFinalResponseContains(t, j.ctx, j.store, "fg-mixed-c"+stableRuntimeAgentIDSegment("researcher")+"-run", "fake claude response")
+	waitForFinalResponseContains(t, j.ctx, j.store, "fg-mixed-c"+stableRuntimeAgentIDSegment("analyst")+"-run", "fake pi response")
+	waitForFinalResponseContains(t, j.ctx, j.store, "fg-mixed-c"+stableRuntimeAgentIDSegment("reviewer")+"-run", "fake grok response")
+	status := waitForProjectedFanoutMemberStatuses(t, j.registry, "ws-1", map[string]string{"researcher": "completed", "analyst": "completed", "reviewer": "completed"})
+	assertStickyInboxKinds(t, status.StickyInbox, map[string]string{"fg-mixed-mresearcher": "worker_completed", "fg-mixed-manalyst": "worker_completed", "fg-mixed-mreviewer": "worker_completed"})
+	record, err := os.ReadFile(recordPath)
+	if err != nil {
+		t.Fatalf("ReadFile fanout record returned error: %v", err)
+	}
+	for _, harness := range []string{"claude", "pi", "grok"} {
+		if !strings.Contains(string(record), `"harness":"`+harness+`"`) {
+			t.Fatalf("fanout record missing %s invocation: %s", harness, record)
+		}
+	}
+}
+
+func TestJourneyFanoutWorkerRateLimitFailureSurfacesInInbox(t *testing.T) {
+	j := newJourneyRuntime(t)
+	primaryFolder := t.TempDir()
+	j.seedWorkspace("ws-1", primaryFolder)
+	j.createSessionConfig("planner", "ws-1", "planner", "claude")
+	j.createHarnessSession("planner-run", "ws-1", "planner", "claude", "waiting", globaldb.HarnessSessionUsageSticky)
+	j.createSessionConfig("researcher", "ws-1", "researcher", "claude")
+	fake := buildFakeHarnessExecutable(t)
+	t.Setenv("ARI_FAKE_HARNESS", "claude")
+	t.Setenv("ARI_FAKE_HARNESS_MODE", "exit-rate-limit")
+	j.daemon.setHarnessFactoryForTest("claude", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = sink
+		return NewClaudeExecutorForTest(claudeExecutorOptions{Executable: fake, Cwd: primaryFolder, InvocationMode: HarnessInvocationModeHeadless}), nil
+	})
+
+	fanout := callMethod[AgentMessageSendResponse](t, j.registry, "session.fanout", AgentMessageSendRequest{FanoutGroupID: "fg-ratelimit", SourceSessionID: "planner-run", TargetProfileIDs: []string{"researcher"}, Body: "fan out into a rate limit"})
+	if fanout.FanoutGroupID != "fg-ratelimit" || len(fanout.FanoutMembers) != 1 {
+		t.Fatalf("fanout = %#v, want one worker", fanout)
+	}
+	status := waitForProjectedFanoutMemberStatuses(t, j.registry, "ws-1", map[string]string{"researcher": "failed"})
+	assertStickyInboxKinds(t, status.StickyInbox, map[string]string{"fg-ratelimit-mresearcher": "worker_failed"})
+}
+
 func buildFakeHarnessExecutable(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "fake-harness")
