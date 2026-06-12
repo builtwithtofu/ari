@@ -7,8 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"os/exec"
 	"regexp"
 	"strings"
 	"sync"
@@ -191,7 +189,7 @@ func (e *ClaudeExecutor) Start(ctx context.Context, req ExecutorStartRequest) (E
 	if err != nil {
 		return ExecutorRun{}, err
 	}
-	commandResult, err := options.RunCommand(ctx, options, claudePromptFromRequest(req))
+	commandResult, err := options.RunCommand(ctx, options, contextPacketPrompt(req))
 	if err != nil {
 		return ExecutorRun{}, err
 	}
@@ -408,10 +406,6 @@ func claudeUsageBucket(mode HarnessInvocationMode) string {
 	return "agent_sdk_credit"
 }
 
-func claudePromptFromRequest(req ExecutorStartRequest) string {
-	return strings.TrimSpace(req.ContextPacket)
-}
-
 func claudeArgs(options claudeExecutorOptions) []string {
 	if options.InvocationMode == HarnessInvocationModeBackground {
 		args := []string{"--bg"}
@@ -434,107 +428,64 @@ func claudeArgs(options claudeExecutorOptions) []string {
 }
 
 func runClaudeCommand(ctx context.Context, options claudeExecutorOptions, prompt string) (commandRunResult, error) {
-	executable := strings.TrimSpace(options.Executable)
-	if executable == "" {
-		executable = "claude"
-	}
-	path, err := exec.LookPath(executable)
+	path, executable, err := resolveHarnessExecutable(HarnessNameClaude, options.Executable, "claude")
 	if err != nil {
-		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+		return commandRunResult{}, err
 	}
 	args := claudeArgs(options)
+	var stdin *string
 	if options.InvocationMode == HarnessInvocationModeBackground {
 		if trimmed := strings.TrimSpace(prompt); trimmed != "" {
 			args = append(args, trimmed)
 		}
+	} else {
+		stdin = &prompt
 	}
-	cmd := exec.CommandContext(ctx, path, args...)
-	cmd.Dir = strings.TrimSpace(options.Cwd)
-	cmd.Env = commandEnvWithProjection(options.AuthProjection)
-	var stdin io.WriteCloser
-	if options.InvocationMode != HarnessInvocationModeBackground {
-		var err error
-		stdin, err = cmd.StdinPipe()
-		if err != nil {
-			return commandRunResult{}, err
-		}
-	}
-	var output strings.Builder
-	cmd.Stdout = &output
-	cmd.Stderr = &output
-	if err := cmd.Start(); err != nil {
-		return commandRunResult{}, err
-	}
-	if stdin != nil {
-		_, _ = io.WriteString(stdin, prompt)
-		_ = stdin.Close()
-	}
-	sample := sampleLinuxProcessMetrics(ctx, HarnessSession{PID: cmd.Process.Pid})
-	err = cmd.Wait()
-	exitCode := cmd.ProcessState.ExitCode()
-	if err != nil {
-		return commandRunResult{}, fmt.Errorf("run claude: %w", err)
-	}
-	return commandRunResult{Output: []byte(output.String()), ProcessSample: &sample, ExitCode: &exitCode}, nil
+	return harnessCommand{
+		harness:     HarnessNameClaude,
+		path:        path,
+		executable:  executable,
+		args:        args,
+		cwd:         options.Cwd,
+		projection:  options.AuthProjection,
+		stdin:       stdin,
+		waitErrWrap: "run claude",
+	}.run(ctx)
 }
 
 func runClaudeManagedPTYDeliveryCommand(ctx context.Context, options claudeExecutorOptions, turn string) (commandRunResult, error) {
-	executable := strings.TrimSpace(options.Executable)
-	if executable == "" {
-		executable = "claude"
-	}
-	path, err := exec.LookPath(executable)
-	if err != nil {
-		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
-	}
-	args := []string{"managed-pty"}
-	cmd := exec.CommandContext(ctx, path, args...)
-	cmd.Dir = strings.TrimSpace(options.Cwd)
-	cmd.Env = commandEnvWithProjection(options.AuthProjection)
-	stdin, err := cmd.StdinPipe()
+	path, executable, err := resolveHarnessExecutable(HarnessNameClaude, options.Executable, "claude")
 	if err != nil {
 		return commandRunResult{}, err
 	}
-	var output strings.Builder
-	cmd.Stdout = &output
-	cmd.Stderr = &output
-	if err := cmd.Start(); err != nil {
-		return commandRunResult{}, err
-	}
-	_, _ = io.WriteString(stdin, turn)
-	_ = stdin.Close()
-	sample := sampleLinuxProcessMetrics(ctx, HarnessSession{PID: cmd.Process.Pid})
-	err = cmd.Wait()
-	exitCode := cmd.ProcessState.ExitCode()
-	result := commandRunResult{Output: []byte(output.String()), ProcessSample: &sample, ExitCode: &exitCode}
-	if err != nil {
-		return result, fmt.Errorf("run claude managed pty delivery: %w", err)
-	}
-	return result, nil
+	return harnessCommand{
+		harness:             HarnessNameClaude,
+		path:                path,
+		executable:          executable,
+		args:                []string{"managed-pty"},
+		cwd:                 options.Cwd,
+		projection:          options.AuthProjection,
+		stdin:               &turn,
+		waitErrWrap:         "run claude managed pty delivery",
+		keepResultOnWaitErr: true,
+	}.run(ctx)
 }
 
 func runClaudeAuthCommand(ctx context.Context, options claudeExecutorOptions, args []string) (commandRunResult, error) {
-	executable := strings.TrimSpace(options.Executable)
-	if executable == "" {
-		executable = "claude"
-	}
-	path, err := exec.LookPath(executable)
+	path, executable, err := resolveHarnessExecutable(HarnessNameClaude, options.Executable, "claude")
 	if err != nil {
-		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+		return commandRunResult{}, err
 	}
-	cmd := exec.CommandContext(ctx, path, args...)
-	cmd.Dir = strings.TrimSpace(options.Cwd)
-	cmd.Env = commandEnvWithProjection(options.AuthProjection)
-	var output strings.Builder
-	cmd.Stdout = &output
-	cmd.Stderr = &output
-	if err := cmd.Start(); err != nil {
-		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "start_failed", Executable: executable, Probe: executable + " " + strings.Join(args, " "), RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: true}
-	}
-	sample := sampleLinuxProcessMetrics(ctx, HarnessSession{PID: cmd.Process.Pid})
-	err = cmd.Wait()
-	exitCode := cmd.ProcessState.ExitCode()
-	return commandRunResult{Output: []byte(output.String()), ProcessSample: &sample, ExitCode: &exitCode}, err
+	return harnessCommand{
+		harness:                HarnessNameClaude,
+		path:                   path,
+		executable:             executable,
+		args:                   args,
+		cwd:                    options.Cwd,
+		projection:             options.AuthProjection,
+		startFailedUnavailable: true,
+		keepResultOnWaitErr:    true,
+	}.run(ctx)
 }
 
 func claudeAuthOutputAuthenticated(output []byte) bool {

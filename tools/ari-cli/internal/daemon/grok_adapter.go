@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -258,7 +257,7 @@ func (e *GrokExecutor) Start(ctx context.Context, req ExecutorStartRequest) (Exe
 	if err != nil {
 		return ExecutorRun{}, err
 	}
-	commandResult, err := options.RunCommand(ctx, options, grokStartArgs(options, grokPromptFromRequest(req)))
+	commandResult, err := options.RunCommand(ctx, options, grokStartArgs(options, contextPacketPrompt(req)))
 	if err != nil {
 		return ExecutorRun{}, err
 	}
@@ -461,10 +460,6 @@ func grokTimelineItemsFromEvents(workspaceID, sessionID string, parsed grokParse
 	return items
 }
 
-func grokPromptFromRequest(req ExecutorStartRequest) string {
-	return strings.TrimSpace(req.ContextPacket)
-}
-
 func grokStartArgs(options grokExecutorOptions, prompt string) []string {
 	args := []string{"-p", prompt, "--output-format", "streaming-json", "--no-auto-update"}
 	if model := strings.TrimSpace(options.Model); model != "" {
@@ -480,29 +475,19 @@ func grokStartArgs(options grokExecutorOptions, prompt string) []string {
 }
 
 func runGrokCommand(ctx context.Context, options grokExecutorOptions, args []string) (commandRunResult, error) {
-	executable := strings.TrimSpace(options.Executable)
-	if executable == "" {
-		executable = "grok"
-	}
-	path, err := exec.LookPath(executable)
+	path, executable, err := resolveHarnessExecutable(HarnessNameGrok, options.Executable, "grok")
 	if err != nil {
-		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameGrok, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+		return commandRunResult{}, err
 	}
-	cmd := exec.CommandContext(ctx, path, args...)
-	cmd.Dir = strings.TrimSpace(options.Cwd)
-	cmd.Env = commandEnvWithProjection(options.AuthProjection)
-	var output strings.Builder
-	cmd.Stdout = &output
-	cmd.Stderr = &output
-	if err := cmd.Start(); err != nil {
-		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameGrok, Reason: "start_failed", Executable: executable, Probe: executable + " " + strings.Join(args, " "), RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: true}
-	}
-	sample := sampleLinuxProcessMetrics(ctx, HarnessSession{PID: cmd.Process.Pid})
-	err = cmd.Wait()
-	exitCode := cmd.ProcessState.ExitCode()
-	result := commandRunResult{Output: []byte(output.String()), ProcessSample: &sample, ExitCode: &exitCode}
-	if err != nil {
-		return result, fmt.Errorf("run grok: %w", err)
-	}
-	return result, nil
+	return harnessCommand{
+		harness:                HarnessNameGrok,
+		path:                   path,
+		executable:             executable,
+		args:                   args,
+		cwd:                    options.Cwd,
+		projection:             options.AuthProjection,
+		startFailedUnavailable: true,
+		waitErrWrap:            "run grok",
+		keepResultOnWaitErr:    true,
+	}.run(ctx)
 }

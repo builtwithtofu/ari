@@ -6,9 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"strings"
 	"sync"
 )
@@ -492,13 +490,9 @@ func piStartInput(options piExecutorOptions, req ExecutorStartRequest) string {
 }
 
 func runPiCommand(ctx context.Context, options piExecutorOptions, args []string, input string) (commandRunResult, error) {
-	executable := strings.TrimSpace(options.Executable)
-	if executable == "" {
-		executable = "pi"
-	}
-	path, err := exec.LookPath(executable)
+	path, executable, err := resolveHarnessExecutable(HarnessNamePi, options.Executable, "pi")
 	if err != nil {
-		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNamePi, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+		return commandRunResult{}, err
 	}
 	rpcMode := false
 	for i := 0; i < len(args)-1; i++ {
@@ -506,38 +500,22 @@ func runPiCommand(ctx context.Context, options piExecutorOptions, args []string,
 			rpcMode = true
 		}
 	}
-	if !rpcMode {
-		if trimmed := strings.TrimSpace(input); trimmed != "" {
-			args = append(args, trimmed)
-		}
-		input = ""
-	}
-	cmd := exec.CommandContext(ctx, path, args...)
-	cmd.Dir = strings.TrimSpace(options.Cwd)
-	cmd.Env = commandEnvWithProjection(options.AuthProjection)
-	var stdin io.WriteCloser
+	var stdin *string
 	if rpcMode {
-		stdin, err = cmd.StdinPipe()
-		if err != nil {
-			return commandRunResult{}, err
-		}
+		stdin = &input
+	} else if trimmed := strings.TrimSpace(input); trimmed != "" {
+		args = append(args, trimmed)
 	}
-	var output strings.Builder
-	cmd.Stdout = &output
-	cmd.Stderr = &output
-	if err := cmd.Start(); err != nil {
-		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNamePi, Reason: "start_failed", Executable: executable, Probe: executable + " " + strings.Join(args, " "), RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: true}
-	}
-	if stdin != nil {
-		_, _ = io.WriteString(stdin, input)
-		_ = stdin.Close()
-	}
-	sample := sampleLinuxProcessMetrics(ctx, HarnessSession{PID: cmd.Process.Pid})
-	err = cmd.Wait()
-	exitCode := cmd.ProcessState.ExitCode()
-	result := commandRunResult{Output: []byte(output.String()), ProcessSample: &sample, ExitCode: &exitCode}
-	if err != nil {
-		return result, fmt.Errorf("run pi: %w", err)
-	}
-	return result, nil
+	return harnessCommand{
+		harness:                HarnessNamePi,
+		path:                   path,
+		executable:             executable,
+		args:                   args,
+		cwd:                    options.Cwd,
+		projection:             options.AuthProjection,
+		stdin:                  stdin,
+		startFailedUnavailable: true,
+		waitErrWrap:            "run pi",
+		keepResultOnWaitErr:    true,
+	}.run(ctx)
 }
