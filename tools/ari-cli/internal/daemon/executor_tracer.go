@@ -1000,7 +1000,7 @@ func (d *Daemon) harnessAuthDiagnose(ctx context.Context, store *globaldb.Store,
 		factory, ok := d.harnessRegistry.Resolve(harness)
 		if !ok {
 			status := HarnessAuthStatus{Harness: harness, AuthSlotID: authSlotIDForName(harness, "default"), Name: "default", Status: HarnessAuthUnknown, AriSecretStorage: HarnessAriSecretStorageNone}
-			resp.Harnesses = append(resp.Harnesses, HarnessAuthDiagnostic{Harness: harness, Installed: true, Status: HarnessAuthUnknown, DefaultSlot: status, Auth: auth, NextStep: authDiagnosticNextStep(status)})
+			resp.Harnesses = append(resp.Harnesses, HarnessAuthDiagnostic{Harness: harness, Installed: true, Status: HarnessAuthUnknown, DefaultSlot: status, Auth: auth, NextStep: d.authDiagnosticNextStep(status)})
 			continue
 		}
 		executor, err := factory(HarnessSessionStartRequest{Executor: harness}, primaryFolder, d.appendExecutorItems)
@@ -1009,7 +1009,7 @@ func (d *Daemon) harnessAuthDiagnose(ctx context.Context, store *globaldb.Store,
 			diagnostic.DefaultSlot = NewHarnessAuthRequired(harness, diagnostic.DefaultSlot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, SecretOwnedBy: harness})
 			diagnostic.DefaultSlot.Name = "default"
 			diagnostic.Status = diagnostic.DefaultSlot.Status
-			diagnostic.NextStep = authDiagnosticNextStep(diagnostic.DefaultSlot)
+			diagnostic.NextStep = d.authDiagnosticNextStep(diagnostic.DefaultSlot)
 			resp.Harnesses = append(resp.Harnesses, diagnostic)
 			continue
 		}
@@ -1034,7 +1034,7 @@ func (d *Daemon) harnessAuthDiagnose(ctx context.Context, store *globaldb.Store,
 			status.Name = authStatusName(defaultSlot, harness)
 			diagnostic.DefaultSlot = status
 			diagnostic.Status = status.Status
-			diagnostic.NextStep = authDiagnosticNextStep(status)
+			diagnostic.NextStep = d.authDiagnosticNextStep(status)
 		}
 		diagnostic.ProviderMethods = authProviderMethodDiagnostic(ctx, executor, req.DiscoverProviderMethods)
 		for _, stored := range slotsByHarness[harness] {
@@ -1108,12 +1108,12 @@ func authSlotIDForName(harness, name string) string {
 	return harness + "-" + name
 }
 
-func authDiagnosticNextStep(status HarnessAuthStatus) string {
+func (d *Daemon) authDiagnosticNextStep(status HarnessAuthStatus) string {
 	if status.Status == HarnessAuthAuthenticated {
 		return ""
 	}
 	if status.Status == HarnessAuthNotInstalled {
-		return "Install " + authDiagnosticHarnessDisplayName(status.Harness) + ", then run `ari auth login --harness " + status.Harness + "`."
+		return "Install " + d.harnessDisplayName(status.Harness) + ", then run `ari auth login --harness " + status.Harness + "`."
 	}
 	method := ""
 	if status.Remediation != nil && strings.TrimSpace(status.Remediation.Method) != "" {
@@ -1135,17 +1135,13 @@ func authDiagnosticNextStep(status HarnessAuthStatus) string {
 	}
 }
 
-func authDiagnosticHarnessDisplayName(harness string) string {
-	switch harness {
-	case HarnessNameClaude:
-		return "Claude Code"
-	case HarnessNameCodex:
-		return "Codex"
-	case HarnessNameOpenCode:
-		return "OpenCode"
-	default:
-		return harness
+func (d *Daemon) harnessDisplayName(harness string) string {
+	if d != nil {
+		if descriptor, ok := d.harnessRegistry.ResolveDescriptor(harness); ok && strings.TrimSpace(descriptor.DisplayName) != "" {
+			return descriptor.DisplayName
+		}
 	}
+	return harness
 }
 
 func (d *Daemon) harnessAuthStatus(ctx context.Context, store *globaldb.Store, req HarnessAuthStatusRequest) (HarnessAuthStatusResponse, error) {
@@ -2327,7 +2323,7 @@ func StartExecutorRunResultWithProjection(ctx context.Context, executor Executor
 		if profile[0].InvocationClass != "" {
 			call.InvocationClass = profile[0].InvocationClass
 		}
-		options, err := harnessOptionsFromProfile(profile[0])
+		options, err := harnessOptionsFromProfile(executor, profile[0])
 		if err != nil {
 			return HarnessCallResult{}, err
 		}

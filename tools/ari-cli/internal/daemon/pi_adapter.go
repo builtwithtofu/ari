@@ -111,6 +111,7 @@ func (e *PiExecutor) AuthStatus(ctx context.Context, slot HarnessAuthSlot) (Harn
 func (e *PiExecutor) Descriptor() HarnessAdapterDescriptor {
 	return HarnessAdapterDescriptor{
 		Name:                    HarnessNamePi,
+		DisplayName:             "pi",
 		Capabilities:            sharedHarnessRuntimeCapabilities(),
 		ObservationCapabilities: []HarnessObservationCapability{HarnessObservationEventStream},
 		DeliveryCapabilities:    []HarnessDeliveryCapability{HarnessDeliveryVisiblePromptTurn},

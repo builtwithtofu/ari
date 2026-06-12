@@ -327,6 +327,7 @@ func authSlotIsDefaultForHarness(harness, slotID string) bool {
 
 type HarnessAdapterDescriptor struct {
 	Name                    string
+	DisplayName             string
 	Capabilities            []HarnessCapability
 	ObservationCapabilities []HarnessObservationCapability
 	DeliveryCapabilities    []HarnessDeliveryCapability

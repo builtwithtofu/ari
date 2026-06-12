@@ -303,6 +303,7 @@ func (e *CodexExecutor) AuthLogout(ctx context.Context, slot HarnessAuthSlot) (H
 func (e *CodexExecutor) Descriptor() HarnessAdapterDescriptor {
 	return HarnessAdapterDescriptor{
 		Name:                    HarnessNameCodex,
+		DisplayName:             "Codex",
 		Capabilities:            sharedHarnessRuntimeCapabilities(),
 		ObservationCapabilities: []HarnessObservationCapability{HarnessObservationEventStream},
 		DeliveryCapabilities:    []HarnessDeliveryCapability{HarnessDeliveryVisiblePromptTurn},

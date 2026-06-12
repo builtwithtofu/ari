@@ -105,6 +105,7 @@ func (e *OpenCodeExecutor) AuthLogout(ctx context.Context, slot HarnessAuthSlot)
 func (e *OpenCodeExecutor) Descriptor() HarnessAdapterDescriptor {
 	return HarnessAdapterDescriptor{
 		Name:                    HarnessNameOpenCode,
+		DisplayName:             "OpenCode",
 		Capabilities:            sharedHarnessRuntimeCapabilities(),
 		ObservationCapabilities: []HarnessObservationCapability{HarnessObservationUnsupported},
 		DeliveryCapabilities:    []HarnessDeliveryCapability{HarnessDeliveryVisiblePromptTurn},

@@ -206,6 +206,7 @@ func grokRuntimeCapabilities() []HarnessCapability {
 func (e *GrokExecutor) Descriptor() HarnessAdapterDescriptor {
 	return HarnessAdapterDescriptor{
 		Name:                    HarnessNameGrok,
+		DisplayName:             "grok",
 		Capabilities:            grokRuntimeCapabilities(),
 		ObservationCapabilities: []HarnessObservationCapability{HarnessObservationEventStream},
 		DeliveryCapabilities:    []HarnessDeliveryCapability{HarnessDeliveryVisiblePromptTurn},

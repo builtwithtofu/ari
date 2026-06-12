@@ -139,6 +139,7 @@ func (e *ClaudeExecutor) AuthLogout(ctx context.Context, slot HarnessAuthSlot) (
 func (e *ClaudeExecutor) Descriptor() HarnessAdapterDescriptor {
 	return HarnessAdapterDescriptor{
 		Name:                    HarnessNameClaude,
+		DisplayName:             "Claude Code",
 		Capabilities:            sharedHarnessRuntimeCapabilities(),
 		ObservationCapabilities: []HarnessObservationCapability{HarnessObservationUnsupported},
 		DeliveryCapabilities:    []HarnessDeliveryCapability{HarnessDeliveryVisiblePromptTurn},

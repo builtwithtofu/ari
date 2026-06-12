@@ -124,6 +124,7 @@ func (r *HarnessRegistry) ReplaceForTestWithDescriptor(name string, factory Harn
 
 func harnessAdapterDescriptorHasContract(descriptor HarnessAdapterDescriptor) bool {
 	return descriptor.Name != "" ||
+		descriptor.DisplayName != "" ||
 		len(descriptor.Capabilities) > 0 ||
 		len(descriptor.ObservationCapabilities) > 0 ||
 		len(descriptor.DeliveryCapabilities) > 0 ||
