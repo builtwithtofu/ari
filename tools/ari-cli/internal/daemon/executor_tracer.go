@@ -97,6 +97,8 @@ const (
 	HarnessNameCodex    = "codex"
 	HarnessNameClaude   = "claude"
 	HarnessNameOpenCode = "opencode"
+	HarnessNamePi       = "pi"
+	HarnessNameGrok     = "grok"
 	HarnessNamePTY      = "pty"
 )
 
@@ -1047,7 +1049,7 @@ func (d *Daemon) harnessAuthDiagnose(ctx context.Context, store *globaldb.Store,
 }
 
 func providerAuthHarnesses() []string {
-	return []string{HarnessNameClaude, HarnessNameCodex, HarnessNameOpenCode}
+	return []string{HarnessNameClaude, HarnessNameCodex, HarnessNameOpenCode, HarnessNamePi, HarnessNameGrok}
 }
 
 func authProviderMethodDiagnostic(ctx context.Context, executor Executor, discover bool) HarnessAuthProviderMethodDiagnostic {
@@ -1220,11 +1222,11 @@ func (d *Daemon) harnessAuthStatus(ctx context.Context, store *globaldb.Store, r
 			}
 			return HarnessAuthStatusResponse{}, err
 		}
+		if status.Status == HarnessAuthAuthenticated && namedSlotMissingProjection(storedByID[slot.AuthSlotID]) {
+			status = NewHarnessAuthRequired(harness, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, Method: "ari_secret_projection_required", SecretOwnedBy: harness})
+		}
 		if err := storePersistAuthStatus(ctx, store, storedByID, slot.AuthSlotID, status.Status); err != nil {
 			return HarnessAuthStatusResponse{}, err
-		}
-		if status.Status == HarnessAuthAuthenticated && opencodeNamedSlotMissingProjection(storedByID[slot.AuthSlotID]) {
-			status = NewHarnessAuthRequired(harness, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, Method: "ari_secret_projection_required", SecretOwnedBy: HarnessNameOpenCode})
 		}
 		status.Name = authStatusName(slot, status.Harness)
 		statuses = append(statuses, status)
@@ -1232,11 +1234,17 @@ func (d *Daemon) harnessAuthStatus(ctx context.Context, store *globaldb.Store, r
 	return HarnessAuthStatusResponse{Statuses: statuses}, nil
 }
 
-func opencodeNamedSlotMissingProjection(slot globaldb.AuthSlot) bool {
-	if strings.TrimSpace(slot.Harness) != HarnessNameOpenCode || authSlotIsDefaultForHarness(HarnessNameOpenCode, slot.AuthSlotID) {
+func namedSlotMissingProjection(slot globaldb.AuthSlot) bool {
+	harness := strings.TrimSpace(slot.Harness)
+	switch harness {
+	case HarnessNameOpenCode, HarnessNamePi:
+	default:
 		return false
 	}
-	_, err := opencodeProjectionSecretID(slot.MetadataJSON)
+	if authSlotIsDefaultForHarness(harness, slot.AuthSlotID) {
+		return false
+	}
+	_, err := slotProjectionSecretID(harness, slot.MetadataJSON)
 	return err != nil
 }
 
@@ -1292,8 +1300,8 @@ func (d *Daemon) removeAuthSlot(ctx context.Context, store *globaldb.Store, req 
 	if authSlotID == "" {
 		return AuthSlotRemoveResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "auth_slot_id is required", map[string]any{"reason": "missing_auth_slot_id"})
 	}
-	if stored, err := store.GetAuthSlot(ctx, authSlotID); err == nil && stored.Harness == HarnessNameOpenCode {
-		if secretID, err := opencodeProjectionSecretID(stored.MetadataJSON); err == nil {
+	if stored, err := store.GetAuthSlot(ctx, authSlotID); err == nil && (stored.Harness == HarnessNameOpenCode || stored.Harness == HarnessNamePi) {
+		if secretID, err := slotProjectionSecretID(stored.Harness, stored.MetadataJSON); err == nil {
 			if err := store.DeleteSecret(ctx, d.secretBackend, secretID); err != nil && !errors.Is(err, globaldb.ErrNotFound) {
 				return AuthSlotRemoveResponse{}, mapWorkspaceStoreError(err, secretID)
 			}
@@ -2057,7 +2065,13 @@ func storeHarnessRunLogMessages(ctx context.Context, store *globaldb.Store, resu
 	if err := store.EnsureHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: agentID, WorkspaceID: agentConfigWorkspaceID, Name: agentName, Harness: run.Executor, Model: model, Prompt: prompt}); err != nil {
 		return err
 	}
-	providerMetadata, err := json.Marshal(map[string]any{"session_ref": result.SessionRef, "provider_session_id": run.ProviderSessionID, "capabilities": run.Capabilities, "invocation_mode": run.InvocationMode, "usage_bucket": run.UsageBucket})
+	metadata := map[string]any{"session_ref": result.SessionRef, "provider_session_id": run.ProviderSessionID, "capabilities": run.Capabilities, "invocation_mode": run.InvocationMode, "usage_bucket": run.UsageBucket}
+	if len(profile) > 0 {
+		if authSlotID := strings.TrimSpace(profile[0].AuthSlotID); authSlotID != "" {
+			metadata["auth_slot_id"] = authSlotID
+		}
+	}
+	providerMetadata, err := json.Marshal(metadata)
 	if err != nil {
 		return err
 	}
@@ -2334,38 +2348,71 @@ func authSlotIDFromProfiles(profile ...Profile) string {
 func (d *Daemon) authProjectionForStart(ctx context.Context, store *globaldb.Store, harness, workspaceID, authSlotID string) (HarnessAuthProjectionPlan, error) {
 	harness = strings.TrimSpace(harness)
 	authSlotID = strings.TrimSpace(authSlotID)
-	if harness != HarnessNameOpenCode || authSlotIsDefaultForHarness(HarnessNameOpenCode, authSlotID) {
+	switch harness {
+	case HarnessNameOpenCode, HarnessNamePi:
+	default:
+		return HarnessAuthProjectionPlan{}, nil
+	}
+	if authSlotIsDefaultForHarness(harness, authSlotID) {
 		return HarnessAuthProjectionPlan{}, nil
 	}
 	slot, err := store.GetAuthSlot(ctx, authSlotID)
 	if err != nil {
 		return HarnessAuthProjectionPlan{}, err
 	}
-	secretID, err := opencodeProjectionSecretID(slot.MetadataJSON)
+	secretID, err := slotProjectionSecretID(harness, slot.MetadataJSON)
 	if err != nil {
 		return HarnessAuthProjectionPlan{}, err
 	}
 	workspaceID = strings.TrimSpace(workspaceID)
 	if workspaceID == "" {
-		return HarnessAuthProjectionPlan{}, fmt.Errorf("%w: workspace_id is required for opencode secret projection", globaldb.ErrPermissionDenied)
+		return HarnessAuthProjectionPlan{}, fmt.Errorf("%w: workspace_id is required for %s secret projection", globaldb.ErrPermissionDenied, harness)
 	}
 	value, err := store.ProjectSecretWithGrant(ctx, d.secretBackend, secretID, globaldb.SecretGrantSubjectWorkspace, workspaceID)
 	if err != nil {
 		return HarnessAuthProjectionPlan{}, err
 	}
+	if harness == HarnessNamePi {
+		// pi secrets are a JSON object of provider env keys projected as an
+		// ari-owned env plan.
+		env, err := piProjectionEnvFromSecret(value)
+		if err != nil {
+			return HarnessAuthProjectionPlan{}, err
+		}
+		return HarnessAuthProjectionPlan{Owner: HarnessAuthProjectionOwnerAri, Kind: HarnessAuthProjectionEnv, Env: env, RiskLabels: []string{"provider_owned", "ari_projected_env_keys", "env_projection_downgrade_risk"}}, nil
+	}
 	return HarnessAuthProjectionPlan{Owner: HarnessAuthProjectionOwnerAri, Kind: HarnessAuthProjectionAuthContent, Env: map[string]string{"OPENCODE_AUTH_CONTENT": string(value)}, RiskLabels: []string{"provider_owned", "provider_hint_matching", "ari_projected_auth_content", "env_projection_downgrade_risk"}}, nil
 }
 
-func opencodeProjectionSecretID(metadataJSON string) (string, error) {
+func slotProjectionSecretID(harness, metadataJSON string) (string, error) {
 	var metadata map[string]string
 	if err := json.Unmarshal([]byte(defaultString(strings.TrimSpace(metadataJSON), "{}")), &metadata); err != nil {
 		return "", fmt.Errorf("%w: auth slot metadata json is invalid", globaldb.ErrInvalidInput)
 	}
 	secretID := strings.TrimSpace(metadata["projection_ref"])
 	if secretID == "" {
-		return "", fmt.Errorf("%w: opencode auth slot projection_ref is required", globaldb.ErrInvalidInput)
+		return "", fmt.Errorf("%w: %s auth slot projection_ref is required", globaldb.ErrInvalidInput, harness)
 	}
 	return secretID, nil
+}
+
+func piProjectionEnvFromSecret(value []byte) (map[string]string, error) {
+	var env map[string]string
+	if err := json.Unmarshal(value, &env); err != nil {
+		return nil, fmt.Errorf("%w: pi auth secret must be a JSON object of env keys", globaldb.ErrInvalidInput)
+	}
+	out := make(map[string]string, len(env))
+	for key, secret := range env {
+		key = strings.TrimSpace(key)
+		if key == "" || strings.TrimSpace(secret) == "" {
+			continue
+		}
+		out[key] = secret
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("%w: pi auth secret has no env keys", globaldb.ErrInvalidInput)
+	}
+	return out, nil
 }
 
 func storeFinalResponse(ctx context.Context, store *globaldb.Store, result HarnessCallResult, profile ...Profile) (string, error) {

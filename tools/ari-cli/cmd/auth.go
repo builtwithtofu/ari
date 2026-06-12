@@ -300,6 +300,8 @@ func runProviderLoginCommand(ctx context.Context, harness, method, provider, aut
 		command = exec.CommandContext(ctx, daemon.HarnessExecutable("claude", daemon.EnvClaudeExecutable), authProviderLoginArgs(harness, method, provider)...)
 	case daemon.HarnessNameOpenCode:
 		command = exec.CommandContext(ctx, daemon.HarnessExecutable("opencode", daemon.EnvOpenCodeExecutable), authProviderLoginArgs(harness, method, provider)...)
+	case daemon.HarnessNameGrok:
+		command = exec.CommandContext(ctx, daemon.HarnessExecutable("grok", daemon.EnvGrokExecutable), "login")
 	default:
 		return fmt.Errorf("provider login is not available for %s", strings.TrimSpace(harness))
 	}
@@ -334,6 +336,8 @@ func providerLoginEnv(harness, authSlotID string) ([]string, error) {
 		key = "CODEX_HOME"
 	case daemon.HarnessNameClaude:
 		key = "CLAUDE_CONFIG_DIR"
+	case daemon.HarnessNameGrok:
+		key = "GROK_HOME"
 	default:
 		return nil, nil
 	}
@@ -422,7 +426,10 @@ func authMethodRunsClientSide(harness, method string) bool {
 
 func authMethodIsProviderGuidance(harness, method string) bool {
 	harness = strings.TrimSpace(harness)
-	return method == "api_key" && (harness == daemon.HarnessNameCodex || harness == daemon.HarnessNameClaude)
+	if method == "api_key" && (harness == daemon.HarnessNameCodex || harness == daemon.HarnessNameClaude || harness == daemon.HarnessNameGrok) {
+		return true
+	}
+	return method == "provider_env_key" && harness == daemon.HarnessNamePi
 }
 
 type authLoginMethod struct {
@@ -438,6 +445,10 @@ func authLoginMethods(harness string) []authLoginMethod {
 		return []authLoginMethod{{Method: "browser", Label: "Claude account"}, {Method: "console", Label: "Claude Console account"}, {Method: "api_key", Label: "API key/helper setup guidance"}}
 	case daemon.HarnessNameOpenCode:
 		return []authLoginMethod{{Method: "opencode_interactive", Label: "OpenCode provider login"}}
+	case daemon.HarnessNameGrok:
+		return []authLoginMethod{{Method: "browser", Label: "Grok account / browser login"}, {Method: "device_code", Label: "Device code"}, {Method: "api_key", Label: "XAI_API_KEY setup guidance"}}
+	case daemon.HarnessNamePi:
+		return []authLoginMethod{{Method: "provider_env_key", Label: "Provider API key env setup guidance"}}
 	default:
 		return []authLoginMethod{{Method: "browser", Label: "Provider login"}}
 	}

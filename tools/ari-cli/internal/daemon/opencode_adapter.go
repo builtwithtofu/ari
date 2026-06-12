@@ -34,9 +34,10 @@ type (
 )
 
 type OpenCodeExecutor struct {
-	options opencodeExecutorOptions
-	mu      sync.Mutex
-	runs    map[string][]TimelineItem
+	options         opencodeExecutorOptions
+	mu              sync.Mutex
+	runs            map[string][]TimelineItem
+	deliveryOptions map[string]opencodeExecutorOptions
 }
 
 func NewOpenCodeExecutor(cwd string) *OpenCodeExecutor {
@@ -57,7 +58,7 @@ func newOpenCodeExecutor(options opencodeExecutorOptions) *OpenCodeExecutor {
 	if options.RunAuthCommand == nil {
 		options.RunAuthCommand = runOpenCodeAuthCommand
 	}
-	return &OpenCodeExecutor{options: options, runs: map[string][]TimelineItem{}}
+	return &OpenCodeExecutor{options: options, runs: map[string][]TimelineItem{}, deliveryOptions: map[string]opencodeExecutorOptions{}}
 }
 
 func (e *OpenCodeExecutor) AuthStatus(ctx context.Context, slot HarnessAuthSlot) (HarnessAuthStatus, error) {
@@ -102,15 +103,12 @@ func (e *OpenCodeExecutor) AuthLogout(ctx context.Context, slot HarnessAuthSlot)
 }
 
 func (e *OpenCodeExecutor) Descriptor() HarnessAdapterDescriptor {
-	deliveryCapabilities := []HarnessDeliveryCapability{}
-	if e != nil && strings.TrimSpace(e.options.DeliveryServerURL) != "" {
-		deliveryCapabilities = []HarnessDeliveryCapability{HarnessDeliveryVisiblePromptTurn}
-	}
 	return HarnessAdapterDescriptor{
 		Name:                    HarnessNameOpenCode,
 		Capabilities:            sharedHarnessRuntimeCapabilities(),
 		ObservationCapabilities: []HarnessObservationCapability{HarnessObservationUnsupported},
-		DeliveryCapabilities:    deliveryCapabilities,
+		DeliveryCapabilities:    []HarnessDeliveryCapability{HarnessDeliveryVisiblePromptTurn},
+		InvocationModes:         []HarnessInvocationMode{HarnessInvocationModeHeadless},
 		Auth: HarnessAuthDescriptor{
 			StatusCheck:        HarnessAuthSupportSupported,
 			Login:              HarnessAuthSupportPartial,
@@ -150,6 +148,16 @@ func (e *OpenCodeExecutor) Start(ctx context.Context, req ExecutorStartRequest) 
 	if workspaceID == "" {
 		return ExecutorRun{}, fmt.Errorf("workspace id is required")
 	}
+	for _, option := range req.Options {
+		switch typed := option.(type) {
+		case invocationModeOption:
+			if typed.mode != HarnessInvocationModeHeadless {
+				return ExecutorRun{}, &HarnessValidationError{Message: fmt.Sprintf("invocation mode %q is not supported by harness %s", typed.mode, HarnessNameOpenCode), Field: "invocation_mode"}
+			}
+		default:
+			return ExecutorRun{}, fmt.Errorf("unsupported opencode option %T", option)
+		}
+	}
 	options := e.options
 	if strings.TrimSpace(req.Model) != "" {
 		options.Model = strings.TrimSpace(req.Model)
@@ -170,8 +178,13 @@ func (e *OpenCodeExecutor) Start(ctx context.Context, req ExecutorStartRequest) 
 	items := opencodeTimelineItemsFromEvents(workspaceID, parsed)
 	e.mu.Lock()
 	e.runs[parsed.SessionID] = items
+	e.deliveryOptions[parsed.SessionID] = options
 	e.mu.Unlock()
-	return ExecutorRun{RunID: parsed.SessionID, SessionID: parsed.SessionID, Executor: HarnessNameOpenCode, ProviderSessionID: parsed.SessionID, ProviderRunID: parsed.SessionID, ExitCode: commandResult.ExitCode, ProcessSample: commandResult.ProcessSample, CapabilityNames: harnessCapabilitiesToStrings(e.Descriptor().Capabilities)}, nil
+	run := ExecutorRun{RunID: parsed.SessionID, SessionID: parsed.SessionID, Executor: HarnessNameOpenCode, ProviderSessionID: parsed.SessionID, ProviderRunID: parsed.SessionID, ExitCode: commandResult.ExitCode, ProcessSample: commandResult.ProcessSample, CapabilityNames: harnessCapabilitiesToStrings(e.Descriptor().Capabilities), Persistence: HarnessSessionPersistent, ResumeMode: HarnessResumeHTTPAPI}
+	if cursor, err := json.Marshal(map[string]string{"session_id": parsed.SessionID}); err == nil {
+		run.ResumeCursor = cursor
+	}
+	return run, nil
 }
 
 func openCodeAuthContentProjectionReady(projection HarnessAuthProjectionPlan) bool {
@@ -205,14 +218,21 @@ func (e *OpenCodeExecutor) AttemptWorkspaceDelivery(ctx context.Context, attempt
 	if e == nil {
 		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("executor is required")
 	}
-	serverURL := strings.TrimRight(strings.TrimSpace(e.options.DeliveryServerURL), "/")
-	if serverURL == "" {
-		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("opencode delivery server url is required")
-	}
 	sessionID := strings.TrimSpace(attempt.Delivery.TargetID)
 	if sessionID == "" || strings.TrimSpace(attempt.Delivery.DeliveryID) == "" || len(attempt.Delivery.EventIDs) == 0 {
 		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("delivery target session, delivery id, and event ids are required")
 	}
+	deliveryOptions := e.options
+	e.mu.Lock()
+	if options, ok := e.deliveryOptions[sessionID]; ok {
+		deliveryOptions = options
+	}
+	e.mu.Unlock()
+	serverURL, stopServer, err := e.deliveryServerURL(ctx, deliveryOptions)
+	if err != nil {
+		return WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptRetry, LastError: err.Error()}, err
+	}
+	defer stopServer()
 	prompt, err := postOpenCodeDeliveryPrompt(ctx, serverURL, sessionID, attempt)
 	if err != nil {
 		return WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptRetry, LastError: err.Error()}, err
@@ -224,6 +244,51 @@ func (e *OpenCodeExecutor) AttemptWorkspaceDelivery(ctx context.Context, attempt
 	return result, nil
 }
 
+// deliveryServerURL resolves the opencode server endpoint for a delivery
+// attempt. A configured DeliveryServerURL (tests, externally managed servers)
+// is used as-is; otherwise the adapter starts a bounded `opencode serve`
+// process for the attempt and stops it afterwards.
+func (e *OpenCodeExecutor) deliveryServerURL(ctx context.Context, options opencodeExecutorOptions) (string, func(), error) {
+	if configured := strings.TrimRight(strings.TrimSpace(options.DeliveryServerURL), "/"); configured != "" {
+		return configured, func() {}, nil
+	}
+	return startOpenCodeDeliveryServer(ctx, options)
+}
+
+func startOpenCodeDeliveryServer(ctx context.Context, options opencodeExecutorOptions) (string, func(), error) {
+	executable := strings.TrimSpace(options.Executable)
+	if executable == "" {
+		executable = "opencode"
+	}
+	path, err := exec.LookPath(executable)
+	if err != nil {
+		return "", nil, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+	}
+	command := exec.CommandContext(ctx, path, "serve", "--port", "0", "--hostname", "127.0.0.1")
+	command.Dir = strings.TrimSpace(options.Cwd)
+	command.Env = commandEnvWithProjection(options.AuthProjection)
+	pipeReader, pipeWriter := io.Pipe()
+	command.Stdout = pipeWriter
+	command.Stderr = pipeWriter
+	if err := command.Start(); err != nil {
+		_ = pipeWriter.Close()
+		_ = pipeReader.Close()
+		return "", nil, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "start_failed", Executable: executable, Probe: executable + " serve", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: true}
+	}
+	stop := func() {
+		_ = command.Process.Kill()
+		_ = pipeReader.Close()
+		_ = pipeWriter.Close()
+		_ = command.Wait()
+	}
+	serverURL, err := readOpenCodeServerURL(ctx, pipeReader)
+	if err != nil {
+		stop()
+		return "", nil, fmt.Errorf("start opencode delivery server: %w", err)
+	}
+	return strings.TrimRight(serverURL, "/"), stop, nil
+}
+
 type openCodeDeliveryPromptResponse struct {
 	SessionID string `json:"session_id"`
 	PromptID  string `json:"prompt_id"`
@@ -233,7 +298,7 @@ type openCodeDeliveryPromptResponse struct {
 var openCodeDeliveryHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 func postOpenCodeDeliveryPrompt(ctx context.Context, serverURL, sessionID string, attempt WorkspaceDeliveryAttempt) (openCodeDeliveryPromptResponse, error) {
-	body, err := json.Marshal(map[string]string{"text": opencodeWorkspaceDeliveryText(attempt), "delivery": "queue", "idempotency_key": strings.TrimSpace(attempt.Delivery.DeliveryID)})
+	body, err := json.Marshal(map[string]string{"prompt": opencodeWorkspaceDeliveryText(attempt), "delivery": "queue", "id": strings.TrimSpace(attempt.Delivery.DeliveryID)})
 	if err != nil {
 		return openCodeDeliveryPromptResponse{}, fmt.Errorf("encode opencode delivery prompt: %w", err)
 	}
@@ -251,13 +316,18 @@ func postOpenCodeDeliveryPrompt(ctx context.Context, serverURL, sessionID string
 	if response.StatusCode != http.StatusOK {
 		return openCodeDeliveryPromptResponse{}, fmt.Errorf("opencode prompt delivery returned HTTP %d", response.StatusCode)
 	}
-	var prompt openCodeDeliveryPromptResponse
-	if err := json.NewDecoder(response.Body).Decode(&prompt); err != nil {
+	var payload struct {
+		openCodeDeliveryPromptResponse
+		Data openCodeDeliveryPromptResponse `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
 		return openCodeDeliveryPromptResponse{}, fmt.Errorf("decode opencode prompt delivery response: %w", err)
 	}
-	if strings.TrimSpace(prompt.PromptID) == "" {
-		return openCodeDeliveryPromptResponse{}, fmt.Errorf("opencode prompt delivery response missing prompt id")
+	prompt := payload.openCodeDeliveryPromptResponse
+	if strings.TrimSpace(prompt.PromptID) == "" && strings.TrimSpace(payload.Data.PromptID) != "" {
+		prompt = payload.Data
 	}
+	prompt.PromptID = strings.TrimSpace(defaultString(prompt.PromptID, attempt.Delivery.DeliveryID))
 	return prompt, nil
 }
 
@@ -281,39 +351,25 @@ func opencodeWorkspaceDeliveryText(attempt WorkspaceDeliveryAttempt) string {
 }
 
 func fetchOpenCodeDeliveryCompletion(ctx context.Context, serverURL, sessionID, promptID string) (WorkspaceDeliveryAttemptResult, error) {
-	endpoint := serverURL + "/api/session/" + url.PathEscape(sessionID) + "/events"
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	endpoint := serverURL + "/api/session/" + url.PathEscape(sessionID) + "/wait"
+	body, err := json.Marshal(map[string]string{"prompt_id": strings.TrimSpace(promptID)})
+	if err != nil {
+		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("encode opencode wait request: %w", err)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return WorkspaceDeliveryAttemptResult{}, err
 	}
+	request.Header.Set("Content-Type", "application/json")
 	response, err := openCodeDeliveryHTTPClient.Do(request)
 	if err != nil {
 		return WorkspaceDeliveryAttemptResult{}, err
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
-		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("opencode delivery events returned HTTP %d", response.StatusCode)
+		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("opencode delivery wait returned HTTP %d", response.StatusCode)
 	}
-	var payload struct {
-		Events []struct {
-			Type      string `json:"type"`
-			SessionID string `json:"session_id"`
-			PromptID  string `json:"prompt_id"`
-		} `json:"events"`
-	}
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
-		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("decode opencode delivery events: %w", err)
-	}
-	for _, event := range payload.Events {
-		if strings.TrimSpace(event.PromptID) != strings.TrimSpace(promptID) {
-			continue
-		}
-		switch strings.TrimSpace(event.Type) {
-		case "prompt.completed", "session.idle":
-			return WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptCompleted}, nil
-		}
-	}
-	return WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptRetry, LastError: "opencode prompt delivery admitted without completion event"}, nil
+	return WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptCompleted}, nil
 }
 
 type opencodeParsedEvents struct {

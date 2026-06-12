@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -311,10 +312,16 @@ type ExecutorRun struct {
 	Executor          string
 	ProviderSessionID string
 	ProviderRunID     string
+	ProviderThreadID  string
 	PID               int
 	ExitCode          *int
 	ProcessSample     *ProcessMetricsSample
 	CapabilityNames   []string
+	// Persistence, ResumeMode, and ResumeCursor are the adapter-reported
+	// session-ref facts. Adapters that leave them empty surface as unknown.
+	Persistence  HarnessSessionPersistence
+	ResumeMode   HarnessResumeMode
+	ResumeCursor json.RawMessage
 }
 
 type Executor interface {
@@ -395,7 +402,7 @@ func (e *PTYExecutor) Start(ctx context.Context, req ExecutorStartRequest) (Exec
 			e.sink(ariRunID, []TimelineItem{sinkItem})
 		}
 	}()
-	return ExecutorRun{RunID: runID, SessionID: runID, Executor: "pty", ProviderSessionID: runID, ProviderRunID: runID, PID: proc.PID(), CapabilityNames: []string{"timeline", "pty"}}, nil
+	return ExecutorRun{RunID: runID, SessionID: runID, Executor: "pty", ProviderSessionID: runID, ProviderRunID: runID, PID: proc.PID(), CapabilityNames: []string{"timeline", "pty"}, Persistence: HarnessSessionEphemeral, ResumeMode: HarnessResumeNone}, nil
 }
 
 func (e *PTYExecutor) Items(ctx context.Context, runID string) ([]TimelineItem, error) {

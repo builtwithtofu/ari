@@ -78,6 +78,21 @@ OpenCode:
 - If session creation cannot carry system behavior, create the session and apply the profile prompt through the native message/system channel before user task/context delivery.
 - Use CLI `--agent` plus generated agent configuration only as a fallback adapter strategy, not the primary orchestration path.
 
+pi (pi.dev):
+
+- Prefer `pi --mode rpc` for sticky/server orchestration because it separates typed commands (prompt, steer, follow_up, switch_session) from the NDJSON event stream; use `pi -p --mode json` for headless calls.
+- Address sessions with an Ari-chosen `--session-id`; pi creates the session file if missing, so later turns and deliveries reattach by re-invoking with the same id.
+- Map Ari profile/session behavior to `--system-prompt` (replacement) per the default replacement rule.
+- Auth is provider env keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, ...); named slots use Ari-owned env projection through the secrets boundary. Status is a key-presence probe and is declared partial.
+- Parse only known event types: pi setups with extensions emit `extension_ui_request` and other noise on stdout.
+
+Grok CLI (xAI):
+
+- Headless `grok -p --output-format streaming-json` is the only supported invocation mode; `-s/--session-id` is TUI-only and ignored headless, so the provider session id is captured from the terminal `end` event and later turns use `grok -r <session-id>`.
+- Map Ari profile/session behavior to `--rules` (additive system prompt channel) so grok keeps its native tool behavior; `--system-prompt-override` is the explicit replacement escape hatch.
+- Auth state lives under `GROK_HOME` (documented config-root override), so named slots project a per-slot `GROK_HOME` like Codex; `grok login --device-auth` provides the headless device-code flow and `XAI_API_KEY` is the API fallback.
+- Headless output carries no token usage, so grok does not declare measured token telemetry; capability checks must surface that rather than fabricate usage.
+
 Future harnesses:
 
 - A harness should declare how it maps Ari base behavior, user task messages, context excerpts, provider sessions, final responses, and usage telemetry.
@@ -86,7 +101,7 @@ Future harnesses:
 
 ### Supported harness delivery constraints
 
-Ari supports delivery adapters for Claude Code, Codex, and OpenCode only. SoloTerm is prior art for process supervision, not a supported harness.
+Ari supports delivery adapters for Claude Code, Codex, OpenCode, pi, and the Grok CLI. SoloTerm is prior art for process supervision, not a supported harness.
 
 Architectural constraints:
 
@@ -103,6 +118,8 @@ Architectural constraints:
 | OpenCode | Server/API prompt delivery to an existing session, with Ari-generated idempotency and Ari-selected steer/queue policy. | Prompt response proves admission. OpenCode events, idle/step events, or message/context reconciliation prove completion. | CLI/generated agent config only when API delivery is unavailable and the input remains visible task content. | OpenCode prompt queues/events are not Ari's durable queue. Do not rely on an unavailable wait endpoint as completion proof. |
 | Codex | App-server JSON-RPC: resume/start thread, then `turn/start`; use `turn/steer` only for intentional same-turn steering with the expected turn id. | `turn/completed` is terminal. `turn/start` only proves acceptance. | `codex exec resume` for weaker one-shot delivery when app-server is unavailable. | Do not call provider APIs directly. Do not treat item/progress events as terminal delivery completion. |
 | Claude Code | Ari-managed native `claude` process attached to a daemon-owned PTY. Ari sends visible user turns only at safe idle/input boundaries and records terminal output. | Managed-process state, terminal/output markers, idle/readiness detection, or adapter-classified terminal outcome. Terminal write success is not completion. | `claude --bg <prompt>` for detached background startup when Ari does not need a PTY handle. Agent SDK only by explicit non-`-p` decision. | No print mode. No raw input while Claude is busy, awaiting unsafe permission input, or in an unknown screen state. Managed PTY requires safe input framing, output capture, restart/attach, and deterministic tests. |
+| pi | `pi --mode rpc --session-id <id>`: send a `prompt` command as the visible user turn and read the NDJSON event stream. | The `prompt` response proves admission; `agent_end` is terminal. `error`/`extension_error` events classify failure. | Headless `pi -p --mode json --session-id <id>` one-shot when RPC delivery is unavailable. | pi sessions are addressed by Ari-chosen session ids; ignore unknown event types from extensions; do not treat `message_update` deltas as completion. |
+| Grok CLI | `grok -r <session-id> -p <turn> --output-format streaming-json`: resume the captured provider session with the delivery turn as the visible prompt. | The `end` event is terminal. `error` events classify failure; output without `end` retries. | None: `-s` is TUI-only headless, so resume-by-id is the only reattach channel. | Provider assigns the session id; Ari must capture it from the start `end` event before delivery is possible. No token usage in headless output. |
 
 Adapters must report Ari outcomes: pending, attempted, completed, failed, retryable, acknowledged, and canceled.
 

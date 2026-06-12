@@ -31,11 +31,27 @@ func NewDefaultHarnessRegistry() *HarnessRegistry {
 		panic(fmt.Sprintf("register default Claude harness: %v", err))
 	}
 	if err := registry.RegisterWithDescriptor(HarnessNameOpenCode, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
-		_ = req
 		_ = sink
-		return NewOpenCodeExecutor(primaryFolder), nil
+		executor := NewOpenCodeExecutor(primaryFolder)
+		executor.options.AuthProjection = req.AuthProjection
+		return executor, nil
 	}, NewOpenCodeExecutor("").Descriptor()); err != nil {
 		panic(fmt.Sprintf("register default OpenCode harness: %v", err))
+	}
+	if err := registry.RegisterWithDescriptor(HarnessNamePi, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = sink
+		executor := NewPiExecutor(primaryFolder)
+		executor.options.AuthProjection = req.AuthProjection
+		return executor, nil
+	}, NewPiExecutor("").Descriptor()); err != nil {
+		panic(fmt.Sprintf("register default pi harness: %v", err))
+	}
+	if err := registry.RegisterWithDescriptor(HarnessNameGrok, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = sink
+		return NewGrokExecutor(primaryFolder), nil
+	}, NewGrokExecutor("").Descriptor()); err != nil {
+		panic(fmt.Sprintf("register default grok harness: %v", err))
 	}
 	if err := registry.Register(HarnessNamePTY, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		return NewPTYExecutorWithSink(req.Command, req.Args, primaryFolder, sink), nil
@@ -111,6 +127,7 @@ func harnessAdapterDescriptorHasContract(descriptor HarnessAdapterDescriptor) bo
 		len(descriptor.Capabilities) > 0 ||
 		len(descriptor.ObservationCapabilities) > 0 ||
 		len(descriptor.DeliveryCapabilities) > 0 ||
+		len(descriptor.InvocationModes) > 0 ||
 		descriptor.Auth.StatusCheck != ""
 }
 

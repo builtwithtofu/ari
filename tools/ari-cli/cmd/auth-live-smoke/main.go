@@ -30,7 +30,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
-	for _, r := range []result{smokeClaude(tmp), smokeCodex(tmp), smokeOpenCode(tmp)} {
+	for _, r := range []result{smokeClaude(tmp), smokeCodex(tmp), smokeOpenCode(tmp), smokePi(tmp), smokeGrok(tmp)} {
 		fmt.Printf("%s: %s pathway=%s %s\n", r.harness, r.status, r.pathway, r.detail)
 	}
 }
@@ -74,6 +74,25 @@ func smokeOpenCode(tmp string) result {
 	}
 	out, err := runOpenCodeProviderAuth(tmp, path)
 	return classify("opencode", "opencode_provider_auth", out, err)
+}
+
+func smokePi(tmp string) result {
+	if _, ok := executable("pi", "ARI_PI_EXECUTABLE"); !ok {
+		return result{"pi", "skipped", "pi_provider_env_key", "executable not found"}
+	}
+	// pi has no provider login command; auth is provider env keys. There is
+	// no OAuth initiation to smoke, so report the pathway as unsupported.
+	_ = tmp
+	return result{"pi", "unsupported", "pi_provider_env_key", "pi auth is provider env keys; no login flow to initiate"}
+}
+
+func smokeGrok(tmp string) result {
+	path, ok := executable("grok", "ARI_GROK_EXECUTABLE")
+	if !ok {
+		return result{"grok", "skipped", "grok_device_code", "executable not found"}
+	}
+	out, err := runBounded(tmp, map[string]string{"GROK_HOME": filepath.Join(tmp, "grok")}, path, "login", "--device-auth")
+	return classify("grok", "grok_device_code", out, err)
 }
 
 func executable(name, env string) (string, bool) {

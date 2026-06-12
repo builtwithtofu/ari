@@ -36,7 +36,7 @@ func TestClaudeStartCarriesAuthProjectionToCommandOptions(t *testing.T) {
 	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunCommand: runner.Run})
 	projection := HarnessAuthProjectionPlan{Owner: HarnessAuthProjectionOwnerNative, Kind: HarnessAuthProjectionConfigRoot, Env: map[string]string{"CLAUDE_CONFIG_DIR": "/tmp/ari/claude-work"}}
 
-	_, err := executor.Start(context.Background(), ExecutorStartRequest{WorkspaceID: "ws-1", ContextPacket: `{"context_packet_id":"ctx_123"}`, Options: []HarnessOption{ClaudeWithInvocationMode(HarnessInvocationModeHeadless)}, AuthProjection: projection})
+	_, err := executor.Start(context.Background(), ExecutorStartRequest{WorkspaceID: "ws-1", ContextPacket: `{"context_packet_id":"ctx_123"}`, Options: []HarnessOption{WithInvocationMode(HarnessInvocationModeHeadless)}, AuthProjection: projection})
 	if err != nil {
 		t.Fatalf("Start returned error: %v", err)
 	}
@@ -78,6 +78,20 @@ func TestHarnessCallPassesAuthProjectionToExecutorStart(t *testing.T) {
 	}
 	if runner.authProjection.Kind != HarnessAuthProjectionAuthContent || runner.authProjection.Env["OPENCODE_AUTH_CONTENT"] == "" {
 		t.Fatalf("projection = %#v, want harness call projection passed to OpenCode executor", runner.authProjection)
+	}
+}
+
+func TestGrokStartCarriesAuthProjectionToCommandOptions(t *testing.T) {
+	runner := &fakeGrokRunner{output: []byte(`{"type":"end","stopReason":"EndTurn","sessionId":"grok-sess-1","requestId":"req-1"}`)}
+	executor := NewGrokExecutorForTest(grokExecutorOptions{Executable: "grok", Cwd: "/repo", RunCommand: runner.Run})
+	projection := HarnessAuthProjectionPlan{Owner: HarnessAuthProjectionOwnerNative, Kind: HarnessAuthProjectionConfigRoot, Env: map[string]string{"GROK_HOME": "/tmp/ari/grok-work"}}
+
+	_, err := executor.Start(context.Background(), ExecutorStartRequest{WorkspaceID: "ws-1", ContextPacket: `{"context_packet_id":"ctx_123"}`, AuthProjection: projection})
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	if runner.authProjection.Env["GROK_HOME"] != "/tmp/ari/grok-work" || runner.authProjection.Kind != HarnessAuthProjectionConfigRoot {
+		t.Fatalf("projection = %#v, want Grok home projection on command options", runner.authProjection)
 	}
 }
 

@@ -97,21 +97,54 @@ func TestOpenCodeExecutorAttemptsServerPromptDeliveryAgainstFakeHandler(t *testi
 	}
 }
 
+func TestOpenCodeExecutorDeliversThroughManagedServeProcess(t *testing.T) {
+	// No DeliveryServerURL configured: the adapter must start a bounded fake
+	// `opencode serve` process itself, deliver, and stop it afterwards.
+	fake := buildFakeHarnessExecutable(t)
+	t.Setenv(fakeharness.EnvHarness, "opencode")
+	t.Setenv(fakeharness.EnvMode, "authenticated")
+	executor := NewOpenCodeExecutorForTest(opencodeExecutorOptions{Executable: fake, Cwd: t.TempDir()})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(cancel)
+	result, err := executor.AttemptWorkspaceDelivery(ctx, WorkspaceDeliveryAttempt{Delivery: globaldb.PendingDelivery{DeliveryID: "pd-opencode", WorkspaceID: "ws-1", SubscriptionID: "sub-1", TargetType: "harness_session", TargetID: "sess_123", EventIDs: []string{"we-1"}, Status: "attempted", Attempts: 1}})
+	if err != nil {
+		t.Fatalf("AttemptWorkspaceDelivery returned error: %v", err)
+	}
+	if result.Status != WorkspaceDeliveryAttemptCompleted || result.LastError != "" {
+		t.Fatalf("delivery result = %#v, want completed delivery through managed serve process", result)
+	}
+}
+
+func TestOpenCodeExecutorDeliversWithStartedAuthProjection(t *testing.T) {
+	projection := HarnessAuthProjectionPlan{Owner: HarnessAuthProjectionOwnerAri, Kind: HarnessAuthProjectionAuthContent, Env: map[string]string{"OPENCODE_AUTH_CONTENT": `{"provider":"test"}`}}
+	executor := NewOpenCodeExecutorForTest(opencodeExecutorOptions{Executable: "opencode", Cwd: "/repo", RunCommand: (&fakeOpenCodeRunner{output: []byte(strings.Join([]string{`{"type":"session.status","properties":{"sessionID":"sess_123","status":{"type":"busy"}}}`, `{"type":"session.status","properties":{"sessionID":"sess_123","status":{"type":"idle"}}}`}, "\n"))}).Run})
+	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
+
+	_, err := executor.Start(context.Background(), ExecutorStartRequest{WorkspaceID: "ws-1", ContextPacket: string(renderContextPacket(packet)), AuthProjection: projection})
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	stored, ok := executor.deliveryOptions["sess_123"]
+	if !ok || stored.AuthProjection.Kind != HarnessAuthProjectionAuthContent || stored.AuthProjection.Env["OPENCODE_AUTH_CONTENT"] == "" {
+		t.Fatalf("stored delivery options = %#v (ok=%v), want started auth projection preserved for deliveries", stored, ok)
+	}
+}
+
 func TestOpenCodeDeliveryHTTPClientHasTimeout(t *testing.T) {
 	if openCodeDeliveryHTTPClient == nil || openCodeDeliveryHTTPClient.Timeout <= 0 {
 		t.Fatalf("openCodeDeliveryHTTPClient = %#v, want explicit timeout", openCodeDeliveryHTTPClient)
 	}
 }
 
-func TestOpenCodeExecutorAdvertisesDeliveryOnlyWithServerURL(t *testing.T) {
-	withoutServer := NewOpenCodeExecutorForTest(opencodeExecutorOptions{})
-	if got := withoutServer.Descriptor().DeliveryCapabilities; len(got) != 0 {
-		t.Fatalf("delivery capabilities without server = %#v, want none", got)
-	}
-
-	withServer := NewOpenCodeExecutorForTest(opencodeExecutorOptions{DeliveryServerURL: "http://127.0.0.1:3000"})
-	if got := withServer.Descriptor().DeliveryCapabilities; len(got) != 1 || got[0] != HarnessDeliveryVisiblePromptTurn {
-		t.Fatalf("delivery capabilities with server = %#v, want visible prompt turn", got)
+func TestOpenCodeExecutorAlwaysAdvertisesPromptTurnDelivery(t *testing.T) {
+	// Delivery no longer depends on a pre-configured server URL: attempts
+	// without one start a bounded `opencode serve` process themselves.
+	for _, options := range []opencodeExecutorOptions{{}, {DeliveryServerURL: "http://127.0.0.1:3000"}} {
+		executor := NewOpenCodeExecutorForTest(options)
+		if got := executor.Descriptor().DeliveryCapabilities; len(got) != 1 || got[0] != HarnessDeliveryVisiblePromptTurn {
+			t.Fatalf("delivery capabilities (server url %q) = %#v, want visible prompt turn", options.DeliveryServerURL, got)
+		}
 	}
 }
 
