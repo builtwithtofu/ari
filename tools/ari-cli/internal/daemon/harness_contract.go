@@ -332,8 +332,20 @@ type HarnessAdapterDescriptor struct {
 	ObservationCapabilities []HarnessObservationCapability
 	DeliveryCapabilities    []HarnessDeliveryCapability
 	InvocationModes         []HarnessInvocationMode
+	AuthProjection          HarnessAuthProjectionStyle
 	Auth                    HarnessAuthDescriptor
 }
+
+// HarnessAuthProjectionStyle declares how Ari projects named auth slot
+// secrets into a harness invocation. Empty means the harness never needs
+// Ari-owned secret projection.
+type HarnessAuthProjectionStyle string
+
+const (
+	HarnessAuthProjectionStyleNone        HarnessAuthProjectionStyle = ""
+	HarnessAuthProjectionStyleEnvKeys     HarnessAuthProjectionStyle = "env_keys"
+	HarnessAuthProjectionStyleAuthContent HarnessAuthProjectionStyle = "auth_content"
+)
 
 func harnessInvocationModesContain(modes []HarnessInvocationMode, target HarnessInvocationMode) bool {
 	for _, mode := range modes {

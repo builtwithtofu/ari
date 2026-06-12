@@ -1144,6 +1144,17 @@ func (d *Daemon) harnessDisplayName(harness string) string {
 	return harness
 }
 
+func (d *Daemon) harnessAuthProjectionStyle(harness string) HarnessAuthProjectionStyle {
+	if d == nil {
+		return HarnessAuthProjectionStyleNone
+	}
+	descriptor, ok := d.harnessRegistry.ResolveDescriptor(strings.TrimSpace(harness))
+	if !ok {
+		return HarnessAuthProjectionStyleNone
+	}
+	return descriptor.AuthProjection
+}
+
 func (d *Daemon) harnessAuthStatus(ctx context.Context, store *globaldb.Store, req HarnessAuthStatusRequest) (HarnessAuthStatusResponse, error) {
 	primaryFolder := ""
 	if strings.TrimSpace(req.WorkspaceID) != "" {
@@ -1218,7 +1229,7 @@ func (d *Daemon) harnessAuthStatus(ctx context.Context, store *globaldb.Store, r
 			}
 			return HarnessAuthStatusResponse{}, err
 		}
-		if status.Status == HarnessAuthAuthenticated && namedSlotMissingProjection(storedByID[slot.AuthSlotID]) {
+		if status.Status == HarnessAuthAuthenticated && d.namedSlotMissingProjection(storedByID[slot.AuthSlotID]) {
 			status = NewHarnessAuthRequired(harness, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, Method: "ari_secret_projection_required", SecretOwnedBy: harness})
 		}
 		if err := storePersistAuthStatus(ctx, store, storedByID, slot.AuthSlotID, status.Status); err != nil {
@@ -1230,11 +1241,9 @@ func (d *Daemon) harnessAuthStatus(ctx context.Context, store *globaldb.Store, r
 	return HarnessAuthStatusResponse{Statuses: statuses}, nil
 }
 
-func namedSlotMissingProjection(slot globaldb.AuthSlot) bool {
+func (d *Daemon) namedSlotMissingProjection(slot globaldb.AuthSlot) bool {
 	harness := strings.TrimSpace(slot.Harness)
-	switch harness {
-	case HarnessNameOpenCode, HarnessNamePi:
-	default:
+	if d.harnessAuthProjectionStyle(harness) == HarnessAuthProjectionStyleNone {
 		return false
 	}
 	if authSlotIsDefaultForHarness(harness, slot.AuthSlotID) {
@@ -1296,7 +1305,7 @@ func (d *Daemon) removeAuthSlot(ctx context.Context, store *globaldb.Store, req 
 	if authSlotID == "" {
 		return AuthSlotRemoveResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "auth_slot_id is required", map[string]any{"reason": "missing_auth_slot_id"})
 	}
-	if stored, err := store.GetAuthSlot(ctx, authSlotID); err == nil && (stored.Harness == HarnessNameOpenCode || stored.Harness == HarnessNamePi) {
+	if stored, err := store.GetAuthSlot(ctx, authSlotID); err == nil && d.harnessAuthProjectionStyle(stored.Harness) != HarnessAuthProjectionStyleNone {
 		if secretID, err := slotProjectionSecretID(stored.Harness, stored.MetadataJSON); err == nil {
 			if err := store.DeleteSecret(ctx, d.secretBackend, secretID); err != nil && !errors.Is(err, globaldb.ErrNotFound) {
 				return AuthSlotRemoveResponse{}, mapWorkspaceStoreError(err, secretID)
@@ -2344,9 +2353,8 @@ func authSlotIDFromProfiles(profile ...Profile) string {
 func (d *Daemon) authProjectionForStart(ctx context.Context, store *globaldb.Store, harness, workspaceID, authSlotID string) (HarnessAuthProjectionPlan, error) {
 	harness = strings.TrimSpace(harness)
 	authSlotID = strings.TrimSpace(authSlotID)
-	switch harness {
-	case HarnessNameOpenCode, HarnessNamePi:
-	default:
+	style := d.harnessAuthProjectionStyle(harness)
+	if style == HarnessAuthProjectionStyleNone {
 		return HarnessAuthProjectionPlan{}, nil
 	}
 	if authSlotIsDefaultForHarness(harness, authSlotID) {
@@ -2368,9 +2376,9 @@ func (d *Daemon) authProjectionForStart(ctx context.Context, store *globaldb.Sto
 	if err != nil {
 		return HarnessAuthProjectionPlan{}, err
 	}
-	if harness == HarnessNamePi {
-		// pi secrets are a JSON object of provider env keys projected as an
-		// ari-owned env plan.
+	if style == HarnessAuthProjectionStyleEnvKeys {
+		// env-keys secrets are a JSON object of provider env keys projected
+		// as an ari-owned env plan.
 		env, err := piProjectionEnvFromSecret(value)
 		if err != nil {
 			return HarnessAuthProjectionPlan{}, err

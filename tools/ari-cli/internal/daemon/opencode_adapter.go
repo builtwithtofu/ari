@@ -110,6 +110,7 @@ func (e *OpenCodeExecutor) Descriptor() HarnessAdapterDescriptor {
 		ObservationCapabilities: []HarnessObservationCapability{HarnessObservationUnsupported},
 		DeliveryCapabilities:    []HarnessDeliveryCapability{HarnessDeliveryVisiblePromptTurn},
 		InvocationModes:         []HarnessInvocationMode{HarnessInvocationModeHeadless},
+		AuthProjection:          HarnessAuthProjectionStyleAuthContent,
 		Auth: HarnessAuthDescriptor{
 			StatusCheck:        HarnessAuthSupportSupported,
 			Login:              HarnessAuthSupportPartial,

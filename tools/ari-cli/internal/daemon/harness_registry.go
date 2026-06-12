@@ -129,6 +129,7 @@ func harnessAdapterDescriptorHasContract(descriptor HarnessAdapterDescriptor) bo
 		len(descriptor.ObservationCapabilities) > 0 ||
 		len(descriptor.DeliveryCapabilities) > 0 ||
 		len(descriptor.InvocationModes) > 0 ||
+		descriptor.AuthProjection != HarnessAuthProjectionStyleNone ||
 		descriptor.Auth.StatusCheck != ""
 }
 

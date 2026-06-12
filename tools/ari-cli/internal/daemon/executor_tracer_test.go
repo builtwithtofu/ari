@@ -488,12 +488,12 @@ func TestAuthStatusPersistsCodexNamedSlotReadiness(t *testing.T) {
 
 func TestAuthStatusDoesNotReportOpenCodeNamedSlotReadyWithoutProjection(t *testing.T) {
 	registry := NewHarnessRegistry()
-	if err := registry.Register(HarnessNameOpenCode, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	if err := registry.RegisterWithDescriptor(HarnessNameOpenCode, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
 		return &capturingHarness{name: HarnessNameOpenCode, authStatuses: map[string]HarnessAuthState{"opencode-work": HarnessAuthAuthenticated}}, nil
-	}); err != nil {
+	}, HarnessAdapterDescriptor{AuthProjection: HarnessAuthProjectionStyleAuthContent}); err != nil {
 		t.Fatalf("register harness: %v", err)
 	}
 	daemon := &Daemon{harnessRegistry: registry}
@@ -1264,17 +1264,18 @@ func TestOpenCodeProjectionDeniedOutsideGrantedWorkspace(t *testing.T) {
 }
 
 func TestNamedSlotMissingProjectionCoversOpenCodeAndPi(t *testing.T) {
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	for _, harness := range []string{HarnessNameOpenCode, HarnessNamePi} {
 		slot := globaldb.AuthSlot{AuthSlotID: harness + "-work", Harness: harness, MetadataJSON: `{}`}
-		if !namedSlotMissingProjection(slot) {
+		if !d.namedSlotMissingProjection(slot) {
 			t.Fatalf("namedSlotMissingProjection(%s) = false, want missing projection detected", harness)
 		}
 		slot.MetadataJSON = `{"projection_ref":"secret_123"}`
-		if namedSlotMissingProjection(slot) {
+		if d.namedSlotMissingProjection(slot) {
 			t.Fatalf("namedSlotMissingProjection(%s with ref) = true, want projection accepted", harness)
 		}
 	}
-	if namedSlotMissingProjection(globaldb.AuthSlot{AuthSlotID: "grok-work", Harness: HarnessNameGrok, MetadataJSON: `{}`}) {
+	if d.namedSlotMissingProjection(globaldb.AuthSlot{AuthSlotID: "grok-work", Harness: HarnessNameGrok, MetadataJSON: `{}`}) {
 		t.Fatal("namedSlotMissingProjection(grok) = true, want unsupported harness ignored")
 	}
 }

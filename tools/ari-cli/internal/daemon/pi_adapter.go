@@ -116,6 +116,7 @@ func (e *PiExecutor) Descriptor() HarnessAdapterDescriptor {
 		ObservationCapabilities: []HarnessObservationCapability{HarnessObservationEventStream},
 		DeliveryCapabilities:    []HarnessDeliveryCapability{HarnessDeliveryVisiblePromptTurn},
 		InvocationModes:         []HarnessInvocationMode{HarnessInvocationModeHeadless, HarnessInvocationModeServer},
+		AuthProjection:          HarnessAuthProjectionStyleEnvKeys,
 		Auth: HarnessAuthDescriptor{
 			StatusCheck:        HarnessAuthSupportPartial,
 			Login:              HarnessAuthSupportPartial,
