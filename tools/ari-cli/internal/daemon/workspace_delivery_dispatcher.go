@@ -113,7 +113,15 @@ func (d *harnessWorkspaceDeliveryDispatcher) rehydrateStickyDeliveryTarget(ctx c
 	if session.Usage != globaldb.HarnessSessionUsageSticky || !stickySessionCanReceiveDelivery(session.Status) {
 		return activeHarnessDeliveryTarget{}, false, nil
 	}
-	executor, err := d.daemon.resolveHarness(HarnessSessionStartRequest{Executor: session.Harness, SessionID: session.SessionID, WorkspaceID: session.WorkspaceID}, session.CWD)
+	req := HarnessSessionStartRequest{Executor: session.Harness, SessionID: session.SessionID, WorkspaceID: session.WorkspaceID}
+	if authSlotID := harnessSessionAuthSlotID(session); authSlotID != "" {
+		projection, err := d.daemon.authProjectionForStart(ctx, d.store, session.Harness, session.WorkspaceID, authSlotID)
+		if err != nil {
+			return activeHarnessDeliveryTarget{}, false, err
+		}
+		req.AuthProjection = projection
+	}
+	executor, err := d.daemon.resolveHarness(req, session.CWD)
 	if err != nil {
 		return activeHarnessDeliveryTarget{}, false, err
 	}
@@ -127,6 +135,16 @@ func (d *harnessWorkspaceDeliveryDispatcher) rehydrateStickyDeliveryTarget(ctx c
 	d.daemon.registerHarnessDeliveryTarget(session.WorkspaceID, session.SessionID, providerSessionID, executor)
 	target, ok := d.daemon.activeHarnessDeliveryTarget(session.SessionID)
 	return target, ok, nil
+}
+
+func harnessSessionAuthSlotID(session globaldb.HarnessSession) string {
+	var metadata struct {
+		AuthSlotID string `json:"auth_slot_id"`
+	}
+	if err := json.Unmarshal([]byte(defaultString(strings.TrimSpace(session.ProviderMetadataJSON), "{}")), &metadata); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(metadata.AuthSlotID)
 }
 
 func stickySessionCanReceiveDelivery(status string) bool {

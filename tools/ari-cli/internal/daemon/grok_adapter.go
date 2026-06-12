@@ -119,13 +119,22 @@ func (e *GrokExecutor) AuthStatus(ctx context.Context, slot HarnessAuthSlot) (Ha
 			authenticated = true
 		}
 	}
-	if !authenticated && authSlotIsDefaultForHarness(HarnessNameGrok, slot.AuthSlotID) && (strings.TrimSpace(options.AuthProjection.Env["XAI_API_KEY"]) != "" || strings.TrimSpace(options.LookupEnv("XAI_API_KEY")) != "") {
+	if !authenticated && authSlotIsDefaultForHarness(HarnessNameGrok, slot.AuthSlotID) && grokProviderAPIKeyPresent(options) {
 		authenticated = true
 	}
 	if authenticated {
 		return HarnessAuthStatus{Harness: HarnessNameGrok, AuthSlotID: strings.TrimSpace(slot.AuthSlotID), Status: HarnessAuthAuthenticated, AriSecretStorage: HarnessAriSecretStorageNone}, nil
 	}
 	return NewHarnessAuthRequired(HarnessNameGrok, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, Method: "device_code", SecretOwnedBy: HarnessNameGrok}), nil
+}
+
+func grokProviderAPIKeyPresent(options grokExecutorOptions) bool {
+	for _, key := range []string{"GROK_CODE_XAI_API_KEY", "XAI_API_KEY"} {
+		if strings.TrimSpace(options.AuthProjection.Env[key]) != "" || strings.TrimSpace(options.LookupEnv(key)) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *GrokExecutor) AuthStart(ctx context.Context, slot HarnessAuthSlot, method string) (HarnessAuthStatus, error) {
@@ -256,6 +265,9 @@ func (e *GrokExecutor) Start(ctx context.Context, req ExecutorStartRequest) (Exe
 	if err != nil {
 		return ExecutorRun{}, err
 	}
+	if parsed.ErrorMessage != "" && strings.TrimSpace(parsed.SessionID) == "" {
+		return ExecutorRun{}, fmt.Errorf("grok run failed: %s", parsed.ErrorMessage)
+	}
 	sessionID := strings.TrimSpace(parsed.SessionID)
 	if sessionID == "" {
 		return ExecutorRun{}, fmt.Errorf("grok session id is required")
@@ -312,11 +324,14 @@ func (e *GrokExecutor) AttemptWorkspaceDelivery(ctx context.Context, attempt Wor
 	args := []string{"-r", sessionID, "-p", grokWorkspaceDeliveryTurn(attempt), "--output-format", "streaming-json", "--no-auto-update"}
 	commandResult, commandErr := deliveryOptions.RunCommand(ctx, deliveryOptions, args)
 	deliveryResult, parseErr := parseGrokDeliveryOutput(commandResult.Output)
+	if commandErr != nil {
+		if parseErr == nil && deliveryResult.Status == WorkspaceDeliveryAttemptFailed {
+			return deliveryResult, nil
+		}
+		return WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptRetry, LastError: commandErr.Error()}, commandErr
+	}
 	if parseErr == nil {
 		return deliveryResult, nil
-	}
-	if commandErr != nil {
-		return WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptRetry, LastError: commandErr.Error()}, commandErr
 	}
 	return WorkspaceDeliveryAttemptResult{}, parseErr
 }

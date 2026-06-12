@@ -109,6 +109,39 @@ func TestHarnessWorkspaceDeliveryDispatcherRehydratesPersistedStickyTarget(t *te
 	}
 }
 
+func TestHarnessWorkspaceDeliveryDispatcherRehydratesAuthProjection(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	if err := store.CreateWorkspace(ctx, "ws-delivery", "ws-delivery", t.TempDir(), "manual", "auto"); err != nil {
+		t.Fatalf("CreateWorkspace returned error: %v", err)
+	}
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-1", WorkspaceID: "ws-delivery", Name: "agent-1", Harness: HarnessNameOpenCode}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig returned error: %v", err)
+	}
+	backend := globaldb.NewMemorySecretBackend()
+	seedOpenCodeProjectionSecret(t, ctx, store, backend, "opencode-work", "ws-delivery", []byte(`{"provider":"anthropic","apiKey":"ari-secret"}`))
+	if err := store.CreateHarnessSession(ctx, globaldb.HarnessSession{SessionID: "ari-session", WorkspaceID: "ws-delivery", AgentID: "agent-1", Harness: HarnessNameOpenCode, Status: "completed", Usage: globaldb.HarnessSessionUsageSticky, ProviderSessionID: "provider-session", CWD: t.TempDir(), ProviderMetadataJSON: `{"auth_slot_id":"opencode-work"}`}); err != nil {
+		t.Fatalf("CreateHarnessSession returned error: %v", err)
+	}
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.secretBackend = backend
+	d.setHarnessFactoryForTest(HarnessNameOpenCode, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		if req.AuthProjection.Kind != HarnessAuthProjectionAuthContent || req.AuthProjection.Env["OPENCODE_AUTH_CONTENT"] == "" {
+			t.Fatalf("rehydrate auth projection = %#v, want durable named-slot projection", req.AuthProjection)
+		}
+		return &recordingHarnessDeliveryExecutor{result: WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptCompleted}}, nil
+	})
+	dispatcher := newHarnessWorkspaceDeliveryDispatcher(d, store)
+
+	result, err := dispatcher.AttemptWorkspaceDelivery(ctx, WorkspaceDeliveryAttempt{Delivery: globaldb.PendingDelivery{DeliveryID: "pd-rehydrate", WorkspaceID: "ws-delivery", SubscriptionID: "sub-rehydrate", TargetType: "harness_session", TargetID: "ari-session", DeliveryPolicyJSON: `{"channel":"visible_prompt_turn"}`, EventIDs: []string{"we-rehydrate"}, Status: "attempted", Attempts: 1}, Now: time.Date(2026, 6, 11, 21, 30, 0, 0, time.UTC)})
+	if err != nil {
+		t.Fatalf("AttemptWorkspaceDelivery returned error: %v", err)
+	}
+	if result.Status != WorkspaceDeliveryAttemptCompleted {
+		t.Fatalf("AttemptWorkspaceDelivery result = %#v, want completed", result)
+	}
+}
+
 func TestHarnessWorkspaceDeliveryDispatcherRetriesWhileWorkspaceSuspended(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()

@@ -17,6 +17,7 @@ type fakeGrokRunner struct {
 	output         []byte
 	args           []string
 	authProjection HarnessAuthProjectionPlan
+	err            error
 }
 
 func (r *fakeGrokRunner) Run(ctx context.Context, opts grokExecutorOptions, args []string) (commandRunResult, error) {
@@ -24,7 +25,7 @@ func (r *fakeGrokRunner) Run(ctx context.Context, opts grokExecutorOptions, args
 	r.authProjection = opts.AuthProjection
 	r.args = append([]string(nil), args...)
 	exitCode := 0
-	return commandRunResult{Output: append([]byte(nil), r.output...), ExitCode: &exitCode}, nil
+	return commandRunResult{Output: append([]byte(nil), r.output...), ExitCode: &exitCode}, r.err
 }
 
 func TestGrokExecutorMapsStreamingJSONEvents(t *testing.T) {
@@ -127,6 +128,34 @@ func TestGrokNamedSlotDoesNotUseAmbientAPIKey(t *testing.T) {
 	}
 }
 
+func TestGrokAuthStatusRecognizesDocumentedGrokAPIKeyEnv(t *testing.T) {
+	executor := NewGrokExecutorForTest(grokExecutorOptions{Executable: "grok", AuthHomeRoot: t.TempDir(), LookupEnv: func(key string) string {
+		if key == "GROK_CODE_XAI_API_KEY" {
+			return "xai-fake"
+		}
+		return ""
+	}})
+
+	status, err := executor.AuthStatus(context.Background(), HarnessAuthSlot{AuthSlotID: "grok-default", Harness: HarnessNameGrok})
+	if err != nil {
+		t.Fatalf("AuthStatus returned error: %v", err)
+	}
+	if status.Status != HarnessAuthAuthenticated {
+		t.Fatalf("status = %#v, want authenticated from GROK_CODE_XAI_API_KEY", status)
+	}
+}
+
+func TestGrokStartReportsProviderErrorBeforeMissingSessionID(t *testing.T) {
+	runner := &fakeGrokRunner{output: []byte(`{"type":"error","message":"quota exceeded"}`)}
+	executor := NewGrokExecutorForTest(grokExecutorOptions{Executable: "grok", Cwd: "/repo", RunCommand: runner.Run})
+	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
+
+	_, err := StartExecutorRunResult(context.Background(), executor, packet, "", Profile{Name: "builder", Harness: HarnessNameGrok, InvocationClass: HarnessInvocationSticky})
+	if err == nil || !strings.Contains(err.Error(), "quota exceeded") {
+		t.Fatalf("StartExecutorRunResult error = %v, want provider error", err)
+	}
+}
+
 func TestGrokExecutorRejectsServerInvocationMode(t *testing.T) {
 	executor := NewGrokExecutorForTest(grokExecutorOptions{Executable: "grok", Cwd: "/repo", RunCommand: (&fakeGrokRunner{}).Run})
 	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
@@ -221,6 +250,16 @@ func TestGrokExecutorStartsAndDeliversAgainstFakeBinary(t *testing.T) {
 	}
 	if result.Status != WorkspaceDeliveryAttemptCompleted {
 		t.Fatalf("delivery result = %#v, want completed grok resume delivery", result)
+	}
+}
+
+func TestGrokDeliveryRetriesWhenCommandFailsDespiteParsedOutput(t *testing.T) {
+	runner := &fakeGrokRunner{output: []byte(strings.Join([]string{`{"type":"text","data":"partial"}`, `{"type":"end","stopReason":"EndTurn","sessionId":"grok-sess-1"}`}, "\n")), err: errors.New("grok exited 1")}
+	executor := NewGrokExecutorForTest(grokExecutorOptions{Executable: "grok", Cwd: "/repo", RunCommand: runner.Run})
+
+	result, err := executor.AttemptWorkspaceDelivery(context.Background(), WorkspaceDeliveryAttempt{Delivery: globaldb.PendingDelivery{DeliveryID: "pd-grok", WorkspaceID: "ws-1", SubscriptionID: "sub-1", TargetType: "harness_session", TargetID: "grok-sess-1", EventIDs: []string{"we-1"}, Status: "attempted", Attempts: 1}})
+	if err == nil || result.Status != WorkspaceDeliveryAttemptRetry || !strings.Contains(result.LastError, "grok exited 1") {
+		t.Fatalf("delivery result = %#v error = %v, want retry preserving command failure", result, err)
 	}
 }
 

@@ -1215,12 +1215,19 @@ func TestOpenCodeProfileRunBuildsAuthContentProjectionFromGrantedSecret(t *testi
 	}
 	profile := Profile{Name: "opencode-worker", Harness: HarnessNameOpenCode, AuthSlotID: "opencode-work", InvocationClass: HarnessInvocationSticky}
 
-	_, err = d.startHarnessSession(ctx, store, HarnessSessionStartRequest{Executor: HarnessNameOpenCode, Packet: ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}}, profile)
+	started, err := d.startHarnessSession(ctx, store, HarnessSessionStartRequest{Executor: HarnessNameOpenCode, Packet: ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}}, profile)
 	if err != nil {
 		t.Fatalf("startHarnessSession returned error: %v", err)
 	}
 	if captured.AuthProjection.Kind != HarnessAuthProjectionAuthContent || captured.AuthProjection.Owner != HarnessAuthProjectionOwnerAri || captured.AuthProjection.Env["OPENCODE_AUTH_CONTENT"] != string(value) {
 		t.Fatalf("captured projection = %#v, want granted OpenCode auth-content projection", captured.AuthProjection)
+	}
+	storedSession, err := store.GetHarnessSession(ctx, started.Run.SessionID)
+	if err != nil {
+		t.Fatalf("GetHarnessSession returned error: %v", err)
+	}
+	if !strings.Contains(storedSession.ProviderMetadataJSON, `"auth_slot_id":"opencode-work"`) {
+		t.Fatalf("provider metadata = %s, want auth_slot_id for rehydration", storedSession.ProviderMetadataJSON)
 	}
 	workspaceEvents, err := store.ListWorkspaceEventsAfterSequence(ctx, "ws-1", 0, 100)
 	if err != nil {
@@ -1269,6 +1276,34 @@ func TestNamedSlotMissingProjectionCoversOpenCodeAndPi(t *testing.T) {
 	}
 	if namedSlotMissingProjection(globaldb.AuthSlot{AuthSlotID: "grok-work", Harness: HarnessNameGrok, MetadataJSON: `{}`}) {
 		t.Fatal("namedSlotMissingProjection(grok) = true, want unsupported harness ignored")
+	}
+}
+
+func TestHarnessAuthStatusPersistsFinalProjectionGatedStatus(t *testing.T) {
+	ctx := context.Background()
+	store := newCommandMethodTestStore(t)
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	var captured ExecutorStartRequest
+	d.setHarnessFactoryForTest(HarnessNameOpenCode, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		return &capturingHarness{name: HarnessNameOpenCode, captured: &captured, authStatuses: map[string]HarnessAuthState{"opencode-work": HarnessAuthAuthenticated}, auth: HarnessAuthDescriptor{StatusCheck: HarnessAuthSupportSupported, NamedSlotExecution: HarnessAuthSupportSupported, CredentialOwner: HarnessCredentialOwnerProvider}}, nil
+	})
+	if err := store.UpsertAuthSlot(ctx, globaldb.AuthSlot{AuthSlotID: "opencode-work", Harness: HarnessNameOpenCode, Label: "Work", CredentialOwner: "provider", Status: "unknown", MetadataJSON: `{}`}); err != nil {
+		t.Fatalf("UpsertAuthSlot returned error: %v", err)
+	}
+
+	resp, err := d.harnessAuthStatus(ctx, store, HarnessAuthStatusRequest{Slots: []HarnessAuthSlot{{AuthSlotID: "opencode-work", Harness: HarnessNameOpenCode, Label: "Work"}}})
+	if err != nil {
+		t.Fatalf("harnessAuthStatus returned error: %v", err)
+	}
+	if len(resp.Statuses) != 1 || resp.Statuses[0].Status != HarnessAuthRequired {
+		t.Fatalf("statuses = %#v, want projection-gated auth_required", resp.Statuses)
+	}
+	stored, err := store.GetAuthSlot(ctx, "opencode-work")
+	if err != nil {
+		t.Fatalf("GetAuthSlot returned error: %v", err)
+	}
+	if stored.Status != string(HarnessAuthRequired) {
+		t.Fatalf("stored status = %q, want final auth_required", stored.Status)
 	}
 }
 

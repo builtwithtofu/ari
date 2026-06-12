@@ -298,7 +298,7 @@ type openCodeDeliveryPromptResponse struct {
 var openCodeDeliveryHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 func postOpenCodeDeliveryPrompt(ctx context.Context, serverURL, sessionID string, attempt WorkspaceDeliveryAttempt) (openCodeDeliveryPromptResponse, error) {
-	body, err := json.Marshal(map[string]string{"text": opencodeWorkspaceDeliveryText(attempt), "delivery": "queue", "idempotency_key": strings.TrimSpace(attempt.Delivery.DeliveryID)})
+	body, err := json.Marshal(map[string]string{"prompt": opencodeWorkspaceDeliveryText(attempt), "delivery": "queue", "id": strings.TrimSpace(attempt.Delivery.DeliveryID)})
 	if err != nil {
 		return openCodeDeliveryPromptResponse{}, fmt.Errorf("encode opencode delivery prompt: %w", err)
 	}
@@ -316,13 +316,18 @@ func postOpenCodeDeliveryPrompt(ctx context.Context, serverURL, sessionID string
 	if response.StatusCode != http.StatusOK {
 		return openCodeDeliveryPromptResponse{}, fmt.Errorf("opencode prompt delivery returned HTTP %d", response.StatusCode)
 	}
-	var prompt openCodeDeliveryPromptResponse
-	if err := json.NewDecoder(response.Body).Decode(&prompt); err != nil {
+	var payload struct {
+		openCodeDeliveryPromptResponse
+		Data openCodeDeliveryPromptResponse `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
 		return openCodeDeliveryPromptResponse{}, fmt.Errorf("decode opencode prompt delivery response: %w", err)
 	}
-	if strings.TrimSpace(prompt.PromptID) == "" {
-		return openCodeDeliveryPromptResponse{}, fmt.Errorf("opencode prompt delivery response missing prompt id")
+	prompt := payload.openCodeDeliveryPromptResponse
+	if strings.TrimSpace(prompt.PromptID) == "" && strings.TrimSpace(payload.Data.PromptID) != "" {
+		prompt = payload.Data
 	}
+	prompt.PromptID = strings.TrimSpace(defaultString(prompt.PromptID, attempt.Delivery.DeliveryID))
 	return prompt, nil
 }
 
@@ -346,39 +351,25 @@ func opencodeWorkspaceDeliveryText(attempt WorkspaceDeliveryAttempt) string {
 }
 
 func fetchOpenCodeDeliveryCompletion(ctx context.Context, serverURL, sessionID, promptID string) (WorkspaceDeliveryAttemptResult, error) {
-	endpoint := serverURL + "/api/session/" + url.PathEscape(sessionID) + "/events"
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	endpoint := serverURL + "/api/session/" + url.PathEscape(sessionID) + "/wait"
+	body, err := json.Marshal(map[string]string{"prompt_id": strings.TrimSpace(promptID)})
+	if err != nil {
+		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("encode opencode wait request: %w", err)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return WorkspaceDeliveryAttemptResult{}, err
 	}
+	request.Header.Set("Content-Type", "application/json")
 	response, err := openCodeDeliveryHTTPClient.Do(request)
 	if err != nil {
 		return WorkspaceDeliveryAttemptResult{}, err
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
-		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("opencode delivery events returned HTTP %d", response.StatusCode)
+		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("opencode delivery wait returned HTTP %d", response.StatusCode)
 	}
-	var payload struct {
-		Events []struct {
-			Type      string `json:"type"`
-			SessionID string `json:"session_id"`
-			PromptID  string `json:"prompt_id"`
-		} `json:"events"`
-	}
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
-		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("decode opencode delivery events: %w", err)
-	}
-	for _, event := range payload.Events {
-		if strings.TrimSpace(event.PromptID) != strings.TrimSpace(promptID) {
-			continue
-		}
-		switch strings.TrimSpace(event.Type) {
-		case "prompt.completed", "session.idle":
-			return WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptCompleted}, nil
-		}
-	}
-	return WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptRetry, LastError: "opencode prompt delivery admitted without completion event"}, nil
+	return WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptCompleted}, nil
 }
 
 type opencodeParsedEvents struct {

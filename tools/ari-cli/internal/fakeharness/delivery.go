@@ -86,6 +86,8 @@ func OpenCodeDeliveryHandler(record func(OpenCodePromptDelivery)) http.Handler {
 		switch {
 		case r.Method == http.MethodPost && parts[1] == "prompt":
 			var body struct {
+				Prompt         string `json:"prompt"`
+				ID             string `json:"id"`
 				Text           string `json:"text"`
 				Delivery       string `json:"delivery"`
 				IdempotencyKey string `json:"idempotency_key"`
@@ -97,15 +99,23 @@ func OpenCodeDeliveryHandler(record func(OpenCodePromptDelivery)) http.Handler {
 			if strings.TrimSpace(body.Delivery) == "" {
 				body.Delivery = "queue"
 			}
-			delivery := OpenCodePromptDelivery{SessionID: sessionID, PromptID: "fake-opencode-prompt", Delivery: body.Delivery, IdempotencyKey: body.IdempotencyKey, TextHash: shortHash(body.Text)}
+			idempotencyKey := strings.TrimSpace(body.ID)
+			if idempotencyKey == "" {
+				idempotencyKey = strings.TrimSpace(body.IdempotencyKey)
+			}
+			text := body.Prompt
+			if strings.TrimSpace(text) == "" {
+				text = body.Text
+			}
+			delivery := OpenCodePromptDelivery{SessionID: sessionID, PromptID: "fake-opencode-prompt", Delivery: body.Delivery, IdempotencyKey: idempotencyKey, TextHash: shortHash(text)}
 			if record != nil {
 				record(delivery)
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]string{"session_id": delivery.SessionID, "prompt_id": delivery.PromptID, "status": "queued"})
-		case r.Method == http.MethodGet && parts[1] == "events":
+		case r.Method == http.MethodPost && parts[1] == "wait":
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{"events": []map[string]string{{"type": "prompt.completed", "session_id": sessionID, "prompt_id": "fake-opencode-prompt"}, {"type": "session.idle", "session_id": sessionID, "prompt_id": "fake-opencode-prompt"}}})
+			_ = json.NewEncoder(w).Encode(map[string]string{"session_id": sessionID, "status": "idle"})
 		default:
 			http.NotFound(w, r)
 		}

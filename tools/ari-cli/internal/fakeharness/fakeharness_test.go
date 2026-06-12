@@ -143,7 +143,7 @@ func TestRunnerProvidesDeliveryProofSurfaces(t *testing.T) {
 	}
 }
 
-func TestOpenCodeDeliveryHandlerAcceptsPromptAndExposesCompletionEvent(t *testing.T) {
+func TestOpenCodeDeliveryHandlerAcceptsPromptAndWaitsForCompletion(t *testing.T) {
 	t.Parallel()
 	var recorded OpenCodePromptDelivery
 	server := httptest.NewServer(OpenCodeDeliveryHandler(func(delivery OpenCodePromptDelivery) {
@@ -151,7 +151,7 @@ func TestOpenCodeDeliveryHandlerAcceptsPromptAndExposesCompletionEvent(t *testin
 	}))
 	t.Cleanup(server.Close)
 
-	response, err := http.Post(server.URL+"/api/session/sess_123/prompt", "application/json", strings.NewReader(`{"text":"visible task for opencode","delivery":"queue","idempotency_key":"pd-1"}`))
+	response, err := http.Post(server.URL+"/api/session/sess_123/prompt", "application/json", strings.NewReader(`{"prompt":"visible task for opencode","delivery":"queue","id":"pd-1"}`))
 	if err != nil {
 		t.Fatalf("post prompt returned error: %v", err)
 	}
@@ -164,16 +164,16 @@ func TestOpenCodeDeliveryHandlerAcceptsPromptAndExposesCompletionEvent(t *testin
 		t.Fatalf("prompt response status=%d body=%s recorded=%#v", response.StatusCode, body, recorded)
 	}
 
-	events, err := http.Get(server.URL + "/api/session/sess_123/events")
+	events, err := http.Post(server.URL+"/api/session/sess_123/wait", "application/json", strings.NewReader(`{"prompt_id":"fake-opencode-prompt"}`))
 	if err != nil {
-		t.Fatalf("get events returned error: %v", err)
+		t.Fatalf("post wait returned error: %v", err)
 	}
 	defer func() { _ = events.Body.Close() }()
 	eventsBody, err := io.ReadAll(events.Body)
 	if err != nil {
 		t.Fatalf("ReadAll events returned error: %v", err)
 	}
-	if events.StatusCode != http.StatusOK || !strings.Contains(string(eventsBody), `"type":"session.idle"`) || !strings.Contains(string(eventsBody), `"prompt_id":"fake-opencode-prompt"`) {
-		t.Fatalf("events response status=%d body=%s", events.StatusCode, eventsBody)
+	if events.StatusCode != http.StatusOK || !strings.Contains(string(eventsBody), `"status":"idle"`) || !strings.Contains(string(eventsBody), `"session_id":"sess_123"`) {
+		t.Fatalf("wait response status=%d body=%s", events.StatusCode, eventsBody)
 	}
 }

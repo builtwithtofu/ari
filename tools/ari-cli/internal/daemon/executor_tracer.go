@@ -1222,11 +1222,11 @@ func (d *Daemon) harnessAuthStatus(ctx context.Context, store *globaldb.Store, r
 			}
 			return HarnessAuthStatusResponse{}, err
 		}
-		if err := storePersistAuthStatus(ctx, store, storedByID, slot.AuthSlotID, status.Status); err != nil {
-			return HarnessAuthStatusResponse{}, err
-		}
 		if status.Status == HarnessAuthAuthenticated && namedSlotMissingProjection(storedByID[slot.AuthSlotID]) {
 			status = NewHarnessAuthRequired(harness, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, Method: "ari_secret_projection_required", SecretOwnedBy: harness})
+		}
+		if err := storePersistAuthStatus(ctx, store, storedByID, slot.AuthSlotID, status.Status); err != nil {
+			return HarnessAuthStatusResponse{}, err
 		}
 		status.Name = authStatusName(slot, status.Harness)
 		statuses = append(statuses, status)
@@ -2065,7 +2065,13 @@ func storeHarnessRunLogMessages(ctx context.Context, store *globaldb.Store, resu
 	if err := store.EnsureHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: agentID, WorkspaceID: agentConfigWorkspaceID, Name: agentName, Harness: run.Executor, Model: model, Prompt: prompt}); err != nil {
 		return err
 	}
-	providerMetadata, err := json.Marshal(map[string]any{"session_ref": result.SessionRef, "provider_session_id": run.ProviderSessionID, "capabilities": run.Capabilities, "invocation_mode": run.InvocationMode, "usage_bucket": run.UsageBucket})
+	metadata := map[string]any{"session_ref": result.SessionRef, "provider_session_id": run.ProviderSessionID, "capabilities": run.Capabilities, "invocation_mode": run.InvocationMode, "usage_bucket": run.UsageBucket}
+	if len(profile) > 0 {
+		if authSlotID := strings.TrimSpace(profile[0].AuthSlotID); authSlotID != "" {
+			metadata["auth_slot_id"] = authSlotID
+		}
+	}
+	providerMetadata, err := json.Marshal(metadata)
 	if err != nil {
 		return err
 	}
