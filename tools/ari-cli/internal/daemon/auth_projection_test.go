@@ -81,6 +81,20 @@ func TestHarnessCallPassesAuthProjectionToExecutorStart(t *testing.T) {
 	}
 }
 
+func TestGrokStartCarriesAuthProjectionToCommandOptions(t *testing.T) {
+	runner := &fakeGrokRunner{output: []byte(`{"type":"end","stopReason":"EndTurn","sessionId":"grok-sess-1","requestId":"req-1"}`)}
+	executor := NewGrokExecutorForTest(grokExecutorOptions{Executable: "grok", Cwd: "/repo", RunCommand: runner.Run})
+	projection := HarnessAuthProjectionPlan{Owner: HarnessAuthProjectionOwnerNative, Kind: HarnessAuthProjectionConfigRoot, Env: map[string]string{"GROK_HOME": "/tmp/ari/grok-work"}}
+
+	_, err := executor.Start(context.Background(), ExecutorStartRequest{WorkspaceID: "ws-1", ContextPacket: `{"context_packet_id":"ctx_123"}`, AuthProjection: projection})
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	if runner.authProjection.Env["GROK_HOME"] != "/tmp/ari/grok-work" || runner.authProjection.Kind != HarnessAuthProjectionConfigRoot {
+		t.Fatalf("projection = %#v, want Grok home projection on command options", runner.authProjection)
+	}
+}
+
 func TestCodexStartCarriesAuthProjectionToTransportOptions(t *testing.T) {
 	transport := newFakeCodexTransport([]codexNotification{{Method: "turn/completed", Params: mustRawJSON(t, `{"threadId":"thr_123","turn":{"id":"turn_456","status":"completed"}}`)}})
 	var captured codexExecutorOptions

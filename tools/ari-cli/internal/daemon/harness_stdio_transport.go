@@ -53,6 +53,7 @@ type jsonlRPCTransport struct {
 	nextID    int64
 	closed    chan struct{}
 	closeOnce sync.Once
+	waitOnce  sync.Once
 }
 
 func newJSONLRPCTransport(harness string, cmd *exec.Cmd, stdin io.WriteCloser, stdout io.Reader, stderr io.Reader, notificationCap int, terminal func(harnessRPCNotification) bool) *jsonlRPCTransport {
@@ -171,12 +172,18 @@ func (t *jsonlRPCTransport) Close() error {
 		if t.cmd != nil && t.cmd.Process != nil {
 			err = t.cmd.Process.Kill()
 		}
+		close(t.closed)
+	})
+	t.wait()
+	return err
+}
+
+func (t *jsonlRPCTransport) wait() {
+	t.waitOnce.Do(func() {
 		if t.cmd != nil {
 			_, _ = waitWithTimeout(t.cmd, 2*time.Second)
 		}
-		close(t.closed)
 	})
-	return err
 }
 
 func waitWithTimeout(cmd *exec.Cmd, timeout time.Duration) (struct{}, error) {
@@ -192,6 +199,7 @@ func waitWithTimeout(cmd *exec.Cmd, timeout time.Duration) (struct{}, error) {
 
 func (t *jsonlRPCTransport) readMessages(stdout io.Reader) {
 	defer func() {
+		t.wait()
 		close(t.notifications)
 		t.closeOnce.Do(func() { close(t.closed) })
 	}()

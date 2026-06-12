@@ -1256,6 +1256,22 @@ func TestOpenCodeProjectionDeniedOutsideGrantedWorkspace(t *testing.T) {
 	}
 }
 
+func TestNamedSlotMissingProjectionCoversOpenCodeAndPi(t *testing.T) {
+	for _, harness := range []string{HarnessNameOpenCode, HarnessNamePi} {
+		slot := globaldb.AuthSlot{AuthSlotID: harness + "-work", Harness: harness, MetadataJSON: `{}`}
+		if !namedSlotMissingProjection(slot) {
+			t.Fatalf("namedSlotMissingProjection(%s) = false, want missing projection detected", harness)
+		}
+		slot.MetadataJSON = `{"projection_ref":"secret_123"}`
+		if namedSlotMissingProjection(slot) {
+			t.Fatalf("namedSlotMissingProjection(%s with ref) = true, want projection accepted", harness)
+		}
+	}
+	if namedSlotMissingProjection(globaldb.AuthSlot{AuthSlotID: "grok-work", Harness: HarnessNameGrok, MetadataJSON: `{}`}) {
+		t.Fatal("namedSlotMissingProjection(grok) = true, want unsupported harness ignored")
+	}
+}
+
 func TestOpenCodeAuthSlotRemoveDeletesAriOwnedSecret(t *testing.T) {
 	ctx := context.Background()
 	store := newCommandMethodTestStore(t)

@@ -117,6 +117,11 @@ func (s sessionStore) latestSession(harness string) string {
 	if len(candidates) == 0 {
 		return ""
 	}
-	sort.Slice(candidates, func(i, j int) bool { return candidates[i].mod > candidates[j].mod })
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].mod == candidates[j].mod {
+			return candidates[i].name > candidates[j].name
+		}
+		return candidates[i].mod > candidates[j].mod
+	})
 	return candidates[0].name
 }

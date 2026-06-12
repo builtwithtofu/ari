@@ -116,6 +116,21 @@ func TestOpenCodeExecutorDeliversThroughManagedServeProcess(t *testing.T) {
 	}
 }
 
+func TestOpenCodeExecutorDeliversWithStartedAuthProjection(t *testing.T) {
+	projection := HarnessAuthProjectionPlan{Owner: HarnessAuthProjectionOwnerAri, Kind: HarnessAuthProjectionAuthContent, Env: map[string]string{"OPENCODE_AUTH_CONTENT": `{"provider":"test"}`}}
+	executor := NewOpenCodeExecutorForTest(opencodeExecutorOptions{Executable: "opencode", Cwd: "/repo", RunCommand: (&fakeOpenCodeRunner{output: []byte(strings.Join([]string{`{"type":"session.status","properties":{"sessionID":"sess_123","status":{"type":"busy"}}}`, `{"type":"session.status","properties":{"sessionID":"sess_123","status":{"type":"idle"}}}`}, "\n"))}).Run})
+	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
+
+	_, err := executor.Start(context.Background(), ExecutorStartRequest{WorkspaceID: "ws-1", ContextPacket: string(renderContextPacket(packet)), AuthProjection: projection})
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	stored, ok := executor.deliveryOptions["sess_123"]
+	if !ok || stored.AuthProjection.Kind != HarnessAuthProjectionAuthContent || stored.AuthProjection.Env["OPENCODE_AUTH_CONTENT"] == "" {
+		t.Fatalf("stored delivery options = %#v (ok=%v), want started auth projection preserved for deliveries", stored, ok)
+	}
+}
+
 func TestOpenCodeDeliveryHTTPClientHasTimeout(t *testing.T) {
 	if openCodeDeliveryHTTPClient == nil || openCodeDeliveryHTTPClient.Timeout <= 0 {
 		t.Fatalf("openCodeDeliveryHTTPClient = %#v, want explicit timeout", openCodeDeliveryHTTPClient)

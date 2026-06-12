@@ -34,9 +34,10 @@ type (
 )
 
 type OpenCodeExecutor struct {
-	options opencodeExecutorOptions
-	mu      sync.Mutex
-	runs    map[string][]TimelineItem
+	options         opencodeExecutorOptions
+	mu              sync.Mutex
+	runs            map[string][]TimelineItem
+	deliveryOptions map[string]opencodeExecutorOptions
 }
 
 func NewOpenCodeExecutor(cwd string) *OpenCodeExecutor {
@@ -57,7 +58,7 @@ func newOpenCodeExecutor(options opencodeExecutorOptions) *OpenCodeExecutor {
 	if options.RunAuthCommand == nil {
 		options.RunAuthCommand = runOpenCodeAuthCommand
 	}
-	return &OpenCodeExecutor{options: options, runs: map[string][]TimelineItem{}}
+	return &OpenCodeExecutor{options: options, runs: map[string][]TimelineItem{}, deliveryOptions: map[string]opencodeExecutorOptions{}}
 }
 
 func (e *OpenCodeExecutor) AuthStatus(ctx context.Context, slot HarnessAuthSlot) (HarnessAuthStatus, error) {
@@ -177,6 +178,7 @@ func (e *OpenCodeExecutor) Start(ctx context.Context, req ExecutorStartRequest) 
 	items := opencodeTimelineItemsFromEvents(workspaceID, parsed)
 	e.mu.Lock()
 	e.runs[parsed.SessionID] = items
+	e.deliveryOptions[parsed.SessionID] = options
 	e.mu.Unlock()
 	run := ExecutorRun{RunID: parsed.SessionID, SessionID: parsed.SessionID, Executor: HarnessNameOpenCode, ProviderSessionID: parsed.SessionID, ProviderRunID: parsed.SessionID, ExitCode: commandResult.ExitCode, ProcessSample: commandResult.ProcessSample, CapabilityNames: harnessCapabilitiesToStrings(e.Descriptor().Capabilities), Persistence: HarnessSessionPersistent, ResumeMode: HarnessResumeHTTPAPI}
 	if cursor, err := json.Marshal(map[string]string{"session_id": parsed.SessionID}); err == nil {
@@ -220,7 +222,13 @@ func (e *OpenCodeExecutor) AttemptWorkspaceDelivery(ctx context.Context, attempt
 	if sessionID == "" || strings.TrimSpace(attempt.Delivery.DeliveryID) == "" || len(attempt.Delivery.EventIDs) == 0 {
 		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("delivery target session, delivery id, and event ids are required")
 	}
-	serverURL, stopServer, err := e.deliveryServerURL(ctx)
+	deliveryOptions := e.options
+	e.mu.Lock()
+	if options, ok := e.deliveryOptions[sessionID]; ok {
+		deliveryOptions = options
+	}
+	e.mu.Unlock()
+	serverURL, stopServer, err := e.deliveryServerURL(ctx, deliveryOptions)
 	if err != nil {
 		return WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptRetry, LastError: err.Error()}, err
 	}
@@ -240,11 +248,11 @@ func (e *OpenCodeExecutor) AttemptWorkspaceDelivery(ctx context.Context, attempt
 // attempt. A configured DeliveryServerURL (tests, externally managed servers)
 // is used as-is; otherwise the adapter starts a bounded `opencode serve`
 // process for the attempt and stops it afterwards.
-func (e *OpenCodeExecutor) deliveryServerURL(ctx context.Context) (string, func(), error) {
-	if configured := strings.TrimRight(strings.TrimSpace(e.options.DeliveryServerURL), "/"); configured != "" {
+func (e *OpenCodeExecutor) deliveryServerURL(ctx context.Context, options opencodeExecutorOptions) (string, func(), error) {
+	if configured := strings.TrimRight(strings.TrimSpace(options.DeliveryServerURL), "/"); configured != "" {
 		return configured, func() {}, nil
 	}
-	return startOpenCodeDeliveryServer(ctx, e.options)
+	return startOpenCodeDeliveryServer(ctx, options)
 }
 
 func startOpenCodeDeliveryServer(ctx context.Context, options opencodeExecutorOptions) (string, func(), error) {

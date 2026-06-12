@@ -223,14 +223,23 @@ func TestModeListCombinesBehaviorAndStreaming(t *testing.T) {
 
 func TestProjectionSummaryHashesProviderKeys(t *testing.T) {
 	t.Parallel()
-	summary := projectionSummary(map[string]string{"ANTHROPIC_API_KEY": "secret", "XAI_API_KEY": "secret", "GROK_CONFIG_DIR": "/tmp/grok"})
+	summary := projectionSummary(map[string]string{"ANTHROPIC_API_KEY": "secret", "XAI_API_KEY": "secret", "GROK_HOME": "/tmp/grok"})
 	if !strings.HasPrefix(summary["ANTHROPIC_API_KEY"], "present sha256:") || !strings.HasPrefix(summary["XAI_API_KEY"], "present sha256:") {
 		t.Fatalf("summary = %#v, want hashed provider keys", summary)
 	}
-	if summary["GROK_CONFIG_DIR"] != "/tmp/grok" {
-		t.Fatalf("summary = %#v, want grok config dir recorded verbatim", summary)
+	if summary["GROK_HOME"] != "/tmp/grok" {
+		t.Fatalf("summary = %#v, want grok home recorded verbatim", summary)
 	}
 	if strings.Contains(summary["ANTHROPIC_API_KEY"], "secret") {
 		t.Fatalf("summary leaked secret: %#v", summary)
+	}
+}
+
+func TestInteractiveEngineReportsScannerErrors(t *testing.T) {
+	t.Parallel()
+	longLine := strings.Repeat("x", 4*1024*1024+1) + "\n"
+	code, _, stderr := runFake(t, longLine, []string{EnvHarness + "=pi"}, "fake-pi", "--mode", "rpc")
+	if code == 0 || !strings.Contains(stderr, "stdin read error") {
+		t.Fatalf("code=%d stderr=%q, want scanner error failure", code, stderr)
 	}
 }

@@ -14,13 +14,14 @@ import (
 )
 
 type fakeGrokRunner struct {
-	output []byte
-	args   []string
+	output         []byte
+	args           []string
+	authProjection HarnessAuthProjectionPlan
 }
 
 func (r *fakeGrokRunner) Run(ctx context.Context, opts grokExecutorOptions, args []string) (commandRunResult, error) {
 	_ = ctx
-	_ = opts
+	r.authProjection = opts.AuthProjection
 	r.args = append([]string(nil), args...)
 	exitCode := 0
 	return commandRunResult{Output: append([]byte(nil), r.output...), ExitCode: &exitCode}, nil
@@ -95,6 +96,34 @@ func TestGrokExecutorMapsErrorEventsToFailure(t *testing.T) {
 	last := result.Items[len(result.Items)-1]
 	if last.Kind != "lifecycle" || last.Status != "failed" || !strings.Contains(last.Text, "rate limited") {
 		t.Fatalf("last item = %#v, want failed lifecycle with grok error", last)
+	}
+}
+
+func TestGrokExecutorRejectsNonTerminalStreamingOutput(t *testing.T) {
+	runner := &fakeGrokRunner{output: []byte(`{"type":"text","data":"partial"}`)}
+	executor := NewGrokExecutorForTest(grokExecutorOptions{Executable: "grok", Cwd: "/repo", RunCommand: runner.Run})
+	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
+
+	_, err := StartExecutorRunResult(context.Background(), executor, packet, "", Profile{Name: "builder", Harness: HarnessNameGrok, InvocationClass: HarnessInvocationSticky})
+	if err == nil || !strings.Contains(err.Error(), "terminal end event") {
+		t.Fatalf("StartExecutorRunResult error = %v, want missing end event error", err)
+	}
+}
+
+func TestGrokNamedSlotDoesNotUseAmbientAPIKey(t *testing.T) {
+	executor := NewGrokExecutorForTest(grokExecutorOptions{Executable: "grok", AuthHomeRoot: t.TempDir(), LookupEnv: func(key string) string {
+		if key == "XAI_API_KEY" {
+			return "global-key"
+		}
+		return ""
+	}})
+
+	status, err := executor.AuthStatus(context.Background(), HarnessAuthSlot{AuthSlotID: "grok-work", Harness: HarnessNameGrok})
+	if err != nil {
+		t.Fatalf("AuthStatus returned error: %v", err)
+	}
+	if status.Status != HarnessAuthRequired {
+		t.Fatalf("status = %#v, want named slot to ignore ambient API key", status)
 	}
 }
 

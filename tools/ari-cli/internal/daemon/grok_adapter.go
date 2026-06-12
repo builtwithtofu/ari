@@ -119,7 +119,7 @@ func (e *GrokExecutor) AuthStatus(ctx context.Context, slot HarnessAuthSlot) (Ha
 			authenticated = true
 		}
 	}
-	if !authenticated && (strings.TrimSpace(options.AuthProjection.Env["XAI_API_KEY"]) != "" || strings.TrimSpace(options.LookupEnv("XAI_API_KEY")) != "") {
+	if !authenticated && authSlotIsDefaultForHarness(HarnessNameGrok, slot.AuthSlotID) && (strings.TrimSpace(options.AuthProjection.Env["XAI_API_KEY"]) != "" || strings.TrimSpace(options.LookupEnv("XAI_API_KEY")) != "") {
 		authenticated = true
 	}
 	if authenticated {
@@ -419,6 +419,9 @@ func parseGrokStreamingEvents(output []byte) (grokParsedEvents, error) {
 	}
 	if !sawEvent {
 		return grokParsedEvents{}, fmt.Errorf("grok output did not include any events")
+	}
+	if parsed.ErrorMessage == "" && !parsed.Completed {
+		return grokParsedEvents{}, fmt.Errorf("grok output ended without terminal end event")
 	}
 	return parsed, nil
 }

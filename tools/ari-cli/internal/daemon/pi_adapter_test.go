@@ -62,8 +62,8 @@ func TestPiExecutorMapsJSONEventsToTimelineItems(t *testing.T) {
 		t.Fatalf("session ref = %#v, want persistent json_rpc default server mode", result.SessionRef)
 	}
 	args := strings.Join(runner.args, " ")
-	if !strings.Contains(args, "--mode rpc") || !strings.Contains(args, "--session-id "+run.ProviderSessionID) || !strings.Contains(args, "--model anthropic/claude-sonnet") || !strings.Contains(args, "--system-prompt Build") {
-		t.Fatalf("pi args = %q, want rpc mode with ari session id, model, and system prompt", args)
+	if !strings.Contains(args, "--mode rpc") || !strings.Contains(args, "--session "+run.ProviderSessionID) || !strings.Contains(args, "--model anthropic/claude-sonnet") || !strings.Contains(args, "--system-prompt Build") {
+		t.Fatalf("pi args = %q, want rpc mode with documented session flag, model, and system prompt", args)
 	}
 	if !strings.Contains(runner.input, `"type":"prompt"`) || !strings.Contains(runner.input, "ctx_123") {
 		t.Fatalf("pi rpc input = %q, want prompt command carrying context packet", runner.input)
@@ -121,6 +121,38 @@ func TestPiExecutorMapsErrorEventsToFailure(t *testing.T) {
 	last := result.Items[len(result.Items)-1]
 	if last.Kind != "lifecycle" || last.Status != "failed" || !strings.Contains(last.Text, "provider exploded") {
 		t.Fatalf("last item = %#v, want failed lifecycle with provider error", last)
+	}
+}
+
+func TestPiExecutorRejectsNonTerminalOutput(t *testing.T) {
+	runner := &fakePiRunner{output: []byte(strings.Join([]string{
+		`{"type":"agent_start"}`,
+		`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"partial"}],"usage":{"input":1,"output":1},"stopReason":"stop"}}`,
+	}, "\n"))}
+	executor := NewPiExecutorForTest(piExecutorOptions{Executable: "pi", Cwd: "/repo", RunCommand: runner.Run})
+	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
+
+	_, err := StartExecutorRunResult(context.Background(), executor, packet, "", Profile{Name: "builder", Harness: HarnessNamePi, InvocationClass: HarnessInvocationSticky})
+	if err == nil || !strings.Contains(err.Error(), "agent_end") {
+		t.Fatalf("StartExecutorRunResult error = %v, want missing agent_end error", err)
+	}
+}
+
+func TestPiExecutorConcatenatesMultipartAssistantText(t *testing.T) {
+	runner := &fakePiRunner{output: []byte(strings.Join([]string{
+		`{"type":"agent_start"}`,
+		`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"part one"},{"type":"text","text":"part two"}],"usage":{"input":1,"output":1},"stopReason":"stop"}}`,
+		`{"type":"agent_end","messages":[]}`,
+	}, "\n"))}
+	executor := NewPiExecutorForTest(piExecutorOptions{Executable: "pi", Cwd: "/repo", RunCommand: runner.Run})
+	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
+
+	result, err := StartExecutorRunResult(context.Background(), executor, packet, "", Profile{Name: "builder", Harness: HarnessNamePi, InvocationClass: HarnessInvocationSticky})
+	if err != nil {
+		t.Fatalf("StartExecutorRunResult returned error: %v", err)
+	}
+	if result.FinalResponse == nil || result.FinalResponse.Text != "part one\npart two" {
+		t.Fatalf("final response = %#v, want all text parts", result.FinalResponse)
 	}
 }
 

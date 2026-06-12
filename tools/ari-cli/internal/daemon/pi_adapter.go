@@ -16,7 +16,7 @@ import (
 // PiExecutor integrates the pi coding agent (pi.dev). Headless calls run
 // `pi -p --mode json`; sticky calls speak pi's --mode rpc line protocol with
 // one process per turn, like the codex app-server shape: session continuity
-// lives in pi's session files addressed by an ari-chosen --session-id, so a
+// lives in pi's session files addressed by an ari-chosen --session value, so a
 // later turn or delivery reattaches by re-invoking with the same id.
 type piExecutorOptions struct {
 	Executable     string
@@ -368,7 +368,10 @@ func parsePiEvents(output []byte) (piParsedEvents, error) {
 				if message.Role == "assistant" {
 					for _, content := range message.Content {
 						if content.Type == "text" && strings.TrimSpace(content.Text) != "" {
-							parsed.Text = content.Text
+							if parsed.Text != "" {
+								parsed.Text += "\n"
+							}
+							parsed.Text += content.Text
 						}
 					}
 					if message.Usage != nil {
@@ -413,6 +416,9 @@ func parsePiEvents(output []byte) (piParsedEvents, error) {
 	if !sawEvent {
 		return piParsedEvents{}, fmt.Errorf("pi output did not include any events")
 	}
+	if parsed.ErrorMessage == "" && !parsed.Completed {
+		return piParsedEvents{}, fmt.Errorf("pi output ended without terminal agent_end event")
+	}
 	return parsed, nil
 }
 
@@ -444,13 +450,13 @@ func piStartArgs(options piExecutorOptions, sessionID string) []string {
 	if options.InvocationMode == HarnessInvocationModeServer {
 		return piRPCArgs(options, sessionID)
 	}
-	args := []string{"-p", "--mode", "json", "--session-id", sessionID}
+	args := []string{"-p", "--mode", "json", "--session", sessionID}
 	args = append(args, piCommonArgs(options)...)
 	return args
 }
 
 func piRPCArgs(options piExecutorOptions, sessionID string) []string {
-	args := []string{"--mode", "rpc", "--session-id", sessionID}
+	args := []string{"--mode", "rpc", "--session", sessionID}
 	return append(args, piCommonArgs(options)...)
 }
 

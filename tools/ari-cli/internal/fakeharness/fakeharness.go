@@ -332,7 +332,7 @@ func stdinSummary(s string) string {
 }
 
 func safeEnv(env map[string]string) map[string]string {
-	keys := []string{"HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "GROK_CONFIG_DIR", EnvHarness, EnvMode, EnvStateDir}
+	keys := []string{"HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "GROK_HOME", EnvHarness, EnvMode, EnvStateDir}
 	out := map[string]string{}
 	for _, k := range keys {
 		if v := strings.TrimSpace(env[k]); v != "" {
@@ -344,7 +344,7 @@ func safeEnv(env map[string]string) map[string]string {
 
 func projectionSummary(env map[string]string) map[string]string {
 	out := map[string]string{}
-	for _, k := range []string{"CLAUDE_CONFIG_DIR", "CODEX_HOME", "GROK_CONFIG_DIR"} {
+	for _, k := range []string{"CLAUDE_CONFIG_DIR", "CODEX_HOME", "GROK_HOME"} {
 		if v, ok := env[k]; ok && strings.TrimSpace(v) != "" {
 			out[k] = v
 		}

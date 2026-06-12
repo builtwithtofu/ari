@@ -31,6 +31,10 @@ func engineLoop(run personaRun, handle func(line []byte) bool) int {
 			return 0
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		_, _ = fmt.Fprintf(run.stderr, "fake harness stdin read error: %v\n", err)
+		return 1
+	}
 	return 0
 }
 
