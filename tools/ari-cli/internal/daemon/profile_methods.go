@@ -127,6 +127,9 @@ func createStoredProfile(ctx context.Context, store *globaldb.Store, req Profile
 	if req.InvocationClass != "" && req.InvocationClass != HarnessInvocationSticky && req.InvocationClass != HarnessInvocationEphemeral {
 		return ProfileResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "invocation class is invalid", map[string]any{"reason": "invalid_invocation_class"})
 	}
+	if key, ok := profileDefaultsForbiddenKey(req.Defaults); ok {
+		return ProfileResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "profile defaults include a forbidden key", map[string]any{"reason": "forbidden_default_key", "key": key})
+	}
 	profileID, err := newAriULID()
 	if err != nil {
 		return ProfileResponse{}, err
@@ -205,6 +208,50 @@ func decodeStoredAuthPool(raw string) HarnessAuthPool {
 	var pool HarnessAuthPool
 	_ = json.Unmarshal([]byte(raw), &pool)
 	return pool
+}
+
+func profileDefaultsForbiddenKey(defaults map[string]any) (string, bool) {
+	for key, value := range defaults {
+		if isForbiddenProfileDefaultKey(key) {
+			return key, true
+		}
+		if nested, ok := profileDefaultValueForbiddenKey(value); ok {
+			return key + "." + nested, true
+		}
+	}
+	return "", false
+}
+
+func profileDefaultValueForbiddenKey(value any) (string, bool) {
+	switch typed := value.(type) {
+	case map[string]any:
+		return profileDefaultsForbiddenKey(typed)
+	case []any:
+		for _, item := range typed {
+			if key, ok := profileDefaultValueForbiddenKey(item); ok {
+				return key, true
+			}
+		}
+	}
+	return "", false
+}
+
+func isForbiddenProfileDefaultKey(key string) bool {
+	normalized := strings.ToLower(strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			return r
+		}
+		return -1
+	}, key))
+	if normalized == "" {
+		return false
+	}
+	for _, marker := range []string{"apikey", "bearer", "secret", "password"} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return normalized == "token" || strings.HasSuffix(normalized, "token")
 }
 
 func ensureDefaultHelperProfile(ctx context.Context, store *globaldb.Store, req DefaultHelperEnsureRequest) (ProfileResponse, error) {

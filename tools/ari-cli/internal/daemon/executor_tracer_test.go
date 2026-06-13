@@ -1664,11 +1664,16 @@ func TestProfileCreateRejectsSecretLikeDefaults(t *testing.T) {
 	}
 
 	err := callMethodError(registry, "profile.create", ProfileCreateRequest{Name: "executor", Harness: "codex", Defaults: map[string]any{"api_key": "sk-test-secret"}})
-	if err == nil {
-		t.Fatal("profile.create returned nil error for secret-like defaults")
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "forbidden_default_key" || data["key"] != "api_key" {
+		t.Fatalf("error data = %#v, want forbidden api_key", data)
 	}
 	if strings.Contains(err.Error(), "sk-test-secret") {
 		t.Fatalf("profile.create error leaked secret value: %v", err)
+	}
+	list := callMethod[ProfileListResponse](t, registry, "profile.list", ProfileListRequest{})
+	if len(list.Profiles) != 0 {
+		t.Fatalf("profiles = %#v, want secret-bearing profile rejected before persist", list.Profiles)
 	}
 }
 
