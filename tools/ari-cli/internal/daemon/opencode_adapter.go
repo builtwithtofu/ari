@@ -93,11 +93,11 @@ func (e *OpenCodeExecutor) AuthLogout(ctx context.Context, slot HarnessAuthSlot)
 		args = append(args, "--provider", provider)
 	}
 	result, err := e.options.RunAuthCommand(ctx, e.options, args)
-	if err != nil {
-		return HarnessAuthStatus{}, err
-	}
 	if result.ExitCode != nil && *result.ExitCode != 0 {
 		return HarnessAuthStatus{}, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "auth_logout_failed", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: true}
+	}
+	if err != nil {
+		return HarnessAuthStatus{}, err
 	}
 	return NewHarnessAuthRequired(HarnessNameOpenCode, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, Method: "provider_login", SecretOwnedBy: HarnessNameOpenCode}), nil
 }
@@ -105,10 +105,12 @@ func (e *OpenCodeExecutor) AuthLogout(ctx context.Context, slot HarnessAuthSlot)
 func (e *OpenCodeExecutor) Descriptor() HarnessAdapterDescriptor {
 	return HarnessAdapterDescriptor{
 		Name:                    HarnessNameOpenCode,
+		DisplayName:             "OpenCode",
 		Capabilities:            sharedHarnessRuntimeCapabilities(),
 		ObservationCapabilities: []HarnessObservationCapability{HarnessObservationUnsupported},
 		DeliveryCapabilities:    []HarnessDeliveryCapability{HarnessDeliveryVisiblePromptTurn},
 		InvocationModes:         []HarnessInvocationMode{HarnessInvocationModeHeadless},
+		AuthProjection:          HarnessAuthProjectionStyleAuthContent,
 		Auth: HarnessAuthDescriptor{
 			StatusCheck:        HarnessAuthSupportSupported,
 			Login:              HarnessAuthSupportPartial,
@@ -256,13 +258,9 @@ func (e *OpenCodeExecutor) deliveryServerURL(ctx context.Context, options openco
 }
 
 func startOpenCodeDeliveryServer(ctx context.Context, options opencodeExecutorOptions) (string, func(), error) {
-	executable := strings.TrimSpace(options.Executable)
-	if executable == "" {
-		executable = "opencode"
-	}
-	path, err := exec.LookPath(executable)
+	path, executable, err := resolveHarnessExecutable(HarnessNameOpenCode, options.Executable, "opencode")
 	if err != nil {
-		return "", nil, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+		return "", nil, err
 	}
 	command := exec.CommandContext(ctx, path, "serve", "--port", "0", "--hostname", "127.0.0.1")
 	command.Dir = strings.TrimSpace(options.Cwd)
@@ -487,66 +485,44 @@ func opencodeArgs(options opencodeExecutorOptions, prompt string) []string {
 }
 
 func runOpenCodeCommand(ctx context.Context, options opencodeExecutorOptions, prompt string) (commandRunResult, error) {
-	executable := strings.TrimSpace(options.Executable)
-	if executable == "" {
-		executable = "opencode"
-	}
-	path, err := exec.LookPath(executable)
+	path, executable, err := resolveHarnessExecutable(HarnessNameOpenCode, options.Executable, "opencode")
 	if err != nil {
-		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
-	}
-	cmd := exec.CommandContext(ctx, path, opencodeArgs(options, prompt)...)
-	cmd.Dir = strings.TrimSpace(options.Cwd)
-	cmd.Env = commandEnvWithProjection(options.AuthProjection)
-	var output strings.Builder
-	cmd.Stdout = &output
-	cmd.Stderr = &output
-	if err := cmd.Start(); err != nil {
 		return commandRunResult{}, err
 	}
-	sample := sampleLinuxProcessMetrics(ctx, HarnessSession{PID: cmd.Process.Pid})
-	err = cmd.Wait()
-	exitCode := cmd.ProcessState.ExitCode()
-	if err != nil {
-		return commandRunResult{}, fmt.Errorf("run opencode json: %w", err)
-	}
-	return commandRunResult{Output: []byte(output.String()), ProcessSample: &sample, ExitCode: &exitCode}, nil
+	return harnessCommand{
+		harness:     HarnessNameOpenCode,
+		path:        path,
+		executable:  executable,
+		args:        opencodeArgs(options, prompt),
+		cwd:         options.Cwd,
+		projection:  options.AuthProjection,
+		waitErrWrap: "run opencode json",
+	}.run(ctx)
 }
 
 func runOpenCodeAuthCommand(ctx context.Context, options opencodeExecutorOptions, args []string) (commandRunResult, error) {
-	executable := strings.TrimSpace(options.Executable)
-	if executable == "" {
-		executable = "opencode"
-	}
-	path, err := exec.LookPath(executable)
+	path, executable, err := resolveHarnessExecutable(HarnessNameOpenCode, options.Executable, "opencode")
 	if err != nil {
-		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+		return commandRunResult{}, err
 	}
-	cmd := exec.CommandContext(ctx, path, args...)
-	cmd.Dir = strings.TrimSpace(options.Cwd)
-	cmd.Env = commandEnvWithProjection(options.AuthProjection)
-	var output strings.Builder
-	cmd.Stdout = &output
-	cmd.Stderr = &output
-	if err := cmd.Start(); err != nil {
-		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "start_failed", Executable: executable, Probe: executable + " " + strings.Join(args, " "), RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: true}
-	}
-	sample := sampleLinuxProcessMetrics(ctx, HarnessSession{PID: cmd.Process.Pid})
-	err = cmd.Wait()
-	exitCode := cmd.ProcessState.ExitCode()
-	return commandRunResult{Output: []byte(output.String()), ProcessSample: &sample, ExitCode: &exitCode}, err
+	return harnessCommand{
+		harness:                HarnessNameOpenCode,
+		path:                   path,
+		executable:             executable,
+		args:                   args,
+		cwd:                    options.Cwd,
+		projection:             options.AuthProjection,
+		startFailedUnavailable: true,
+		keepResultOnWaitErr:    true,
+	}.run(ctx)
 }
 
 func fetchOpenCodeAuthProviderMethods(ctx context.Context, options opencodeExecutorOptions) (HarnessAuthProviderMethodsResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	executable := strings.TrimSpace(options.Executable)
-	if executable == "" {
-		executable = "opencode"
-	}
-	path, err := exec.LookPath(executable)
+	path, _, err := resolveHarnessExecutable(HarnessNameOpenCode, options.Executable, "opencode")
 	if err != nil {
-		return HarnessAuthProviderMethodsResponse{}, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+		return HarnessAuthProviderMethodsResponse{}, err
 	}
 	command := exec.CommandContext(ctx, path, "serve", "--port", "0", "--hostname", "127.0.0.1")
 	command.Dir = strings.TrimSpace(options.Cwd)

@@ -75,26 +75,171 @@ type storedAriApproval struct {
 	Consumed bool            `json:"consumed"`
 }
 
-var ariTools = []AriToolSchema{
-	{Name: "ari.defaults.get", Description: "Read Ari default harness, model, and invocation settings", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ReadOnly: true, OperationKind: daemonOperationKindReadOnly},
-	{Name: "ari.defaults.set", Description: "Update Ari defaults after scoped approval", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ApprovalRequired: true, OperationKind: daemonOperationKindMutating, TrustChoices: ariToolTrustChoices()},
-	{Name: "ari.profile.draft", Description: "Draft a profile spec without persisting it", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ReadOnly: true, OperationKind: daemonOperationKindReadOnly},
-	{Name: "ari.profile.save", Description: "Persist an approved profile spec", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ApprovalRequired: true, OperationKind: daemonOperationKindMutating, TrustChoices: ariToolTrustChoices()},
-	{Name: "ari.self_check", Description: "Read Ari daemon, config, workspace, profile, and harness health", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ReadOnly: true, OperationKind: daemonOperationKindReadOnly},
-	{Name: "ari.run.explain_latest", Description: "Summarize the latest available Ari run evidence", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ReadOnly: true, OperationKind: daemonOperationKindReadOnly},
-	{Name: "ari.session.fanout", Description: "Launch one or more ephemeral worker profiles from a scoped sticky source session", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), OperationKind: daemonOperationKindMutating},
-	{Name: "ari.fanout.status", Description: "Read durable fanout group and member status", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ReadOnly: true, OperationKind: daemonOperationKindReadOnly},
-	{Name: "ari.inbox.list", Description: "List durable sticky-session inbox items", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ReadOnly: true, OperationKind: daemonOperationKindReadOnly},
-	{Name: "ari.inbox.count", Description: "Count durable sticky-session inbox items by read state", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ReadOnly: true, OperationKind: daemonOperationKindReadOnly},
-	{Name: "ari.inbox.mark_read", Description: "Mark durable sticky-session inbox items read", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), OperationKind: daemonOperationKindMutating},
-	{Name: "ari.workspace.events.next", Description: "Read unread events from a durable workspace event subscription, optionally blocking until min_events arrive within timeout_ms (max 60000)", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ReadOnly: true, OperationKind: daemonOperationKindReadOnly},
-	{Name: "ari.workspace.events.ack", Description: "Advance a durable workspace event subscription cursor", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), OperationKind: daemonOperationKindMutating},
-	{Name: "ari.workspace.signals.send", Description: "Send a workspace-scoped signal event from the scoped source session", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), OperationKind: daemonOperationKindMutating},
-	{Name: "ari.workspace.timers.create", Description: "Create a durable workspace timer owned by the scoped source session", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), OperationKind: daemonOperationKindMutating},
-	{Name: "ari.workspace.timers.get", Description: "Read a durable workspace timer", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ReadOnly: true, OperationKind: daemonOperationKindReadOnly},
-	{Name: "ari.workspace.timers.cancel", Description: "Cancel a durable workspace timer owned by the scoped source session", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), OperationKind: daemonOperationKindMutating},
-	{Name: "ari.workspace.deliveries.get", Description: "Read a pending workspace event delivery", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ReadOnly: true, OperationKind: daemonOperationKindReadOnly},
-	{Name: "ari.workspace.deliveries.list_due", Description: "List due pending workspace event deliveries", ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ReadOnly: true, OperationKind: daemonOperationKindReadOnly},
+type ariToolHandler func(ctx context.Context, d *Daemon, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error)
+
+const (
+	ariToolTrustApprovedOnce        = "approved_once"
+	ariToolTrustScopedSourceSession = "scoped_source_session"
+)
+
+// ariToolOperation declares how a mutating tool call is recorded as a daemon
+// operation. The trust decision selects the request-hash source: approved_once
+// reuses the consumed approval's hash, scoped_source_session hashes the call
+// input and records the scoped source run.
+type ariToolOperation struct {
+	Type           string
+	Scope          string
+	RequestSummary string
+	TrustDecision  string
+	RollbackData   map[string]string
+}
+
+type ariToolDefinition struct {
+	Schema AriToolSchema
+	// RequiresDefaultScope rejects calls outside an in-scope helper.
+	RequiresDefaultScope bool
+	// Operation is nil for calls that do not record a daemon operation.
+	Operation *ariToolOperation
+	Handler   ariToolHandler
+}
+
+func readOnlyAriToolSchema(name, description string) AriToolSchema {
+	return AriToolSchema{Name: name, Description: description, ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), ReadOnly: true, OperationKind: daemonOperationKindReadOnly}
+}
+
+func mutatingAriToolSchema(name, description string, approvalRequired bool) AriToolSchema {
+	schema := AriToolSchema{Name: name, Description: description, ScopeRequired: true, RequiredScopeFields: ariToolScopeFields(), OperationKind: daemonOperationKindMutating}
+	if approvalRequired {
+		schema.ApprovalRequired = true
+		schema.TrustChoices = ariToolTrustChoices()
+	}
+	return schema
+}
+
+var ariToolRegistry = []ariToolDefinition{
+	{
+		Schema: readOnlyAriToolSchema("ari.defaults.get", "Read Ari default harness, model, and invocation settings"),
+		Handler: func(ctx context.Context, d *Daemon, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
+			return d.ariDefaultsGet()
+		},
+	},
+	{
+		Schema:               mutatingAriToolSchema("ari.defaults.set", "Update Ari defaults after scoped approval", true),
+		RequiresDefaultScope: true,
+		Operation:            &ariToolOperation{Type: "ari_defaults_set", Scope: globaldb.OperationScopeGlobal, RequestSummary: "set Ari defaults from helper tool", TrustDecision: ariToolTrustApprovedOnce, RollbackData: map[string]string{"scope": "ari_owned_config"}},
+		Handler: func(ctx context.Context, d *Daemon, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
+			return d.ariDefaultsSet(input)
+		},
+	},
+	{
+		Schema: readOnlyAriToolSchema("ari.profile.draft", "Draft a profile spec without persisting it"),
+		Handler: func(ctx context.Context, d *Daemon, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
+			return ariProfileDraft(input)
+		},
+	},
+	{
+		Schema:    mutatingAriToolSchema("ari.profile.save", "Persist an approved profile spec", true),
+		Operation: &ariToolOperation{Type: "ari_profile_save", Scope: globaldb.OperationScopeWorkspace, RequestSummary: "save Ari helper profile", TrustDecision: ariToolTrustApprovedOnce, RollbackData: map[string]string{"scope": "ari_owned_profile"}},
+		Handler: func(ctx context.Context, d *Daemon, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
+			return ariProfileSave(ctx, store, scope, input)
+		},
+	},
+	{
+		Schema: readOnlyAriToolSchema("ari.self_check", "Read Ari daemon, config, workspace, profile, and harness health"),
+		Handler: func(ctx context.Context, d *Daemon, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
+			return d.ariSelfCheck(ctx, store, scope)
+		},
+	},
+	{
+		Schema: readOnlyAriToolSchema("ari.run.explain_latest", "Summarize the latest available Ari run evidence"),
+		Handler: func(ctx context.Context, d *Daemon, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
+			return ariRunExplainLatest(ctx, store, scope)
+		},
+	},
+	{
+		Schema:    mutatingAriToolSchema("ari.session.fanout", "Launch one or more ephemeral worker profiles from a scoped sticky source session", false),
+		Operation: &ariToolOperation{Type: "ari_session_fanout", Scope: globaldb.OperationScopeWorkspace, RequestSummary: "launch Ari fanout workers from helper tool", TrustDecision: ariToolTrustScopedSourceSession, RollbackData: map[string]string{"scope": "runtime_coordination", "rollback": "not_supported_for_external_worker_runs"}},
+		Handler: func(ctx context.Context, d *Daemon, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
+			return d.ariSessionFanout(ctx, store, scope, input)
+		},
+	},
+	{
+		Schema: readOnlyAriToolSchema("ari.fanout.status", "Read durable fanout group and member status"),
+		Handler: func(ctx context.Context, d *Daemon, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
+			return ariFanoutStatus(ctx, store, scope, input)
+		},
+	},
+	{
+		Schema: readOnlyAriToolSchema("ari.inbox.list", "List durable sticky-session inbox items"),
+		Handler: func(ctx context.Context, d *Daemon, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
+			return ariInboxList(ctx, store, scope, input)
+		},
+	},
+	{
+		Schema: readOnlyAriToolSchema("ari.inbox.count", "Count durable sticky-session inbox items by read state"),
+		Handler: func(ctx context.Context, d *Daemon, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
+			return ariInboxCount(ctx, store, scope, input)
+		},
+	},
+	{
+		Schema:    mutatingAriToolSchema("ari.inbox.mark_read", "Mark durable sticky-session inbox items read", false),
+		Operation: &ariToolOperation{Type: "ari_inbox_mark_read", Scope: globaldb.OperationScopeWorkspace, RequestSummary: "mark Ari inbox items read from helper tool", TrustDecision: ariToolTrustScopedSourceSession, RollbackData: map[string]string{"scope": "runtime_inbox", "rollback": "not_supported_for_read_lifecycle"}},
+		Handler: func(ctx context.Context, d *Daemon, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
+			return ariInboxMarkRead(ctx, store, scope, input)
+		},
+	},
+	{
+		Schema: readOnlyAriToolSchema("ari.workspace.events.next", "Read unread events from a durable workspace event subscription, optionally blocking until min_events arrive within timeout_ms (max 60000)"),
+		Handler: func(ctx context.Context, d *Daemon, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
+			return ariWorkspaceEventsNext(ctx, store, scope, input)
+		},
+	},
+	{
+		Schema:    mutatingAriToolSchema("ari.workspace.events.ack", "Advance a durable workspace event subscription cursor", false),
+		Operation: &ariToolOperation{Type: "ari_workspace_events_ack", Scope: globaldb.OperationScopeWorkspace, RequestSummary: "ack Ari workspace event subscription from helper tool", TrustDecision: ariToolTrustScopedSourceSession, RollbackData: map[string]string{"scope": "workspace_event_subscription", "rollback": "not_supported_for_read_lifecycle"}},
+		Handler: func(ctx context.Context, d *Daemon, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
+			return ariWorkspaceEventsAck(ctx, store, scope, input)
+		},
+	},
+	{
+		Schema:    mutatingAriToolSchema("ari.workspace.signals.send", "Send a workspace-scoped signal event from the scoped source session", false),
+		Operation: &ariToolOperation{Type: "ari_workspace_signals_send", Scope: globaldb.OperationScopeWorkspace, RequestSummary: "send Ari workspace signal from helper tool", TrustDecision: ariToolTrustScopedSourceSession, RollbackData: map[string]string{"scope": "workspace_event_history", "rollback": "append_only_signal_not_reverted"}},
+		Handler: func(ctx context.Context, d *Daemon, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
+			return ariWorkspaceSignalSend(ctx, store, scope, input)
+		},
+	},
+	{
+		Schema:    mutatingAriToolSchema("ari.workspace.timers.create", "Create a durable workspace timer owned by the scoped source session", false),
+		Operation: &ariToolOperation{Type: "ari_workspace_timers_create", Scope: globaldb.OperationScopeWorkspace, RequestSummary: "create Ari workspace timer from helper tool", TrustDecision: ariToolTrustScopedSourceSession, RollbackData: map[string]string{"scope": "workspace_timer", "rollback": "cancel_timer_when_scheduled"}},
+		Handler: func(ctx context.Context, d *Daemon, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
+			return ariWorkspaceTimerCreate(ctx, store, scope, input)
+		},
+	},
+	{
+		Schema: readOnlyAriToolSchema("ari.workspace.timers.get", "Read a durable workspace timer"),
+		Handler: func(ctx context.Context, d *Daemon, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
+			return ariWorkspaceTimerGet(ctx, store, scope, input)
+		},
+	},
+	{
+		Schema:    mutatingAriToolSchema("ari.workspace.timers.cancel", "Cancel a durable workspace timer owned by the scoped source session", false),
+		Operation: &ariToolOperation{Type: "ari_workspace_timers_cancel", Scope: globaldb.OperationScopeWorkspace, RequestSummary: "cancel Ari workspace timer from helper tool", TrustDecision: ariToolTrustScopedSourceSession, RollbackData: map[string]string{"scope": "workspace_timer", "rollback": "not_supported_for_timer_cancellation"}},
+		Handler: func(ctx context.Context, d *Daemon, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
+			return ariWorkspaceTimerCancel(ctx, store, scope, input)
+		},
+	},
+	{
+		Schema: readOnlyAriToolSchema("ari.workspace.deliveries.get", "Read a pending workspace event delivery"),
+		Handler: func(ctx context.Context, d *Daemon, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
+			return ariWorkspaceDeliveryGet(ctx, store, scope, input)
+		},
+	},
+	{
+		Schema: readOnlyAriToolSchema("ari.workspace.deliveries.list_due", "List due pending workspace event deliveries"),
+		Handler: func(ctx context.Context, d *Daemon, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
+			return ariWorkspaceDeliveriesListDue(ctx, store, scope, input)
+		},
+	},
 }
 
 func ariToolScopeFields() []string {
@@ -105,15 +250,41 @@ func ariToolTrustChoices() []string {
 	return []string{"trust_once", "trust_always_by_operation_type", "deny"}
 }
 
+func validateAriToolRegistry() error {
+	for _, definition := range ariToolRegistry {
+		if definition.Operation == nil {
+			continue
+		}
+		switch definition.Operation.TrustDecision {
+		case ariToolTrustApprovedOnce:
+			if !definition.Schema.ApprovalRequired {
+				return fmt.Errorf("ari tool %q uses approved_once without approval", definition.Schema.Name)
+			}
+		case ariToolTrustScopedSourceSession:
+			if definition.Schema.ApprovalRequired {
+				return fmt.Errorf("ari tool %q uses scoped_source_session with approval", definition.Schema.Name)
+			}
+		default:
+			return fmt.Errorf("ari tool %q has unknown trust decision %q", definition.Schema.Name, definition.Operation.TrustDecision)
+		}
+	}
+	return nil
+}
+
 func (d *Daemon) registerAriToolMethods(registry *rpc.MethodRegistry, store *globaldb.Store) error {
+	if err := validateAriToolRegistry(); err != nil {
+		return err
+	}
 	if err := rpc.RegisterMethod(registry, rpc.Method[AriToolListRequest, AriToolListResponse]{
 		Name:        "ari.tool.list",
 		Description: "List Ari-owned tools available to helpers",
 		Handler: func(ctx context.Context, req AriToolListRequest) (AriToolListResponse, error) {
 			_ = ctx
 			_ = req
-			tools := make([]AriToolSchema, len(ariTools))
-			copy(tools, ariTools)
+			tools := make([]AriToolSchema, 0, len(ariToolRegistry))
+			for _, definition := range ariToolRegistry {
+				tools = append(tools, definition.Schema)
+			}
 			return AriToolListResponse{Tools: tools}, nil
 		},
 	}); err != nil {
@@ -142,7 +313,7 @@ func (d *Daemon) callAriTool(ctx context.Context, store *globaldb.Store, req Ari
 	if req.Scope.ToolName != name {
 		return AriToolCallResponse{}, ariToolError("scope_tool_mismatch", "scope tool_name must match requested tool")
 	}
-	tool, ok := ariToolByName(name)
+	definition, ok := ariToolDefinitionByName(name)
 	if !ok {
 		return AriToolCallResponse{}, ariToolError("unknown_tool", "unknown Ari tool")
 	}
@@ -152,138 +323,56 @@ func (d *Daemon) callAriTool(ctx context.Context, store *globaldb.Store, req Ari
 	if _, err := store.GetWorkspace(ctx, req.Scope.WorkspaceID); err != nil {
 		return AriToolCallResponse{}, err
 	}
-	if name == "ari.defaults.set" && !req.Scope.WithinDefaultScope {
+	if definition.RequiresDefaultScope && !req.Scope.WithinDefaultScope {
 		return AriToolCallResponse{}, ariToolError("handoff_required", "defaults writes require an in-scope helper approval")
 	}
-	if tool.ApprovalRequired {
+	if definition.Schema.ApprovalRequired {
 		if err := validateAndConsumeAriApproval(ctx, store, req); err != nil {
 			return AriToolCallResponse{}, err
 		}
 	}
-	switch name {
-	case "ari.defaults.get":
-		return d.ariDefaultsGet()
-	case "ari.defaults.set":
-		var response AriToolCallResponse
-		_, err := recordDaemonOperation(ctx, store, daemonOperationRecordOptions{OperationType: "ari_defaults_set", OperationKind: daemonOperationKindMutating, Actor: req.Scope.ProfileName, Source: daemonOperationSourceTool, Scope: globaldb.OperationScopeGlobal, RequestSummary: "set Ari defaults from helper tool", TrustDecision: "approved_once", RollbackData: map[string]string{"scope": "ari_owned_config"}, PayloadSnapshot: map[string]string{"tool": name, "workspace_id": req.Scope.WorkspaceID, "request_hash": req.Approval.RequestHash}}, func(ctx context.Context) error {
-			_ = ctx
-			var err error
-			response, err = d.ariDefaultsSet(req.Input)
-			return err
-		})
-		return response, err
-	case "ari.profile.draft":
-		return ariProfileDraft(req.Input)
-	case "ari.profile.save":
-		var response AriToolCallResponse
-		_, err := recordDaemonOperation(ctx, store, daemonOperationRecordOptions{WorkspaceID: req.Scope.WorkspaceID, OperationType: "ari_profile_save", OperationKind: daemonOperationKindMutating, Actor: req.Scope.ProfileName, Source: daemonOperationSourceTool, Scope: globaldb.OperationScopeWorkspace, RequestSummary: "save Ari helper profile", TrustDecision: "approved_once", RollbackData: map[string]string{"scope": "ari_owned_profile"}, PayloadSnapshot: map[string]string{"tool": name, "workspace_id": req.Scope.WorkspaceID, "request_hash": req.Approval.RequestHash}}, func(ctx context.Context) error {
-			var err error
-			response, err = ariProfileSave(ctx, store, req.Scope, req.Input)
-			return err
-		})
-		return response, err
-	case "ari.self_check":
-		return d.ariSelfCheck(ctx, store, req.Scope)
-	case "ari.run.explain_latest":
-		return ariRunExplainLatest(ctx, store, req.Scope)
-	case "ari.session.fanout":
-		var response AriToolCallResponse
-		requestHash, err := HashAriToolRequest(name, req.Input)
-		if err != nil {
-			return AriToolCallResponse{}, err
-		}
-		_, err = recordDaemonOperation(ctx, store, daemonOperationRecordOptions{WorkspaceID: req.Scope.WorkspaceID, OperationType: "ari_session_fanout", OperationKind: daemonOperationKindMutating, Actor: req.Scope.ProfileName, Source: daemonOperationSourceTool, Scope: globaldb.OperationScopeWorkspace, RequestSummary: "launch Ari fanout workers from helper tool", TrustDecision: "scoped_source_session", RollbackData: map[string]string{"scope": "runtime_coordination", "rollback": "not_supported_for_external_worker_runs"}, PayloadSnapshot: map[string]string{"tool": name, "workspace_id": req.Scope.WorkspaceID, "source_run_id": req.Scope.SourceRunID, "request_hash": requestHash}}, func(ctx context.Context) error {
-			var err error
-			response, err = d.ariSessionFanout(ctx, store, req.Scope, req.Input)
-			return err
-		})
-		return response, err
-	case "ari.fanout.status":
-		return ariFanoutStatus(ctx, store, req.Scope, req.Input)
-	case "ari.inbox.list":
-		return ariInboxList(ctx, store, req.Scope, req.Input)
-	case "ari.inbox.count":
-		return ariInboxCount(ctx, store, req.Scope, req.Input)
-	case "ari.inbox.mark_read":
-		var response AriToolCallResponse
-		requestHash, err := HashAriToolRequest(name, req.Input)
-		if err != nil {
-			return AriToolCallResponse{}, err
-		}
-		_, err = recordDaemonOperation(ctx, store, daemonOperationRecordOptions{WorkspaceID: req.Scope.WorkspaceID, OperationType: "ari_inbox_mark_read", OperationKind: daemonOperationKindMutating, Actor: req.Scope.ProfileName, Source: daemonOperationSourceTool, Scope: globaldb.OperationScopeWorkspace, RequestSummary: "mark Ari inbox items read from helper tool", TrustDecision: "scoped_source_session", RollbackData: map[string]string{"scope": "runtime_inbox", "rollback": "not_supported_for_read_lifecycle"}, PayloadSnapshot: map[string]string{"tool": name, "workspace_id": req.Scope.WorkspaceID, "source_run_id": req.Scope.SourceRunID, "request_hash": requestHash}}, func(ctx context.Context) error {
-			var err error
-			response, err = ariInboxMarkRead(ctx, store, req.Scope, req.Input)
-			return err
-		})
-		return response, err
-	case "ari.workspace.events.next":
-		return ariWorkspaceEventsNext(ctx, store, req.Scope, req.Input)
-	case "ari.workspace.events.ack":
-		var response AriToolCallResponse
-		requestHash, err := HashAriToolRequest(name, req.Input)
-		if err != nil {
-			return AriToolCallResponse{}, err
-		}
-		_, err = recordDaemonOperation(ctx, store, daemonOperationRecordOptions{WorkspaceID: req.Scope.WorkspaceID, OperationType: "ari_workspace_events_ack", OperationKind: daemonOperationKindMutating, Actor: req.Scope.ProfileName, Source: daemonOperationSourceTool, Scope: globaldb.OperationScopeWorkspace, RequestSummary: "ack Ari workspace event subscription from helper tool", TrustDecision: "scoped_source_session", RollbackData: map[string]string{"scope": "workspace_event_subscription", "rollback": "not_supported_for_read_lifecycle"}, PayloadSnapshot: map[string]string{"tool": name, "workspace_id": req.Scope.WorkspaceID, "source_run_id": req.Scope.SourceRunID, "request_hash": requestHash}}, func(ctx context.Context) error {
-			var err error
-			response, err = ariWorkspaceEventsAck(ctx, store, req.Scope, req.Input)
-			return err
-		})
-		return response, err
-	case "ari.workspace.signals.send":
-		var response AriToolCallResponse
-		requestHash, err := HashAriToolRequest(name, req.Input)
-		if err != nil {
-			return AriToolCallResponse{}, err
-		}
-		_, err = recordDaemonOperation(ctx, store, daemonOperationRecordOptions{WorkspaceID: req.Scope.WorkspaceID, OperationType: "ari_workspace_signals_send", OperationKind: daemonOperationKindMutating, Actor: req.Scope.ProfileName, Source: daemonOperationSourceTool, Scope: globaldb.OperationScopeWorkspace, RequestSummary: "send Ari workspace signal from helper tool", TrustDecision: "scoped_source_session", RollbackData: map[string]string{"scope": "workspace_event_history", "rollback": "append_only_signal_not_reverted"}, PayloadSnapshot: map[string]string{"tool": name, "workspace_id": req.Scope.WorkspaceID, "source_run_id": req.Scope.SourceRunID, "request_hash": requestHash}}, func(ctx context.Context) error {
-			var err error
-			response, err = ariWorkspaceSignalSend(ctx, store, req.Scope, req.Input)
-			return err
-		})
-		return response, err
-	case "ari.workspace.timers.create":
-		var response AriToolCallResponse
-		requestHash, err := HashAriToolRequest(name, req.Input)
-		if err != nil {
-			return AriToolCallResponse{}, err
-		}
-		_, err = recordDaemonOperation(ctx, store, daemonOperationRecordOptions{WorkspaceID: req.Scope.WorkspaceID, OperationType: "ari_workspace_timers_create", OperationKind: daemonOperationKindMutating, Actor: req.Scope.ProfileName, Source: daemonOperationSourceTool, Scope: globaldb.OperationScopeWorkspace, RequestSummary: "create Ari workspace timer from helper tool", TrustDecision: "scoped_source_session", RollbackData: map[string]string{"scope": "workspace_timer", "rollback": "cancel_timer_when_scheduled"}, PayloadSnapshot: map[string]string{"tool": name, "workspace_id": req.Scope.WorkspaceID, "source_run_id": req.Scope.SourceRunID, "request_hash": requestHash}}, func(ctx context.Context) error {
-			var err error
-			response, err = ariWorkspaceTimerCreate(ctx, store, req.Scope, req.Input)
-			return err
-		})
-		return response, err
-	case "ari.workspace.timers.get":
-		return ariWorkspaceTimerGet(ctx, store, req.Scope, req.Input)
-	case "ari.workspace.timers.cancel":
-		var response AriToolCallResponse
-		requestHash, err := HashAriToolRequest(name, req.Input)
-		if err != nil {
-			return AriToolCallResponse{}, err
-		}
-		_, err = recordDaemonOperation(ctx, store, daemonOperationRecordOptions{WorkspaceID: req.Scope.WorkspaceID, OperationType: "ari_workspace_timers_cancel", OperationKind: daemonOperationKindMutating, Actor: req.Scope.ProfileName, Source: daemonOperationSourceTool, Scope: globaldb.OperationScopeWorkspace, RequestSummary: "cancel Ari workspace timer from helper tool", TrustDecision: "scoped_source_session", RollbackData: map[string]string{"scope": "workspace_timer", "rollback": "not_supported_for_timer_cancellation"}, PayloadSnapshot: map[string]string{"tool": name, "workspace_id": req.Scope.WorkspaceID, "source_run_id": req.Scope.SourceRunID, "request_hash": requestHash}}, func(ctx context.Context) error {
-			var err error
-			response, err = ariWorkspaceTimerCancel(ctx, store, req.Scope, req.Input)
-			return err
-		})
-		return response, err
-	case "ari.workspace.deliveries.get":
-		return ariWorkspaceDeliveryGet(ctx, store, req.Scope, req.Input)
-	case "ari.workspace.deliveries.list_due":
-		return ariWorkspaceDeliveriesListDue(ctx, store, req.Scope, req.Input)
-	default:
-		return AriToolCallResponse{}, ariToolError("unknown_tool", "unknown Ari tool")
+	if definition.Operation == nil {
+		return definition.Handler(ctx, d, store, req.Scope, req.Input)
 	}
+	return d.callAriToolWithOperation(ctx, store, req, definition)
 }
 
-func ariToolByName(name string) (AriToolSchema, bool) {
-	for _, tool := range ariTools {
-		if tool.Name == name {
-			return tool, true
+// callAriToolWithOperation wraps a mutating tool handler in one daemon
+// operation record, deriving the request hash and payload from the tool's
+// declared trust decision.
+func (d *Daemon) callAriToolWithOperation(ctx context.Context, store *globaldb.Store, req AriToolCallRequest, definition ariToolDefinition) (AriToolCallResponse, error) {
+	operation := definition.Operation
+	requestHash := req.Approval.RequestHash
+	payload := map[string]string{"tool": req.Name, "workspace_id": req.Scope.WorkspaceID}
+	if operation.TrustDecision == ariToolTrustScopedSourceSession {
+		var err error
+		requestHash, err = HashAriToolRequest(req.Name, req.Input)
+		if err != nil {
+			return AriToolCallResponse{}, err
+		}
+		payload["source_run_id"] = req.Scope.SourceRunID
+	}
+	payload["request_hash"] = requestHash
+	options := daemonOperationRecordOptions{OperationType: operation.Type, OperationKind: daemonOperationKindMutating, Actor: req.Scope.ProfileName, Source: daemonOperationSourceTool, Scope: operation.Scope, RequestSummary: operation.RequestSummary, TrustDecision: operation.TrustDecision, RollbackData: operation.RollbackData, PayloadSnapshot: payload}
+	if operation.Scope == globaldb.OperationScopeWorkspace {
+		options.WorkspaceID = req.Scope.WorkspaceID
+	}
+	var response AriToolCallResponse
+	_, err := recordDaemonOperation(ctx, store, options, func(ctx context.Context) error {
+		var err error
+		response, err = definition.Handler(ctx, d, store, req.Scope, req.Input)
+		return err
+	})
+	return response, err
+}
+
+func ariToolDefinitionByName(name string) (ariToolDefinition, bool) {
+	for _, definition := range ariToolRegistry {
+		if definition.Schema.Name == name {
+			return definition, true
 		}
 	}
-	return AriToolSchema{}, false
+	return ariToolDefinition{}, false
 }
 
 func validateAriToolScope(scope AriToolScope) error {

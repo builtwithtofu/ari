@@ -259,7 +259,7 @@ func stringSliceContains(values []string, target string) bool {
 }
 
 func TestHarnessOptionsFromProfileUseNormalizedAndNativeInvocationModes(t *testing.T) {
-	options, err := harnessOptionsFromProfile(Profile{Harness: HarnessNameClaude})
+	options, err := harnessOptionsFromProfile(NewClaudeExecutor(""), Profile{Harness: HarnessNameClaude})
 	if err != nil {
 		t.Fatalf("harnessOptionsFromProfile returned error: %v", err)
 	}
@@ -267,7 +267,7 @@ func TestHarnessOptionsFromProfileUseNormalizedAndNativeInvocationModes(t *testi
 		t.Fatalf("options = %#v, want no explicit option when settings omit invocation_mode", options)
 	}
 
-	options, err = harnessOptionsFromProfile(Profile{Harness: HarnessNameClaude, Defaults: map[string]any{"invocation_mode": "background"}})
+	options, err = harnessOptionsFromProfile(NewClaudeExecutor(""), Profile{Harness: HarnessNameClaude, Defaults: map[string]any{"invocation_mode": "background"}})
 	if err != nil {
 		t.Fatalf("harnessOptionsFromProfile returned error: %v", err)
 	}
@@ -275,7 +275,7 @@ func TestHarnessOptionsFromProfileUseNormalizedAndNativeInvocationModes(t *testi
 		t.Fatalf("resolved mode = %q (set=%t), want background", mode, ok)
 	}
 
-	options, err = harnessOptionsFromProfile(Profile{Harness: HarnessNameClaude, Defaults: map[string]any{"invocation_mode": "background", "claude": map[string]any{"invocation_mode": "headless"}}})
+	options, err = harnessOptionsFromProfile(NewClaudeExecutor(""), Profile{Harness: HarnessNameClaude, Defaults: map[string]any{"invocation_mode": "background", "claude": map[string]any{"invocation_mode": "headless"}}})
 	if err != nil {
 		t.Fatalf("harnessOptionsFromProfile returned error: %v", err)
 	}
@@ -285,19 +285,19 @@ func TestHarnessOptionsFromProfileUseNormalizedAndNativeInvocationModes(t *testi
 }
 
 func TestHarnessOptionsFromProfileRejectUnsupportedInvocationMode(t *testing.T) {
-	_, err := harnessOptionsFromProfile(Profile{Harness: HarnessNameClaude, Defaults: map[string]any{"invocation_mode": "telepathy"}})
+	_, err := harnessOptionsFromProfile(NewClaudeExecutor(""), Profile{Harness: HarnessNameClaude, Defaults: map[string]any{"invocation_mode": "telepathy"}})
 	if err == nil || !strings.Contains(err.Error(), "unsupported invocation_mode") {
 		t.Fatalf("error = %v, want unsupported invocation mode", err)
 	}
 }
 
 func TestHarnessOptionsFromProfileRejectMalformedSettings(t *testing.T) {
-	_, err := harnessOptionsFromProfile(Profile{Harness: HarnessNameClaude, Defaults: map[string]any{"invocation_mode": 123}})
+	_, err := harnessOptionsFromProfile(NewClaudeExecutor(""), Profile{Harness: HarnessNameClaude, Defaults: map[string]any{"invocation_mode": 123}})
 	if err == nil || !strings.Contains(err.Error(), "invocation_mode must be a string") {
 		t.Fatalf("error = %v, want non-string invocation mode error", err)
 	}
 
-	_, err = harnessOptionsFromProfile(Profile{Harness: HarnessNameClaude, Defaults: map[string]any{"claude": "background"}})
+	_, err = harnessOptionsFromProfile(NewClaudeExecutor(""), Profile{Harness: HarnessNameClaude, Defaults: map[string]any{"claude": "background"}})
 	if err == nil || !strings.Contains(err.Error(), "claude must be an object") {
 		t.Fatalf("error = %v, want malformed native settings error", err)
 	}
@@ -453,7 +453,7 @@ func TestHarnessSessionDefaultsCanOverrideInvocationModeWithoutDuplicatingProfil
 	profile := Profile{Name: "reviewer", Harness: HarnessNameClaude, Prompt: "Review", Defaults: map[string]any{"invocation_mode": "headless"}}
 	profile = applyHarnessSessionDefaults(profile, HarnessSessionDefaults{Settings: map[string]any{"invocation_mode": "background"}})
 
-	options, err := harnessOptionsFromProfile(profile)
+	options, err := harnessOptionsFromProfile(NewClaudeExecutor(""), profile)
 	if err != nil {
 		t.Fatalf("harnessOptionsFromProfile returned error: %v", err)
 	}
@@ -658,6 +658,21 @@ func TestClaudeAuthLogoutRunsProviderLogout(t *testing.T) {
 	}
 	if status.Status != HarnessAuthRequired || status.AriSecretStorage != HarnessAriSecretStorageNone {
 		t.Fatalf("status = %#v, want auth_required after provider logout", status)
+	}
+}
+
+func TestClaudeAuthLogoutReportsProviderFailureAfterWaitError(t *testing.T) {
+	exitCode := 2
+	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunAuthCommand: func(ctx context.Context, opts claudeExecutorOptions, args []string) (commandRunResult, error) {
+		_ = ctx
+		_ = opts
+		return commandRunResult{ExitCode: &exitCode}, errors.New("exit status 2")
+	}})
+
+	_, err := executor.AuthLogout(context.Background(), HarnessAuthSlot{AuthSlotID: "claude-default", Harness: HarnessNameClaude})
+	var unavailable *HarnessUnavailableError
+	if !errors.As(err, &unavailable) || unavailable.Reason != "auth_logout_failed" || !unavailable.StartInvoked {
+		t.Fatalf("err = %#v, want invoked auth_logout_failed unavailability", err)
 	}
 }
 

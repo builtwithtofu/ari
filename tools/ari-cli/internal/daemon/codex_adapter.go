@@ -133,30 +133,23 @@ func (e *CodexExecutor) AuthStatus(ctx context.Context, slot HarnessAuthSlot) (H
 }
 
 func runCodexAuthCommand(ctx context.Context, options codexExecutorOptions, args []string) (commandRunResult, error) {
-	executable := strings.TrimSpace(options.Executable)
-	if executable == "" {
-		executable = "codex"
-	}
-	path, err := exec.LookPath(executable)
+	path, executable, err := resolveHarnessExecutable(HarnessNameCodex, options.Executable, "codex")
 	if err != nil {
-		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameCodex, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+		return commandRunResult{}, err
 	}
 	if len(args) == 2 && args[0] == "login" && args[1] == "--device-auth" {
 		return runCodexDeviceAuthCommand(ctx, path, executable, options)
 	}
-	cmd := exec.CommandContext(ctx, path, args...)
-	cmd.Dir = strings.TrimSpace(options.Cwd)
-	cmd.Env = commandEnvWithProjection(options.AuthProjection)
-	var output strings.Builder
-	cmd.Stdout = &output
-	cmd.Stderr = &output
-	if err := cmd.Start(); err != nil {
-		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameCodex, Reason: "start_failed", Executable: executable, Probe: executable + " " + strings.Join(args, " "), RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: true}
-	}
-	sample := sampleLinuxProcessMetrics(ctx, HarnessSession{PID: cmd.Process.Pid})
-	err = cmd.Wait()
-	exitCode := cmd.ProcessState.ExitCode()
-	return commandRunResult{Output: []byte(output.String()), ProcessSample: &sample, ExitCode: &exitCode}, err
+	return harnessCommand{
+		harness:                HarnessNameCodex,
+		path:                   path,
+		executable:             executable,
+		args:                   args,
+		cwd:                    options.Cwd,
+		projection:             options.AuthProjection,
+		startFailedUnavailable: true,
+		keepResultOnWaitErr:    true,
+	}.run(ctx)
 }
 
 func runCodexDeviceAuthCommand(ctx context.Context, path, executable string, options codexExecutorOptions) (commandRunResult, error) {
@@ -291,11 +284,11 @@ func (e *CodexExecutor) AuthLogout(ctx context.Context, slot HarnessAuthSlot) (H
 		return HarnessAuthStatus{}, err
 	}
 	result, err := options.RunAuthCommand(ctx, options, []string{"logout"})
-	if err != nil {
-		return HarnessAuthStatus{}, err
-	}
 	if result.ExitCode != nil && *result.ExitCode != 0 {
 		return HarnessAuthStatus{}, &HarnessUnavailableError{Harness: HarnessNameCodex, Reason: "auth_logout_failed", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: true}
+	}
+	if err != nil {
+		return HarnessAuthStatus{}, err
 	}
 	return NewHarnessAuthRequired(HarnessNameCodex, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, Method: "device_code", SecretOwnedBy: HarnessNameCodex}), nil
 }
@@ -303,6 +296,7 @@ func (e *CodexExecutor) AuthLogout(ctx context.Context, slot HarnessAuthSlot) (H
 func (e *CodexExecutor) Descriptor() HarnessAdapterDescriptor {
 	return HarnessAdapterDescriptor{
 		Name:                    HarnessNameCodex,
+		DisplayName:             "Codex",
 		Capabilities:            sharedHarnessRuntimeCapabilities(),
 		ObservationCapabilities: []HarnessObservationCapability{HarnessObservationEventStream},
 		DeliveryCapabilities:    []HarnessDeliveryCapability{HarnessDeliveryVisiblePromptTurn},
@@ -375,7 +369,7 @@ func (e *CodexExecutor) Start(ctx context.Context, req ExecutorStartRequest) (Ex
 		return ExecutorRun{}, fmt.Errorf("codex thread id is required")
 	}
 	var turn codexTurnStartResult
-	if err := transport.Call(ctx, "turn/start", map[string]any{"threadId": threadID, "input": []map[string]string{{"type": "text", "text": codexPromptFromRequest(req)}}}, &turn); err != nil {
+	if err := transport.Call(ctx, "turn/start", map[string]any{"threadId": threadID, "input": []map[string]string{{"type": "text", "text": contextPacketPrompt(req)}}}, &turn); err != nil {
 		return ExecutorRun{}, fmt.Errorf("start codex turn: %w", err)
 	}
 	turnID := strings.TrimSpace(turn.Turn.ID)
@@ -463,10 +457,6 @@ type codexTurnStartResult struct {
 	Turn struct {
 		ID string `json:"id"`
 	} `json:"turn"`
-}
-
-func codexPromptFromRequest(req ExecutorStartRequest) string {
-	return strings.TrimSpace(req.ContextPacket)
 }
 
 func codexWorkspaceDeliveryAppServerRequest(attempt WorkspaceDeliveryAttempt) (string, error) {
@@ -621,13 +611,9 @@ func codexTimelineItemsFromNotification(notification codexNotification, workspac
 }
 
 func startCodexAppServerTransport(ctx context.Context, options codexExecutorOptions) (codexTransport, error) {
-	executable := strings.TrimSpace(options.Executable)
-	if executable == "" {
-		executable = "codex"
-	}
-	path, err := exec.LookPath(executable)
+	path, executable, err := resolveHarnessExecutable(HarnessNameCodex, options.Executable, "codex")
 	if err != nil {
-		return nil, &HarnessUnavailableError{Harness: HarnessNameCodex, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+		return nil, err
 	}
 	cmd := exec.CommandContext(ctx, path, "app-server", "--listen", "stdio://")
 	cmd.Dir = strings.TrimSpace(options.Cwd)
@@ -652,37 +638,22 @@ func startCodexAppServerTransport(ctx context.Context, options codexExecutorOpti
 }
 
 func runCodexAppServerDeliveryCommand(ctx context.Context, options codexExecutorOptions, request string) (commandRunResult, error) {
-	executable := strings.TrimSpace(options.Executable)
-	if executable == "" {
-		executable = "codex"
-	}
-	path, err := exec.LookPath(executable)
+	path, executable, err := resolveHarnessExecutable(HarnessNameCodex, options.Executable, "codex")
 	if err != nil {
-		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameCodex, Reason: "missing_executable", Executable: executable, Probe: executable + " --version", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+		return commandRunResult{}, err
 	}
-	cmd := exec.CommandContext(ctx, path, "app-server")
-	cmd.Dir = strings.TrimSpace(options.Cwd)
-	cmd.Env = commandEnvWithProjection(options.AuthProjection)
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return commandRunResult{}, fmt.Errorf("open codex delivery stdin: %w", err)
-	}
-	var output strings.Builder
-	cmd.Stdout = &output
-	cmd.Stderr = &output
-	if err := cmd.Start(); err != nil {
-		return commandRunResult{}, &HarnessUnavailableError{Harness: HarnessNameCodex, Reason: "start_failed", Executable: executable, Probe: executable + " app-server", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: true}
-	}
-	_, _ = io.WriteString(stdin, request)
-	_ = stdin.Close()
-	sample := sampleLinuxProcessMetrics(ctx, HarnessSession{PID: cmd.Process.Pid})
-	err = cmd.Wait()
-	exitCode := cmd.ProcessState.ExitCode()
-	result := commandRunResult{Output: []byte(output.String()), ProcessSample: &sample, ExitCode: &exitCode}
-	if err != nil {
-		return result, fmt.Errorf("run codex app-server delivery: %w", err)
-	}
-	return result, nil
+	return harnessCommand{
+		harness:                HarnessNameCodex,
+		path:                   path,
+		executable:             executable,
+		args:                   []string{"app-server"},
+		cwd:                    options.Cwd,
+		projection:             options.AuthProjection,
+		stdin:                  &request,
+		startFailedUnavailable: true,
+		waitErrWrap:            "run codex app-server delivery",
+		keepResultOnWaitErr:    true,
+	}.run(ctx)
 }
 
 // codexNotification and codexRPCMessage are the codex-facing names for the

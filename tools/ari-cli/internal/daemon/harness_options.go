@@ -42,21 +42,19 @@ func requestedInvocationMode(options []HarnessOption) (HarnessInvocationMode, bo
 	return mode, found
 }
 
-func harnessOptionsFromProfile(profile Profile) ([]HarnessOption, error) {
-	harness := strings.TrimSpace(profile.Harness)
-	switch harness {
-	case HarnessNameClaude, HarnessNameCodex, HarnessNameOpenCode, HarnessNamePi, HarnessNameGrok:
-		mode, ok, err := invocationModeFromSettings(profile.Defaults, harness)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			return nil, nil
-		}
-		return []HarnessOption{WithInvocationMode(mode)}, nil
-	default:
+func harnessOptionsFromProfile(executor Executor, profile Profile) ([]HarnessOption, error) {
+	describer, ok := executor.(HarnessDescriber)
+	if !ok || len(describer.Descriptor().InvocationModes) == 0 {
 		return nil, nil
 	}
+	mode, ok, err := invocationModeFromSettings(profile.Defaults, strings.TrimSpace(profile.Harness))
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
+	}
+	return []HarnessOption{WithInvocationMode(mode)}, nil
 }
 
 func invocationModeFromSettings(settings map[string]any, harness string) (HarnessInvocationMode, bool, error) {

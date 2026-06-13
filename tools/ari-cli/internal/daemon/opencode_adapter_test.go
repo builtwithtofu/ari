@@ -303,6 +303,21 @@ func TestOpenCodeAuthLogoutRunsProviderLogout(t *testing.T) {
 	}
 }
 
+func TestOpenCodeAuthLogoutReportsProviderFailureAfterWaitError(t *testing.T) {
+	exitCode := 2
+	executor := NewOpenCodeExecutorForTest(opencodeExecutorOptions{Executable: "opencode", Cwd: "/repo", RunAuthCommand: func(ctx context.Context, opts opencodeExecutorOptions, args []string) (commandRunResult, error) {
+		_ = ctx
+		_ = opts
+		return commandRunResult{ExitCode: &exitCode}, errors.New("exit status 2")
+	}})
+
+	_, err := executor.AuthLogout(context.Background(), HarnessAuthSlot{AuthSlotID: "opencode-default", Harness: HarnessNameOpenCode})
+	var unavailable *HarnessUnavailableError
+	if !errors.As(err, &unavailable) || unavailable.Reason != "auth_logout_failed" || !unavailable.StartInvoked {
+		t.Fatalf("err = %#v, want invoked auth_logout_failed unavailability", err)
+	}
+}
+
 func TestOpenCodeAuthLogoutUsesProviderLabel(t *testing.T) {
 	exitCode := 0
 	executor := NewOpenCodeExecutorForTest(opencodeExecutorOptions{Executable: "opencode", Cwd: "/repo", RunAuthCommand: func(ctx context.Context, opts opencodeExecutorOptions, args []string) (commandRunResult, error) {

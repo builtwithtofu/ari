@@ -196,6 +196,48 @@ func TestAgentMessageSendMethodGeneratesAgentMessageIDWhenOmitted(t *testing.T) 
 	}
 }
 
+func TestAgentMessageSendRejectsFanoutFields(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	err := callMethodError(registry, "session.message.send", AgentMessageSendRequest{SourceSessionID: "run-1", TargetAgentID: "agent-2", TargetProfileIDs: []string{"worker"}, Body: "fan out"})
+	data := requireHandlerErrorData(t, err)
+	if data["reason"] != "fanout_fields_unsupported" || data["start_invoked"] != false {
+		t.Fatalf("error data = %#v, want fanout_fields_unsupported before send", data)
+	}
+}
+
+func TestFinalResponseListAndTelemetryRollupRequireWorkspaceID(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	for _, tc := range []struct {
+		method string
+		req    any
+	}{
+		{method: "final_response.list", req: FinalResponseListRequest{}},
+		{method: "telemetry.rollup", req: TelemetryRollupRequest{}},
+	} {
+		t.Run(tc.method, func(t *testing.T) {
+			err := callMethodError(registry, tc.method, tc.req)
+			data := requireHandlerErrorData(t, err)
+			if data["reason"] != "missing_workspace_id" {
+				t.Fatalf("error data = %#v, want missing_workspace_id", data)
+			}
+		})
+	}
+}
+
 func TestAgentMessageSendMethodDeliversExcerptAppendedMessage(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()

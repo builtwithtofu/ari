@@ -3,6 +3,7 @@ package globaldb
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -44,6 +45,25 @@ func TestProfileAllowsNullableOverrides(t *testing.T) {
 	}
 	if profile.Harness != "" || profile.Model != "" || profile.InvocationClass != "" {
 		t.Fatalf("partial profile = %#v, want empty explicit overrides", profile)
+	}
+}
+
+func TestProfileTimestampParseFailuresSurface(t *testing.T) {
+	store := newGlobalDBTestStore(t, "agent-profile-invalid-timestamp")
+	ctx := context.Background()
+	if err := store.UpsertProfile(ctx, Profile{ProfileID: "ap_time", Name: "timekeeper", Harness: "codex"}); err != nil {
+		t.Fatalf("UpsertProfile returned error: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE agent_profiles SET created_at = ? WHERE profile_id = ?`, "not-a-time", "ap_time"); err != nil {
+		t.Fatalf("corrupt profile timestamp: %v", err)
+	}
+
+	_, err := store.GetProfile(ctx, "", "timekeeper")
+	if err == nil {
+		t.Fatal("GetProfile returned nil error for malformed created_at")
+	}
+	if !strings.Contains(err.Error(), `profile "ap_time" created_at "not-a-time"`) {
+		t.Fatalf("GetProfile error = %v, want profile id and raw timestamp", err)
 	}
 }
 

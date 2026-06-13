@@ -298,7 +298,7 @@ func TestCommandListReturnsCommandsForSession(t *testing.T) {
 }
 
 func TestCommandListRejectsMalformedStoredArgs(t *testing.T) {
-	store := newCommandMethodTestStore(t)
+	store, db := newCommandMethodTestStoreWithDB(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 
@@ -309,9 +309,7 @@ func TestCommandListRejectsMalformedStoredArgs(t *testing.T) {
 	workspace := t.TempDir()
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
-	if err := store.CreateCommand(context.Background(), globaldb.CreateCommandParams{CommandID: "cmd-bad", WorkspaceID: "sess-1", Command: "echo one", Args: `{"bad":true}`, Status: "running", StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}); err != nil {
-		t.Fatalf("CreateCommand cmd-bad returned error: %v", err)
-	}
+	insertMalformedStoredCommandArgs(t, store, db, "sess-1", "cmd-bad", `{"bad":true}`)
 
 	spec, ok := registry.Get("command.list")
 	if !ok {
@@ -331,7 +329,7 @@ func TestCommandListRejectsMalformedStoredArgs(t *testing.T) {
 }
 
 func TestCommandGetRejectsMalformedStoredArgs(t *testing.T) {
-	store := newCommandMethodTestStore(t)
+	store, db := newCommandMethodTestStoreWithDB(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 
@@ -342,9 +340,7 @@ func TestCommandGetRejectsMalformedStoredArgs(t *testing.T) {
 	workspace := t.TempDir()
 	seedSessionWithPrimaryFolder(t, store, "sess-1", workspace)
 
-	if err := store.CreateCommand(context.Background(), globaldb.CreateCommandParams{CommandID: "cmd-bad", WorkspaceID: "sess-1", Command: "echo one", Args: `{"bad":true}`, Status: "running", StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}); err != nil {
-		t.Fatalf("CreateCommand cmd-bad returned error: %v", err)
-	}
+	insertMalformedStoredCommandArgs(t, store, db, "sess-1", "cmd-bad", `{"bad":true}`)
 
 	spec, ok := registry.Get("command.get")
 	if !ok {
@@ -723,7 +719,24 @@ func seedSessionWithPrimaryFolder(t *testing.T, store *globaldb.Store, sessionID
 	}
 }
 
+func insertMalformedStoredCommandArgs(t *testing.T, store *globaldb.Store, db *sql.DB, workspaceID, commandID, args string) {
+	t.Helper()
+
+	if err := store.CreateCommand(context.Background(), globaldb.CreateCommandParams{CommandID: commandID, WorkspaceID: workspaceID, Command: "echo one", Args: `[]`, Status: "running", StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}); err != nil {
+		t.Fatalf("CreateCommand %s returned error: %v", commandID, err)
+	}
+	if _, err := db.ExecContext(context.Background(), `UPDATE commands SET args = ? WHERE workspace_id = ? AND command_id = ?`, args, workspaceID, commandID); err != nil {
+		t.Fatalf("update command %s args returned error: %v", commandID, err)
+	}
+}
+
 func newCommandMethodTestStore(t *testing.T) *globaldb.Store {
+	t.Helper()
+	store, _ := newCommandMethodTestStoreWithDB(t)
+	return store
+}
+
+func newCommandMethodTestStoreWithDB(t *testing.T) (*globaldb.Store, *sql.DB) {
 	t.Helper()
 
 	dbPath := filepath.Join(t.TempDir(), fmt.Sprintf("command-method-%d.db", time.Now().UnixNano()))
@@ -754,5 +767,5 @@ func newCommandMethodTestStore(t *testing.T) *globaldb.Store {
 		t.Fatalf("NewSQLStore returned error: %v", err)
 	}
 
-	return store
+	return store, db
 }

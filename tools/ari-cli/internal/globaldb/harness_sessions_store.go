@@ -871,3 +871,11 @@ func messageText(msg RunLogMessage) string {
 	}
 	return strings.Join(parts, "\n")
 }
+
+func (s *Store) MarkRunningHarnessSessionsLost(ctx context.Context) error {
+	if err := s.sqlcQueries().MarkRunningHarnessSessionsLost(ctx); err != nil {
+		return fmt.Errorf("mark running harness sessions lost: %w", err)
+	}
+
+	return nil
+}
