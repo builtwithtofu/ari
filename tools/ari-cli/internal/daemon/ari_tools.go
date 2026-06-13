@@ -250,7 +250,31 @@ func ariToolTrustChoices() []string {
 	return []string{"trust_once", "trust_always_by_operation_type", "deny"}
 }
 
+func validateAriToolRegistry() error {
+	for _, definition := range ariToolRegistry {
+		if definition.Operation == nil {
+			continue
+		}
+		switch definition.Operation.TrustDecision {
+		case ariToolTrustApprovedOnce:
+			if !definition.Schema.ApprovalRequired {
+				return fmt.Errorf("ari tool %q uses approved_once without approval", definition.Schema.Name)
+			}
+		case ariToolTrustScopedSourceSession:
+			if definition.Schema.ApprovalRequired {
+				return fmt.Errorf("ari tool %q uses scoped_source_session with approval", definition.Schema.Name)
+			}
+		default:
+			return fmt.Errorf("ari tool %q has unknown trust decision %q", definition.Schema.Name, definition.Operation.TrustDecision)
+		}
+	}
+	return nil
+}
+
 func (d *Daemon) registerAriToolMethods(registry *rpc.MethodRegistry, store *globaldb.Store) error {
+	if err := validateAriToolRegistry(); err != nil {
+		return err
+	}
 	if err := rpc.RegisterMethod(registry, rpc.Method[AriToolListRequest, AriToolListResponse]{
 		Name:        "ari.tool.list",
 		Description: "List Ari-owned tools available to helpers",

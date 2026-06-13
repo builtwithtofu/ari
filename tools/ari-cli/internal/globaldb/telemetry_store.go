@@ -179,6 +179,7 @@ func (s *Store) RollupHarnessSessionTelemetry(ctx context.Context, workspaceID s
 		if byGroup[group].Runs != 1 {
 			byGroup[group].PID = KnownInt64{}
 			byGroup[group].ExitCode = KnownInt64{}
+			byGroup[group].PortsJSON = ""
 		}
 		rollups = append(rollups, *byGroup[group])
 	}

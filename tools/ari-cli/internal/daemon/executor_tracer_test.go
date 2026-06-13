@@ -1631,11 +1631,11 @@ func TestProfileCreateAndGetPersistProfile(t *testing.T) {
 		t.Fatalf("created profile = %#v, want durable profile response", created)
 	}
 	got := callMethod[ProfileResponse](t, registry, "profile.get", ProfileGetRequest{Name: "executor"})
-	if got.ProfileID != created.ProfileID || got.Model != "gpt-5.1-codex" || got.Prompt != "Do work" || got.InvocationClass != HarnessInvocationSticky {
+	if got.ProfileID != created.ProfileID || got.Model != "gpt-5.1-codex" || got.Prompt != "Do work" || got.InvocationClass != HarnessInvocationSticky || got.Defaults["effort"] != "high" {
 		t.Fatalf("got profile = %#v, want created profile %#v", got, created)
 	}
 	listed := callMethod[ProfileListResponse](t, registry, "profile.list", ProfileListRequest{})
-	if len(listed.Profiles) != 1 || listed.Profiles[0].ProfileID != created.ProfileID {
+	if len(listed.Profiles) != 1 || listed.Profiles[0].ProfileID != created.ProfileID || listed.Profiles[0].Defaults["effort"] != "high" {
 		t.Fatalf("listed profiles = %#v, want created profile", listed.Profiles)
 	}
 }

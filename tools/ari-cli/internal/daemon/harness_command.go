@@ -67,14 +67,24 @@ func (c harnessCommand) run(ctx context.Context) (commandRunResult, error) {
 	cmd.Stdout = &output
 	cmd.Stderr = &output
 	if err := cmd.Start(); err != nil {
+		if stdin != nil {
+			_ = stdin.Close()
+		}
 		if c.startFailedUnavailable {
-			return commandRunResult{}, &HarnessUnavailableError{Harness: c.harness, Reason: "start_failed", Executable: c.executable, Probe: c.executable + " " + strings.Join(c.args, " "), RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: true}
+			return commandRunResult{}, &HarnessUnavailableError{Harness: c.harness, Reason: "start_failed", Executable: c.executable, Probe: c.executable, RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: true}
 		}
 		return commandRunResult{}, err
 	}
 	if stdin != nil {
-		_, _ = io.WriteString(stdin, *c.stdin)
-		_ = stdin.Close()
+		if _, err := io.WriteString(stdin, *c.stdin); err != nil {
+			_ = stdin.Close()
+			_ = cmd.Wait()
+			return commandRunResult{}, fmt.Errorf("write %s stdin: %w", c.harness, err)
+		}
+		if err := stdin.Close(); err != nil {
+			_ = cmd.Wait()
+			return commandRunResult{}, fmt.Errorf("close %s stdin: %w", c.harness, err)
+		}
 	}
 	sample := sampleLinuxProcessMetrics(ctx, HarnessSession{PID: cmd.Process.Pid})
 	err := cmd.Wait()

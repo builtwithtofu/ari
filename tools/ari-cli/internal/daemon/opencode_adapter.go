@@ -93,11 +93,11 @@ func (e *OpenCodeExecutor) AuthLogout(ctx context.Context, slot HarnessAuthSlot)
 		args = append(args, "--provider", provider)
 	}
 	result, err := e.options.RunAuthCommand(ctx, e.options, args)
-	if err != nil {
-		return HarnessAuthStatus{}, err
-	}
 	if result.ExitCode != nil && *result.ExitCode != 0 {
 		return HarnessAuthStatus{}, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "auth_logout_failed", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: true}
+	}
+	if err != nil {
+		return HarnessAuthStatus{}, err
 	}
 	return NewHarnessAuthRequired(HarnessNameOpenCode, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, Method: "provider_login", SecretOwnedBy: HarnessNameOpenCode}), nil
 }

@@ -131,6 +131,24 @@ func TestCreateCommandRejectsMissingWorkspace(t *testing.T) {
 	}
 }
 
+func TestCreateCommandRejectsInvalidArgsJSON(t *testing.T) {
+	store := newCommandTestStore(t)
+	ctx := context.Background()
+	if err := store.CreateWorkspace(ctx, "sess-1", "alpha", "/tmp/origin", "manual", "auto"); err != nil {
+		t.Fatalf("CreateWorkspace returned error: %v", err)
+	}
+
+	for _, args := range []string{`{bad`, `{"not":"array"}`, `null`} {
+		err := store.CreateCommand(ctx, CreateCommandParams{CommandID: "cmd-1", WorkspaceID: "sess-1", Command: "go test ./...", Args: args})
+		if err == nil {
+			t.Fatalf("CreateCommand returned nil error for args %q", args)
+		}
+		if !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("CreateCommand error = %v, want ErrInvalidInput", err)
+		}
+	}
+}
+
 func TestWorkspaceCommandDefinitionRejectsMissingWorkspace(t *testing.T) {
 	store := newCommandTestStore(t)
 	ctx := context.Background()

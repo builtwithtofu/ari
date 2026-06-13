@@ -463,7 +463,7 @@ func TestCodexAuthLogoutReportsProviderFailureAfterLogoutCommand(t *testing.T) {
 		call := strings.Join(args, " ")
 		calls = append(calls, call)
 		if call == "logout" {
-			return commandRunResult{ExitCode: &logoutExitCode}, nil
+			return commandRunResult{ExitCode: &logoutExitCode}, errors.New("exit status 42")
 		}
 		return commandRunResult{ExitCode: &statusExitCode}, nil
 	}})

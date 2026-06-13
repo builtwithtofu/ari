@@ -58,6 +58,29 @@ func TestAriToolSchemaExposesStarterToolsAndScopeMetadata(t *testing.T) {
 	}
 }
 
+func TestAriToolRegistryApprovalTrustInvariant(t *testing.T) {
+	if err := validateAriToolRegistry(); err != nil {
+		t.Fatalf("validateAriToolRegistry returned error: %v", err)
+	}
+	for _, definition := range ariToolRegistry {
+		if definition.Operation == nil {
+			continue
+		}
+		switch definition.Operation.TrustDecision {
+		case ariToolTrustApprovedOnce:
+			if !definition.Schema.ApprovalRequired {
+				t.Fatalf("tool %q uses approved_once without approval", definition.Schema.Name)
+			}
+		case ariToolTrustScopedSourceSession:
+			if definition.Schema.ApprovalRequired {
+				t.Fatalf("tool %q uses scoped_source_session with approval", definition.Schema.Name)
+			}
+		default:
+			t.Fatalf("tool %q has unknown trust decision %q", definition.Schema.Name, definition.Operation.TrustDecision)
+		}
+	}
+}
+
 func TestAriToolCatalogIsPrunedAndDoesNotExposeRawDaemonRPCs(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()

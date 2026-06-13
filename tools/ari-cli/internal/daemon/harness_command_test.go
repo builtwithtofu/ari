@@ -28,6 +28,17 @@ func TestResolveHarnessExecutablePrefersConfiguredName(t *testing.T) {
 	}
 }
 
+func TestHarnessCommandRunRedactsArgsFromStartFailureProbe(t *testing.T) {
+	_, err := harnessCommand{harness: "testharness", path: "/missing/testharness", executable: "testharness", args: []string{"prompt-secret"}, startFailedUnavailable: true}.run(context.Background())
+	var unavailable *HarnessUnavailableError
+	if !errors.As(err, &unavailable) || unavailable.Reason != "start_failed" {
+		t.Fatalf("err = %v, want start_failed unavailability", err)
+	}
+	if unavailable.Probe != "testharness" || strings.Contains(unavailable.Probe, "prompt-secret") {
+		t.Fatalf("probe = %q, want executable only", unavailable.Probe)
+	}
+}
+
 func TestHarnessCommandRunCapturesOutputAndExitCode(t *testing.T) {
 	path, executable, err := resolveHarnessExecutable("testharness", "sh", "sh")
 	if err != nil {

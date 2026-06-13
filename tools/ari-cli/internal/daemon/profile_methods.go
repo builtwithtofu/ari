@@ -170,9 +170,9 @@ func getStoredProfile(ctx context.Context, store *globaldb.Store, req ProfileGet
 		}
 		return ProfileResponse{}, err
 	}
-	defaults := map[string]any{}
-	if strings.TrimSpace(stored.DefaultsJSON) != "" {
-		_ = json.Unmarshal([]byte(stored.DefaultsJSON), &defaults)
+	defaults, err := decodeStoredDefaults(stored.DefaultsJSON)
+	if err != nil {
+		return ProfileResponse{}, err
 	}
 	return agentProfileResponseFromStore(stored, defaults), nil
 }
@@ -184,9 +184,9 @@ func listStoredProfiles(ctx context.Context, store *globaldb.Store, req ProfileL
 	}
 	profiles := make([]ProfileResponse, 0, len(stored))
 	for _, profile := range stored {
-		defaults := map[string]any{}
-		if strings.TrimSpace(profile.DefaultsJSON) != "" {
-			_ = json.Unmarshal([]byte(profile.DefaultsJSON), &defaults)
+		defaults, err := decodeStoredDefaults(profile.DefaultsJSON)
+		if err != nil {
+			return ProfileListResponse{}, err
 		}
 		profiles = append(profiles, agentProfileResponseFromStore(profile, defaults))
 	}

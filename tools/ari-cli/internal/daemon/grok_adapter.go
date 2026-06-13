@@ -182,11 +182,11 @@ func (e *GrokExecutor) AuthLogout(ctx context.Context, slot HarnessAuthSlot) (Ha
 		return HarnessAuthStatus{}, err
 	}
 	result, err := options.RunAuthCommand(ctx, options, []string{"logout"})
-	if err != nil {
-		return HarnessAuthStatus{}, err
-	}
 	if result.ExitCode != nil && *result.ExitCode != 0 {
 		return HarnessAuthStatus{}, &HarnessUnavailableError{Harness: HarnessNameGrok, Reason: "auth_logout_failed", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: true}
+	}
+	if err != nil {
+		return HarnessAuthStatus{}, err
 	}
 	return NewHarnessAuthRequired(HarnessNameGrok, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, Method: "device_code", SecretOwnedBy: HarnessNameGrok}), nil
 }

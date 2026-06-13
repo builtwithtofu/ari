@@ -84,6 +84,13 @@ func (s *Store) CreateCommand(ctx context.Context, params CreateCommandParams) e
 	if params.Args = strings.TrimSpace(params.Args); params.Args == "" {
 		params.Args = "[]"
 	}
+	var decodedArgs any
+	if err := json.Unmarshal([]byte(params.Args), &decodedArgs); err != nil {
+		return fmt.Errorf("%w: command args must be a json array", ErrInvalidInput)
+	}
+	if _, ok := decodedArgs.([]any); !ok {
+		return fmt.Errorf("%w: command args must be a json array", ErrInvalidInput)
+	}
 	if params.Status = strings.TrimSpace(params.Status); params.Status == "" {
 		params.Status = commandStatusRunning
 	}

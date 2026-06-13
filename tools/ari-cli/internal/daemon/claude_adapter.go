@@ -125,11 +125,11 @@ func (e *ClaudeExecutor) AuthLogout(ctx context.Context, slot HarnessAuthSlot) (
 		return HarnessAuthStatus{}, err
 	}
 	result, err := options.RunAuthCommand(ctx, options, []string{"auth", "logout"})
+	if result.ExitCode != nil && *result.ExitCode != 0 {
+		return HarnessAuthStatus{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "auth_logout_failed", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: true}
+	}
 	if err != nil {
 		return HarnessAuthStatus{}, err
-	}
-	if result.ExitCode != nil && *result.ExitCode != 0 {
-		return HarnessAuthStatus{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "auth_logout_failed", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
 	}
 	return NewHarnessAuthRequired(HarnessNameClaude, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, Method: "provider_config", SecretOwnedBy: HarnessNameClaude}), nil
 }

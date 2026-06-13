@@ -284,11 +284,11 @@ func (e *CodexExecutor) AuthLogout(ctx context.Context, slot HarnessAuthSlot) (H
 		return HarnessAuthStatus{}, err
 	}
 	result, err := options.RunAuthCommand(ctx, options, []string{"logout"})
-	if err != nil {
-		return HarnessAuthStatus{}, err
-	}
 	if result.ExitCode != nil && *result.ExitCode != 0 {
 		return HarnessAuthStatus{}, &HarnessUnavailableError{Harness: HarnessNameCodex, Reason: "auth_logout_failed", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: true}
+	}
+	if err != nil {
+		return HarnessAuthStatus{}, err
 	}
 	return NewHarnessAuthRequired(HarnessNameCodex, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, Method: "device_code", SecretOwnedBy: HarnessNameCodex}), nil
 }

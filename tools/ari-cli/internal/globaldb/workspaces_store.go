@@ -115,24 +115,28 @@ func (s *Store) UpdateWorkspaceStatus(ctx context.Context, id, status string) er
 		return fmt.Errorf("%w: invalid status %q", ErrInvalidInput, status)
 	}
 
-	workspace, err := s.GetWorkspace(ctx, id)
-	if err != nil {
-		return err
-	}
-	if !canTransitionWorkspaceStatus(workspace.Status, status) {
-		return fmt.Errorf("%w: invalid workspace transition %q -> %q", ErrInvalidInput, workspace.Status, status)
-	}
+	return s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
+		workspace, err := queries.GetWorkspaceByID(ctx, dbsqlc.GetWorkspaceByIDParams{WorkspaceID: id})
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("%w: workspace id %q", ErrNotFound, id)
+			}
+			return err
+		}
+		if !canTransitionWorkspaceStatus(workspace.Status, status) {
+			return fmt.Errorf("%w: invalid workspace transition %q -> %q", ErrInvalidInput, workspace.Status, status)
+		}
 
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	rowsAffected, err := s.sqlcQueries().UpdateWorkspaceStatus(ctx, dbsqlc.UpdateWorkspaceStatusParams{Status: status, UpdatedAt: now, WorkspaceID: id})
-	if err != nil {
-		return fmt.Errorf("update workspace status %q: %w", id, err)
-	}
-	if rowsAffected == 0 {
-		return fmt.Errorf("%w: workspace id %q", ErrNotFound, id)
-	}
-
-	return nil
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		rowsAffected, err := queries.UpdateWorkspaceStatus(ctx, dbsqlc.UpdateWorkspaceStatusParams{Status: status, UpdatedAt: now, WorkspaceID: id})
+		if err != nil {
+			return fmt.Errorf("update workspace status %q: %w", id, err)
+		}
+		if rowsAffected == 0 {
+			return fmt.Errorf("%w: workspace id %q", ErrNotFound, id)
+		}
+		return nil
+	})
 }
 
 func (s *Store) DeleteWorkspace(ctx context.Context, id string) error {
@@ -236,7 +240,7 @@ func addFolderInTransaction(ctx context.Context, queries *dbsqlc.Queries, worksp
 		return fmt.Errorf("add workspace folder %q: %w", folderPath, err)
 	}
 
-	if isPrimary {
+	if isPrimary && len(existingFolders) > 0 {
 		if err := queries.PromotePrimaryWorkspaceFolder(ctx, dbsqlc.PromotePrimaryWorkspaceFolderParams{FolderPath: folderPath, WorkspaceID: workspaceID}); err != nil {
 			return fmt.Errorf("promote workspace primary folder %q: %w", folderPath, err)
 		}

@@ -248,9 +248,13 @@ func getFinalResponse(ctx context.Context, store *globaldb.Store, req FinalRespo
 }
 
 func listFinalResponses(ctx context.Context, store *globaldb.Store, req FinalResponseListRequest) (FinalResponseListResponse, error) {
-	stored, err := store.ListFinalResponses(ctx, req.WorkspaceID)
+	workspaceID := strings.TrimSpace(req.WorkspaceID)
+	if workspaceID == "" {
+		return FinalResponseListResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", map[string]any{"reason": "missing_workspace_id"})
+	}
+	stored, err := store.ListFinalResponses(ctx, workspaceID)
 	if err != nil {
-		return FinalResponseListResponse{}, err
+		return FinalResponseListResponse{}, mapWorkspaceStoreError(err, workspaceID)
 	}
 	responses := make([]FinalResponseResponse, 0, len(stored))
 	for _, response := range stored {
@@ -272,9 +276,13 @@ func finalResponseResponseFromStore(stored globaldb.FinalResponse) FinalResponse
 }
 
 func telemetryRollup(ctx context.Context, store *globaldb.Store, req TelemetryRollupRequest) (TelemetryRollupResponse, error) {
-	rollups, err := store.RollupHarnessSessionTelemetry(ctx, req.WorkspaceID)
+	workspaceID := strings.TrimSpace(req.WorkspaceID)
+	if workspaceID == "" {
+		return TelemetryRollupResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "workspace_id is required", map[string]any{"reason": "missing_workspace_id"})
+	}
+	rollups, err := store.RollupHarnessSessionTelemetry(ctx, workspaceID)
 	if err != nil {
-		return TelemetryRollupResponse{}, err
+		return TelemetryRollupResponse{}, mapWorkspaceStoreError(err, workspaceID)
 	}
 	out := make([]TelemetryRollup, 0, len(rollups))
 	for _, rollup := range rollups {
@@ -431,6 +439,9 @@ func sendAgentMessage(ctx context.Context, store *globaldb.Store, req AgentMessa
 	targetSessionID := strings.TrimSpace(req.TargetSessionID)
 	startSessionID := strings.TrimSpace(req.StartSessionID)
 	contextExcerptIDs := trimNonEmptyStrings(req.ContextExcerptIDs)
+	if strings.TrimSpace(req.FanoutGroupID) != "" || len(trimNonEmptyStrings(req.TargetProfileIDs)) > 0 {
+		return AgentMessageSendResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "fanout fields are only supported by session.fanout", map[string]any{"reason": "fanout_fields_unsupported", "start_invoked": false})
+	}
 	effectiveTargetSessionID := targetSessionID
 	if effectiveTargetSessionID == "" {
 		effectiveTargetSessionID = startSessionID

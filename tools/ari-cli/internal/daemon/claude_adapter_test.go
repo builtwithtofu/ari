@@ -661,6 +661,21 @@ func TestClaudeAuthLogoutRunsProviderLogout(t *testing.T) {
 	}
 }
 
+func TestClaudeAuthLogoutReportsProviderFailureAfterWaitError(t *testing.T) {
+	exitCode := 2
+	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunAuthCommand: func(ctx context.Context, opts claudeExecutorOptions, args []string) (commandRunResult, error) {
+		_ = ctx
+		_ = opts
+		return commandRunResult{ExitCode: &exitCode}, errors.New("exit status 2")
+	}})
+
+	_, err := executor.AuthLogout(context.Background(), HarnessAuthSlot{AuthSlotID: "claude-default", Harness: HarnessNameClaude})
+	var unavailable *HarnessUnavailableError
+	if !errors.As(err, &unavailable) || unavailable.Reason != "auth_logout_failed" || !unavailable.StartInvoked {
+		t.Fatalf("err = %#v, want invoked auth_logout_failed unavailability", err)
+	}
+}
+
 func TestClaudeExecutorRejectsMissingSessionID(t *testing.T) {
 	executor := NewClaudeExecutorForTest(claudeExecutorOptions{Executable: "claude", Cwd: "/repo", RunCommand: func(ctx context.Context, opts claudeExecutorOptions, prompt string) (commandRunResult, error) {
 		return commandRunResult{Output: []byte(`{"result":"Done"}`)}, nil

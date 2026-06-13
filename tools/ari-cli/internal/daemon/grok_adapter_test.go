@@ -224,6 +224,24 @@ func TestGrokAuthStartRelaysDeviceCodeWithoutSecrets(t *testing.T) {
 	}
 }
 
+func TestGrokAuthLogoutReportsProviderFailureAfterWaitError(t *testing.T) {
+	exitCode := 7
+	executor := NewGrokExecutorForTest(grokExecutorOptions{Executable: "grok", AuthHomeRoot: t.TempDir(), RunAuthCommand: func(ctx context.Context, opts grokExecutorOptions, args []string) (commandRunResult, error) {
+		_ = ctx
+		_ = opts
+		if strings.Join(args, " ") != "logout" {
+			t.Fatalf("args = %q, want logout", strings.Join(args, " "))
+		}
+		return commandRunResult{ExitCode: &exitCode}, errors.New("exit status 7")
+	}})
+
+	_, err := executor.AuthLogout(context.Background(), HarnessAuthSlot{AuthSlotID: "grok-default", Harness: HarnessNameGrok})
+	var unavailable *HarnessUnavailableError
+	if !errors.As(err, &unavailable) || unavailable.Reason != "auth_logout_failed" || !unavailable.StartInvoked {
+		t.Fatalf("err = %#v, want invoked auth_logout_failed unavailability", err)
+	}
+}
+
 func TestGrokExecutorStartsAndDeliversAgainstFakeBinary(t *testing.T) {
 	fake := buildFakeHarnessExecutable(t)
 	stateDir := t.TempDir()
