@@ -307,10 +307,10 @@ func workspaceOwnersByFolderPath(ctx context.Context, queries *dbsqlc.Queries, f
 		owner.WorkspaceID = strings.TrimSpace(owner.WorkspaceID)
 		owner.Status = strings.TrimSpace(owner.Status)
 		if owner.WorkspaceID == "" {
-			return nil, fmt.Errorf("%w: folder %q has empty workspace id", ErrInvalidInput, folderPath)
+			return nil, fmt.Errorf("%w: folder %q has empty workspace id", ErrDataIntegrity, folderPath)
 		}
 		if owner.Status == "" {
-			return nil, fmt.Errorf("%w: folder %q owner %q has empty workspace status", ErrInvalidInput, folderPath, owner.WorkspaceID)
+			return nil, fmt.Errorf("%w: folder %q owner %q has empty workspace status", ErrDataIntegrity, folderPath, owner.WorkspaceID)
 		}
 		owners = append(owners, owner)
 	}

@@ -226,6 +226,45 @@ func TestAddFolderRejectsFolderAlreadyOwnedByAnotherWorkspace(t *testing.T) {
 	}
 }
 
+func TestAddFolderReportsCorruptOwnerRowsAsDataIntegrity(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		ownerID     string
+		ownerStatus string
+		folderPath  string
+	}{
+		{name: "empty workspace id", ownerID: "", ownerStatus: "active", folderPath: "/tmp/corrupt-empty-owner"},
+		{name: "empty status", ownerID: "corrupt-owner", ownerStatus: "", folderPath: "/tmp/corrupt-empty-status"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newSessionTestStore(t)
+			ctx := context.Background()
+			if err := store.CreateWorkspace(ctx, "sess-1", "alpha", "/tmp/origin-a", "manual", "auto"); err != nil {
+				t.Fatalf("CreateSession sess-1 returned error: %v", err)
+			}
+
+			now := time.Now().UTC().Format(time.RFC3339Nano)
+			if _, err := store.db.ExecContext(ctx, `INSERT INTO workspaces (workspace_id, name, status, vcs_preference, origin_root, cleanup_policy, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, tc.ownerID, "corrupt-"+tc.name, tc.ownerStatus, "auto", "/tmp/corrupt-origin", "manual", now, now); err != nil {
+				t.Fatalf("insert corrupt workspace owner: %v", err)
+			}
+			if _, err := store.db.ExecContext(ctx, `INSERT INTO workspace_folders (workspace_id, folder_path, vcs_type, is_primary, added_at) VALUES (?, ?, ?, ?, ?)`, tc.ownerID, tc.folderPath, "git", 1, now); err != nil {
+				t.Fatalf("insert corrupt workspace folder: %v", err)
+			}
+
+			err := store.AddFolder(ctx, "sess-1", tc.folderPath, "git", true)
+			if err == nil {
+				t.Fatal("AddFolder returned nil error for corrupt owner row")
+			}
+			if !errors.Is(err, ErrDataIntegrity) {
+				t.Fatalf("AddFolder error = %v, want ErrDataIntegrity", err)
+			}
+			if errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("AddFolder error = %v, should not report corrupt stored data as ErrInvalidInput", err)
+			}
+		})
+	}
+}
+
 func TestWorkspaceFolderPathAllowsHistoricalDuplicates(t *testing.T) {
 	store := newSessionTestStore(t)
 	ctx := context.Background()

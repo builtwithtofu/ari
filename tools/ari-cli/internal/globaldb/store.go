@@ -15,6 +15,7 @@ var (
 	ErrInvalidInput     = errors.New("invalid globaldb input")
 	ErrNotFound         = errors.New("globaldb record not found")
 	ErrPermissionDenied = errors.New("globaldb permission denied")
+	ErrDataIntegrity    = errors.New("globaldb data integrity violation")
 )
 
 const (

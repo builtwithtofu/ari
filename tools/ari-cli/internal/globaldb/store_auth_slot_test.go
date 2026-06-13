@@ -3,6 +3,7 @@ package globaldb
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -20,6 +21,25 @@ func TestAuthSlotPersistsMetadataWithoutCredentialSources(t *testing.T) {
 	}
 	if slot.AuthSlotID != "codex-personal" || slot.Harness != "codex" || slot.Label != "Personal" || slot.ProviderLabel != "ChatGPT Plus" || slot.CredentialOwner != "provider" || slot.Status != "authenticated" {
 		t.Fatalf("slot = %#v, want provider-owned metadata only", slot)
+	}
+}
+
+func TestAuthSlotTimestampParseFailuresSurface(t *testing.T) {
+	store := newGlobalDBTestStore(t, "auth-slot-invalid-timestamp")
+	ctx := context.Background()
+	if err := store.UpsertAuthSlot(ctx, AuthSlot{AuthSlotID: "codex-work", Harness: "codex", Label: "Work", Status: "authenticated"}); err != nil {
+		t.Fatalf("UpsertAuthSlot returned error: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE auth_slots SET updated_at = ? WHERE auth_slot_id = ?`, "not-a-time", "codex-work"); err != nil {
+		t.Fatalf("corrupt auth slot timestamp: %v", err)
+	}
+
+	_, err := store.GetAuthSlot(ctx, "codex-work")
+	if err == nil {
+		t.Fatal("GetAuthSlot returned nil error for malformed updated_at")
+	}
+	if !strings.Contains(err.Error(), `auth slot "codex-work" updated_at "not-a-time"`) {
+		t.Fatalf("GetAuthSlot error = %v, want auth slot id and raw timestamp", err)
 	}
 }
 

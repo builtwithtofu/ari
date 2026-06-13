@@ -128,7 +128,7 @@ func (s *Store) getExactProfile(ctx context.Context, workspaceID, name string) (
 			}
 			return Profile{}, fmt.Errorf("query exact workspace agent profile: %w", err)
 		}
-		return profileFromWorkspaceNameRow(profile), nil
+		return profileFromWorkspaceNameRow(profile)
 	}
 	profile, err := s.sqlcQueries().GetGlobalProfileByName(ctx, dbsqlc.GetGlobalProfileByNameParams{Name: name})
 	if err != nil {
@@ -137,7 +137,7 @@ func (s *Store) getExactProfile(ctx context.Context, workspaceID, name string) (
 		}
 		return Profile{}, fmt.Errorf("query exact global agent profile: %w", err)
 	}
-	return profileFromGlobalNameRow(profile), nil
+	return profileFromGlobalNameRow(profile)
 }
 
 func (s *Store) GetProfile(ctx context.Context, workspaceID, name string) (Profile, error) {
@@ -149,7 +149,7 @@ func (s *Store) GetProfile(ctx context.Context, workspaceID, name string) (Profi
 	if workspaceID != "" {
 		profile, err := s.sqlcQueries().GetWorkspaceProfileByName(ctx, dbsqlc.GetWorkspaceProfileByNameParams{WorkspaceID: optionalString(workspaceID), Name: name})
 		if err == nil {
-			return profileFromWorkspaceNameRow(profile), nil
+			return profileFromWorkspaceNameRow(profile)
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
 			return Profile{}, fmt.Errorf("query workspace agent profile: %w", err)
@@ -162,52 +162,66 @@ func (s *Store) GetProfile(ctx context.Context, workspaceID, name string) (Profi
 		}
 		return Profile{}, fmt.Errorf("query global agent profile: %w", err)
 	}
-	return profileFromGlobalNameRow(profile), nil
+	return profileFromGlobalNameRow(profile)
 }
 
 func (s *Store) ListProfiles(ctx context.Context, workspaceID string) ([]Profile, error) {
 	workspaceID = strings.TrimSpace(workspaceID)
-	var err error
-	var profiles []Profile
 	if workspaceID == "" {
-		rows, listErr := s.sqlcQueries().ListGlobalProfiles(ctx)
-		err = listErr
-		profiles = make([]Profile, 0, len(rows))
-		for _, row := range rows {
-			profiles = append(profiles, profileFromGlobalListRow(row))
+		rows, err := s.sqlcQueries().ListGlobalProfiles(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("list agent profiles: %w", err)
 		}
-	} else {
-		rows, listErr := s.sqlcQueries().ListWorkspaceProfiles(ctx, dbsqlc.ListWorkspaceProfilesParams{WorkspaceID: optionalString(workspaceID)})
-		err = listErr
-		profiles = make([]Profile, 0, len(rows))
+		profiles := make([]Profile, 0, len(rows))
 		for _, row := range rows {
-			profiles = append(profiles, profileFromWorkspaceListRow(row))
+			profile, err := profileFromGlobalListRow(row)
+			if err != nil {
+				return nil, fmt.Errorf("list agent profiles: %w", err)
+			}
+			profiles = append(profiles, profile)
 		}
+		return profiles, nil
 	}
+
+	rows, err := s.sqlcQueries().ListWorkspaceProfiles(ctx, dbsqlc.ListWorkspaceProfilesParams{WorkspaceID: optionalString(workspaceID)})
 	if err != nil {
 		return nil, fmt.Errorf("list agent profiles: %w", err)
+	}
+	profiles := make([]Profile, 0, len(rows))
+	for _, row := range rows {
+		profile, err := profileFromWorkspaceListRow(row)
+		if err != nil {
+			return nil, fmt.Errorf("list agent profiles: %w", err)
+		}
+		profiles = append(profiles, profile)
 	}
 	return profiles, nil
 }
 
-func profileFromWorkspaceNameRow(row dbsqlc.GetWorkspaceProfileByNameRow) Profile {
+func profileFromWorkspaceNameRow(row dbsqlc.GetWorkspaceProfileByNameRow) (Profile, error) {
 	return profileFromFields(row.ProfileID, row.WorkspaceID, row.Name, row.Harness, row.Model, row.Prompt, row.AuthSlotID, row.AuthPoolJson, row.InvocationClass, row.DefaultsJson, row.CreatedAt, row.UpdatedAt)
 }
 
-func profileFromGlobalNameRow(row dbsqlc.GetGlobalProfileByNameRow) Profile {
+func profileFromGlobalNameRow(row dbsqlc.GetGlobalProfileByNameRow) (Profile, error) {
 	return profileFromFields(row.ProfileID, row.WorkspaceID, row.Name, row.Harness, row.Model, row.Prompt, row.AuthSlotID, row.AuthPoolJson, row.InvocationClass, row.DefaultsJson, row.CreatedAt, row.UpdatedAt)
 }
 
-func profileFromWorkspaceListRow(row dbsqlc.ListWorkspaceProfilesRow) Profile {
+func profileFromWorkspaceListRow(row dbsqlc.ListWorkspaceProfilesRow) (Profile, error) {
 	return profileFromFields(row.ProfileID, row.WorkspaceID, row.Name, row.Harness, row.Model, row.Prompt, row.AuthSlotID, row.AuthPoolJson, row.InvocationClass, row.DefaultsJson, row.CreatedAt, row.UpdatedAt)
 }
 
-func profileFromGlobalListRow(row dbsqlc.ListGlobalProfilesRow) Profile {
+func profileFromGlobalListRow(row dbsqlc.ListGlobalProfilesRow) (Profile, error) {
 	return profileFromFields(row.ProfileID, row.WorkspaceID, row.Name, row.Harness, row.Model, row.Prompt, row.AuthSlotID, row.AuthPoolJson, row.InvocationClass, row.DefaultsJson, row.CreatedAt, row.UpdatedAt)
 }
 
-func profileFromFields(profileID string, workspaceID *string, name string, harness *string, model *string, prompt *string, authSlotID *string, authPoolJSON string, invocationClass *string, defaultsJSON string, createdAtValue string, updatedAtValue string) Profile {
-	createdAt, _ := time.Parse(time.RFC3339Nano, createdAtValue)
-	updatedAt, _ := time.Parse(time.RFC3339Nano, updatedAtValue)
-	return Profile{ProfileID: profileID, WorkspaceID: stringValue(workspaceID), Name: name, Harness: stringValue(harness), Model: stringValue(model), Prompt: stringValue(prompt), AuthSlotID: stringValue(authSlotID), AuthPoolJSON: authPoolJSON, InvocationClass: stringValue(invocationClass), DefaultsJSON: defaultsJSON, CreatedAt: createdAt, UpdatedAt: updatedAt}
+func profileFromFields(profileID string, workspaceID *string, name string, harness *string, model *string, prompt *string, authSlotID *string, authPoolJSON string, invocationClass *string, defaultsJSON string, createdAtValue string, updatedAtValue string) (Profile, error) {
+	createdAt, err := time.Parse(time.RFC3339Nano, createdAtValue)
+	if err != nil {
+		return Profile{}, fmt.Errorf("parse profile %q created_at %q: %w", profileID, createdAtValue, err)
+	}
+	updatedAt, err := time.Parse(time.RFC3339Nano, updatedAtValue)
+	if err != nil {
+		return Profile{}, fmt.Errorf("parse profile %q updated_at %q: %w", profileID, updatedAtValue, err)
+	}
+	return Profile{ProfileID: profileID, WorkspaceID: stringValue(workspaceID), Name: name, Harness: stringValue(harness), Model: stringValue(model), Prompt: stringValue(prompt), AuthSlotID: stringValue(authSlotID), AuthPoolJSON: authPoolJSON, InvocationClass: stringValue(invocationClass), DefaultsJSON: defaultsJSON, CreatedAt: createdAt, UpdatedAt: updatedAt}, nil
 }

@@ -89,7 +89,7 @@ func (s *Store) GetAuthSlot(ctx context.Context, authSlotID string) (AuthSlot, e
 		}
 		return AuthSlot{}, fmt.Errorf("query auth slot %q: %w", authSlotID, err)
 	}
-	return authSlotFromSQLC(row), nil
+	return authSlotFromSQLC(row)
 }
 
 func (s *Store) ListAuthSlots(ctx context.Context, harness string) ([]AuthSlot, error) {
@@ -106,7 +106,11 @@ func (s *Store) ListAuthSlots(ctx context.Context, harness string) ([]AuthSlot, 
 	}
 	slots := make([]AuthSlot, 0, len(rows))
 	for _, row := range rows {
-		slots = append(slots, authSlotFromSQLC(row))
+		slot, err := authSlotFromSQLC(row)
+		if err != nil {
+			return nil, fmt.Errorf("list auth slots: %w", err)
+		}
+		slots = append(slots, slot)
 	}
 	return slots, nil
 }
@@ -135,8 +139,14 @@ func validAuthSlotStatus(status string) bool {
 	}
 }
 
-func authSlotFromSQLC(row dbsqlc.AuthSlot) AuthSlot {
-	createdAt, _ := time.Parse(time.RFC3339Nano, row.CreatedAt)
-	updatedAt, _ := time.Parse(time.RFC3339Nano, row.UpdatedAt)
-	return AuthSlot{AuthSlotID: row.AuthSlotID, Harness: row.Harness, Label: row.Label, ProviderLabel: stringValue(row.ProviderLabel), CredentialOwner: row.CredentialOwner, Status: row.Status, MetadataJSON: row.MetadataJson, CreatedAt: createdAt, UpdatedAt: updatedAt}
+func authSlotFromSQLC(row dbsqlc.AuthSlot) (AuthSlot, error) {
+	createdAt, err := time.Parse(time.RFC3339Nano, row.CreatedAt)
+	if err != nil {
+		return AuthSlot{}, fmt.Errorf("parse auth slot %q created_at %q: %w", row.AuthSlotID, row.CreatedAt, err)
+	}
+	updatedAt, err := time.Parse(time.RFC3339Nano, row.UpdatedAt)
+	if err != nil {
+		return AuthSlot{}, fmt.Errorf("parse auth slot %q updated_at %q: %w", row.AuthSlotID, row.UpdatedAt, err)
+	}
+	return AuthSlot{AuthSlotID: row.AuthSlotID, Harness: row.Harness, Label: row.Label, ProviderLabel: stringValue(row.ProviderLabel), CredentialOwner: row.CredentialOwner, Status: row.Status, MetadataJSON: row.MetadataJson, CreatedAt: createdAt, UpdatedAt: updatedAt}, nil
 }
