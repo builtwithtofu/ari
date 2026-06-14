@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb/dbsqlc"
 )
@@ -728,20 +727,11 @@ func sendAgentMessageWithQueries(ctx context.Context, qtx *dbsqlc.Queries, param
 		if strings.TrimSpace(event.CorrelationID) == "" {
 			event.CorrelationID = targetSessionID
 		}
-		event = normalizeWorkspaceEvent(event)
-		if err := validateWorkspaceEvent(event); err != nil {
+		prepared, err := prepareCoordinatedWorkspaceEvent(event)
+		if err != nil {
 			return AgentMessage{}, err
 		}
-		if event.EventID == "" {
-			event.EventID = newWorkspaceEventID()
-		}
-		if event.CreatedAt.IsZero() {
-			event.CreatedAt = time.Now().UTC()
-		}
-		if err := createWorkspaceEventWithQueries(ctx, qtx, &event); err != nil {
-			return AgentMessage{}, err
-		}
-		if err := createPendingDeliveriesForWorkspaceEvent(ctx, qtx, event); err != nil {
+		if err := appendCoordinatedWorkspaceEventWithQueries(ctx, qtx, &prepared); err != nil {
 			return AgentMessage{}, err
 		}
 	}

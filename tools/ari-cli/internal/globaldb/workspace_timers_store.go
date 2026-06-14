@@ -132,32 +132,25 @@ func (s *Store) FireWorkspaceTimer(ctx context.Context, timerID string) (Workspa
 		if timer.Status != workspaceTimerStatusScheduled {
 			return ErrNotFound
 		}
-		event := normalizeWorkspaceEvent(WorkspaceEvent{EventID: newWorkspaceEventID(), WorkspaceID: timer.WorkspaceID, EventType: workspaceTimerFiredEventType, SubjectType: "timer", SubjectID: timer.TimerID, ProducerType: "daemon", ProducerID: "timer", CorrelationID: defaultString(timer.Purpose, timer.TimerID), CausationID: timer.SubscriptionID, PayloadJSON: timer.PayloadJSON, PayloadRefJSON: workspaceTimerPayloadRef(timer.TimerID)})
-		if event.CreatedAt.IsZero() {
-			event.CreatedAt = time.Now().UTC()
-		}
-		if err := validateWorkspaceEvent(event); err != nil {
-			return err
-		}
-		if err := createWorkspaceEventWithQueries(ctx, queries, &event); err != nil {
-			return err
-		}
-		if err := createPendingDeliveriesForWorkspaceEvent(ctx, queries, event); err != nil {
-			return err
-		}
-		now := time.Now().UTC()
-		rows, err := queries.MarkWorkspaceTimerFired(ctx, dbsqlc.MarkWorkspaceTimerFiredParams{FiredEventID: event.EventID, UpdatedAt: now.Format(time.RFC3339Nano), TimerID: timer.TimerID})
+		event, err := prepareCoordinatedWorkspaceEvent(WorkspaceEvent{EventID: newWorkspaceEventID(), WorkspaceID: timer.WorkspaceID, EventType: workspaceTimerFiredEventType, SubjectType: "timer", SubjectID: timer.TimerID, ProducerType: "daemon", ProducerID: "timer", CorrelationID: defaultString(timer.Purpose, timer.TimerID), CausationID: timer.SubscriptionID, PayloadJSON: timer.PayloadJSON, PayloadRefJSON: workspaceTimerPayloadRef(timer.TimerID)})
 		if err != nil {
-			return fmt.Errorf("mark workspace timer %q fired: %w", timer.TimerID, err)
+			return err
 		}
-		if rows == 0 {
-			return ErrNotFound
-		}
-		timer.Status = workspaceTimerStatusFired
-		timer.FiredEventID = event.EventID
-		timer.UpdatedAt = now
-		fired = timer
-		return nil
+		return appendCoordinatedWorkspaceEventWithQueries(ctx, queries, &event, func(ctx context.Context, queries *dbsqlc.Queries, event WorkspaceEvent) error {
+			now := time.Now().UTC()
+			rows, err := queries.MarkWorkspaceTimerFired(ctx, dbsqlc.MarkWorkspaceTimerFiredParams{FiredEventID: event.EventID, UpdatedAt: now.Format(time.RFC3339Nano), TimerID: timer.TimerID})
+			if err != nil {
+				return fmt.Errorf("mark workspace timer %q fired: %w", timer.TimerID, err)
+			}
+			if rows == 0 {
+				return ErrNotFound
+			}
+			timer.Status = workspaceTimerStatusFired
+			timer.FiredEventID = event.EventID
+			timer.UpdatedAt = now
+			fired = timer
+			return nil
+		})
 	}); err != nil {
 		return WorkspaceTimer{}, err
 	}

@@ -92,8 +92,8 @@ func upsertFanoutMemberWithQueries(ctx context.Context, queries *dbsqlc.Queries,
 // at all. The store fills the inbox item's event linkage because the event ID
 // is only final inside the call.
 func (s *Store) ProjectFanoutWorkerEvent(ctx context.Context, event WorkspaceEvent, member FanoutMember, inboxItem *InboxItem) (WorkspaceEvent, error) {
-	event = normalizeWorkspaceEvent(event)
-	if err := validateWorkspaceEvent(event); err != nil {
+	event, err := prepareCoordinatedWorkspaceEvent(event)
+	if err != nil {
 		return WorkspaceEvent{}, err
 	}
 	if err := validateFanoutMemberProjection(member); err != nil {
@@ -104,12 +104,6 @@ func (s *Store) ProjectFanoutWorkerEvent(ctx context.Context, event WorkspaceEve
 	}
 	if strings.TrimSpace(event.CorrelationID) != "" && strings.TrimSpace(member.FanoutGroupID) != "" && strings.TrimSpace(event.CorrelationID) != strings.TrimSpace(member.FanoutGroupID) {
 		return WorkspaceEvent{}, ErrInvalidInput
-	}
-	if event.EventID == "" {
-		event.EventID = newWorkspaceEventID()
-	}
-	if event.CreatedAt.IsZero() {
-		event.CreatedAt = time.Now().UTC()
 	}
 	var item InboxItem
 	if inboxItem != nil {
@@ -132,23 +126,22 @@ func (s *Store) ProjectFanoutWorkerEvent(ctx context.Context, event WorkspaceEve
 		}
 	}
 	if err := s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
-		if err := createWorkspaceEventWithQueries(ctx, queries, &event); err != nil {
-			return err
-		}
-		if strings.TrimSpace(member.CreatedAt) == "" {
-			member.CreatedAt = event.CreatedAt.UTC().Format(time.RFC3339Nano)
-		}
-		member.UpdatedAt = event.CreatedAt.UTC().Format(time.RFC3339Nano)
-		if err := createPendingDeliveriesForWorkspaceEvent(ctx, queries, event); err != nil {
-			return err
-		}
-		if err := upsertFanoutMemberWithQueries(ctx, queries, member); err != nil {
-			return err
-		}
-		if inboxItem != nil {
-			return createInboxItemWithQueries(ctx, queries, item)
-		}
-		return nil
+		return appendCoordinatedWorkspaceEventWithQueries(
+			ctx, queries, &event,
+			func(ctx context.Context, queries *dbsqlc.Queries, event WorkspaceEvent) error {
+				if strings.TrimSpace(member.CreatedAt) == "" {
+					member.CreatedAt = event.CreatedAt.UTC().Format(time.RFC3339Nano)
+				}
+				member.UpdatedAt = event.CreatedAt.UTC().Format(time.RFC3339Nano)
+				return upsertFanoutMemberWithQueries(ctx, queries, member)
+			},
+			func(ctx context.Context, queries *dbsqlc.Queries, event WorkspaceEvent) error {
+				if inboxItem == nil {
+					return nil
+				}
+				return createInboxItemWithQueries(ctx, queries, item)
+			},
+		)
 	}); err != nil {
 		return WorkspaceEvent{}, err
 	}

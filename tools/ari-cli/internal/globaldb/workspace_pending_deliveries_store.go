@@ -471,7 +471,7 @@ func appendPendingDeliveryEventWithQueries(ctx context.Context, queries *dbsqlc.
 	if len(delivery.EventIDs) > 0 {
 		causationID = delivery.EventIDs[0]
 	}
-	event := normalizeWorkspaceEvent(WorkspaceEvent{
+	event, err := prepareCoordinatedWorkspaceEvent(WorkspaceEvent{
 		EventID:           newWorkspaceEventID(),
 		WorkspaceID:       delivery.WorkspaceID,
 		EventType:         eventType,
@@ -484,16 +484,10 @@ func appendPendingDeliveryEventWithQueries(ctx context.Context, queries *dbsqlc.
 		PayloadJSON:       string(payloadJSON),
 		AttentionRequired: eventType == pendingDeliveryEventFailed,
 	})
-	if err := validateWorkspaceEvent(event); err != nil {
+	if err != nil {
 		return err
 	}
-	if event.CreatedAt.IsZero() {
-		event.CreatedAt = time.Now().UTC()
-	}
-	if err := createWorkspaceEventWithQueries(ctx, queries, &event); err != nil {
-		return err
-	}
-	return createPendingDeliveriesForWorkspaceEvent(ctx, queries, event)
+	return appendCoordinatedWorkspaceEventWithQueries(ctx, queries, &event)
 }
 
 func normalizePendingDelivery(delivery PendingDelivery) PendingDelivery {
