@@ -68,6 +68,56 @@ func workspaceCommandDefinitionFromSQLC(row dbsqlc.WorkspaceCommandDefinition) W
 	return WorkspaceCommandDefinition{CommandID: row.CommandID, WorkspaceID: row.WorkspaceID, Name: row.Name, Command: row.Command, Args: row.Args, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
 }
 
+func commandWorkspaceEvent(command Command) (WorkspaceEvent, error) {
+	payload := map[string]string{
+		"command_id": command.CommandID,
+		"command":    command.Command,
+		"args":       command.Args,
+		"status":     command.Status,
+	}
+	if command.ExitCode != nil {
+		payload["exit_code"] = fmt.Sprintf("%d", *command.ExitCode)
+	}
+	if command.FinishedAt != nil {
+		payload["finished_at"] = strings.TrimSpace(*command.FinishedAt)
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return WorkspaceEvent{}, fmt.Errorf("marshal command workspace event payload for %q: %w", command.CommandID, err)
+	}
+	return prepareCoordinatedWorkspaceEvent(WorkspaceEvent{WorkspaceID: command.WorkspaceID, EventType: commandWorkspaceEventType(command), SubjectType: "command", SubjectID: command.CommandID, ProducerType: "daemon", ProducerID: "command", CorrelationID: command.CommandID, PayloadJSON: string(encoded), PayloadRefJSON: daemonLocalPayloadRef("command", command.CommandID), AttentionRequired: commandWorkspaceEventNeedsAttention(command)})
+}
+
+func commandWorkspaceEventType(command Command) string {
+	switch strings.TrimSpace(command.Status) {
+	case commandStatusRunning:
+		return "command.started"
+	case commandStatusStopped:
+		return "command.stopped"
+	case commandStatusLost:
+		return "command.failed"
+	case commandStatusExited:
+		if command.ExitCode != nil && *command.ExitCode != 0 {
+			return "command.failed"
+		}
+		return "command.completed"
+	default:
+		return "command.updated"
+	}
+}
+
+func commandWorkspaceEventNeedsAttention(command Command) bool {
+	if strings.TrimSpace(command.Status) == commandStatusLost {
+		return true
+	}
+	return command.ExitCode != nil && *command.ExitCode != 0
+}
+
+func daemonLocalPayloadRef(kind, id string) string {
+	encoded, _ := json.Marshal(map[string]string{"kind": strings.TrimSpace(kind), "id": strings.TrimSpace(id)})
+	return string(encoded)
+}
+
 func (s *Store) CreateCommand(ctx context.Context, params CreateCommandParams) error {
 	if params.CommandID = strings.TrimSpace(params.CommandID); params.CommandID == "" {
 		return fmt.Errorf("%w: command id is required", ErrInvalidInput)
@@ -101,11 +151,17 @@ func (s *Store) CreateCommand(ctx context.Context, params CreateCommandParams) e
 		params.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
 
-	if err := s.sqlcQueries().CreateCommand(ctx, dbsqlc.CreateCommandParams{CommandID: params.CommandID, WorkspaceID: params.WorkspaceID, Command: params.Command, Args: params.Args, Status: params.Status, ExitCode: optionalInt(params.ExitCode), StartedAt: params.StartedAt, FinishedAt: params.FinishedAt}); err != nil {
-		return fmt.Errorf("create command %q: %w", params.CommandID, err)
-	}
-
-	return nil
+	return s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
+		if err := queries.CreateCommand(ctx, dbsqlc.CreateCommandParams{CommandID: params.CommandID, WorkspaceID: params.WorkspaceID, Command: params.Command, Args: params.Args, Status: params.Status, ExitCode: optionalInt(params.ExitCode), StartedAt: params.StartedAt, FinishedAt: params.FinishedAt}); err != nil {
+			return fmt.Errorf("create command %q: %w", params.CommandID, err)
+		}
+		command := Command{CommandID: params.CommandID, WorkspaceID: params.WorkspaceID, Command: params.Command, Args: params.Args, Status: params.Status, ExitCode: params.ExitCode, StartedAt: params.StartedAt, FinishedAt: params.FinishedAt}
+		event, err := commandWorkspaceEvent(command)
+		if err != nil {
+			return err
+		}
+		return appendCoordinatedWorkspaceEventWithQueries(ctx, queries, &event)
+	})
 }
 
 func (s *Store) GetCommand(ctx context.Context, workspaceID, commandID string) (*Command, error) {
@@ -157,15 +213,24 @@ func (s *Store) UpdateCommandStatus(ctx context.Context, params UpdateCommandSta
 		return fmt.Errorf("%w: invalid command status %q", ErrInvalidInput, params.Status)
 	}
 
-	rowsAffected, err := s.sqlcQueries().UpdateCommandStatus(ctx, dbsqlc.UpdateCommandStatusParams{Status: params.Status, ExitCode: optionalInt(params.ExitCode), FinishedAt: params.FinishedAt, WorkspaceID: params.WorkspaceID, CommandID: params.CommandID})
-	if err != nil {
-		return fmt.Errorf("update command status %q: %w", params.CommandID, err)
-	}
-	if rowsAffected == 0 {
-		return fmt.Errorf("%w: command id %q for workspace %q", ErrNotFound, params.CommandID, params.WorkspaceID)
-	}
-
-	return nil
+	return s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
+		rowsAffected, err := queries.UpdateCommandStatus(ctx, dbsqlc.UpdateCommandStatusParams{Status: params.Status, ExitCode: optionalInt(params.ExitCode), FinishedAt: params.FinishedAt, WorkspaceID: params.WorkspaceID, CommandID: params.CommandID})
+		if err != nil {
+			return fmt.Errorf("update command status %q: %w", params.CommandID, err)
+		}
+		if rowsAffected == 0 {
+			return fmt.Errorf("%w: command id %q for workspace %q", ErrNotFound, params.CommandID, params.WorkspaceID)
+		}
+		row, err := queries.GetCommandByID(ctx, dbsqlc.GetCommandByIDParams{WorkspaceID: params.WorkspaceID, CommandID: params.CommandID})
+		if err != nil {
+			return fmt.Errorf("get updated command %q: %w", params.CommandID, err)
+		}
+		event, err := commandWorkspaceEvent(commandFromSQLC(row))
+		if err != nil {
+			return err
+		}
+		return appendCoordinatedWorkspaceEventWithQueries(ctx, queries, &event)
+	})
 }
 
 func (s *Store) MarkRunningCommandsLost(ctx context.Context) error {

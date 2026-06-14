@@ -275,7 +275,7 @@ func createEphemeralRequestMessage(ctx context.Context, store *globaldb.Store, s
 
 func (d *Daemon) runEphemeralHarness(ctx context.Context, store *globaldb.Store, setup ephemeralCallSetup, request ephemeralCall) (ephemeralHarnessResult, error) {
 	primaryFolder, _ := lookupPrimaryFolder(ctx, store, setup.SourceRun.WorkspaceID)
-	executor, err := d.resolveHarness(HarnessSessionStartRequest{Executor: setup.TargetAgent.Harness}, primaryFolder)
+	executor, err := d.resolveHarness(ctx, store, HarnessSessionStartRequest{Executor: setup.TargetAgent.Harness}, primaryFolder)
 	if err != nil {
 		return ephemeralHarnessResult{}, mapHarnessRunError(err)
 	}

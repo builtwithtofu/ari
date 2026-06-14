@@ -131,7 +131,7 @@ func (d *Daemon) stopPersistedRunningHarnessSessions(ctx context.Context, store 
 		if _, ok := skip[sessionID]; ok {
 			continue
 		}
-		executor, err := d.resolveHarness(HarnessSessionStartRequest{Executor: session.Harness}, session.CWD)
+		executor, err := d.resolveHarness(ctx, store, HarnessSessionStartRequest{Executor: session.Harness}, session.CWD)
 		if err == nil && executor != nil {
 			providerSessionID := strings.TrimSpace(session.ProviderSessionID)
 			if providerSessionID == "" {

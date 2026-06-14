@@ -121,7 +121,7 @@ func (d *harnessWorkspaceDeliveryDispatcher) rehydrateStickyDeliveryTarget(ctx c
 		}
 		req.AuthProjection = projection
 	}
-	executor, err := d.daemon.resolveHarness(req, session.CWD)
+	executor, err := d.daemon.resolveHarness(ctx, d.store, req, session.CWD)
 	if err != nil {
 		return activeHarnessDeliveryTarget{}, false, err
 	}

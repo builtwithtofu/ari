@@ -214,7 +214,7 @@ func unknownProcessMetric(confidence string) ProcessMetricValue {
 	return ProcessMetricValue{Known: false, Confidence: strings.TrimSpace(confidence)}
 }
 
-func (d *Daemon) resolveHarness(req HarnessSessionStartRequest, primaryFolder string) (Executor, error) {
+func (d *Daemon) resolveHarness(ctx context.Context, store *globaldb.Store, req HarnessSessionStartRequest, primaryFolder string) (Executor, error) {
 	if d == nil {
 		return nil, fmt.Errorf("daemon is required")
 	}
@@ -226,7 +226,7 @@ func (d *Daemon) resolveHarness(req HarnessSessionStartRequest, primaryFolder st
 	if !ok {
 		return nil, unknownHarnessError(name)
 	}
-	return factory(req, primaryFolder, d.appendExecutorItems)
+	return factory(req, primaryFolder, d.appendExecutorItemsToStore(ctx, store))
 }
 
 func (d *Daemon) setHarnessFactoryForTest(name string, factory HarnessFactory) {
@@ -507,7 +507,7 @@ func (d *Daemon) startHarnessSession(ctx context.Context, store *globaldb.Store,
 	if err != nil {
 		return HarnessSessionStartResponse{}, mapWorkspaceStoreError(err, req.Packet.WorkspaceID)
 	}
-	executor, err := d.resolveHarness(req, primaryFolder)
+	executor, err := d.resolveHarness(ctx, store, req, primaryFolder)
 	if err != nil {
 		return HarnessSessionStartResponse{}, mapHarnessRunError(err)
 	}
@@ -721,6 +721,25 @@ func (d *Daemon) appendExecutorItems(sessionID string, items []TimelineItem) {
 	d.executorItems[sessionID] = append(d.executorItems[sessionID], items...)
 	d.updateExecutorRunStatusLocked(sessionID, items)
 	d.executorMu.Unlock()
+}
+
+func (d *Daemon) appendExecutorItemsToStore(ctx context.Context, store *globaldb.Store) func(string, []TimelineItem) {
+	return func(sessionID string, items []TimelineItem) {
+		d.appendExecutorItems(sessionID, items)
+		if store == nil || strings.TrimSpace(sessionID) == "" || len(items) == 0 {
+			return
+		}
+		emitCtx := ctx
+		if emitCtx == nil {
+			emitCtx = context.Background()
+		}
+		stored, err := store.GetHarnessSession(emitCtx, sessionID)
+		if err != nil {
+			return
+		}
+		run := HarnessSession{HarnessSessionID: stored.SessionID, SessionID: stored.SessionID, WorkspaceID: stored.WorkspaceID, Executor: stored.Harness, Status: stored.Status}
+		_ = appendHarnessRuntimeWorkspaceEvents(emitCtx, store, run, harnessRuntimeEventsFromItems(run, items))
+	}
 }
 
 func StartExecutorRun(ctx context.Context, executor Executor, packet ContextPacket, profile ...Profile) (HarnessSession, []TimelineItem, error) {
