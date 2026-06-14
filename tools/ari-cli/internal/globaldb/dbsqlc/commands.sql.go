@@ -110,6 +110,45 @@ func (q *Queries) ListCommandsByWorkspace(ctx context.Context, arg ListCommandsB
 	return items, nil
 }
 
+const listRunningCommands = `-- name: ListRunningCommands :many
+SELECT command_id, workspace_id, command, args, status, exit_code, started_at, finished_at
+FROM commands
+WHERE status = 'running'
+ORDER BY started_at ASC, command_id ASC
+`
+
+func (q *Queries) ListRunningCommands(ctx context.Context) ([]Command, error) {
+	rows, err := q.db.QueryContext(ctx, listRunningCommands)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Command{}
+	for rows.Next() {
+		var i Command
+		if err := rows.Scan(
+			&i.CommandID,
+			&i.WorkspaceID,
+			&i.Command,
+			&i.Args,
+			&i.Status,
+			&i.ExitCode,
+			&i.StartedAt,
+			&i.FinishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markRunningCommandsLost = `-- name: MarkRunningCommandsLost :exec
 UPDATE commands
 SET status = 'lost'

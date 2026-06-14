@@ -742,12 +742,16 @@ func harnessRuntimeEventsFromItems(run HarnessSession, items []TimelineItem) []H
 		if err != nil {
 			panic(fmt.Sprintf("encode harness runtime event payload: %v", err))
 		}
+		sequence := item.Sequence
+		if sequence <= 0 {
+			sequence = i + 1
+		}
 		events = append(events, HarnessRuntimeEvent{
-			EventID:      fmt.Sprintf("%s:event-%d", run.HarnessSessionID, i+1),
+			EventID:      fmt.Sprintf("%s:event-%d", run.HarnessSessionID, sequence),
 			RunID:        run.HarnessSessionID,
 			SessionID:    run.HarnessSessionID,
 			Kind:         string(kind),
-			Sequence:     item.Sequence,
+			Sequence:     sequence,
 			CreatedAt:    time.Now().UTC(),
 			Payload:      payload,
 			ProviderKind: item.Kind,
@@ -781,6 +785,12 @@ func normalizedHarnessEventKind(kind string) HarnessRuntimeEventKind {
 
 func normalizedHarnessEventPayload(kind HarnessRuntimeEventKind, item TimelineItem) (json.RawMessage, error) {
 	payload := map[string]any{}
+	if itemID := strings.TrimSpace(item.ID); itemID != "" {
+		payload["timeline_item_id"] = itemID
+	}
+	if status := strings.TrimSpace(item.Status); status != "" {
+		payload["status"] = status
+	}
 	switch kind {
 	case HarnessEventLifecycle:
 		payload["status"] = trimOrDefault(item.Status, HarnessLifecycleRunStarted)

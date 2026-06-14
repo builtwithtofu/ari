@@ -21,6 +21,12 @@ SET status = ?,
   finished_at = ?
 WHERE workspace_id = ? AND command_id = ?;
 
+-- name: ListRunningCommands :many
+SELECT command_id, workspace_id, command, args, status, exit_code, started_at, finished_at
+FROM commands
+WHERE status = 'running'
+ORDER BY started_at ASC, command_id ASC;
+
 -- name: MarkRunningCommandsLost :exec
 UPDATE commands
 SET status = 'lost'

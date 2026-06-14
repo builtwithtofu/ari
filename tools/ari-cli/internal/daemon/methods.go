@@ -34,6 +34,11 @@ func (d *Daemon) registerMethods(registry *rpc.MethodRegistry, store *globaldb.S
 	if store == nil {
 		return fmt.Errorf("globaldb store is required")
 	}
+	d.mu.Lock()
+	if d.store == nil {
+		d.store = store
+	}
+	d.mu.Unlock()
 
 	if err := rpc.RegisterMethod(registry, rpc.Method[StatusRequest, StatusResponse]{
 		Name:        "daemon.status",

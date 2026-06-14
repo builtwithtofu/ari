@@ -67,29 +67,11 @@ type EventSubscriptionFilter struct {
 }
 
 func (s *Store) AppendWorkspaceEvent(ctx context.Context, event AppendWorkspaceEventParams) (WorkspaceEvent, error) {
-	event = normalizeWorkspaceEvent(event)
-	if err := validateWorkspaceEvent(event); err != nil {
-		return WorkspaceEvent{}, err
-	}
-	if event.EventID == "" {
-		event.EventID = newWorkspaceEventID()
-	}
-	if event.CreatedAt.IsZero() {
-		event.CreatedAt = time.Now().UTC()
-	}
-	if err := s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
-		if err := createWorkspaceEventWithQueries(ctx, queries, &event); err != nil {
-			return err
-		}
-		return createPendingDeliveriesForWorkspaceEvent(ctx, queries, event)
-	}); err != nil {
-		return WorkspaceEvent{}, err
-	}
-	return event, nil
+	return s.EventCoordinator().AppendWorkspaceEvent(ctx, event)
 }
 
 func createPendingDeliveriesForWorkspaceEvent(ctx context.Context, queries *dbsqlc.Queries, event WorkspaceEvent) error {
-	if strings.HasPrefix(event.EventType, "delivery.") {
+	if workspaceEventSkipsDeliveryFanout(event) {
 		return nil
 	}
 	rows, err := queries.ListActiveEventSubscriptionsByWorkspace(ctx, dbsqlc.ListActiveEventSubscriptionsByWorkspaceParams{WorkspaceID: event.WorkspaceID})

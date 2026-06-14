@@ -39,21 +39,58 @@ type OperationRecord struct {
 type AppendOperationRecordParams = OperationRecord
 
 func (s *Store) AppendOperationRecord(ctx context.Context, record AppendOperationRecordParams) (OperationRecord, error) {
-	record = normalizeOperationRecord(record)
-	if err := validateOperationRecord(record); err != nil {
+	return createOperationRecordWithQueries(ctx, s.sqlcQueries(), record)
+}
+
+func (s *Store) AppendOperationRecordWithWorkspaceEvent(ctx context.Context, record AppendOperationRecordParams, event WorkspaceEvent) (OperationRecord, error) {
+	preparedEvent, err := prepareCoordinatedWorkspaceEvent(event)
+	if err != nil {
 		return OperationRecord{}, err
 	}
-	if err := s.validateOperationRecordReferences(ctx, record); err != nil {
+	record = normalizeOperationRecord(record)
+	if err := validateOperationRecord(record); err != nil {
 		return OperationRecord{}, err
 	}
 	if record.CreatedAt.IsZero() {
 		record.CreatedAt = time.Now().UTC()
 	}
 
-	if err := s.sqlcQueries().CreateOperationRecord(ctx, dbsqlc.CreateOperationRecordParams{OperationID: record.OperationID, WorkspaceID: optionalString(record.WorkspaceID), OperationType: record.OperationType, Actor: record.Actor, Source: record.Source, Scope: record.Scope, RequestSummary: record.RequestSummary, Result: record.Result, TrustDecision: optionalString(record.TrustDecision), ParentOperationID: optionalString(record.ParentOperationID), CheckpointOperationID: optionalString(record.CheckpointOperationID), RollbackPointID: optionalString(record.RollbackPointID), RollbackDataJson: record.RollbackDataJSON, PayloadHash: record.PayloadHash, PayloadSnapshotJson: record.PayloadSnapshotJSON, CreatedAt: record.CreatedAt.Format(time.RFC3339Nano)}); err != nil {
-		return OperationRecord{}, fmt.Errorf("append operation record %q: %w", record.OperationID, err)
+	if err := s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
+		if err := validateOperationRecordReferencesWithQueries(ctx, queries, record); err != nil {
+			return err
+		}
+		if err := insertOperationRecordWithQueries(ctx, queries, record); err != nil {
+			return err
+		}
+		return appendCoordinatedWorkspaceEventWithQueries(ctx, queries, &preparedEvent, s.EventCoordinator().defaultProjections()...)
+	}); err != nil {
+		return OperationRecord{}, err
 	}
 	return record, nil
+}
+
+func createOperationRecordWithQueries(ctx context.Context, queries *dbsqlc.Queries, record AppendOperationRecordParams) (OperationRecord, error) {
+	record = normalizeOperationRecord(record)
+	if err := validateOperationRecord(record); err != nil {
+		return OperationRecord{}, err
+	}
+	if err := validateOperationRecordReferencesWithQueries(ctx, queries, record); err != nil {
+		return OperationRecord{}, err
+	}
+	if record.CreatedAt.IsZero() {
+		record.CreatedAt = time.Now().UTC()
+	}
+	if err := insertOperationRecordWithQueries(ctx, queries, record); err != nil {
+		return OperationRecord{}, err
+	}
+	return record, nil
+}
+
+func insertOperationRecordWithQueries(ctx context.Context, queries *dbsqlc.Queries, record OperationRecord) error {
+	if err := queries.CreateOperationRecord(ctx, dbsqlc.CreateOperationRecordParams{OperationID: record.OperationID, WorkspaceID: optionalString(record.WorkspaceID), OperationType: record.OperationType, Actor: record.Actor, Source: record.Source, Scope: record.Scope, RequestSummary: record.RequestSummary, Result: record.Result, TrustDecision: optionalString(record.TrustDecision), ParentOperationID: optionalString(record.ParentOperationID), CheckpointOperationID: optionalString(record.CheckpointOperationID), RollbackPointID: optionalString(record.RollbackPointID), RollbackDataJson: record.RollbackDataJSON, PayloadHash: record.PayloadHash, PayloadSnapshotJson: record.PayloadSnapshotJSON, CreatedAt: record.CreatedAt.Format(time.RFC3339Nano)}); err != nil {
+		return fmt.Errorf("append operation record %q: %w", record.OperationID, err)
+	}
+	return nil
 }
 
 func (s *Store) GetOperationRecord(ctx context.Context, operationID string) (OperationRecord, error) {
@@ -132,9 +169,12 @@ func validateOperationRecord(record OperationRecord) error {
 	return nil
 }
 
-func (s *Store) validateOperationRecordReferences(ctx context.Context, record OperationRecord) error {
+func validateOperationRecordReferencesWithQueries(ctx context.Context, queries *dbsqlc.Queries, record OperationRecord) error {
 	if record.Scope == OperationScopeWorkspace {
-		if _, err := s.GetWorkspace(ctx, record.WorkspaceID); err != nil {
+		if _, err := queries.GetWorkspaceByID(ctx, dbsqlc.GetWorkspaceByIDParams{WorkspaceID: record.WorkspaceID}); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrNotFound
+			}
 			return err
 		}
 	}
@@ -142,7 +182,10 @@ func (s *Store) validateOperationRecordReferences(ctx context.Context, record Op
 		if operationID == "" {
 			continue
 		}
-		if _, err := s.GetOperationRecord(ctx, operationID); err != nil {
+		if _, err := queries.GetOperationRecord(ctx, dbsqlc.GetOperationRecordParams{OperationID: operationID}); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrNotFound
+			}
 			return err
 		}
 	}

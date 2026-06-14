@@ -86,7 +86,39 @@ func appendDaemonOperationRecord(ctx context.Context, store *globaldb.Store, opt
 	if err != nil {
 		return globaldb.OperationRecord{}, err
 	}
-	return store.AppendOperationRecord(ctx, globaldb.AppendOperationRecordParams{OperationID: newDaemonOperationID(), WorkspaceID: opts.WorkspaceID, OperationType: opts.OperationType, Actor: opts.Actor, Source: opts.Source, Scope: opts.Scope, RequestSummary: opts.RequestSummary, Result: result, TrustDecision: opts.TrustDecision, ParentOperationID: opts.ParentOperationID, CheckpointOperationID: opts.CheckpointOperationID, RollbackPointID: opts.RollbackPointID, RollbackDataJSON: rollbackJSON, PayloadHash: payloadHash, PayloadSnapshotJSON: snapshotJSON})
+	record := globaldb.OperationRecord{OperationID: newDaemonOperationID(), WorkspaceID: opts.WorkspaceID, OperationType: opts.OperationType, Actor: opts.Actor, Source: opts.Source, Scope: opts.Scope, RequestSummary: opts.RequestSummary, Result: result, TrustDecision: opts.TrustDecision, ParentOperationID: opts.ParentOperationID, CheckpointOperationID: opts.CheckpointOperationID, RollbackPointID: opts.RollbackPointID, RollbackDataJSON: rollbackJSON, PayloadHash: payloadHash, PayloadSnapshotJSON: snapshotJSON}
+	event, emitEvent := operationWorkspaceEvent(record)
+	if !emitEvent {
+		return store.AppendOperationRecord(ctx, record)
+	}
+	return store.AppendOperationRecordWithWorkspaceEvent(ctx, record, event)
+}
+
+func operationWorkspaceEvent(record globaldb.OperationRecord) (globaldb.WorkspaceEvent, bool) {
+	operationType := strings.TrimSpace(record.OperationType)
+	if operationType == daemonOperationTypeRollbackCheckpoint {
+		return globaldb.WorkspaceEvent{}, false
+	}
+	workspaceID := strings.TrimSpace(record.WorkspaceID)
+	if workspaceID == "" {
+		workspaceID = operationRecordHomeWorkspaceID(record)
+	}
+	if workspaceID == "" {
+		return globaldb.WorkspaceEvent{}, false
+	}
+	payload := map[string]string{
+		"operation_id":    strings.TrimSpace(record.OperationID),
+		"operation_type":  operationType,
+		"source":          strings.TrimSpace(record.Source),
+		"scope":           strings.TrimSpace(record.Scope),
+		"result":          operationRecordStatus(record),
+		"request_summary": strings.TrimSpace(record.RequestSummary),
+	}
+	if rollbackPointID := strings.TrimSpace(record.RollbackPointID); rollbackPointID != "" {
+		payload["rollback_point_id"] = rollbackPointID
+	}
+	operationID := strings.TrimSpace(record.OperationID)
+	return globaldb.WorkspaceEvent{WorkspaceID: workspaceID, EventType: "operation." + operationType, SubjectType: "operation", SubjectID: operationID, ProducerType: workspaceEventProducerDaemon, ProducerID: daemonOperationSource(record.Source), CorrelationID: operationID, PayloadJSON: daemonEventPayload(payload), PayloadRefJSON: daemonEventPayload(map[string]string{"kind": "operation_record", "id": operationID}), AttentionRequired: strings.HasPrefix(record.Result, "failed:")}, true
 }
 
 func operationPayloadSnapshot(operationKind string, snapshot map[string]string) (string, string, error) {

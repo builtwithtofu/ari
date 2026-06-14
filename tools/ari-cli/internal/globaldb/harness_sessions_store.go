@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb/dbsqlc"
 )
@@ -154,10 +153,35 @@ type AgentMessageSendParams struct {
 	Body              string
 	ContextExcerptIDs []string
 	StartSessionID    string
-	// WorkspaceEvent, when set, is appended to workspace event history in the
-	// same transaction as the message. The store fills workspace, subject,
-	// and correlation identity from the resolved message.
+	// WorkspaceEvent, when set, customizes the message.sent fact appended to
+	// workspace event history in the same transaction as the message. The store
+	// fills missing workspace, subject, producer, correlation, and artifact ref
+	// identity from the resolved message.
 	WorkspaceEvent *WorkspaceEvent
+}
+
+func defaultAgentMessageWorkspaceEvent(params AgentMessageSendParams, workspaceID, sourceSessionID, sourceAgentID, targetSessionID string) WorkspaceEvent {
+	return WorkspaceEvent{WorkspaceID: strings.TrimSpace(workspaceID), EventType: "message.sent", SubjectType: "agent_message", SubjectID: params.AgentMessageID, ProducerType: "session", ProducerID: strings.TrimSpace(sourceSessionID), CorrelationID: targetSessionID, PayloadJSON: defaultAgentMessageWorkspaceEventPayload(params, sourceSessionID, sourceAgentID, targetSessionID), PayloadRefJSON: daemonLocalPayloadRef("agent_message", params.AgentMessageID)}
+}
+
+func defaultAgentMessageWorkspaceEventPayload(params AgentMessageSendParams, sourceSessionID, sourceAgentID, targetSessionID string) string {
+	encoded, _ := json.Marshal(map[string]string{"agent_message_id": strings.TrimSpace(params.AgentMessageID), "source_session_id": strings.TrimSpace(sourceSessionID), "source_agent_id": strings.TrimSpace(sourceAgentID), "target_agent_id": strings.TrimSpace(params.TargetAgentID), "target_session_id": strings.TrimSpace(targetSessionID), "context_excerpt_count": fmt.Sprintf("%d", len(params.ContextExcerptIDs))})
+	return string(encoded)
+}
+
+func contextExcerptCreatedWorkspaceEvent(excerpt ContextExcerpt) (WorkspaceEvent, error) {
+	payload, err := json.Marshal(map[string]string{
+		"context_excerpt_id": excerpt.ContextExcerptID,
+		"source_session_id":  excerpt.SourceSessionID,
+		"source_agent_id":    excerpt.SourceAgentID,
+		"target_agent_id":    excerpt.TargetAgentID,
+		"selector_type":      excerpt.SelectorType,
+		"item_count":         fmt.Sprintf("%d", len(excerpt.Items)),
+	})
+	if err != nil {
+		return WorkspaceEvent{}, err
+	}
+	return prepareCoordinatedWorkspaceEvent(WorkspaceEvent{WorkspaceID: excerpt.WorkspaceID, EventType: "context_excerpt.created", SubjectType: "context_excerpt", SubjectID: excerpt.ContextExcerptID, ProducerType: "session", ProducerID: excerpt.SourceSessionID, CorrelationID: excerpt.SourceSessionID, PayloadJSON: string(payload), PayloadRefJSON: daemonLocalPayloadRef("context_excerpt", excerpt.ContextExcerptID)})
 }
 
 func (s *Store) CreateHarnessSessionConfig(ctx context.Context, agent HarnessSessionConfig) error {
@@ -556,12 +580,6 @@ func (s *Store) messagesForExcerptSelector(ctx context.Context, sourceSessionID 
 func (s *Store) createContextExcerptFromMessages(ctx context.Context, spec contextExcerptCreateSpec, run dbsqlc.GetHarnessSessionRow, messages []RunLogMessage) (ContextExcerpt, error) {
 	items := make([]ContextExcerptItem, 0, len(messages))
 	h := sha256.New()
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return ContextExcerpt{}, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	qtx := s.sqlc.WithTx(tx)
 	for i, msg := range messages {
 		text := messageText(msg)
 		parts := copyMessageParts(msg.Parts)
@@ -571,19 +589,26 @@ func (s *Store) createContextExcerptFromMessages(ctx context.Context, spec conte
 	}
 	_, _ = fmt.Fprintf(h, "workspace:%s\x00source_run:%s\x00source_agent:%s\x00target_agent:%s\x00selector:%s\x00selector_json:%s\x00visibility:visible_context\x00appended:%s\x00", run.WorkspaceID, spec.SourceSessionID, run.AgentID, spec.TargetAgentID, spec.SelectorType, spec.SelectorJSON, spec.AppendedMessage)
 	contentHash := "sha256:" + hex.EncodeToString(h.Sum(nil))
-	if err := qtx.CreateContextExcerpt(ctx, dbsqlc.CreateContextExcerptParams{ContextExcerptID: spec.ContextExcerptID, WorkspaceID: run.WorkspaceID, SourceSessionID: spec.SourceSessionID, SourceAgentID: run.AgentID, TargetAgentID: spec.TargetAgentID, SelectorType: spec.SelectorType, SelectorJson: spec.SelectorJSON, AppendedMessage: spec.AppendedMessage, ContentHash: contentHash}); err != nil {
-		return ContextExcerpt{}, err
-	}
-	for _, item := range items {
-		partsJSON, _ := json.Marshal(item.CopiedParts)
-		if err := qtx.CreateContextExcerptItem(ctx, dbsqlc.CreateContextExcerptItemParams{ContextExcerptID: spec.ContextExcerptID, Sequence: int64(item.Sequence), SourceMessageID: item.SourceMessageID, SourceSessionID: spec.SourceSessionID, SourceAgentID: run.AgentID, CopiedRole: item.CopiedRole, CopiedText: item.CopiedText, CopiedPartsJson: string(partsJSON)}); err != nil {
-			return ContextExcerpt{}, err
+	excerpt := ContextExcerpt{ContextExcerptID: spec.ContextExcerptID, WorkspaceID: run.WorkspaceID, SourceSessionID: spec.SourceSessionID, SourceAgentID: run.AgentID, TargetAgentID: spec.TargetAgentID, SelectorType: spec.SelectorType, SelectorJSON: spec.SelectorJSON, Visibility: "visible_context", AppendedMessage: spec.AppendedMessage, ContentHash: contentHash, Items: items}
+	if err := s.withImmediateQueries(ctx, func(qtx *dbsqlc.Queries) error {
+		if err := qtx.CreateContextExcerpt(ctx, dbsqlc.CreateContextExcerptParams{ContextExcerptID: spec.ContextExcerptID, WorkspaceID: run.WorkspaceID, SourceSessionID: spec.SourceSessionID, SourceAgentID: run.AgentID, TargetAgentID: spec.TargetAgentID, SelectorType: spec.SelectorType, SelectorJson: spec.SelectorJSON, AppendedMessage: spec.AppendedMessage, ContentHash: contentHash}); err != nil {
+			return err
 		}
-	}
-	if err := tx.Commit(); err != nil {
+		for _, item := range items {
+			partsJSON, _ := json.Marshal(item.CopiedParts)
+			if err := qtx.CreateContextExcerptItem(ctx, dbsqlc.CreateContextExcerptItemParams{ContextExcerptID: spec.ContextExcerptID, Sequence: int64(item.Sequence), SourceMessageID: item.SourceMessageID, SourceSessionID: spec.SourceSessionID, SourceAgentID: run.AgentID, CopiedRole: item.CopiedRole, CopiedText: item.CopiedText, CopiedPartsJson: string(partsJSON)}); err != nil {
+				return err
+			}
+		}
+		event, err := contextExcerptCreatedWorkspaceEvent(excerpt)
+		if err != nil {
+			return err
+		}
+		return appendCoordinatedWorkspaceEventWithQueries(ctx, qtx, &event, s.EventCoordinator().defaultProjections()...)
+	}); err != nil {
 		return ContextExcerpt{}, err
 	}
-	return ContextExcerpt{ContextExcerptID: spec.ContextExcerptID, WorkspaceID: run.WorkspaceID, SourceSessionID: spec.SourceSessionID, SourceAgentID: run.AgentID, TargetAgentID: spec.TargetAgentID, SelectorType: spec.SelectorType, SelectorJSON: spec.SelectorJSON, Visibility: "visible_context", AppendedMessage: spec.AppendedMessage, ContentHash: contentHash, Items: items}, nil
+	return excerpt, nil
 }
 
 func (s *Store) SendAgentMessage(ctx context.Context, params AgentMessageSendParams) (AgentMessage, error) {
@@ -715,35 +740,45 @@ func sendAgentMessageWithQueries(ctx context.Context, qtx *dbsqlc.Queries, param
 	if err := appendRunLogMessageTx(ctx, qtx, RunLogMessage{MessageID: params.AgentMessageID + "-message", SessionID: targetSessionID, WorkspaceID: source.WorkspaceID, AgentID: targetAgent.AgentID, Sequence: int(nextSequence), Role: "user", Status: "completed", Parts: []RunLogMessagePart{{PartID: params.AgentMessageID + "-part-1", Sequence: 1, Kind: "text", Text: params.Body}}}); err != nil {
 		return AgentMessage{}, err
 	}
+	event := defaultAgentMessageWorkspaceEvent(params, source.WorkspaceID, source.SessionID, source.AgentID, targetSessionID)
 	if params.WorkspaceEvent != nil {
-		event := *params.WorkspaceEvent
-		if strings.TrimSpace(event.WorkspaceID) == "" {
-			event.WorkspaceID = source.WorkspaceID
-		} else if strings.TrimSpace(event.WorkspaceID) != source.WorkspaceID {
-			return AgentMessage{}, ErrInvalidInput
+		event = *params.WorkspaceEvent
+		if strings.TrimSpace(event.EventType) == "" {
+			event.EventType = "message.sent"
 		}
-		if strings.TrimSpace(event.SubjectID) == "" {
-			event.SubjectID = params.AgentMessageID
+		if strings.TrimSpace(event.SubjectType) == "" {
+			event.SubjectType = "agent_message"
 		}
-		if strings.TrimSpace(event.CorrelationID) == "" {
-			event.CorrelationID = targetSessionID
+		if strings.TrimSpace(event.ProducerType) == "" {
+			event.ProducerType = "session"
 		}
-		event = normalizeWorkspaceEvent(event)
-		if err := validateWorkspaceEvent(event); err != nil {
-			return AgentMessage{}, err
+		if strings.TrimSpace(event.ProducerID) == "" {
+			event.ProducerID = source.SessionID
 		}
-		if event.EventID == "" {
-			event.EventID = newWorkspaceEventID()
+		if strings.TrimSpace(event.PayloadJSON) == "" || strings.TrimSpace(event.PayloadJSON) == "{}" {
+			event.PayloadJSON = defaultAgentMessageWorkspaceEventPayload(params, source.SessionID, source.AgentID, targetSessionID)
 		}
-		if event.CreatedAt.IsZero() {
-			event.CreatedAt = time.Now().UTC()
+		if strings.TrimSpace(event.PayloadRefJSON) == "" || strings.TrimSpace(event.PayloadRefJSON) == "{}" {
+			event.PayloadRefJSON = daemonLocalPayloadRef("agent_message", params.AgentMessageID)
 		}
-		if err := createWorkspaceEventWithQueries(ctx, qtx, &event); err != nil {
-			return AgentMessage{}, err
-		}
-		if err := createPendingDeliveriesForWorkspaceEvent(ctx, qtx, event); err != nil {
-			return AgentMessage{}, err
-		}
+	}
+	if strings.TrimSpace(event.WorkspaceID) == "" {
+		event.WorkspaceID = source.WorkspaceID
+	} else if strings.TrimSpace(event.WorkspaceID) != source.WorkspaceID {
+		return AgentMessage{}, ErrInvalidInput
+	}
+	if strings.TrimSpace(event.SubjectID) == "" {
+		event.SubjectID = params.AgentMessageID
+	}
+	if strings.TrimSpace(event.CorrelationID) == "" {
+		event.CorrelationID = targetSessionID
+	}
+	prepared, err := prepareCoordinatedWorkspaceEvent(event)
+	if err != nil {
+		return AgentMessage{}, err
+	}
+	if err := appendCoordinatedWorkspaceEventWithQueries(ctx, qtx, &prepared); err != nil {
+		return AgentMessage{}, err
 	}
 	return AgentMessage{AgentMessageID: params.AgentMessageID, WorkspaceID: source.WorkspaceID, SourceAgentID: source.AgentID, SourceSessionID: source.SessionID, TargetAgentID: targetAgent.AgentID, TargetSessionID: targetSessionID, Body: params.Body, Status: "delivered", DeliveredSessionID: targetSessionID, ContextExcerptIDs: params.ContextExcerptIDs}, nil
 }

@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func TestProjectFanoutWorkerEventWritesEventMemberInboxAndDeliveryAtomically(t *testing.T) {
+func TestEventCoordinatorProjectsFanoutMemberInboxAndDeliveryAtomically(t *testing.T) {
 	store := newGlobalDBTestStore(t, "fanout-worker-event-atomic")
 	ctx := context.Background()
 	seedHarnessSessionConfigSession(t, store, ctx)
@@ -20,13 +20,11 @@ func TestProjectFanoutWorkerEventWritesEventMemberInboxAndDeliveryAtomically(t *
 		t.Fatalf("CreateEventSubscription returned error: %v", err)
 	}
 
-	event := WorkspaceEvent{WorkspaceID: "ws-1", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "worker-1", CorrelationID: "fg-atomic", CausationID: "reply-1", PayloadJSON: `{"status":"completed"}`, PayloadRefJSON: `{"kind":"final_response","id":"fr-1"}`}
-	member := FanoutMember{FanoutMemberID: "fg-atomic-m1", FanoutGroupID: "fg-atomic", WorkspaceID: "ws-1", WorkerSessionID: "worker-1", TargetProfileID: "agent-2", ReplyAgentMessageID: "reply-1", FinalResponseID: "fr-1", Status: "completed"}
-	inboxItem := &InboxItem{InboxItemID: "inbox-fg-atomic-m1", WorkspaceID: "ws-1", SourceSessionID: "run-1", FanoutGroupID: "fg-atomic", FanoutMemberID: "fg-atomic-m1", WorkerSessionID: "worker-1", FinalResponseID: "fr-1", Kind: "worker_completed", Status: "unread", Summary: "worker completed"}
+	event := WorkspaceEvent{WorkspaceID: "ws-1", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "worker-1", CorrelationID: "fg-atomic", CausationID: "reply-1", PayloadJSON: `{"status":"completed","fanout_group_id":"fg-atomic","fanout_member_id":"fg-atomic-m1","target_profile_id":"agent-2"}`, PayloadRefJSON: `{"kind":"final_response","id":"fr-1"}`}
 
-	stored, err := store.ProjectFanoutWorkerEvent(ctx, event, member, inboxItem)
+	stored, err := store.AppendWorkspaceEvent(ctx, event)
 	if err != nil {
-		t.Fatalf("ProjectFanoutWorkerEvent returned error: %v", err)
+		t.Fatalf("AppendWorkspaceEvent returned error: %v", err)
 	}
 	if stored.EventID == "" || stored.Sequence == 0 {
 		t.Fatalf("stored event = %#v, want assigned id and sequence", stored)
@@ -51,16 +49,15 @@ func TestProjectFanoutWorkerEventWritesEventMemberInboxAndDeliveryAtomically(t *
 	}
 }
 
-func TestProjectFanoutWorkerEventRejectsInvalidProjectionWithoutWriting(t *testing.T) {
+func TestEventCoordinatorRejectsInvalidFanoutProjectionWithoutWriting(t *testing.T) {
 	store := newGlobalDBTestStore(t, "fanout-worker-event-invalid")
 	ctx := context.Background()
 	seedHarnessSessionConfigSession(t, store, ctx)
 
-	event := WorkspaceEvent{WorkspaceID: "ws-1", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "worker-1", CorrelationID: "fg-x"}
-	member := FanoutMember{FanoutMemberID: "fg-x-m1", FanoutGroupID: "fg-x", WorkspaceID: "ws-1"}
+	event := WorkspaceEvent{WorkspaceID: "ws-1", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "worker-1", CorrelationID: "fg-x", PayloadJSON: `{"status":"completed","fanout_group_id":"fg-x","fanout_member_id":"fg-x-m1","target_profile_id":"agent-2"}`}
 
-	if _, err := store.ProjectFanoutWorkerEvent(ctx, event, member, nil); err == nil {
-		t.Fatal("ProjectFanoutWorkerEvent with invalid member returned nil error")
+	if _, err := store.AppendWorkspaceEvent(ctx, event); err == nil {
+		t.Fatal("AppendWorkspaceEvent with invalid fanout projection returned nil error")
 	}
 	events, err := store.ListWorkspaceEventsAfterSequence(ctx, "ws-1", 0, 10)
 	if err != nil {
