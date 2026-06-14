@@ -67,202 +67,365 @@ func (d *Daemon) registerWorkspaceTimelineMethods(registry *rpc.MethodRegistry, 
 }
 
 func (d *Daemon) workspaceTimeline(ctx context.Context, store *globaldb.Store, workspaceID string) ([]TimelineItem, error) {
-	sequence := 1
-	items := make([]TimelineItem, 0)
-	operationItems, err := workspaceOperationTimelineItems(ctx, store, workspaceID)
+	_ = d
+	events, err := listWorkspaceTimelineEvents(ctx, store, workspaceID)
 	if err != nil {
 		return nil, err
 	}
-	for _, item := range operationItems {
-		item.Sequence = sequence
-		items = append(items, item)
-		sequence++
-	}
-	commands, err := store.ListCommands(ctx, workspaceID)
-	if err != nil {
-		return nil, mapCommandStoreError(err, workspaceID)
-	}
-	for _, command := range commands {
-		items = append(items, TimelineItem{
-			ID:          command.CommandID + ":lifecycle",
-			WorkspaceID: command.WorkspaceID,
-			SourceKind:  "command",
-			SourceID:    command.CommandID,
-			Kind:        "lifecycle",
-			Status:      command.Status,
-			Sequence:    sequence,
-			CreatedAt:   command.StartedAt,
-			Text:        commandLabel(command.Command, command.Args),
-		})
-		sequence++
-		if output := strings.TrimSpace(commandSummaryOutput(d, command.CommandID)); output != "" {
-			items = append(items, TimelineItem{
-				ID:          command.CommandID + ":output",
-				WorkspaceID: command.WorkspaceID,
-				SourceKind:  "command",
-				SourceID:    command.CommandID,
-				Kind:        "command_output",
-				Status:      timelineOutputStatus(command.Status),
-				Sequence:    sequence,
-				CreatedAt:   bestTimelineTimestamp(command.FinishedAt, command.StartedAt),
-				Text:        output,
-			})
-			sequence++
-		}
-		proof := ProofResultSummary{
-			ID:         "proof_" + command.CommandID,
-			SourceID:   command.CommandID,
-			SourceKind: "command",
-			Status:     proofStatusForCommand(command),
-			Command:    commandLabel(command.Command, command.Args),
-		}
-		items = append(items, TimelineItem{
-			ID:          proof.ID,
-			WorkspaceID: command.WorkspaceID,
-			SourceKind:  "proof",
-			SourceID:    command.CommandID,
-			Kind:        "proof_result",
-			Status:      proof.Status,
-			Sequence:    sequence,
-			CreatedAt:   bestTimelineTimestamp(command.FinishedAt, command.StartedAt),
-			Text:        proof.Command,
-		})
-		sequence++
-	}
+	projection := newEventTimelineProjection(store, workspaceID)
+	return projection.project(ctx, events)
+}
 
-	excerpts, err := store.ListContextExcerpts(ctx, workspaceID)
-	if err != nil {
-		return nil, err
-	}
-	excerptsByID := make(map[string]globaldb.ContextExcerpt, len(excerpts))
-	excerptOrder := make([]string, 0, len(excerpts))
-	for _, excerpt := range excerpts {
-		excerptsByID[excerpt.ContextExcerptID] = excerpt
-		excerptOrder = append(excerptOrder, excerpt.ContextExcerptID)
-	}
-	emittedExcerpts := make(map[string]bool, len(excerpts))
-	appendExcerpt := func(excerptID string) {
-		if emittedExcerpts[excerptID] {
-			return
-		}
-		excerpt, ok := excerptsByID[excerptID]
-		if !ok {
-			return
-		}
-		items = append(items, TimelineItem{
-			ID:          excerpt.ContextExcerptID,
-			WorkspaceID: workspaceID,
-			RunID:       excerpt.SourceSessionID,
-			SessionID:   excerpt.SourceSessionID,
-			SourceKind:  "context_excerpt",
-			SourceID:    excerpt.ContextExcerptID,
-			Kind:        "context_excerpt",
-			Status:      "captured",
-			Sequence:    sequence,
-			Metadata: map[string]any{
-				"source_session_id": excerpt.SourceSessionID,
-				"source_agent_id":   excerpt.SourceAgentID,
-				"target_agent_id":   excerpt.TargetAgentID,
-				"selector_type":     excerpt.SelectorType,
-				"item_count":        len(excerpt.Items),
-			},
-		})
-		emittedExcerpts[excerptID] = true
-		sequence++
-	}
+type eventTimelineProjection struct {
+	store           *globaldb.Store
+	workspaceID     string
+	sequence        int
+	items           []TimelineItem
+	agentMessages   map[string]globaldb.AgentMessage
+	contextExcerpts map[string]globaldb.ContextExcerpt
+	emittedExcerpts map[string]bool
+	fanoutIndexes   map[string]int
+}
 
-	messages, err := store.ListAgentMessages(ctx, workspaceID)
+func newEventTimelineProjection(store *globaldb.Store, workspaceID string) *eventTimelineProjection {
+	return &eventTimelineProjection{store: store, workspaceID: strings.TrimSpace(workspaceID), sequence: 1, emittedExcerpts: map[string]bool{}, fanoutIndexes: map[string]int{}}
+}
+
+func listWorkspaceTimelineEvents(ctx context.Context, store *globaldb.Store, workspaceID string) ([]globaldb.WorkspaceEvent, error) {
+	const pageSize = 500
+	sequence := int64(0)
+	events := make([]globaldb.WorkspaceEvent, 0)
+	for {
+		page, err := store.ListWorkspaceEventsAfterSequence(ctx, workspaceID, sequence, pageSize)
+		if err != nil {
+			return nil, err
+		}
+		if len(page) == 0 {
+			break
+		}
+		for _, event := range page {
+			sequence = event.Sequence
+			if strings.HasPrefix(event.EventType, "delivery.") {
+				continue
+			}
+			events = append(events, event)
+		}
+		if len(page) < pageSize {
+			break
+		}
+	}
+	return events, nil
+}
+
+func (p *eventTimelineProjection) project(ctx context.Context, events []globaldb.WorkspaceEvent) ([]TimelineItem, error) {
+	for _, event := range events {
+		if err := p.projectEvent(ctx, event); err != nil {
+			return nil, err
+		}
+	}
+	return p.items, nil
+}
+
+func (p *eventTimelineProjection) projectEvent(ctx context.Context, event globaldb.WorkspaceEvent) error {
+	switch {
+	case strings.HasPrefix(event.EventType, "operation."):
+		p.appendItem(operationTimelineItemFromEvent(event))
+	case strings.HasPrefix(event.EventType, "command."):
+		p.appendItem(p.commandTimelineItemFromEvent(ctx, event))
+	case event.EventType == workspaceEventMessageSent:
+		return p.projectAgentMessageEvent(ctx, event)
+	case isFanoutWorkerWorkspaceEvent(event.EventType):
+		p.projectFanoutMemberEvent(event)
+	case strings.HasPrefix(event.EventType, workspaceEventHarnessEventPrefix):
+		p.appendItem(harnessRuntimeTimelineItemFromEvent(event))
+	case strings.HasPrefix(event.EventType, "session."):
+		p.appendItem(harnessSessionTimelineItemFromEvent(event))
+	default:
+		p.appendItem(genericTimelineItemFromEvent(event))
+	}
+	return nil
+}
+
+func (p *eventTimelineProjection) appendItem(item TimelineItem) {
+	if strings.TrimSpace(item.ID) == "" {
+		item.ID = fmt.Sprintf("timeline-%d", p.sequence)
+	}
+	item.Sequence = p.sequence
+	p.sequence++
+	p.items = append(p.items, item)
+}
+
+func operationTimelineItemFromEvent(event globaldb.WorkspaceEvent) TimelineItem {
+	payload := workspaceEventStringPayload(event.PayloadJSON)
+	operationType := strings.TrimSpace(payload["operation_type"])
+	if operationType == "" {
+		operationType = strings.TrimPrefix(event.EventType, "operation.")
+	}
+	status := strings.TrimSpace(payload["result"])
+	if status == "" {
+		status = "recorded"
+	}
+	metadata := map[string]any{"source": payload["source"]}
+	if rollbackPointID := strings.TrimSpace(payload["rollback_point_id"]); rollbackPointID != "" {
+		metadata["rollback_point_id"] = rollbackPointID
+	}
+	return TimelineItem{ID: event.EventID, WorkspaceID: event.WorkspaceID, SourceKind: "operation", SourceID: event.SubjectID, Kind: operationType, Status: status, CreatedAt: event.CreatedAt.Format(time.RFC3339Nano), Text: payload["request_summary"], Metadata: metadata}
+}
+
+func (p *eventTimelineProjection) commandTimelineItemFromEvent(ctx context.Context, event globaldb.WorkspaceEvent) TimelineItem {
+	payload := workspaceEventStringPayload(event.PayloadJSON)
+	text := strings.TrimSpace(payload["command"])
+	if command, err := p.store.GetCommand(ctx, event.WorkspaceID, event.SubjectID); err == nil && command != nil {
+		text = commandLabel(command.Command, command.Args)
+	}
+	status := strings.TrimSpace(payload["status"])
+	switch event.EventType {
+	case "command.started":
+		status = "running"
+	case "command.completed":
+		status = "completed"
+	case "command.failed":
+		status = "failed"
+	case "command.stopped":
+		status = "stopped"
+	}
+	if status == "" {
+		status = "recorded"
+	}
+	return TimelineItem{ID: event.EventID, WorkspaceID: event.WorkspaceID, SourceKind: "command", SourceID: event.SubjectID, Kind: "lifecycle", Status: status, CreatedAt: event.CreatedAt.Format(time.RFC3339Nano), Text: text, Metadata: map[string]any{"event_type": event.EventType}}
+}
+
+func (p *eventTimelineProjection) projectAgentMessageEvent(ctx context.Context, event globaldb.WorkspaceEvent) error {
+	messages, err := p.agentMessageIndex(ctx)
+	if err != nil {
+		return err
+	}
+	msg, ok := messages[event.SubjectID]
+	if !ok {
+		p.appendItem(genericTimelineItemFromEvent(event))
+		return nil
+	}
+	for _, excerptID := range msg.ContextExcerptIDs {
+		if err := p.appendContextExcerpt(ctx, excerptID); err != nil {
+			return err
+		}
+	}
+	p.appendItem(TimelineItem{ID: msg.AgentMessageID, WorkspaceID: event.WorkspaceID, RunID: msg.SourceSessionID, SessionID: msg.SourceSessionID, SourceKind: "agent_message", SourceID: msg.AgentMessageID, Kind: "agent_message", Status: msg.Status, CreatedAt: event.CreatedAt.Format(time.RFC3339Nano), Text: msg.Body, Metadata: map[string]any{"source_session_id": msg.SourceSessionID, "source_agent_id": msg.SourceAgentID, "target_session_id": msg.TargetSessionID, "target_agent_id": msg.TargetAgentID, "context_excerpt_count": len(msg.ContextExcerptIDs)}})
+	return nil
+}
+
+func (p *eventTimelineProjection) appendContextExcerpt(ctx context.Context, excerptID string) error {
+	excerptID = strings.TrimSpace(excerptID)
+	if excerptID == "" || p.emittedExcerpts[excerptID] {
+		return nil
+	}
+	excerpts, err := p.contextExcerptIndex(ctx)
+	if err != nil {
+		return err
+	}
+	excerpt, ok := excerpts[excerptID]
+	if !ok {
+		return nil
+	}
+	p.emittedExcerpts[excerptID] = true
+	p.appendItem(TimelineItem{ID: excerpt.ContextExcerptID, WorkspaceID: p.workspaceID, RunID: excerpt.SourceSessionID, SessionID: excerpt.SourceSessionID, SourceKind: "context_excerpt", SourceID: excerpt.ContextExcerptID, Kind: "context_excerpt", Status: "captured", Metadata: map[string]any{"source_session_id": excerpt.SourceSessionID, "source_agent_id": excerpt.SourceAgentID, "target_agent_id": excerpt.TargetAgentID, "selector_type": excerpt.SelectorType, "item_count": len(excerpt.Items)}})
+	return nil
+}
+
+func (p *eventTimelineProjection) agentMessageIndex(ctx context.Context) (map[string]globaldb.AgentMessage, error) {
+	if p.agentMessages != nil {
+		return p.agentMessages, nil
+	}
+	messages, err := p.store.ListAgentMessages(ctx, p.workspaceID)
 	if err != nil {
 		return nil, err
 	}
+	p.agentMessages = make(map[string]globaldb.AgentMessage, len(messages))
 	for _, msg := range messages {
-		for _, excerptID := range msg.ContextExcerptIDs {
-			appendExcerpt(excerptID)
+		p.agentMessages[msg.AgentMessageID] = msg
+	}
+	return p.agentMessages, nil
+}
+
+func (p *eventTimelineProjection) contextExcerptIndex(ctx context.Context) (map[string]globaldb.ContextExcerpt, error) {
+	if p.contextExcerpts != nil {
+		return p.contextExcerpts, nil
+	}
+	excerpts, err := p.store.ListContextExcerpts(ctx, p.workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	p.contextExcerpts = make(map[string]globaldb.ContextExcerpt, len(excerpts))
+	for _, excerpt := range excerpts {
+		p.contextExcerpts[excerpt.ContextExcerptID] = excerpt
+	}
+	return p.contextExcerpts, nil
+}
+
+func (p *eventTimelineProjection) projectFanoutMemberEvent(event globaldb.WorkspaceEvent) {
+	item := fanoutTimelineItemFromEvent(event)
+	key := strings.TrimSpace(item.SourceID)
+	if key == "" {
+		key = strings.TrimSpace(item.SessionID)
+	}
+	if key == "" {
+		return
+	}
+	idx, ok := p.fanoutIndexes[key]
+	if !ok {
+		item.ID = key
+		p.appendItem(item)
+		p.fanoutIndexes[key] = len(p.items) - 1
+		return
+	}
+	previous := p.items[idx]
+	item.ID = previous.ID
+	item.Sequence = previous.Sequence
+	item.Metadata = mergeTimelineMetadata(previous.Metadata, item.Metadata)
+	p.items[idx] = item
+}
+
+func mergeTimelineMetadata(previous, next map[string]any) map[string]any {
+	if len(previous) == 0 {
+		return next
+	}
+	merged := make(map[string]any, len(previous)+len(next))
+	for key, value := range previous {
+		if value != nil && fmt.Sprint(value) != "" {
+			merged[key] = value
 		}
-		items = append(items, TimelineItem{
-			ID:          msg.AgentMessageID,
-			WorkspaceID: workspaceID,
-			RunID:       msg.SourceSessionID,
-			SessionID:   msg.SourceSessionID,
-			SourceKind:  "agent_message",
-			SourceID:    msg.AgentMessageID,
-			Kind:        "agent_message",
-			Status:      msg.Status,
-			Sequence:    sequence,
-			Text:        msg.Body,
-			Metadata: map[string]any{
-				"source_session_id":     msg.SourceSessionID,
-				"source_agent_id":       msg.SourceAgentID,
-				"target_session_id":     msg.TargetSessionID,
-				"target_agent_id":       msg.TargetAgentID,
-				"context_excerpt_count": len(msg.ContextExcerptIDs),
-			},
-		})
-		sequence++
 	}
-	for _, excerptID := range excerptOrder {
-		appendExcerpt(excerptID)
+	for key, value := range next {
+		if value != nil && fmt.Sprint(value) != "" {
+			merged[key] = value
+		}
 	}
-	fanoutMembers, err := fanoutMemberProjectionForWorkspace(ctx, store, workspaceID)
-	if err != nil {
-		return nil, err
-	}
-	for _, member := range fanoutMembers {
-		items = append(items, TimelineItem{
-			ID:          member.FanoutMemberID,
-			WorkspaceID: workspaceID,
-			RunID:       member.WorkerSessionID,
-			SessionID:   member.WorkerSessionID,
-			SourceKind:  "fanout_member",
-			SourceID:    member.FanoutMemberID,
-			Kind:        "fanout_member",
-			Status:      member.Status,
-			Sequence:    sequence,
-			CreatedAt:   member.UpdatedAt,
-			Text:        member.TargetProfileID,
-			Metadata: map[string]any{
-				"fanout_group_id":          member.FanoutGroupID,
-				"worker_session_id":        member.WorkerSessionID,
-				"target_profile_id":        member.TargetProfileID,
-				"request_agent_message_id": member.RequestAgentMessageID,
-				"reply_agent_message_id":   member.ReplyAgentMessageID,
-				"final_response_id":        member.FinalResponseID,
-			},
-		})
-		sequence++
-	}
-
-	for _, item := range d.executorTimelineItems(workspaceID) {
-		item = normalizeHarnessSessionTimelineItem(item)
-		item.Sequence = sequence
-		items = append(items, item)
-		sequence++
-	}
-	return items, nil
+	return merged
 }
 
-func workspaceOperationTimelineItems(ctx context.Context, store *globaldb.Store, workspaceID string) ([]TimelineItem, error) {
-	operations, err := workspaceOperationActivity(ctx, store, workspaceID)
-	if err != nil {
-		return nil, err
+func fanoutTimelineItemFromEvent(event globaldb.WorkspaceEvent) TimelineItem {
+	payload := workspaceEventStringPayload(event.PayloadJSON)
+	memberID := strings.TrimSpace(payload["fanout_member_id"])
+	if memberID == "" {
+		memberID = event.SubjectID
 	}
-	items := make([]TimelineItem, 0, len(operations))
-	for _, operation := range operations {
-		items = append(items, TimelineItem{ID: operation.OperationID, WorkspaceID: workspaceID, SourceKind: "operation", SourceID: operation.OperationID, Kind: operation.OperationType, Status: operation.Status, CreatedAt: operation.CreatedAt, Text: operation.RequestSummary, Metadata: map[string]any{"source": operation.Source, "rollback_point_id": operation.RollbackPointID}})
+	metadata := map[string]any{"fanout_group_id": event.CorrelationID, "worker_session_id": event.SubjectID, "target_profile_id": payload["target_profile_id"]}
+	if causationID := strings.TrimSpace(event.CausationID); causationID != "" {
+		switch event.EventType {
+		case workspaceEventWorkerStarted:
+			metadata["request_agent_message_id"] = causationID
+		case workspaceEventWorkerCompleted:
+			metadata["reply_agent_message_id"] = causationID
+		}
 	}
-	return items, nil
+	if finalResponseID := finalResponseIDFromWorkspaceEventRef(event.PayloadRefJSON); finalResponseID != "" {
+		metadata["final_response_id"] = finalResponseID
+	}
+	return TimelineItem{ID: event.EventID, WorkspaceID: event.WorkspaceID, RunID: event.SubjectID, SessionID: event.SubjectID, SourceKind: "fanout_member", SourceID: memberID, Kind: "fanout_member", Status: workerEventStatus(event.EventType), CreatedAt: event.CreatedAt.Format(time.RFC3339Nano), Text: payload["target_profile_id"], Metadata: metadata}
 }
 
-func normalizeHarnessSessionTimelineItem(item TimelineItem) TimelineItem {
-	switch item.SourceKind {
-	case "executor", "agent_session", "harness_session":
-		item.SourceKind = "harness_session"
+type harnessRuntimeTimelinePayload struct {
+	HarnessEventID string          `json:"harness_event_id"`
+	Kind           string          `json:"kind"`
+	Sequence       int             `json:"sequence"`
+	SessionID      string          `json:"session_id"`
+	Payload        json.RawMessage `json:"payload"`
+	ProviderKind   string          `json:"provider_kind"`
+}
+
+func harnessRuntimeTimelineItemFromEvent(event globaldb.WorkspaceEvent) TimelineItem {
+	var outer harnessRuntimeTimelinePayload
+	_ = json.Unmarshal([]byte(event.PayloadJSON), &outer)
+	inner := workspaceEventJSONPayload(outer.Payload)
+	sessionID := strings.TrimSpace(outer.SessionID)
+	if sessionID == "" {
+		sessionID = event.SubjectID
 	}
-	switch item.Kind {
-	case "agent_text", "terminal_output":
-		item.Kind = "run_log_message"
+	kind := strings.TrimSpace(outer.Kind)
+	status := strings.TrimSpace(anyString(inner["status"]))
+	text := strings.TrimSpace(anyString(inner["text"]))
+	switch kind {
+	case string(HarnessEventAgentText):
+		kind = "run_log_message"
+		if status == "" {
+			status = "completed"
+		}
+	case string(HarnessEventLifecycle):
+		kind = "lifecycle"
+		if status == "" {
+			status = "running"
+		}
+	case string(HarnessEventError):
+		kind = "error"
+		status = "failed"
+		if text == "" {
+			text = anyString(inner["message"])
+		}
+	case string(HarnessEventUsage):
+		kind = "telemetry"
+		if status == "" {
+			status = "recorded"
+		}
+	default:
+		if kind == "" {
+			kind = strings.TrimPrefix(event.EventType, workspaceEventHarnessEventPrefix)
+		}
+		if status == "" {
+			status = "recorded"
+		}
+		if text == "" {
+			text = anyString(inner["message"])
+		}
 	}
-	return item
+	itemID := strings.TrimSpace(anyString(inner["timeline_item_id"]))
+	if itemID == "" {
+		itemID = event.EventID
+	}
+	return TimelineItem{ID: itemID, WorkspaceID: event.WorkspaceID, RunID: sessionID, SessionID: sessionID, SourceKind: "harness_session", SourceID: sessionID, Kind: kind, Status: status, CreatedAt: event.CreatedAt.Format(time.RFC3339Nano), Text: text, Metadata: map[string]any{"event_type": event.EventType, "provider_kind": outer.ProviderKind, "harness_event_id": outer.HarnessEventID}}
+}
+
+func harnessSessionTimelineItemFromEvent(event globaldb.WorkspaceEvent) TimelineItem {
+	payload := workspaceEventStringPayload(event.PayloadJSON)
+	status := strings.TrimSpace(payload["status"])
+	if status == "" {
+		status = strings.TrimPrefix(event.EventType, "session.")
+	}
+	return TimelineItem{ID: event.EventID, WorkspaceID: event.WorkspaceID, RunID: event.SubjectID, SessionID: event.SubjectID, SourceKind: "harness_session", SourceID: event.SubjectID, Kind: "lifecycle", Status: status, CreatedAt: event.CreatedAt.Format(time.RFC3339Nano), Text: payload["harness"], Metadata: map[string]any{"event_type": event.EventType, "final_response_id": finalResponseIDFromWorkspaceEventRef(event.PayloadRefJSON)}}
+}
+
+func genericTimelineItemFromEvent(event globaldb.WorkspaceEvent) TimelineItem {
+	payload := workspaceEventStringPayload(event.PayloadJSON)
+	status := strings.TrimSpace(payload["status"])
+	if status == "" {
+		status = "recorded"
+	}
+	text := strings.TrimSpace(payload["summary"])
+	if text == "" {
+		text = strings.TrimSpace(payload["message"])
+	}
+	return TimelineItem{ID: event.EventID, WorkspaceID: event.WorkspaceID, SourceKind: event.SubjectType, SourceID: event.SubjectID, Kind: event.EventType, Status: status, CreatedAt: event.CreatedAt.Format(time.RFC3339Nano), Text: text, Metadata: map[string]any{"event_type": event.EventType, "correlation_id": event.CorrelationID, "causation_id": event.CausationID}}
+}
+
+func workspaceEventJSONPayload(raw json.RawMessage) map[string]any {
+	if len(raw) == 0 {
+		return map[string]any{}
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return map[string]any{}
+	}
+	return payload
+}
+
+func anyString(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case fmt.Stringer:
+		return typed.String()
+	default:
+		return ""
+	}
 }
 
 func (d *Daemon) executorTimelineItems(workspaceID string) []TimelineItem {
@@ -432,18 +595,4 @@ func (e *PTYExecutor) Stop(ctx context.Context, runID string) error {
 		return fmt.Errorf("run id is required")
 	}
 	return nil
-}
-
-func timelineOutputStatus(status string) string {
-	if strings.TrimSpace(status) == "running" {
-		return "running"
-	}
-	return "completed"
-}
-
-func bestTimelineTimestamp(finishedAt *string, fallback string) string {
-	if finishedAt != nil && strings.TrimSpace(*finishedAt) != "" {
-		return *finishedAt
-	}
-	return fallback
 }

@@ -423,8 +423,15 @@ func TestJourneyInitToProjectStateIsDaemonBacked(t *testing.T) {
 		t.Fatalf("home status = %#v, want home helper/session/audit projection", homeStatus)
 	}
 	homeTimeline := callMethod[WorkspaceTimelineResponse](t, registry, "workspace.timeline", WorkspaceTimelineRequest{WorkspaceID: active.Current.WorkspaceID})
-	if len(homeTimeline.Items) == 0 || homeTimeline.Items[0].SourceKind != "operation" {
-		t.Fatalf("home timeline = %#v, want operation-backed timeline", homeTimeline)
+	foundOperation := false
+	for _, item := range homeTimeline.Items {
+		if item.SourceKind == "operation" {
+			foundOperation = true
+			break
+		}
+	}
+	if !foundOperation {
+		t.Fatalf("home timeline = %#v, want operation event-backed timeline", homeTimeline)
 	}
 
 	repoRoot := t.TempDir()
@@ -490,8 +497,8 @@ func TestJourneyConcurrentPlannerExecutorRemainVisible(t *testing.T) {
 	j.createSessionConfig("executor", "ws-1", "executor", "test-harness")
 	j.createHarnessSession("planner-run", "ws-1", "planner", "test-harness", "waiting", globaldb.HarnessSessionUsageSticky)
 	j.createHarnessSession("executor-run", "ws-1", "executor", "test-harness", "running", globaldb.HarnessSessionUsageSticky)
-	j.daemon.recordExecutorRun(HarnessSession{HarnessSessionID: "planner-run", SessionID: "planner-run", WorkspaceID: "ws-1", Executor: "test-harness", Status: "waiting", Usage: globaldb.HarnessSessionUsageSticky, StartedAt: "2026-05-13T00:00:00Z"}, []TimelineItem{{ID: "planner-run:item-1", WorkspaceID: "ws-1", RunID: "planner-run", SourceKind: "harness_session", SourceID: "planner-run", Kind: "run_log_message", Status: "completed", Text: "planner message"}})
-	j.daemon.recordExecutorRun(HarnessSession{HarnessSessionID: "executor-run", SessionID: "executor-run", WorkspaceID: "ws-1", Executor: "test-harness", Status: "running", Usage: globaldb.HarnessSessionUsageSticky, StartedAt: "2026-05-13T00:00:01Z"}, []TimelineItem{{ID: "executor-run:item-1", WorkspaceID: "ws-1", RunID: "executor-run", SourceKind: "harness_session", SourceID: "executor-run", Kind: "run_log_message", Status: "running", Text: "executor work"}})
+	j.recordHarnessTimeline(HarnessSession{HarnessSessionID: "planner-run", SessionID: "planner-run", WorkspaceID: "ws-1", Executor: "test-harness", Status: "waiting", Usage: globaldb.HarnessSessionUsageSticky, StartedAt: "2026-05-13T00:00:00Z"}, []TimelineItem{{ID: "planner-run:item-1", WorkspaceID: "ws-1", RunID: "planner-run", SourceKind: "harness_session", SourceID: "planner-run", Kind: "run_log_message", Status: "completed", Text: "planner message"}})
+	j.recordHarnessTimeline(HarnessSession{HarnessSessionID: "executor-run", SessionID: "executor-run", WorkspaceID: "ws-1", Executor: "test-harness", Status: "running", Usage: globaldb.HarnessSessionUsageSticky, StartedAt: "2026-05-13T00:00:01Z"}, []TimelineItem{{ID: "executor-run:item-1", WorkspaceID: "ws-1", RunID: "executor-run", SourceKind: "harness_session", SourceID: "executor-run", Kind: "run_log_message", Status: "running", Text: "executor work"}})
 	j.appendTextMessage("executor-run", "executor-msg-1", 1, "assistant", "implementation in progress")
 	j.appendTextMessage("planner-run", "planner-msg-1", 1, "user", "add a user story for audit logging")
 
@@ -583,8 +590,8 @@ func TestJourneyWorkspaceStatusAndTimelineAgreeOnSessionFacts(t *testing.T) {
 	j.createHarnessSession("planner-run", "ws-1", "planner", "test-harness", "waiting", globaldb.HarnessSessionUsageSticky)
 	j.createHarnessSession("reviewer-call-run", "ws-1", "reviewer", "test-harness", "running", globaldb.HarnessSessionUsageEphemeral)
 	j.appendTextMessage("planner-run", "planner-msg-1", 1, "assistant", "please review")
-	j.daemon.recordExecutorRun(HarnessSession{HarnessSessionID: "planner-run", SessionID: "planner-run", WorkspaceID: "ws-1", Executor: "test-harness", Status: "waiting", Usage: globaldb.HarnessSessionUsageSticky, StartedAt: "2026-05-13T00:00:00Z"}, []TimelineItem{{ID: "planner-run:item-1", WorkspaceID: "ws-1", RunID: "planner-run", SourceKind: "harness_session", SourceID: "planner-run", Kind: "run_log_message", Status: "completed", Text: "planner visible"}})
-	j.daemon.recordExecutorRun(HarnessSession{HarnessSessionID: "reviewer-call-run", SessionID: "reviewer-call-run", WorkspaceID: "ws-1", Executor: "test-harness", Status: "running", Usage: globaldb.HarnessSessionUsageEphemeral, StartedAt: "2026-05-13T00:00:01Z"}, []TimelineItem{{ID: "reviewer-call-run:item-1", WorkspaceID: "ws-1", RunID: "reviewer-call-run", SourceKind: "harness_session", SourceID: "reviewer-call-run", Kind: "run_log_message", Status: "running", Text: "reviewer visible"}})
+	j.recordHarnessTimeline(HarnessSession{HarnessSessionID: "planner-run", SessionID: "planner-run", WorkspaceID: "ws-1", Executor: "test-harness", Status: "waiting", Usage: globaldb.HarnessSessionUsageSticky, StartedAt: "2026-05-13T00:00:00Z"}, []TimelineItem{{ID: "planner-run:item-1", WorkspaceID: "ws-1", RunID: "planner-run", SourceKind: "harness_session", SourceID: "planner-run", Kind: "run_log_message", Status: "completed", Text: "planner visible"}})
+	j.recordHarnessTimeline(HarnessSession{HarnessSessionID: "reviewer-call-run", SessionID: "reviewer-call-run", WorkspaceID: "ws-1", Executor: "test-harness", Status: "running", Usage: globaldb.HarnessSessionUsageEphemeral, StartedAt: "2026-05-13T00:00:01Z"}, []TimelineItem{{ID: "reviewer-call-run:item-1", WorkspaceID: "ws-1", RunID: "reviewer-call-run", SourceKind: "harness_session", SourceID: "reviewer-call-run", Kind: "run_log_message", Status: "running", Text: "reviewer visible"}})
 
 	status := callMethod[WorkspaceStatusResponse](t, j.registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-1"})
 	timeline := callMethod[WorkspaceTimelineResponse](t, j.registry, "workspace.timeline", WorkspaceTimelineRequest{WorkspaceID: "ws-1"})

@@ -96,6 +96,14 @@ func (j *journeyRuntime) createHarnessSession(sessionID, workspaceID, agentID, h
 	}
 }
 
+func (j *journeyRuntime) recordHarnessTimeline(run HarnessSession, items []TimelineItem) {
+	j.t.Helper()
+	j.daemon.recordExecutorRun(run, items)
+	if err := appendHarnessRuntimeWorkspaceEvents(j.ctx, j.store, run, harnessRuntimeEventsFromItems(run, items)); err != nil {
+		j.t.Fatalf("appendHarnessRuntimeWorkspaceEvents(%s) returned error: %v", run.HarnessSessionID, err)
+	}
+}
+
 func (j *journeyRuntime) appendTextMessage(sessionID, messageID string, sequence int, role, text string) {
 	j.t.Helper()
 	if err := j.store.AppendRunLogMessage(j.ctx, globaldb.RunLogMessage{MessageID: messageID, SessionID: sessionID, Sequence: sequence, Role: role, Status: "completed", Parts: []globaldb.RunLogMessagePart{{PartID: messageID + "-part-1", Sequence: 1, Kind: "text", Text: text}}}); err != nil {
