@@ -56,6 +56,39 @@ func TestOperationRecordAppendGetList(t *testing.T) {
 	}
 }
 
+func TestOperationRecordWithWorkspaceEventRollsBackTogether(t *testing.T) {
+	store := newGlobalDBTestStore(t, "operation-records-event")
+	ctx := context.Background()
+	if err := store.CreateWorkspace(ctx, "ws-1", "alpha", "/tmp/alpha", "manual", "auto"); err != nil {
+		t.Fatalf("CreateWorkspace returned error: %v", err)
+	}
+	if _, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "event-existing", WorkspaceID: "ws-1", EventType: "operation.existing", SubjectType: "operation", SubjectID: "op-existing", ProducerType: "daemon", ProducerID: "test"}); err != nil {
+		t.Fatalf("AppendWorkspaceEvent seed returned error: %v", err)
+	}
+
+	record := operationRecordFixture("op-1", "ws-1", OperationScopeWorkspace, time.Time{})
+	event := WorkspaceEvent{EventID: "event-op-1", WorkspaceID: "ws-1", EventType: "operation.workspace.init", SubjectType: "operation", SubjectID: record.OperationID, ProducerType: "daemon", ProducerID: "test", PayloadJSON: `{"operation_id":"op-1"}`, PayloadRefJSON: `{"kind":"operation_record","id":"op-1"}`}
+	if _, err := store.AppendOperationRecordWithWorkspaceEvent(ctx, record, event); err != nil {
+		t.Fatalf("AppendOperationRecordWithWorkspaceEvent returned error: %v", err)
+	}
+	events, err := store.ListWorkspaceEventsAfterSequence(ctx, "ws-1", 0, 10)
+	if err != nil {
+		t.Fatalf("ListWorkspaceEventsAfterSequence returned error: %v", err)
+	}
+	if len(events) != 2 || events[1].EventID != "event-op-1" || events[1].SubjectID != "op-1" {
+		t.Fatalf("workspace events = %#v, want operation event appended", events)
+	}
+
+	rollbackRecord := operationRecordFixture("op-rollback", "ws-1", OperationScopeWorkspace, time.Time{})
+	rollbackEvent := WorkspaceEvent{EventID: "event-existing", WorkspaceID: "ws-1", EventType: "operation.workspace.init", SubjectType: "operation", SubjectID: rollbackRecord.OperationID, ProducerType: "daemon", ProducerID: "test"}
+	if _, err := store.AppendOperationRecordWithWorkspaceEvent(ctx, rollbackRecord, rollbackEvent); err == nil {
+		t.Fatal("AppendOperationRecordWithWorkspaceEvent duplicate event returned nil error")
+	}
+	if _, err := store.GetOperationRecord(ctx, "op-rollback"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetOperationRecord op-rollback error = %v, want ErrNotFound after rollback", err)
+	}
+}
+
 func TestOperationRecordValidationAndMissingReferences(t *testing.T) {
 	store := newGlobalDBTestStore(t, "operation-records-validation")
 	ctx := context.Background()

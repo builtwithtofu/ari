@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"sync"
@@ -66,8 +67,7 @@ func (d *Daemon) registerWorkspaceTimelineMethods(registry *rpc.MethodRegistry, 
 	return nil
 }
 
-func (d *Daemon) workspaceTimeline(ctx context.Context, store *globaldb.Store, workspaceID string) ([]TimelineItem, error) {
-	_ = d
+func (*Daemon) workspaceTimeline(ctx context.Context, store *globaldb.Store, workspaceID string) ([]TimelineItem, error) {
 	events, err := listWorkspaceTimelineEvents(ctx, store, workspaceID)
 	if err != nil {
 		return nil, err
@@ -134,6 +134,8 @@ func (p *eventTimelineProjection) projectEvent(ctx context.Context, event global
 		p.appendItem(p.commandTimelineItemFromEvent(ctx, event))
 	case event.EventType == workspaceEventMessageSent:
 		return p.projectAgentMessageEvent(ctx, event)
+	case event.EventType == "context_excerpt.created":
+		return p.appendContextExcerpt(ctx, event.SubjectID)
 	case isFanoutWorkerWorkspaceEvent(event.EventType):
 		p.projectFanoutMemberEvent(event)
 	case strings.HasPrefix(event.EventType, workspaceEventHarnessEventPrefix):
@@ -185,7 +187,11 @@ func (p *eventTimelineProjection) commandTimelineItemFromEvent(ctx context.Conte
 	case "command.completed":
 		status = "completed"
 	case "command.failed":
-		status = "failed"
+		if strings.TrimSpace(payload["status"]) == "lost" {
+			status = "lost"
+		} else {
+			status = "failed"
+		}
 	case "command.stopped":
 		status = "stopped"
 	}
@@ -335,7 +341,9 @@ type harnessRuntimeTimelinePayload struct {
 
 func harnessRuntimeTimelineItemFromEvent(event globaldb.WorkspaceEvent) TimelineItem {
 	var outer harnessRuntimeTimelinePayload
-	_ = json.Unmarshal([]byte(event.PayloadJSON), &outer)
+	if err := json.Unmarshal([]byte(event.PayloadJSON), &outer); err != nil {
+		log.Printf("decode harness runtime workspace event payload failed: event_id=%s payload=%q error=%v", event.EventID, event.PayloadJSON, err)
+	}
 	inner := workspaceEventJSONPayload(outer.Payload)
 	sessionID := strings.TrimSpace(outer.SessionID)
 	if sessionID == "" {

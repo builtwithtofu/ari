@@ -169,6 +169,21 @@ func defaultAgentMessageWorkspaceEventPayload(params AgentMessageSendParams, sou
 	return string(encoded)
 }
 
+func contextExcerptCreatedWorkspaceEvent(excerpt ContextExcerpt) (WorkspaceEvent, error) {
+	payload, err := json.Marshal(map[string]string{
+		"context_excerpt_id": excerpt.ContextExcerptID,
+		"source_session_id":  excerpt.SourceSessionID,
+		"source_agent_id":    excerpt.SourceAgentID,
+		"target_agent_id":    excerpt.TargetAgentID,
+		"selector_type":      excerpt.SelectorType,
+		"item_count":         fmt.Sprintf("%d", len(excerpt.Items)),
+	})
+	if err != nil {
+		return WorkspaceEvent{}, err
+	}
+	return prepareCoordinatedWorkspaceEvent(WorkspaceEvent{WorkspaceID: excerpt.WorkspaceID, EventType: "context_excerpt.created", SubjectType: "context_excerpt", SubjectID: excerpt.ContextExcerptID, ProducerType: "session", ProducerID: excerpt.SourceSessionID, CorrelationID: excerpt.SourceSessionID, PayloadJSON: string(payload), PayloadRefJSON: daemonLocalPayloadRef("context_excerpt", excerpt.ContextExcerptID)})
+}
+
 func (s *Store) CreateHarnessSessionConfig(ctx context.Context, agent HarnessSessionConfig) error {
 	if strings.TrimSpace(agent.AgentID) == "" || strings.TrimSpace(agent.Name) == "" {
 		return ErrInvalidInput
@@ -565,12 +580,6 @@ func (s *Store) messagesForExcerptSelector(ctx context.Context, sourceSessionID 
 func (s *Store) createContextExcerptFromMessages(ctx context.Context, spec contextExcerptCreateSpec, run dbsqlc.GetHarnessSessionRow, messages []RunLogMessage) (ContextExcerpt, error) {
 	items := make([]ContextExcerptItem, 0, len(messages))
 	h := sha256.New()
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return ContextExcerpt{}, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	qtx := s.sqlc.WithTx(tx)
 	for i, msg := range messages {
 		text := messageText(msg)
 		parts := copyMessageParts(msg.Parts)
@@ -580,19 +589,26 @@ func (s *Store) createContextExcerptFromMessages(ctx context.Context, spec conte
 	}
 	_, _ = fmt.Fprintf(h, "workspace:%s\x00source_run:%s\x00source_agent:%s\x00target_agent:%s\x00selector:%s\x00selector_json:%s\x00visibility:visible_context\x00appended:%s\x00", run.WorkspaceID, spec.SourceSessionID, run.AgentID, spec.TargetAgentID, spec.SelectorType, spec.SelectorJSON, spec.AppendedMessage)
 	contentHash := "sha256:" + hex.EncodeToString(h.Sum(nil))
-	if err := qtx.CreateContextExcerpt(ctx, dbsqlc.CreateContextExcerptParams{ContextExcerptID: spec.ContextExcerptID, WorkspaceID: run.WorkspaceID, SourceSessionID: spec.SourceSessionID, SourceAgentID: run.AgentID, TargetAgentID: spec.TargetAgentID, SelectorType: spec.SelectorType, SelectorJson: spec.SelectorJSON, AppendedMessage: spec.AppendedMessage, ContentHash: contentHash}); err != nil {
-		return ContextExcerpt{}, err
-	}
-	for _, item := range items {
-		partsJSON, _ := json.Marshal(item.CopiedParts)
-		if err := qtx.CreateContextExcerptItem(ctx, dbsqlc.CreateContextExcerptItemParams{ContextExcerptID: spec.ContextExcerptID, Sequence: int64(item.Sequence), SourceMessageID: item.SourceMessageID, SourceSessionID: spec.SourceSessionID, SourceAgentID: run.AgentID, CopiedRole: item.CopiedRole, CopiedText: item.CopiedText, CopiedPartsJson: string(partsJSON)}); err != nil {
-			return ContextExcerpt{}, err
+	excerpt := ContextExcerpt{ContextExcerptID: spec.ContextExcerptID, WorkspaceID: run.WorkspaceID, SourceSessionID: spec.SourceSessionID, SourceAgentID: run.AgentID, TargetAgentID: spec.TargetAgentID, SelectorType: spec.SelectorType, SelectorJSON: spec.SelectorJSON, Visibility: "visible_context", AppendedMessage: spec.AppendedMessage, ContentHash: contentHash, Items: items}
+	if err := s.withImmediateQueries(ctx, func(qtx *dbsqlc.Queries) error {
+		if err := qtx.CreateContextExcerpt(ctx, dbsqlc.CreateContextExcerptParams{ContextExcerptID: spec.ContextExcerptID, WorkspaceID: run.WorkspaceID, SourceSessionID: spec.SourceSessionID, SourceAgentID: run.AgentID, TargetAgentID: spec.TargetAgentID, SelectorType: spec.SelectorType, SelectorJson: spec.SelectorJSON, AppendedMessage: spec.AppendedMessage, ContentHash: contentHash}); err != nil {
+			return err
 		}
-	}
-	if err := tx.Commit(); err != nil {
+		for _, item := range items {
+			partsJSON, _ := json.Marshal(item.CopiedParts)
+			if err := qtx.CreateContextExcerptItem(ctx, dbsqlc.CreateContextExcerptItemParams{ContextExcerptID: spec.ContextExcerptID, Sequence: int64(item.Sequence), SourceMessageID: item.SourceMessageID, SourceSessionID: spec.SourceSessionID, SourceAgentID: run.AgentID, CopiedRole: item.CopiedRole, CopiedText: item.CopiedText, CopiedPartsJson: string(partsJSON)}); err != nil {
+				return err
+			}
+		}
+		event, err := contextExcerptCreatedWorkspaceEvent(excerpt)
+		if err != nil {
+			return err
+		}
+		return appendCoordinatedWorkspaceEventWithQueries(ctx, qtx, &event, s.EventCoordinator().defaultProjections()...)
+	}); err != nil {
 		return ContextExcerpt{}, err
 	}
-	return ContextExcerpt{ContextExcerptID: spec.ContextExcerptID, WorkspaceID: run.WorkspaceID, SourceSessionID: spec.SourceSessionID, SourceAgentID: run.AgentID, TargetAgentID: spec.TargetAgentID, SelectorType: spec.SelectorType, SelectorJSON: spec.SelectorJSON, Visibility: "visible_context", AppendedMessage: spec.AppendedMessage, ContentHash: contentHash, Items: items}, nil
+	return excerpt, nil
 }
 
 func (s *Store) SendAgentMessage(ctx context.Context, params AgentMessageSendParams) (AgentMessage, error) {

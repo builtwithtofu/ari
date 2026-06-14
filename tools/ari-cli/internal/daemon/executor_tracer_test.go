@@ -911,6 +911,35 @@ func (e *fakeHarness) Stop(ctx context.Context, sessionID string) error {
 	return nil
 }
 
+type sinkOnStartHarness struct {
+	name string
+	sink func(string, []TimelineItem)
+}
+
+func (e sinkOnStartHarness) Descriptor() HarnessAdapterDescriptor {
+	return HarnessAdapterDescriptor{Name: e.name, Capabilities: []HarnessCapability{HarnessCapabilityHarnessSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems}}
+}
+
+func (e sinkOnStartHarness) Start(ctx context.Context, req ExecutorStartRequest) (ExecutorRun, error) {
+	_ = ctx
+	if e.sink != nil {
+		e.sink(req.RunID, []TimelineItem{{ID: req.RunID + ":output", Kind: "terminal_output", Status: "completed", Sequence: 1, Text: "instant output"}})
+	}
+	return ExecutorRun{SessionID: req.RunID, Executor: e.name, ProviderSessionID: req.RunID, CapabilityNames: []string{string(HarnessCapabilityTimelineItems)}}, nil
+}
+
+func (e sinkOnStartHarness) Items(ctx context.Context, sessionID string) ([]TimelineItem, error) {
+	_ = ctx
+	_ = sessionID
+	return nil, nil
+}
+
+func (e sinkOnStartHarness) Stop(ctx context.Context, sessionID string) error {
+	_ = ctx
+	_ = sessionID
+	return nil
+}
+
 type capturingHarness struct {
 	name         string
 	captured     *ExecutorStartRequest
@@ -2422,6 +2451,36 @@ func TestHarnessSessionMethodStartsPTYExecutorFromContextPacket(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("workspace.timeline did not persist pty output for run %s", resp.Run.HarnessSessionID)
+}
+
+func TestStartHarnessSessionPersistsSinkItemsBeforeSessionRowExists(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest("sink-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		_ = req
+		_ = primaryFolder
+		return sinkOnStartHarness{name: "sink-harness", sink: sink}, nil
+	})
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+
+	packet := ContextPacket{ID: "ctx_123", WorkspaceID: "ws-1", TaskID: "task-1", PacketHash: "sha256:abc"}
+	resp, err := d.startHarnessSession(context.Background(), store, HarnessSessionStartRequest{Executor: "sink-harness", SessionID: "run-early", Packet: packet})
+	if err != nil {
+		t.Fatalf("startHarnessSession returned error: %v", err)
+	}
+	if resp.Run.HarnessSessionID != "run-early" {
+		t.Fatalf("run id = %q, want requested session id", resp.Run.HarnessSessionID)
+	}
+	events, err := store.ListWorkspaceEventsAfterSequence(context.Background(), "ws-1", 0, 10)
+	if err != nil {
+		t.Fatalf("ListWorkspaceEventsAfterSequence returned error: %v", err)
+	}
+	for _, event := range events {
+		if event.EventType == "harness.event.agent_text" && event.SubjectID == "run-early" {
+			return
+		}
+	}
+	t.Fatalf("workspace events = %#v, want sink-emitted runtime event", events)
 }
 
 func TestRecordExecutorRunPreservesBufferedSinkItems(t *testing.T) {

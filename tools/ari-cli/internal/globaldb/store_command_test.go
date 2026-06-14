@@ -2,6 +2,7 @@ package globaldb
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 )
@@ -91,6 +92,27 @@ func TestCommandStoreLifecycleAndReconciliation(t *testing.T) {
 	}
 	if lost.Status != "lost" {
 		t.Fatalf("GetCommand cmd-2 Status = %q, want %q", lost.Status, "lost")
+	}
+	events, err := store.ListWorkspaceEventsAfterSequence(ctx, "sess-1", 0, 10)
+	if err != nil {
+		t.Fatalf("ListWorkspaceEventsAfterSequence returned error: %v", err)
+	}
+	var lostEvent *WorkspaceEvent
+	for i := range events {
+		if events[i].SubjectID == "cmd-2" && events[i].EventType == "command.failed" {
+			lostEvent = &events[i]
+			break
+		}
+	}
+	if lostEvent == nil {
+		t.Fatalf("workspace events = %#v, want command.failed event for lost command", events)
+	}
+	var payload map[string]string
+	if err := json.Unmarshal([]byte(lostEvent.PayloadJSON), &payload); err != nil {
+		t.Fatalf("unmarshal lost command payload returned error: %v", err)
+	}
+	if payload["status"] != "lost" || !lostEvent.AttentionRequired {
+		t.Fatalf("lost command event = %#v payload=%#v, want lost status with attention", *lostEvent, payload)
 	}
 }
 

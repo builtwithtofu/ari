@@ -328,6 +328,7 @@ func TestWorkspaceEventSubscriptionReadsHarnessRuntimeEvents(t *testing.T) {
 
 		events := waitForSubscriptionEvents(t, j.registry, "sub-runtime-ephemeral", len(wantTypes))
 		assertHarnessRuntimeWorkspaceEvents(t, events, "ws-runtime-ephemeral", workerSessionID, wantTypes)
+		waitForProjectedFanoutMemberStatuses(t, j.registry, "ws-runtime-ephemeral", map[string]string{"worker": "completed"})
 	})
 }
 

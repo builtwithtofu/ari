@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -500,6 +501,16 @@ func (d *Daemon) startHarnessSession(ctx context.Context, store *globaldb.Store,
 	if executorName == "" {
 		return HarnessSessionStartResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "executor is required", nil)
 	}
+	req.Executor = executorName
+	if strings.TrimSpace(req.SessionID) == "" {
+		sessionID, err := newAriULID()
+		if err != nil {
+			return HarnessSessionStartResponse{}, fmt.Errorf("generate Ari session id: %w", err)
+		}
+		req.SessionID = sessionID
+	} else {
+		req.SessionID = strings.TrimSpace(req.SessionID)
+	}
 	if err := requireWorkspaceCanStartRuntime(ctx, store, req.Packet.WorkspaceID); err != nil {
 		return HarnessSessionStartResponse{}, err
 	}
@@ -523,6 +534,7 @@ func (d *Daemon) startHarnessSession(ctx context.Context, store *globaldb.Store,
 	} else if projection.Kind != "" {
 		req.AuthProjection = projection
 	}
+	d.rememberStartingExecutorRun(req)
 	result, err := StartExecutorRunResultWithProjection(ctx, executor, req.Packet, strings.TrimSpace(req.SessionID), req.AuthProjection, profile...)
 	if err != nil {
 		return HarnessSessionStartResponse{}, mapHarnessRunError(err)
@@ -713,6 +725,27 @@ func unknownHarnessError(harness string) error {
 	return rpc.NewHandlerError(rpc.InvalidParams, "harness is not available", map[string]any{"harness": strings.TrimSpace(harness), "reason": "unknown_harness", "start_invoked": false})
 }
 
+func (d *Daemon) rememberStartingExecutorRun(req HarnessSessionStartRequest) {
+	if d == nil || strings.TrimSpace(req.SessionID) == "" {
+		return
+	}
+	d.executorMu.Lock()
+	if _, exists := d.executorRuns[req.SessionID]; !exists {
+		d.executorRuns[req.SessionID] = HarnessSession{HarnessSessionID: req.SessionID, SessionID: req.SessionID, WorkspaceID: strings.TrimSpace(req.Packet.WorkspaceID), Usage: globaldb.HarnessSessionUsageSticky, TaskID: strings.TrimSpace(req.Packet.TaskID), Executor: strings.TrimSpace(req.Executor), Status: "starting", ContextPacketID: strings.TrimSpace(req.Packet.ID), StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	}
+	d.executorMu.Unlock()
+}
+
+func (d *Daemon) executorRunSnapshot(sessionID string) (HarnessSession, bool) {
+	if d == nil || strings.TrimSpace(sessionID) == "" {
+		return HarnessSession{}, false
+	}
+	d.executorMu.RLock()
+	run, ok := d.executorRuns[strings.TrimSpace(sessionID)]
+	d.executorMu.RUnlock()
+	return run, ok
+}
+
 func (d *Daemon) appendExecutorItems(sessionID string, items []TimelineItem) {
 	if d == nil || strings.TrimSpace(sessionID) == "" || len(items) == 0 {
 		return
@@ -734,11 +767,20 @@ func (d *Daemon) appendExecutorItemsToStore(ctx context.Context, store *globaldb
 			emitCtx = context.Background()
 		}
 		stored, err := store.GetHarnessSession(emitCtx, sessionID)
+		var run HarnessSession
 		if err != nil {
-			return
+			var ok bool
+			run, ok = d.executorRunSnapshot(sessionID)
+			if !ok || strings.TrimSpace(run.WorkspaceID) == "" {
+				log.Printf("append executor items skipped: session_id=%s get_harness_session_error=%v", sessionID, err)
+				return
+			}
+		} else {
+			run = HarnessSession{HarnessSessionID: stored.SessionID, SessionID: stored.SessionID, WorkspaceID: stored.WorkspaceID, Executor: stored.Harness, Status: stored.Status}
 		}
-		run := HarnessSession{HarnessSessionID: stored.SessionID, SessionID: stored.SessionID, WorkspaceID: stored.WorkspaceID, Executor: stored.Harness, Status: stored.Status}
-		_ = appendHarnessRuntimeWorkspaceEvents(emitCtx, store, run, harnessRuntimeEventsFromItems(run, items))
+		if err := appendHarnessRuntimeWorkspaceEvents(emitCtx, store, run, harnessRuntimeEventsFromItems(run, items)); err != nil {
+			log.Printf("append executor runtime workspace events failed: session_id=%s error=%v", sessionID, err)
+		}
 	}
 }
 

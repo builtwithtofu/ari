@@ -234,11 +234,27 @@ func (s *Store) UpdateCommandStatus(ctx context.Context, params UpdateCommandSta
 }
 
 func (s *Store) MarkRunningCommandsLost(ctx context.Context) error {
-	if err := s.sqlcQueries().MarkRunningCommandsLost(ctx); err != nil {
-		return fmt.Errorf("mark running commands lost: %w", err)
-	}
-
-	return nil
+	return s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
+		running, err := queries.ListRunningCommands(ctx)
+		if err != nil {
+			return fmt.Errorf("list running commands: %w", err)
+		}
+		if err := queries.MarkRunningCommandsLost(ctx); err != nil {
+			return fmt.Errorf("mark running commands lost: %w", err)
+		}
+		for _, row := range running {
+			command := commandFromSQLC(row)
+			command.Status = commandStatusLost
+			event, err := commandWorkspaceEvent(command)
+			if err != nil {
+				return err
+			}
+			if err := appendCoordinatedWorkspaceEventWithQueries(ctx, queries, &event); err != nil {
+				return fmt.Errorf("append lost command workspace event %q: %w", command.CommandID, err)
+			}
+		}
+		return nil
+	})
 }
 
 func (s *Store) CreateWorkspaceCommandDefinition(ctx context.Context, params CreateWorkspaceCommandDefinitionParams) error {

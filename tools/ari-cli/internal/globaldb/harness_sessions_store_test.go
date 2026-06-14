@@ -269,6 +269,27 @@ func TestContextExcerptCopiesOrderedExcerptAndIsImmutable(t *testing.T) {
 	}
 }
 
+func TestContextExcerptCreateEmitsWorkspaceEvent(t *testing.T) {
+	store := newGlobalDBTestStore(t, "context-excerpt-workspace-event")
+	ctx := context.Background()
+	seedHarnessSessionConfigSession(t, store, ctx)
+	if err := store.AppendRunLogMessage(ctx, RunLogMessage{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "assistant", Parts: []RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "text", Text: "capturable"}}}); err != nil {
+		t.Fatalf("AppendRunLogMessage returned error: %v", err)
+	}
+
+	excerpt, err := store.CreateContextExcerptFromTail(ctx, CreateContextExcerptFromTailParams{ContextExcerptID: "excerpt-1", SourceSessionID: "run-1", TargetAgentID: "agent-2", Count: 1})
+	if err != nil {
+		t.Fatalf("CreateContextExcerptFromTail returned error: %v", err)
+	}
+	events, err := store.ListWorkspaceEventsAfterSequence(ctx, "ws-1", 0, 10)
+	if err != nil {
+		t.Fatalf("ListWorkspaceEventsAfterSequence returned error: %v", err)
+	}
+	if len(events) != 1 || events[0].EventType != "context_excerpt.created" || events[0].SubjectType != "context_excerpt" || events[0].SubjectID != excerpt.ContextExcerptID || events[0].ProducerID != "run-1" {
+		t.Fatalf("workspace events = %#v, want context_excerpt.created for excerpt", events)
+	}
+}
+
 func TestContextExcerptFromRangeCopiesInclusiveOrderedExcerpt(t *testing.T) {
 	store := newGlobalDBTestStore(t, "message-excerpt-range")
 	ctx := context.Background()

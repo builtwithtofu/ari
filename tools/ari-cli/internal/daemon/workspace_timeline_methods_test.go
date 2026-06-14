@@ -86,6 +86,32 @@ func TestWorkspaceTimelineMapsCommandAgentAndProofOutput(t *testing.T) {
 	}
 }
 
+func TestWorkspaceTimelineProjectsLostCommandReconciliationEvent(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	if err := store.CreateCommand(context.Background(), globaldb.CreateCommandParams{CommandID: "cmd-lost", WorkspaceID: "ws-1", Command: "sleep 30", Args: `[]`, Status: "running", StartedAt: "2026-04-25T00:00:00Z"}); err != nil {
+		t.Fatalf("CreateCommand returned error: %v", err)
+	}
+	if err := store.MarkRunningCommandsLost(context.Background()); err != nil {
+		t.Fatalf("MarkRunningCommandsLost returned error: %v", err)
+	}
+
+	resp := callMethod[WorkspaceTimelineResponse](t, registry, "workspace.timeline", WorkspaceTimelineRequest{WorkspaceID: "ws-1"})
+	if len(resp.Items) != 2 {
+		t.Fatalf("timeline items len = %d, want command.started and command.failed", len(resp.Items))
+	}
+	got := resp.Items[1]
+	if got.SourceKind != "command" || got.SourceID != "cmd-lost" || got.Status != "lost" {
+		t.Fatalf("lost command timeline item = %#v, want command lost terminal item", got)
+	}
+}
+
 func TestWorkspaceTimelineOrdersExecutorItemsDeterministically(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
@@ -195,6 +221,38 @@ func TestWorkspaceTimelineIncludesAgentMessageAndContextExcerptActivity(t *testi
 	if !foundExcerpt || !foundMessage {
 		t.Fatalf("timeline items = %#v, want context_excerpt and agent_message activity", resp.Items)
 	}
+}
+
+func TestWorkspaceTimelineIncludesStandaloneContextExcerptActivity(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	ctx := context.Background()
+	seedSessionWithPrimaryFolder(t, store, "ws-1", t.TempDir())
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "executor", WorkspaceID: "ws-1", Name: "executor", Harness: "codex"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig executor returned error: %v", err)
+	}
+	if err := store.CreateHarnessSession(ctx, globaldb.HarnessSession{SessionID: "run-1", WorkspaceID: "ws-1", AgentID: "executor", Harness: "codex", Status: "waiting", Usage: globaldb.HarnessSessionUsageSticky}); err != nil {
+		t.Fatalf("CreateHarnessSession source returned error: %v", err)
+	}
+	if err := store.AppendRunLogMessage(ctx, globaldb.RunLogMessage{MessageID: "msg-1", SessionID: "run-1", Sequence: 1, Role: "assistant", Parts: []globaldb.RunLogMessagePart{{PartID: "part-1", Sequence: 1, Kind: "text", Text: "save this for later"}}}); err != nil {
+		t.Fatalf("AppendRunLogMessage returned error: %v", err)
+	}
+	if _, err := store.CreateContextExcerptFromTail(ctx, globaldb.CreateContextExcerptFromTailParams{ContextExcerptID: "excerpt-standalone", SourceSessionID: "run-1", TargetAgentID: "reviewer", Count: 1}); err != nil {
+		t.Fatalf("CreateContextExcerptFromTail returned error: %v", err)
+	}
+
+	resp := callMethod[WorkspaceTimelineResponse](t, registry, "workspace.timeline", WorkspaceTimelineRequest{WorkspaceID: "ws-1"})
+	for _, item := range resp.Items {
+		if item.SourceKind == "context_excerpt" && item.SourceID == "excerpt-standalone" && item.Status == "captured" {
+			return
+		}
+	}
+	t.Fatalf("timeline items = %#v, want standalone context_excerpt activity", resp.Items)
 }
 
 func TestWorkspaceTimelineOrdersContextExcerptAndAgentMessageActivityByWorkflow(t *testing.T) {
