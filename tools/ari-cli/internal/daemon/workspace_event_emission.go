@@ -212,13 +212,17 @@ func appendFanoutWorkerWorkspaceEvent(ctx context.Context, store *globaldb.Store
 	}
 	status := workerEventStatus(eventType)
 	payload := map[string]string{
-		"status":            status,
-		"fanout_group_id":   member.FanoutGroupID,
-		"fanout_member_id":  member.FanoutMemberID,
-		"target_profile_id": member.TargetProfileID,
+		"status":                   status,
+		"fanout_group_id":          member.FanoutGroupID,
+		"fanout_member_id":         member.FanoutMemberID,
+		"target_profile_id":        member.TargetProfileID,
+		"request_agent_message_id": member.RequestAgentMessageID,
 	}
 	if strings.TrimSpace(causationID) == "" {
 		causationID = member.RequestAgentMessageID
+	}
+	if eventType == workspaceEventWorkerCompleted {
+		payload["reply_agent_message_id"] = strings.TrimSpace(causationID)
 	}
 	event := globaldb.WorkspaceEvent{
 		WorkspaceID:       member.WorkspaceID,
@@ -233,75 +237,12 @@ func appendFanoutWorkerWorkspaceEvent(ctx context.Context, store *globaldb.Store
 		PayloadRefJSON:    daemonEventPayload(finalResponsePayloadRef(finalResponseID)),
 		AttentionRequired: attentionRequired,
 	}
-	projected := projectedFanoutMemberForEvent(member, event, finalResponseID)
-	var inboxItem *globaldb.InboxItem
-	if kind := inboxKindForFanoutWorkerEvent(eventType); kind != "" {
-		// Group lookup stays outside the transaction: fanout groups are
-		// immutable after creation, so the workspace check cannot go stale.
-		group, err := store.GetFanoutGroup(ctx, event.CorrelationID)
-		if err != nil {
-			return err
-		}
-		if group.WorkspaceID != event.WorkspaceID {
-			return fmt.Errorf("%w: fanout group workspace does not match worker event", globaldb.ErrInvalidInput)
-		}
-		inboxItem = &globaldb.InboxItem{InboxItemID: "inbox-" + strings.TrimSpace(member.FanoutMemberID), WorkspaceID: event.WorkspaceID, SourceSessionID: group.SourceSessionID, FanoutGroupID: event.CorrelationID, FanoutMemberID: member.FanoutMemberID, WorkerSessionID: event.SubjectID, FinalResponseID: projected.FinalResponseID, Kind: kind, Status: "unread", Summary: "worker " + status}
-	}
-	_, err := store.ProjectFanoutWorkerEvent(ctx, event, projected, inboxItem)
+	_, err := appendWorkspaceEvent(ctx, store, event)
 	return err
 }
 
-// projectedFanoutMemberForEvent derives the member projection from a fanout
-// worker event. Event facts win for status; linkage fields are only filled
-// in, never blanked.
-func projectedFanoutMemberForEvent(member globaldb.FanoutMember, event globaldb.WorkspaceEvent, finalResponseID string) globaldb.FanoutMember {
-	projected := member
-	projected.Status = workerEventStatus(event.EventType)
-	causationID := strings.TrimSpace(event.CausationID)
-	switch event.EventType {
-	case workspaceEventWorkerStarted:
-		if causationID != "" {
-			projected.RequestAgentMessageID = causationID
-		}
-	case workspaceEventWorkerCompleted:
-		if causationID != "" {
-			projected.ReplyAgentMessageID = causationID
-		}
-	}
-	if finalResponseID = strings.TrimSpace(finalResponseID); finalResponseID == "" {
-		finalResponseID = finalResponseIDFromWorkspaceEvent(event)
-	}
-	if finalResponseID != "" {
-		projected.FinalResponseID = finalResponseID
-	}
-	return projected
-}
-
-func inboxKindForFanoutWorkerEvent(eventType string) string {
-	switch strings.TrimSpace(eventType) {
-	case workspaceEventWorkerCompleted:
-		return "worker_completed"
-	case workspaceEventWorkerFailed:
-		return "worker_failed"
-	case workspaceEventWorkerStopped:
-		return "worker_stopped"
-	default:
-		return ""
-	}
-}
-
 func finalResponseIDFromWorkspaceEvent(event globaldb.WorkspaceEvent) string {
-	var ref struct {
-		Kind string `json:"kind"`
-		ID   string `json:"id"`
-	}
-	if err := json.Unmarshal([]byte(event.PayloadRefJSON), &ref); err != nil {
-		return ""
-	}
-	if strings.TrimSpace(ref.Kind) != "final_response" {
-		return ""
-	}
-	return strings.TrimSpace(ref.ID)
+	return finalResponseIDFromWorkspaceEventRef(event.PayloadRefJSON)
 }
 
 func workerEventStatus(eventType string) string {

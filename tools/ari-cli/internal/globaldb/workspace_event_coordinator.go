@@ -38,11 +38,18 @@ func (c EventCoordinator) AppendWorkspaceEvent(ctx context.Context, event Worksp
 		return WorkspaceEvent{}, err
 	}
 	if err := c.store.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
-		return appendCoordinatedWorkspaceEventWithQueries(ctx, queries, &prepared)
+		return appendCoordinatedWorkspaceEventWithQueries(ctx, queries, &prepared, c.defaultProjections()...)
 	}); err != nil {
 		return WorkspaceEvent{}, err
 	}
 	return prepared, nil
+}
+
+func (c EventCoordinator) defaultProjections() []workspaceEventProjection {
+	return []workspaceEventProjection{
+		FanoutProjection{}.ProjectWorkspaceEvent,
+		InboxProjection{}.ProjectWorkspaceEvent,
+	}
 }
 
 type workspaceEventProjection func(context.Context, *dbsqlc.Queries, WorkspaceEvent) error

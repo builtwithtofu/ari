@@ -86,68 +86,6 @@ func upsertFanoutMemberWithQueries(ctx context.Context, queries *dbsqlc.Queries,
 	return nil
 }
 
-// ProjectFanoutWorkerEvent records a fanout worker fact and its projections
-// as one atomic unit: the workspace event, matched pending deliveries, the
-// fanout member row, and the optional inbox item all commit together or not
-// at all. The store fills the inbox item's event linkage because the event ID
-// is only final inside the call.
-func (s *Store) ProjectFanoutWorkerEvent(ctx context.Context, event WorkspaceEvent, member FanoutMember, inboxItem *InboxItem) (WorkspaceEvent, error) {
-	event, err := prepareCoordinatedWorkspaceEvent(event)
-	if err != nil {
-		return WorkspaceEvent{}, err
-	}
-	if err := validateFanoutMemberProjection(member); err != nil {
-		return WorkspaceEvent{}, err
-	}
-	if strings.TrimSpace(event.WorkspaceID) != strings.TrimSpace(member.WorkspaceID) {
-		return WorkspaceEvent{}, ErrInvalidInput
-	}
-	if strings.TrimSpace(event.CorrelationID) != "" && strings.TrimSpace(member.FanoutGroupID) != "" && strings.TrimSpace(event.CorrelationID) != strings.TrimSpace(member.FanoutGroupID) {
-		return WorkspaceEvent{}, ErrInvalidInput
-	}
-	var item InboxItem
-	if inboxItem != nil {
-		item = *inboxItem
-		if strings.TrimSpace(item.WorkspaceID) != strings.TrimSpace(event.WorkspaceID) {
-			return WorkspaceEvent{}, ErrInvalidInput
-		}
-		item.WorkspaceEventID = event.EventID
-		item.EventType = event.EventType
-		item.AttentionRequired = event.AttentionRequired
-		item = normalizeInboxItem(item)
-		if err := validateInboxItem(item); err != nil {
-			return WorkspaceEvent{}, err
-		}
-		if item.CreatedAt.IsZero() {
-			item.CreatedAt = event.CreatedAt
-		}
-		if item.UpdatedAt.IsZero() {
-			item.UpdatedAt = item.CreatedAt
-		}
-	}
-	if err := s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
-		return appendCoordinatedWorkspaceEventWithQueries(
-			ctx, queries, &event,
-			func(ctx context.Context, queries *dbsqlc.Queries, event WorkspaceEvent) error {
-				if strings.TrimSpace(member.CreatedAt) == "" {
-					member.CreatedAt = event.CreatedAt.UTC().Format(time.RFC3339Nano)
-				}
-				member.UpdatedAt = event.CreatedAt.UTC().Format(time.RFC3339Nano)
-				return upsertFanoutMemberWithQueries(ctx, queries, member)
-			},
-			func(ctx context.Context, queries *dbsqlc.Queries, event WorkspaceEvent) error {
-				if inboxItem == nil {
-					return nil
-				}
-				return createInboxItemWithQueries(ctx, queries, item)
-			},
-		)
-	}); err != nil {
-		return WorkspaceEvent{}, err
-	}
-	return event, nil
-}
-
 func (s *Store) GetFanoutMemberByWorkerSession(ctx context.Context, workerSessionID string) (FanoutMember, error) {
 	workerSessionID = strings.TrimSpace(workerSessionID)
 	if workerSessionID == "" {
