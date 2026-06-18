@@ -27,6 +27,13 @@ WHERE status = 'scheduled' AND fire_at <= ?
 ORDER BY fire_at ASC, timer_id ASC
 LIMIT ?;
 
+-- name: NextScheduledWorkspaceTimerFireAt :one
+SELECT fire_at
+FROM workspace_timers
+WHERE status = 'scheduled'
+ORDER BY fire_at ASC, timer_id ASC
+LIMIT 1;
+
 -- name: MarkWorkspaceTimerFired :execrows
 UPDATE workspace_timers
 SET status = 'fired',

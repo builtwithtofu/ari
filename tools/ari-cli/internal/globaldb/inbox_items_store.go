@@ -113,7 +113,7 @@ func (s *Store) MarkInboxItemsRead(ctx context.Context, workspaceID, sourceSessi
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	var marked int64
-	if err := s.withImmediateQueries(ctx, func(txCtx context.Context, queries *dbsqlc.Queries) error {
+	if err := s.withImmediateQueries(ctx, func(ctx context.Context, queries *dbsqlc.Queries) error {
 		for _, inboxItemID := range trimmedIDs {
 			rows, err := queries.MarkInboxItemRead(ctx, dbsqlc.MarkInboxItemReadParams{UpdatedAt: now, WorkspaceID: workspaceID, SourceSessionID: sourceSessionID, InboxItemID: inboxItemID})
 			if err != nil {

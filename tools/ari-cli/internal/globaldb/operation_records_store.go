@@ -55,7 +55,7 @@ func (s *Store) AppendOperationRecordWithWorkspaceEvent(ctx context.Context, rec
 		record.CreatedAt = time.Now().UTC()
 	}
 
-	if err := s.withImmediateQueries(ctx, func(txCtx context.Context, queries *dbsqlc.Queries) error {
+	if err := s.withImmediateQueries(ctx, func(ctx context.Context, queries *dbsqlc.Queries) error {
 		if err := validateOperationRecordReferencesWithQueries(ctx, queries, record); err != nil {
 			return err
 		}

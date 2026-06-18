@@ -184,3 +184,18 @@ func (q *Queries) MarkWorkspaceTimerFired(ctx context.Context, arg MarkWorkspace
 	}
 	return result.RowsAffected()
 }
+
+const nextScheduledWorkspaceTimerFireAt = `-- name: NextScheduledWorkspaceTimerFireAt :one
+SELECT fire_at
+FROM workspace_timers
+WHERE status = 'scheduled'
+ORDER BY fire_at ASC, timer_id ASC
+LIMIT 1
+`
+
+func (q *Queries) NextScheduledWorkspaceTimerFireAt(ctx context.Context) (string, error) {
+	row := q.db.QueryRowContext(ctx, nextScheduledWorkspaceTimerFireAt)
+	var fire_at string
+	err := row.Scan(&fire_at)
+	return fire_at, err
+}

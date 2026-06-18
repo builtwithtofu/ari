@@ -37,6 +37,7 @@ type Store struct {
 	db                 *sql.DB
 	sqlc               *dbsqlc.Queries
 	agentMessageMu     sync.Mutex
+	orchestrationWake  *orchestrationWakeBroker
 	projectionRegistry *ProjectionRegistry
 }
 
@@ -44,7 +45,7 @@ func NewSQLStore(db *sql.DB) (*Store, error) {
 	if db == nil {
 		return nil, fmt.Errorf("%w: db is required", ErrInvalidInput)
 	}
-	return &Store{db: db, sqlc: dbsqlc.New(db), projectionRegistry: DefaultProjectionRegistry()}, nil
+	return &Store{db: db, sqlc: dbsqlc.New(db), orchestrationWake: newOrchestrationWakeBroker(), projectionRegistry: DefaultProjectionRegistry()}, nil
 }
 
 func (s *Store) SetMeta(ctx context.Context, key, value string) error {
@@ -127,7 +128,9 @@ func (s *Store) withImmediateQueries(ctx context.Context, fn func(context.Contex
 			_, _ = conn.ExecContext(ctx, "ROLLBACK")
 		}
 	}()
-	txCtx := context.WithValue(ctx, projectionContextKey{}, s.workspaceProjectionRegistry())
+	afterCommit := &storeAfterCommit{}
+	txCtx := context.WithValue(ctx, storeAfterCommitKey{}, afterCommit)
+	txCtx = context.WithValue(txCtx, projectionContextKey{}, s.workspaceProjectionRegistry())
 	if err := fn(txCtx, dbsqlc.New(conn)); err != nil {
 		return err
 	}
@@ -135,6 +138,7 @@ func (s *Store) withImmediateQueries(ctx context.Context, fn func(context.Contex
 		return err
 	}
 	committed = true
+	s.notifyAfterCommit(afterCommit)
 	return nil
 }
 

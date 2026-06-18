@@ -35,8 +35,8 @@ func deliveryCodexAppServer(w *lineSink, stdin string) int {
 
 // serveOpenCode runs the fake `opencode serve` HTTP server. It mounts both
 // the provider-discovery endpoints used by auth-method discovery and the
-// session delivery endpoints used by the daemon delivery loop, so dispatcher
-// journeys can run against a real subprocess boundary.
+// session delivery endpoints used by the daemon delivery dispatcher, so
+// dispatcher journeys can run against a real subprocess boundary.
 func serveOpenCode(w *lineSink) int {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

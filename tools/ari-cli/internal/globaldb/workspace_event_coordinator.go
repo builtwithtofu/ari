@@ -36,8 +36,8 @@ func (c EventCoordinator) AppendWorkspaceEvent(ctx context.Context, event Worksp
 	if err != nil {
 		return WorkspaceEvent{}, err
 	}
-	if err := c.store.withImmediateQueries(ctx, func(txCtx context.Context, queries *dbsqlc.Queries) error {
-		return appendCoordinatedWorkspaceEventWithQueries(txCtx, queries, &prepared)
+	if err := c.store.withImmediateQueries(ctx, func(ctx context.Context, queries *dbsqlc.Queries) error {
+		return appendCoordinatedWorkspaceEventWithQueries(ctx, queries, &prepared)
 	}); err != nil {
 		return WorkspaceEvent{}, err
 	}

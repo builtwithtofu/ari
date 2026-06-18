@@ -5,76 +5,46 @@ import (
 	"testing"
 	"time"
 
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
 )
 
-func TestWorkspaceDeliveryRPCRetryLifecycle(t *testing.T) {
+func TestWorkspaceDeliveryRPCGetInspectsPendingDelivery(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
-	if err := store.CreateWorkspace(context.Background(), "ws-delivery", "ws-delivery", t.TempDir(), "manual", "auto"); err != nil {
+	ctx := context.Background()
+	base := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
+	if err := store.CreateWorkspace(ctx, "ws-delivery", "ws-delivery", t.TempDir(), "manual", "auto"); err != nil {
 		t.Fatalf("CreateWorkspace returned error: %v", err)
 	}
-	_ = callMethod[WorkspaceEventSubscriptionResponse](t, registry, "workspace.events.subscribe", WorkspaceEventSubscribeRequest{SubscriptionID: "sub-delivery", WorkspaceID: "ws-delivery", OwnerSessionID: "owner-delivery", FilterJSON: `{"event_types":["worker.completed"]}`})
-	event := callMethod[WorkspaceEventResponse](t, registry, "workspace.events.append", WorkspaceEventAppendRequest{EventID: "we-delivery", WorkspaceID: "ws-delivery", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-delivery"})
-	now := time.Now().UTC()
-	future := now.Add(time.Hour)
+	if _, err := store.CreateEventSubscription(ctx, globaldb.EventSubscription{SubscriptionID: "sub-delivery", WorkspaceID: "ws-delivery", OwnerSessionID: "owner-delivery", FilterJSON: `{"event_types":["worker.completed"]}`, CreatedAt: base, UpdatedAt: base}); err != nil {
+		t.Fatalf("CreateEventSubscription returned error: %v", err)
+	}
+	nextAttemptAt := base.Add(time.Minute)
+	created, err := store.CreatePendingDelivery(ctx, globaldb.PendingDelivery{DeliveryID: "pd-1", WorkspaceID: "ws-delivery", SubscriptionID: "sub-delivery", TargetType: "harness_session", TargetID: "owner-delivery", EventIDs: []string{"we-delivery"}, DeliveryPolicyJSON: `{"max_attempts":3}`, NextAttemptAt: &nextAttemptAt, CreatedAt: base, UpdatedAt: base})
+	if err != nil {
+		t.Fatalf("CreatePendingDelivery returned error: %v", err)
+	}
 
-	dispatched := callMethod[WorkspaceDeliveryResponse](t, registry, "workspace.deliveries.dispatch", WorkspaceDeliveryDispatchRequest{DeliveryID: "pd-1", WorkspaceID: "ws-delivery", SubscriptionID: "sub-delivery", TargetType: "harness_session", TargetID: "owner-delivery", EventIDs: []string{event.EventID}, DeliveryPolicyJSON: `{"max_attempts":3}`, NextAttemptAt: now.Format(time.RFC3339Nano)})
-	if dispatched.Delivery.DeliveryID != "pd-1" || dispatched.Delivery.Status != "pending" || dispatched.Delivery.Attempts != 0 || len(dispatched.Delivery.EventIDs) != 1 {
-		t.Fatalf("workspace.deliveries.dispatch = %#v, want pending delivery with event ref", dispatched)
-	}
-	due := callMethod[WorkspaceDeliveriesResponse](t, registry, "workspace.deliveries.retry_due", WorkspaceDeliveriesRetryDueRequest{Now: now.Format(time.RFC3339Nano), Limit: 10})
-	if len(due.Deliveries) != 1 || due.Deliveries[0].DeliveryID != "pd-1" {
-		t.Fatalf("workspace.deliveries.retry_due = %#v, want pd-1 due", due)
-	}
-	attempted := callMethod[WorkspaceDeliveryResponse](t, registry, "workspace.deliveries.record_attempt", WorkspaceDeliveryRecordAttemptRequest{DeliveryID: "pd-1", LastError: "target offline", NextAttemptAt: future.Format(time.RFC3339Nano)})
-	if attempted.Delivery.Attempts != 1 || attempted.Delivery.Status != "pending" || attempted.Delivery.LastError != "target offline" || attempted.Delivery.NextAttemptAt == "" {
-		t.Fatalf("workspace.deliveries.record_attempt = %#v, want pending retry with error and backoff", attempted)
-	}
-	due = callMethod[WorkspaceDeliveriesResponse](t, registry, "workspace.deliveries.retry_due", WorkspaceDeliveriesRetryDueRequest{Now: now.Format(time.RFC3339Nano), Limit: 10})
-	if len(due.Deliveries) != 0 {
-		t.Fatalf("workspace.deliveries.retry_due before backoff = %#v, want none", due)
-	}
-	due = callMethod[WorkspaceDeliveriesResponse](t, registry, "workspace.deliveries.retry_due", WorkspaceDeliveriesRetryDueRequest{Now: future.Add(time.Second).Format(time.RFC3339Nano), Limit: 10})
-	if len(due.Deliveries) != 1 || due.Deliveries[0].Attempts != 1 {
-		t.Fatalf("workspace.deliveries.retry_due after backoff = %#v, want retryable pd-1", due)
-	}
-	completed := callMethod[WorkspaceDeliveryResponse](t, registry, "workspace.deliveries.complete", WorkspaceDeliveryCompleteRequest{DeliveryID: "pd-1"})
-	if completed.Delivery.Status != "completed" || completed.Delivery.TerminalAt == "" {
-		t.Fatalf("workspace.deliveries.complete = %#v, want terminal completed", completed)
-	}
-	due = callMethod[WorkspaceDeliveriesResponse](t, registry, "workspace.deliveries.retry_due", WorkspaceDeliveriesRetryDueRequest{Now: future.Add(time.Second).Format(time.RFC3339Nano), Limit: 10})
-	if len(due.Deliveries) != 0 {
-		t.Fatalf("workspace.deliveries.retry_due after complete = %#v, want none", due)
+	got := callMethod[WorkspaceDeliveryResponse](t, registry, "workspace.deliveries.get", WorkspaceDeliveryGetRequest{DeliveryID: created.DeliveryID})
+	if got.Delivery.DeliveryID != "pd-1" || got.Delivery.WorkspaceID != "ws-delivery" || got.Delivery.SubscriptionID != "sub-delivery" || got.Delivery.Status != "pending" || len(got.Delivery.EventIDs) != 1 || got.Delivery.EventIDs[0] != "we-delivery" || got.Delivery.NextAttemptAt == "" {
+		t.Fatalf("workspace.deliveries.get = %#v, want inspected pending delivery", got)
 	}
 }
 
-func TestWorkspaceDeliveryRecordAttemptRequiresRetryTime(t *testing.T) {
+func TestWorkspaceEventSubscriptionAutoDispatchesDeliveryThroughRuntimeAndCompleteAcks(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
 	}
-
-	_, err := callMethodResult[WorkspaceDeliveryResponse](registry, "workspace.deliveries.record_attempt", WorkspaceDeliveryRecordAttemptRequest{DeliveryID: "pd-1", LastError: "target offline"})
-	if err == nil {
-		t.Fatalf("workspace.deliveries.record_attempt returned nil error, want missing next_attempt_at")
-	}
-}
-
-func TestWorkspaceEventSubscriptionAutoDispatchesDeliveryAndCompleteAcks(t *testing.T) {
-	store := newCommandMethodTestStore(t)
-	registry := rpc.NewMethodRegistry()
-	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	if err := d.registerMethods(registry, store); err != nil {
-		t.Fatalf("registerMethods returned error: %v", err)
-	}
-	if err := store.CreateWorkspace(context.Background(), "ws-auto-delivery", "ws-auto-delivery", t.TempDir(), "manual", "auto"); err != nil {
+	ctx := context.Background()
+	if err := store.CreateWorkspace(ctx, "ws-auto-delivery", "ws-auto-delivery", t.TempDir(), "manual", "auto"); err != nil {
 		t.Fatalf("CreateWorkspace returned error: %v", err)
 	}
 
@@ -85,25 +55,24 @@ func TestWorkspaceEventSubscriptionAutoDispatchesDeliveryAndCompleteAcks(t *test
 		t.Fatalf("event sequences = %d, %d, want 1 and 2", nonMatching.Sequence, completed.Sequence)
 	}
 
-	due := callMethod[WorkspaceDeliveriesResponse](t, registry, "workspace.deliveries.retry_due", WorkspaceDeliveriesRetryDueRequest{Now: time.Now().UTC().Add(time.Minute).Format(time.RFC3339Nano), Limit: 10})
-	if len(due.Deliveries) != 1 {
-		t.Fatalf("workspace.deliveries.retry_due = %#v, want one auto-dispatched delivery", due)
+	dueBefore, err := store.ListDuePendingDeliveriesForScope(ctx, time.Now().UTC().Add(time.Minute), "ws-auto-delivery", "owner-auto-delivery", 10)
+	if err != nil {
+		t.Fatalf("ListDuePendingDeliveriesForScope returned error: %v", err)
 	}
-	delivery := due.Deliveries[0]
-	if delivery.SubscriptionID != "sub-auto-delivery" || delivery.TargetType != "harness_session" || delivery.TargetID != "owner-auto-delivery" || delivery.DeliveryPolicyJSON != `{"channel":"visible_prompt_turn","max_attempts":3}` || delivery.Status != "pending" || len(delivery.EventIDs) != 1 || delivery.EventIDs[0] != completed.EventID {
-		t.Fatalf("auto delivery = %#v, want pending delivery for completed event and target", delivery)
+	if len(dueBefore) != 1 || dueBefore[0].SubscriptionID != "sub-auto-delivery" || dueBefore[0].TargetID != "owner-auto-delivery" || len(dueBefore[0].EventIDs) != 1 || dueBefore[0].EventIDs[0] != completed.EventID {
+		t.Fatalf("due delivery = %#v, want pending delivery for completed event and target", dueBefore)
 	}
 	beforeComplete := callMethod[WorkspaceEventsResponse](t, registry, "workspace.events.next", WorkspaceEventsNextRequest{SubscriptionID: "sub-auto-delivery", Limit: 10})
 	if len(beforeComplete.Events) != 1 || beforeComplete.Events[0].EventID != completed.EventID {
 		t.Fatalf("workspace.events.next before delivery complete = %#v, want completed event unread", beforeComplete)
 	}
 
-	completedDelivery := callMethod[WorkspaceDeliveryResponse](t, registry, "workspace.deliveries.complete", WorkspaceDeliveryCompleteRequest{DeliveryID: delivery.DeliveryID})
-	if completedDelivery.Delivery.Status != "completed" || completedDelivery.Delivery.TerminalAt == "" {
-		t.Fatalf("workspace.deliveries.complete = %#v, want terminal completed delivery", completedDelivery)
+	runtime := newWorkspaceOrchestrationRuntime(store, &recordingWorkspaceDeliveryDispatcher{result: WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptCompleted}})
+	if err := runtime.runDueOnce(ctx, time.Now().UTC().Add(time.Minute)); err != nil {
+		t.Fatalf("runDueOnce returned error: %v", err)
 	}
 	afterComplete := callMethod[WorkspaceEventsResponse](t, registry, "workspace.events.next", WorkspaceEventsNextRequest{SubscriptionID: "sub-auto-delivery", Limit: 10})
 	if len(afterComplete.Events) != 0 {
-		t.Fatalf("workspace.events.next after delivery complete = %#v, want subscription acked past delivered event", afterComplete)
+		t.Fatalf("workspace.events.next after runtime delivery complete = %#v, want subscription acked past delivered event", afterComplete)
 	}
 }

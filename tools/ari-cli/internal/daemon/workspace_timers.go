@@ -30,15 +30,6 @@ type WorkspaceTimerCancelRequest struct {
 	TimerID string `json:"timer_id"`
 }
 
-type WorkspaceTimersFireDueRequest struct {
-	Now   string `json:"now,omitempty"`
-	Limit int    `json:"limit,omitempty"`
-}
-
-type WorkspaceTimersResponse struct {
-	Timers []WorkspaceTimerResponse `json:"timers"`
-}
-
 type WorkspaceTimerResponse struct {
 	TimerID        string `json:"timer_id"`
 	WorkspaceID    string `json:"workspace_id"`
@@ -102,28 +93,6 @@ func (d *Daemon) registerWorkspaceTimerMethods(registry *rpc.MethodRegistry, sto
 		return fmt.Errorf("register workspace.timers.cancel: %w", err)
 	}
 
-	if err := rpc.RegisterMethod(registry, rpc.Method[WorkspaceTimersFireDueRequest, WorkspaceTimersResponse]{
-		Name:        "workspace.timers.fire_due",
-		Description: "Fire due workspace timers and append timer events",
-		Handler: func(ctx context.Context, req WorkspaceTimersFireDueRequest) (WorkspaceTimersResponse, error) {
-			now := time.Now().UTC()
-			if req.Now != "" {
-				parsed, err := parseWorkspaceTimerTime(req.Now, "invalid_now")
-				if err != nil {
-					return WorkspaceTimersResponse{}, err
-				}
-				now = parsed
-			}
-			timers, err := store.FireDueWorkspaceTimers(ctx, now, req.Limit)
-			if err != nil {
-				return WorkspaceTimersResponse{}, workspaceTimerRPCError(err)
-			}
-			return WorkspaceTimersResponse{Timers: workspaceTimerResponses(timers)}, nil
-		},
-	}); err != nil {
-		return fmt.Errorf("register workspace.timers.fire_due: %w", err)
-	}
-
 	return nil
 }
 
@@ -143,14 +112,6 @@ func workspaceTimerRPCError(err error) error {
 		return rpc.NewHandlerError(rpc.InvalidParams, err.Error(), map[string]any{"reason": "workspace_timer_not_found"})
 	}
 	return err
-}
-
-func workspaceTimerResponses(timers []globaldb.WorkspaceTimer) []WorkspaceTimerResponse {
-	responses := make([]WorkspaceTimerResponse, 0, len(timers))
-	for _, timer := range timers {
-		responses = append(responses, workspaceTimerResponse(timer))
-	}
-	return responses
 }
 
 func workspaceTimerResponse(timer globaldb.WorkspaceTimer) WorkspaceTimerResponse {

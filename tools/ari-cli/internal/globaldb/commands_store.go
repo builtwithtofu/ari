@@ -151,7 +151,7 @@ func (s *Store) CreateCommand(ctx context.Context, params CreateCommandParams) e
 		params.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
 
-	return s.withImmediateQueries(ctx, func(txCtx context.Context, queries *dbsqlc.Queries) error {
+	return s.withImmediateQueries(ctx, func(ctx context.Context, queries *dbsqlc.Queries) error {
 		if err := queries.CreateCommand(ctx, dbsqlc.CreateCommandParams{CommandID: params.CommandID, WorkspaceID: params.WorkspaceID, Command: params.Command, Args: params.Args, Status: params.Status, ExitCode: optionalInt(params.ExitCode), StartedAt: params.StartedAt, FinishedAt: params.FinishedAt}); err != nil {
 			return fmt.Errorf("create command %q: %w", params.CommandID, err)
 		}
@@ -213,7 +213,7 @@ func (s *Store) UpdateCommandStatus(ctx context.Context, params UpdateCommandSta
 		return fmt.Errorf("%w: invalid command status %q", ErrInvalidInput, params.Status)
 	}
 
-	return s.withImmediateQueries(ctx, func(txCtx context.Context, queries *dbsqlc.Queries) error {
+	return s.withImmediateQueries(ctx, func(ctx context.Context, queries *dbsqlc.Queries) error {
 		rowsAffected, err := queries.UpdateCommandStatus(ctx, dbsqlc.UpdateCommandStatusParams{Status: params.Status, ExitCode: optionalInt(params.ExitCode), FinishedAt: params.FinishedAt, WorkspaceID: params.WorkspaceID, CommandID: params.CommandID})
 		if err != nil {
 			return fmt.Errorf("update command status %q: %w", params.CommandID, err)
@@ -234,7 +234,7 @@ func (s *Store) UpdateCommandStatus(ctx context.Context, params UpdateCommandSta
 }
 
 func (s *Store) MarkRunningCommandsLost(ctx context.Context) error {
-	return s.withImmediateQueries(ctx, func(txCtx context.Context, queries *dbsqlc.Queries) error {
+	return s.withImmediateQueries(ctx, func(ctx context.Context, queries *dbsqlc.Queries) error {
 		running, err := queries.ListRunningCommands(ctx)
 		if err != nil {
 			return fmt.Errorf("list running commands: %w", err)
@@ -285,7 +285,7 @@ func (s *Store) CreateWorkspaceCommandDefinition(ctx context.Context, params Cre
 		return fmt.Errorf("%w: command args must be a json string array", ErrInvalidInput)
 	}
 
-	return s.withImmediateQueries(ctx, func(txCtx context.Context, queries *dbsqlc.Queries) error {
+	return s.withImmediateQueries(ctx, func(ctx context.Context, queries *dbsqlc.Queries) error {
 		return createWorkspaceCommandDefinitionInTransaction(ctx, queries, params)
 	})
 }

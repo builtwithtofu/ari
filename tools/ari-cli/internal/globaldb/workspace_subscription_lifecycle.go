@@ -14,7 +14,6 @@ import (
 
 const (
 	defaultSubscriptionEventScanPageSize = 100
-	defaultEventSubscriptionPollInterval = 10 * time.Millisecond
 
 	EventSubscriptionWaitStatusReady   = "ready"
 	EventSubscriptionWaitStatusPartial = "partial"
@@ -32,14 +31,12 @@ type EventSubscriptionWaitRequest struct {
 	Limit          int
 	MinEvents      int
 	Timeout        time.Duration
-	PollInterval   time.Duration
 }
 
 type EventSubscriptionWaitOptions struct {
-	Limit        int
-	MinEvents    int
-	Timeout      time.Duration
-	PollInterval time.Duration
+	Limit     int
+	MinEvents int
+	Timeout   time.Duration
 }
 
 type EventSubscriptionReadResult struct {
@@ -96,18 +93,18 @@ func (s *Store) ReadEventSubscription(ctx context.Context, req EventSubscription
 }
 
 func (s *Store) WaitEventSubscription(ctx context.Context, req EventSubscriptionWaitRequest) (EventSubscriptionReadResult, error) {
-	if req.MinEvents < 0 || req.Timeout < 0 || req.PollInterval < 0 {
+	if req.MinEvents < 0 || req.Timeout < 0 {
 		return EventSubscriptionReadResult{}, fmt.Errorf("%w: event subscription wait values must not be negative", ErrInvalidInput)
 	}
 	subscription, err := s.GetEventSubscription(ctx, req.SubscriptionID)
 	if err != nil {
 		return EventSubscriptionReadResult{}, err
 	}
-	return s.waitEventSubscription(ctx, subscription, EventSubscriptionWaitOptions{Limit: req.Limit, MinEvents: req.MinEvents, Timeout: req.Timeout, PollInterval: req.PollInterval})
+	return s.waitEventSubscription(ctx, subscription, EventSubscriptionWaitOptions{Limit: req.Limit, MinEvents: req.MinEvents, Timeout: req.Timeout})
 }
 
 func (s *Store) WaitEventSubscriptionCondition(ctx context.Context, subscription EventSubscription, options EventSubscriptionWaitOptions) (EventSubscriptionReadResult, error) {
-	if options.MinEvents < 0 || options.Timeout < 0 || options.PollInterval < 0 {
+	if options.MinEvents < 0 || options.Timeout < 0 {
 		return EventSubscriptionReadResult{}, fmt.Errorf("%w: event subscription wait values must not be negative", ErrInvalidInput)
 	}
 	subscription = normalizeEventSubscription(subscription)
@@ -130,37 +127,34 @@ func (s *Store) waitEventSubscription(ctx context.Context, subscription EventSub
 		}
 		return result, nil
 	}
+	if options.Timeout <= 0 {
+		return read(false)
+	}
+	wake, unsubscribe := s.subscribeWorkspaceEventWake(subscription.WorkspaceID)
+	defer unsubscribe()
 	result, err := read(false)
 	if err != nil {
 		return EventSubscriptionReadResult{}, err
 	}
-	if !result.Completion.Configured || result.Completion.Satisfied || options.Timeout <= 0 {
+	if !result.Completion.Configured || result.Completion.Satisfied {
 		return result, nil
 	}
-	pollInterval := options.PollInterval
-	if pollInterval <= 0 {
-		pollInterval = defaultEventSubscriptionPollInterval
-	}
-	deadline := time.Now().Add(options.Timeout)
+	timer := time.NewTimer(options.Timeout)
+	defer timer.Stop()
 	for {
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			return read(true)
-		}
-		if remaining < pollInterval {
-			pollInterval = remaining
-		}
 		select {
 		case <-ctx.Done():
 			return EventSubscriptionReadResult{}, ctx.Err()
-		case <-time.After(pollInterval):
-		}
-		result, err = read(false)
-		if err != nil {
-			return EventSubscriptionReadResult{}, err
-		}
-		if result.Completion.Satisfied {
-			return result, nil
+		case <-timer.C:
+			return read(true)
+		case <-wake:
+			result, err = read(false)
+			if err != nil {
+				return EventSubscriptionReadResult{}, err
+			}
+			if result.Completion.Satisfied {
+				return result, nil
+			}
 		}
 	}
 }

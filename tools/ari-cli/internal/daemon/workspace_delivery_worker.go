@@ -48,46 +48,6 @@ type WorkspaceDeliveryDispatcher interface {
 	AttemptWorkspaceDelivery(context.Context, WorkspaceDeliveryAttempt) (WorkspaceDeliveryAttemptResult, error)
 }
 
-const (
-	defaultWorkspaceDeliveryWorkerInterval = time.Second
-	defaultWorkspaceDeliveryWorkerLimit    = 100
-)
-
-func (d *Daemon) startWorkspaceDeliveryWorker(store *globaldb.Store) {
-	if d == nil || store == nil {
-		return
-	}
-	dispatcher := newHarnessWorkspaceDeliveryDispatcher(d, store)
-	d.startHarnessLifecycleWork(func(ctx context.Context) {
-		ticker := time.NewTicker(defaultWorkspaceDeliveryWorkerInterval)
-		defer ticker.Stop()
-		_ = runWorkspaceDeliveryWorkerLoop(ctx, store, dispatcher, ticker.C, defaultWorkspaceDeliveryWorkerLimit)
-	})
-}
-
-func runWorkspaceDeliveryWorkerLoop(ctx context.Context, store *globaldb.Store, dispatcher WorkspaceDeliveryDispatcher, ticks <-chan time.Time, limit int) error {
-	if ctx == nil {
-		return fmt.Errorf("context is required")
-	}
-	if ticks == nil {
-		return fmt.Errorf("workspace delivery worker ticks are required")
-	}
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case now, ok := <-ticks:
-			if !ok {
-				return nil
-			}
-			// Pending deliveries are durable rows; a transient store error
-			// leaves them due, so the next tick retries instead of killing
-			// the worker until daemon restart.
-			_, _ = runWorkspaceDeliveryWorkerOnce(ctx, store, dispatcher, now, limit)
-		}
-	}
-}
-
 func runWorkspaceDeliveryWorkerOnce(ctx context.Context, store *globaldb.Store, dispatcher WorkspaceDeliveryDispatcher, now time.Time, limit int) ([]WorkspaceDeliveryWorkerOutcome, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("context is required")

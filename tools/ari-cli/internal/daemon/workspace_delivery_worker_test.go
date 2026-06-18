@@ -133,22 +133,20 @@ func TestWorkspaceDeliveryWorkerAttemptsDueDeliveries(t *testing.T) {
 	}
 }
 
-func TestWorkspaceDeliveryWorkerLoopAttemptsDueDeliveriesOnTicks(t *testing.T) {
+func TestWorkspaceOrchestrationRuntimeAttemptsDueDeliveries(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	base := time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC)
 	now := base.Add(time.Minute)
-	delivery, _ := seedDueWorkspaceDelivery(t, store, "loop", base)
+	delivery, _ := seedDueWorkspaceDelivery(t, store, "runtime", base)
 	dispatcher := &recordingWorkspaceDeliveryDispatcher{result: WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptCompleted}}
-	ticks := make(chan time.Time, 1)
-	ticks <- now
-	close(ticks)
+	runtime := newWorkspaceOrchestrationRuntime(store, dispatcher)
 
-	if err := runWorkspaceDeliveryWorkerLoop(ctx, store, dispatcher, ticks, 10); err != nil {
-		t.Fatalf("runWorkspaceDeliveryWorkerLoop returned error: %v", err)
+	if err := runtime.runDueOnce(ctx, now); err != nil {
+		t.Fatalf("runDueOnce returned error: %v", err)
 	}
 	if attempts := dispatcher.Attempts(); len(attempts) != 1 || attempts[0].Delivery.DeliveryID != delivery.DeliveryID {
-		t.Fatalf("dispatcher attempts = %#v, want one loop-driven attempt for %s", attempts, delivery.DeliveryID)
+		t.Fatalf("dispatcher attempts = %#v, want one runtime-driven attempt for %s", attempts, delivery.DeliveryID)
 	}
 	finished, err := store.GetPendingDelivery(ctx, delivery.DeliveryID)
 	if err != nil {
