@@ -30,7 +30,7 @@ type WorkspaceStatusResponse struct {
 	ContextExcerpts  []ContextExcerptActivity `json:"context_excerpts"`
 	AgentMessages    []AgentMessageActivity   `json:"agent_messages"`
 	FanoutMembers    []FanoutMemberActivity   `json:"fanout_members"`
-	StickyInbox      []StickyInboxActivity    `json:"sticky_inbox"`
+	Inbox            []InboxActivity          `json:"inbox"`
 	WorkspaceRoots   []string                 `json:"workspace_roots"`
 	RecentOperations []OperationActivity      `json:"recent_operations"`
 	RecentTimeline   []TimelineItem           `json:"recent_timeline"`
@@ -132,7 +132,7 @@ type FanoutMemberActivity struct {
 	Status                string `json:"status"`
 }
 
-type StickyInboxActivity struct {
+type InboxActivity struct {
 	InboxItemID       string `json:"inbox_item_id"`
 	TargetSessionID   string `json:"target_session_id"`
 	WorkspaceEventID  string `json:"workspace_event_id,omitempty"`
@@ -259,7 +259,7 @@ func (d *Daemon) workspaceStatus(ctx context.Context, store *globaldb.Store, raw
 	if err != nil {
 		return WorkspaceStatusResponse{}, err
 	}
-	stickyInbox, err := stickyInboxActivity(ctx, store, workspaceID, sessions)
+	inboxActivityItems, err := inboxActivity(ctx, store, workspaceID, sessions)
 	if err != nil {
 		return WorkspaceStatusResponse{}, err
 	}
@@ -285,7 +285,7 @@ func (d *Daemon) workspaceStatus(ctx context.Context, store *globaldb.Store, raw
 		ContextExcerpts:  contextExcerpts,
 		AgentMessages:    agentMessages,
 		FanoutMembers:    fanoutMembers,
-		StickyInbox:      stickyInbox,
+		Inbox:            inboxActivityItems,
 		WorkspaceRoots:   roots,
 		RecentOperations: recentOperations,
 		RecentTimeline:   recentTimeline,
@@ -400,8 +400,8 @@ func fanoutMemberActivity(ctx context.Context, store *globaldb.Store, workspaceI
 	return out, nil
 }
 
-func stickyInboxActivity(ctx context.Context, store *globaldb.Store, workspaceID string, sessions []SessionActivity) ([]StickyInboxActivity, error) {
-	out := make([]StickyInboxActivity, 0)
+func inboxActivity(ctx context.Context, store *globaldb.Store, workspaceID string, sessions []SessionActivity) ([]InboxActivity, error) {
+	out := make([]InboxActivity, 0)
 	for _, session := range sessions {
 		if session.Usage != globaldb.HarnessSessionUsageSticky {
 			continue
@@ -411,7 +411,7 @@ func stickyInboxActivity(ctx context.Context, store *globaldb.Store, workspaceID
 			return nil, err
 		}
 		for _, item := range items {
-			out = append(out, StickyInboxActivity{InboxItemID: item.InboxItemID, TargetSessionID: session.ID, WorkspaceEventID: item.WorkspaceEventID, EventType: item.EventType, FanoutGroupID: item.FanoutGroupID, FanoutMemberID: item.FanoutMemberID, WorkerSessionID: item.WorkerSessionID, FinalResponseID: item.FinalResponseID, Kind: item.Kind, Status: item.Status, AttentionRequired: item.AttentionRequired, Summary: item.Summary})
+			out = append(out, InboxActivity{InboxItemID: item.InboxItemID, TargetSessionID: session.ID, WorkspaceEventID: item.WorkspaceEventID, EventType: item.EventType, FanoutGroupID: item.FanoutGroupID, FanoutMemberID: item.FanoutMemberID, WorkerSessionID: item.WorkerSessionID, FinalResponseID: item.FinalResponseID, Kind: item.Kind, Status: item.Status, AttentionRequired: item.AttentionRequired, Summary: item.Summary})
 		}
 	}
 	return out, nil

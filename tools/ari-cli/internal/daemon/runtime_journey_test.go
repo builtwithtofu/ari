@@ -38,7 +38,7 @@ func TestJourneyStickyFlowFanoutUsesFakeHarnessExecutableBoundary(t *testing.T) 
 	waitForFinalResponseContains(t, j.ctx, j.store, "fg-fake-exec-c"+stableRuntimeAgentIDSegment("researcher")+"-run", "fake claude response")
 	waitForFinalResponseContains(t, j.ctx, j.store, "fg-fake-exec-c"+stableRuntimeAgentIDSegment("reviewer")+"-run", "fake claude response")
 	status := waitForProjectedFanoutMemberStatuses(t, j.registry, "ws-1", map[string]string{"researcher": "completed", "reviewer": "completed"})
-	assertStickyInboxKinds(t, status.StickyInbox, map[string]string{"fg-fake-exec-mresearcher": "worker_completed", "fg-fake-exec-mreviewer": "worker_completed"})
+	assertInboxKinds(t, status.Inbox, map[string]string{"fg-fake-exec-mresearcher": "worker_completed", "fg-fake-exec-mreviewer": "worker_completed"})
 	record, err := os.ReadFile(recordPath)
 	if err != nil {
 		t.Fatalf("ReadFile fake-harness record returned error: %v", err)
@@ -97,7 +97,7 @@ func TestJourneyMixedHarnessFanoutAcrossAdapters(t *testing.T) {
 	waitForFinalResponseContains(t, j.ctx, j.store, "fg-mixed-c"+stableRuntimeAgentIDSegment("analyst")+"-run", "fake pi response")
 	waitForFinalResponseContains(t, j.ctx, j.store, "fg-mixed-c"+stableRuntimeAgentIDSegment("reviewer")+"-run", "fake grok response")
 	status := waitForProjectedFanoutMemberStatuses(t, j.registry, "ws-1", map[string]string{"researcher": "completed", "analyst": "completed", "reviewer": "completed"})
-	assertStickyInboxKinds(t, status.StickyInbox, map[string]string{"fg-mixed-mresearcher": "worker_completed", "fg-mixed-manalyst": "worker_completed", "fg-mixed-mreviewer": "worker_completed"})
+	assertInboxKinds(t, status.Inbox, map[string]string{"fg-mixed-mresearcher": "worker_completed", "fg-mixed-manalyst": "worker_completed", "fg-mixed-mreviewer": "worker_completed"})
 	record, err := os.ReadFile(recordPath)
 	if err != nil {
 		t.Fatalf("ReadFile fanout record returned error: %v", err)
@@ -130,7 +130,7 @@ func TestJourneyFanoutWorkerRateLimitFailureSurfacesInInbox(t *testing.T) {
 		t.Fatalf("fanout = %#v, want one worker", fanout)
 	}
 	status := waitForProjectedFanoutMemberStatuses(t, j.registry, "ws-1", map[string]string{"researcher": "failed"})
-	assertStickyInboxKinds(t, status.StickyInbox, map[string]string{"fg-ratelimit-mresearcher": "worker_failed"})
+	assertInboxKinds(t, status.Inbox, map[string]string{"fg-ratelimit-mresearcher": "worker_failed"})
 }
 
 func buildFakeHarnessExecutable(t *testing.T) string {
@@ -210,7 +210,7 @@ func TestJourneyStickyFlowFanoutSuspendResumeAndInbox(t *testing.T) {
 	waitForFinalResponseText(t, j.ctx, j.store, "fg-journey-c"+stableRuntimeAgentIDSegment("good-worker")+"-run", "good result")
 	waitForFinalResponseContains(t, j.ctx, j.store, "fg-journey-c"+stableRuntimeAgentIDSegment("bad-worker")+"-run", "items failed")
 	status := waitForProjectedFanoutMemberStatuses(t, j.registry, "ws-1", map[string]string{"good-worker": "completed", "bad-worker": "failed", "slow-worker": "running"})
-	assertStickyInboxKinds(t, status.StickyInbox, map[string]string{"fg-journey-mgood-worker": "worker_completed", "fg-journey-mbad-worker": "worker_failed"})
+	assertInboxKinds(t, status.Inbox, map[string]string{"fg-journey-mgood-worker": "worker_completed", "fg-journey-mbad-worker": "worker_failed"})
 
 	_ = callMethod[WorkspaceStatusResponse](t, j.registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-2"})
 	assertHarnessSessionStatusRemains(t, j.ctx, j.store, "fg-journey-c"+stableRuntimeAgentIDSegment("slow-worker")+"-run", "running", 75*time.Millisecond)
@@ -230,7 +230,7 @@ func TestJourneyStickyFlowFanoutSuspendResumeAndInbox(t *testing.T) {
 	assertSessionWorkspaceEvent(t, events, "fg-journey-c"+stableRuntimeAgentIDSegment("slow-worker")+"-run", workspaceEventSessionStopped, false)
 	status = callMethod[WorkspaceStatusResponse](t, j.registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-1"})
 	assertProjectedFanoutMemberStatuses(t, status.FanoutMembers, map[string]string{"slow-worker": "stopped"})
-	assertStickyInboxKinds(t, status.StickyInbox, map[string]string{"fg-journey-mslow-worker": "worker_stopped"})
+	assertInboxKinds(t, status.Inbox, map[string]string{"fg-journey-mslow-worker": "worker_stopped"})
 	resumed := callMethod[WorkspaceResumeResponse](t, j.registry, "workspace.resume", WorkspaceResumeRequest{WorkspaceID: "ws-1"})
 	if resumed.Status != "active" {
 		t.Fatalf("resume = %#v, want active", resumed)
@@ -297,7 +297,7 @@ func TestJourneyStickyOrchestratorFanoutLoopThroughAriTools(t *testing.T) {
 	inboxTool := callMethod[AriToolCallResponse](t, j.registry, "ari.tool.call", AriToolCallRequest{Name: "ari.inbox.list", Scope: scope, Input: map[string]any{"unread_only": true}})
 	assertAriToolInboxKinds(t, inboxTool, map[string]string{"fg-tool-journey-mgood-worker": "worker_completed", "fg-tool-journey-mbad-worker": "worker_failed"})
 	status := waitForProjectedFanoutMemberStatuses(t, j.registry, "ws-1", map[string]string{"good-worker": "completed", "bad-worker": "failed", "slow-worker": "running"})
-	assertStickyInboxKinds(t, status.StickyInbox, map[string]string{"fg-tool-journey-mgood-worker": "worker_completed", "fg-tool-journey-mbad-worker": "worker_failed"})
+	assertInboxKinds(t, status.Inbox, map[string]string{"fg-tool-journey-mgood-worker": "worker_completed", "fg-tool-journey-mbad-worker": "worker_failed"})
 
 	suspended := callMethod[WorkspaceSuspendResponse](t, j.registry, "workspace.suspend", WorkspaceSuspendRequest{WorkspaceID: "ws-1"})
 	if suspended.Status != "suspended" {
