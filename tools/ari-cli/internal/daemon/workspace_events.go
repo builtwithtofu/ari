@@ -10,21 +10,6 @@ import (
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
 )
 
-type WorkspaceEventAppendRequest struct {
-	EventID           string `json:"event_id,omitempty"`
-	WorkspaceID       string `json:"workspace_id"`
-	EventType         string `json:"event_type"`
-	SubjectType       string `json:"subject_type"`
-	SubjectID         string `json:"subject_id"`
-	ProducerType      string `json:"producer_type,omitempty"`
-	ProducerID        string `json:"producer_id,omitempty"`
-	CorrelationID     string `json:"correlation_id,omitempty"`
-	CausationID       string `json:"causation_id,omitempty"`
-	PayloadJSON       string `json:"payload_json,omitempty"`
-	PayloadRefJSON    string `json:"payload_ref_json,omitempty"`
-	AttentionRequired bool   `json:"attention_required,omitempty"`
-}
-
 type WorkspaceEventsAfterRequest struct {
 	WorkspaceID   string `json:"workspace_id"`
 	AfterSequence int64  `json:"after_sequence,omitempty"`
@@ -109,33 +94,6 @@ type WorkspaceEventSubscriptionResponse struct {
 }
 
 func (d *Daemon) registerWorkspaceEventMethods(registry *rpc.MethodRegistry, store *globaldb.Store) error {
-	if err := rpc.RegisterMethod(registry, rpc.Method[WorkspaceEventAppendRequest, WorkspaceEventResponse]{
-		Name:        "workspace.events.append",
-		Description: "Append a durable workspace event",
-		Handler: func(ctx context.Context, req WorkspaceEventAppendRequest) (WorkspaceEventResponse, error) {
-			event, err := store.AppendWorkspaceEvent(ctx, globaldb.AppendWorkspaceEventParams{
-				EventID:           req.EventID,
-				WorkspaceID:       req.WorkspaceID,
-				EventType:         req.EventType,
-				SubjectType:       req.SubjectType,
-				SubjectID:         req.SubjectID,
-				ProducerType:      req.ProducerType,
-				ProducerID:        req.ProducerID,
-				CorrelationID:     req.CorrelationID,
-				CausationID:       req.CausationID,
-				PayloadJSON:       req.PayloadJSON,
-				PayloadRefJSON:    req.PayloadRefJSON,
-				AttentionRequired: req.AttentionRequired,
-			})
-			if err != nil {
-				return WorkspaceEventResponse{}, workspaceEventRPCError(err)
-			}
-			return workspaceEventResponse(event), nil
-		},
-	}); err != nil {
-		return fmt.Errorf("register workspace.events.append: %w", err)
-	}
-
 	if err := rpc.RegisterMethod(registry, rpc.Method[WorkspaceEventsAfterRequest, WorkspaceEventsResponse]{
 		Name:        "workspace.events.after",
 		Description: "List workspace events after a workspace sequence cursor",

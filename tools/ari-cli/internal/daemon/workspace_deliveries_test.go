@@ -49,8 +49,8 @@ func TestWorkspaceEventSubscriptionAutoDispatchesDeliveryThroughRuntimeAndComple
 	}
 
 	_ = callMethod[WorkspaceEventSubscriptionResponse](t, registry, "workspace.events.subscribe", WorkspaceEventSubscribeRequest{SubscriptionID: "sub-auto-delivery", WorkspaceID: "ws-auto-delivery", OwnerSessionID: "owner-auto-delivery", FilterJSON: `{"event_types":["worker.completed"],"correlation_ids":["fg-auto-delivery"]}`, DeliveryTargetType: "harness_session", DeliveryTargetID: "owner-auto-delivery", DeliveryPolicyJSON: `{"channel":"visible_prompt_turn","max_attempts":3}`})
-	nonMatching := callMethod[WorkspaceEventResponse](t, registry, "workspace.events.append", WorkspaceEventAppendRequest{EventID: "we-auto-started", WorkspaceID: "ws-auto-delivery", EventType: "worker.started", SubjectType: "harness_session", SubjectID: "worker-auto", CorrelationID: "fg-auto-delivery"})
-	completed := callMethod[WorkspaceEventResponse](t, registry, "workspace.events.append", WorkspaceEventAppendRequest{EventID: "we-auto-completed", WorkspaceID: "ws-auto-delivery", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-auto", CorrelationID: "fg-auto-delivery", PayloadRefJSON: `{"kind":"final_response","id":"fr-auto"}`})
+	nonMatching := appendWorkspaceEventForTest(t, store, globaldb.WorkspaceEvent{EventID: "we-auto-started", WorkspaceID: "ws-auto-delivery", EventType: "worker.started", SubjectType: "harness_session", SubjectID: "worker-auto", CorrelationID: "fg-auto-delivery"})
+	completed := appendWorkspaceEventForTest(t, store, globaldb.WorkspaceEvent{EventID: "we-auto-completed", WorkspaceID: "ws-auto-delivery", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-auto", CorrelationID: "fg-auto-delivery", PayloadRefJSON: `{"kind":"final_response","id":"fr-auto"}`})
 	if nonMatching.Sequence != 1 || completed.Sequence != 2 {
 		t.Fatalf("event sequences = %d, %d, want 1 and 2", nonMatching.Sequence, completed.Sequence)
 	}

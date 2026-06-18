@@ -43,6 +43,7 @@ func TestPublicOrchestrationMethodInventoryUsesSessionProfileContextNames(t *tes
 	}
 
 	legacyPublic := []string{
+		"workspace.events.append",
 		"workspace.timers.fire_due",
 		"workspace.deliveries.dispatch",
 		"workspace.deliveries.retry_due",

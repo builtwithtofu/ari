@@ -23,8 +23,8 @@ func TestWorkspaceEventRPCAppendSubscribeNextAndAck(t *testing.T) {
 		t.Fatalf("CreateWorkspace returned error: %v", err)
 	}
 
-	started := callMethod[WorkspaceEventResponse](t, registry, "workspace.events.append", WorkspaceEventAppendRequest{EventID: "we-started", WorkspaceID: "ws-1", EventType: "worker.started", SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "orch-1", CorrelationID: "fanout-1", PayloadJSON: `{"status":"running"}`})
-	completed := callMethod[WorkspaceEventResponse](t, registry, "workspace.events.append", WorkspaceEventAppendRequest{EventID: "we-completed", WorkspaceID: "ws-1", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "worker-1", CorrelationID: "fanout-1", CausationID: started.EventID, PayloadJSON: `{"status":"completed"}`, PayloadRefJSON: `{"kind":"final_response","id":"fr-1"}`, AttentionRequired: true})
+	started := appendWorkspaceEventForTest(t, store, globaldb.WorkspaceEvent{EventID: "we-started", WorkspaceID: "ws-1", EventType: "worker.started", SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "orch-1", CorrelationID: "fanout-1", PayloadJSON: `{"status":"running"}`})
+	completed := appendWorkspaceEventForTest(t, store, globaldb.WorkspaceEvent{EventID: "we-completed", WorkspaceID: "ws-1", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "worker-1", CorrelationID: "fanout-1", CausationID: started.EventID, PayloadJSON: `{"status":"completed"}`, PayloadRefJSON: `{"kind":"final_response","id":"fr-1"}`, AttentionRequired: true})
 	if started.Sequence != 1 || completed.Sequence != 2 {
 		t.Fatalf("event sequences = %d, %d, want 1, 2", started.Sequence, completed.Sequence)
 	}
@@ -342,7 +342,7 @@ func TestWorkspaceEventSubscriptionCancelStopsNextReads(t *testing.T) {
 	if err := store.CreateWorkspace(context.Background(), "ws-cancel", "ws-cancel", t.TempDir(), "manual", "auto"); err != nil {
 		t.Fatalf("CreateWorkspace returned error: %v", err)
 	}
-	created := callMethod[WorkspaceEventResponse](t, registry, "workspace.events.append", WorkspaceEventAppendRequest{EventID: "we-cancel", WorkspaceID: "ws-cancel", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-cancel"})
+	created := appendWorkspaceEventForTest(t, store, globaldb.WorkspaceEvent{EventID: "we-cancel", WorkspaceID: "ws-cancel", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-cancel"})
 	_ = callMethod[WorkspaceEventSubscriptionResponse](t, registry, "workspace.events.subscribe", WorkspaceEventSubscribeRequest{SubscriptionID: "sub-cancel", WorkspaceID: "ws-cancel", OwnerSessionID: "owner-cancel", FilterJSON: `{"event_types":["worker.completed"]}`})
 	beforeCancel := callMethod[WorkspaceEventsResponse](t, registry, "workspace.events.next", WorkspaceEventsNextRequest{SubscriptionID: "sub-cancel", Limit: 10})
 	if len(beforeCancel.Events) != 1 || beforeCancel.Events[0].EventID != created.EventID {
@@ -383,7 +383,7 @@ func TestWorkspaceEventSubscriptionNextWaitsForMatchingEvent(t *testing.T) {
 		resultC <- callResult{response: response, err: err}
 	}()
 	<-readyC
-	created := callMethod[WorkspaceEventResponse](t, registry, "workspace.events.append", WorkspaceEventAppendRequest{EventID: "we-wait", WorkspaceID: "ws-wait", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-wait"})
+	created := appendWorkspaceEventForTest(t, store, globaldb.WorkspaceEvent{EventID: "we-wait", WorkspaceID: "ws-wait", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-wait"})
 
 	select {
 	case result := <-resultC:
@@ -409,7 +409,7 @@ func TestWorkspaceEventSubscriptionNextWaitsOnStoredCompletionCondition(t *testi
 		t.Fatalf("CreateWorkspace returned error: %v", err)
 	}
 	_ = callMethod[WorkspaceEventSubscriptionResponse](t, registry, "workspace.events.subscribe", WorkspaceEventSubscribeRequest{SubscriptionID: "sub-condition-wait", WorkspaceID: "ws-condition-wait", OwnerSessionID: "owner-condition", FilterJSON: `{"event_types":["worker.completed","worker.failed","worker.stopped"],"correlation_ids":["fg-condition"]}`, CompletionConditionJSON: `{"mode":"all","subject_ids":["worker-a","worker-b"],"terminal_event_types":["worker.completed","worker.failed","worker.stopped"]}`})
-	first := callMethod[WorkspaceEventResponse](t, registry, "workspace.events.append", WorkspaceEventAppendRequest{EventID: "we-condition-a", WorkspaceID: "ws-condition-wait", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-a", CorrelationID: "fg-condition"})
+	first := appendWorkspaceEventForTest(t, store, globaldb.WorkspaceEvent{EventID: "we-condition-a", WorkspaceID: "ws-condition-wait", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-a", CorrelationID: "fg-condition"})
 
 	partial := callMethod[WorkspaceEventsResponse](t, registry, "workspace.events.next", WorkspaceEventsNextRequest{SubscriptionID: "sub-condition-wait", Limit: 10})
 	if len(partial.Events) != 1 || partial.Events[0].EventID != first.EventID || partial.WaitStatus != "partial" || partial.WaitTimedOut {
@@ -428,7 +428,7 @@ func TestWorkspaceEventSubscriptionNextWaitsOnStoredCompletionCondition(t *testi
 		resultC <- callResult{response: response, err: err}
 	}()
 	<-readyC
-	second := callMethod[WorkspaceEventResponse](t, registry, "workspace.events.append", WorkspaceEventAppendRequest{EventID: "we-condition-b", WorkspaceID: "ws-condition-wait", EventType: "worker.failed", SubjectType: "harness_session", SubjectID: "worker-b", CorrelationID: "fg-condition"})
+	second := appendWorkspaceEventForTest(t, store, globaldb.WorkspaceEvent{EventID: "we-condition-b", WorkspaceID: "ws-condition-wait", EventType: "worker.failed", SubjectType: "harness_session", SubjectID: "worker-b", CorrelationID: "fg-condition"})
 
 	select {
 	case result := <-resultC:
@@ -450,6 +450,15 @@ func waitForSubscriptionEvents(t *testing.T, registry *rpc.MethodRegistry, subsc
 		t.Fatalf("workspace.events.next(%s) = %#v, want at least %d events before timeout", subscriptionID, resp.Events, want)
 	}
 	return resp.Events
+}
+
+func appendWorkspaceEventForTest(t *testing.T, store *globaldb.Store, event globaldb.WorkspaceEvent) WorkspaceEventResponse {
+	t.Helper()
+	stored, err := store.AppendWorkspaceEvent(context.Background(), event)
+	if err != nil {
+		t.Fatalf("AppendWorkspaceEvent returned error: %v", err)
+	}
+	return workspaceEventResponse(stored)
 }
 
 func callMethodResult[T any](registry *rpc.MethodRegistry, methodName string, params any) (T, error) {
