@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
@@ -61,6 +60,7 @@ func runWorkspaceDeliveryWorkerOnce(ctx context.Context, store *globaldb.Store, 
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
+	engine := NewDeliveryPolicyEngine()
 	due, err := store.ListDuePendingDeliveries(ctx, now, limit)
 	if err != nil {
 		return nil, err
@@ -80,64 +80,11 @@ func runWorkspaceDeliveryWorkerOnce(ctx context.Context, store *globaldb.Store, 
 		if dispatchErr != nil {
 			result = WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptRetry, LastError: dispatchErr.Error()}
 		}
-		outcome, err := finishWorkspaceDeliveryAttempt(ctx, store, claimed, result, now)
+		outcome, err := engine.FinishAttempt(ctx, store, claimed, result, now)
 		outcomes = append(outcomes, outcome)
 		if err != nil {
 			return outcomes, err
 		}
 	}
 	return outcomes, nil
-}
-
-func finishWorkspaceDeliveryAttempt(ctx context.Context, store *globaldb.Store, delivery globaldb.PendingDelivery, result WorkspaceDeliveryAttemptResult, now time.Time) (WorkspaceDeliveryWorkerOutcome, error) {
-	// Each store transition below emits its delivery.* workspace event in the
-	// same transaction as the row change; the worker only owns delivery
-	// semantics (retry policy, max attempts, outcome mapping).
-	switch result.Status {
-	case WorkspaceDeliveryAttemptCompleted:
-		completed, err := store.CompletePendingDelivery(ctx, delivery.DeliveryID)
-		return WorkspaceDeliveryWorkerOutcome{DeliveryID: completed.DeliveryID, Status: WorkspaceDeliveryWorkerOutcomeCompleted}, err
-	case WorkspaceDeliveryAttemptFailed:
-		failed, err := store.FailPendingDelivery(ctx, delivery.DeliveryID, result.LastError)
-		return WorkspaceDeliveryWorkerOutcome{DeliveryID: failed.DeliveryID, Status: WorkspaceDeliveryWorkerOutcomeFailed, LastError: failed.LastError}, err
-	case WorkspaceDeliveryAttemptRetry:
-		policy, err := parseWorkspaceDeliveryPolicy(delivery.DeliveryPolicyJSON)
-		if err != nil {
-			failed, err := store.FailPendingDelivery(ctx, delivery.DeliveryID, err.Error())
-			return WorkspaceDeliveryWorkerOutcome{DeliveryID: failed.DeliveryID, Status: WorkspaceDeliveryWorkerOutcomeFailed, LastError: failed.LastError}, err
-		}
-		if policy.MaxAttempts > 0 && delivery.Attempts >= policy.MaxAttempts {
-			lastError := strings.TrimSpace(result.LastError)
-			if lastError == "" {
-				lastError = fmt.Sprintf("delivery retry limit reached after %d attempts", delivery.Attempts)
-			}
-			failed, err := store.FailPendingDelivery(ctx, delivery.DeliveryID, lastError)
-			return WorkspaceDeliveryWorkerOutcome{DeliveryID: failed.DeliveryID, Status: WorkspaceDeliveryWorkerOutcomeFailed, LastError: failed.LastError}, err
-		}
-		nextAttemptAt := result.NextAttemptAt
-		if nextAttemptAt == nil || nextAttemptAt.IsZero() {
-			fallback := now.Add(defaultWorkspaceDeliveryRetryDelay(delivery))
-			nextAttemptAt = &fallback
-		}
-		retry, err := store.SchedulePendingDeliveryRetry(ctx, delivery.DeliveryID, *nextAttemptAt, result.LastError)
-		return WorkspaceDeliveryWorkerOutcome{DeliveryID: retry.DeliveryID, Status: WorkspaceDeliveryWorkerOutcomeRetry, LastError: retry.LastError}, err
-	default:
-		lastError := strings.TrimSpace(result.LastError)
-		if lastError == "" {
-			lastError = fmt.Sprintf("unsupported delivery attempt result %q", result.Status)
-		}
-		failed, err := store.FailPendingDelivery(ctx, delivery.DeliveryID, lastError)
-		return WorkspaceDeliveryWorkerOutcome{DeliveryID: failed.DeliveryID, Status: WorkspaceDeliveryWorkerOutcomeFailed, LastError: failed.LastError}, err
-	}
-}
-
-func defaultWorkspaceDeliveryRetryDelay(delivery globaldb.PendingDelivery) time.Duration {
-	attempt := delivery.Attempts
-	if attempt < 1 {
-		attempt = 1
-	}
-	if attempt > 6 {
-		attempt = 6
-	}
-	return time.Duration(attempt) * time.Second
 }
