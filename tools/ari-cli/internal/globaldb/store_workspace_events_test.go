@@ -52,10 +52,7 @@ func TestWorkspaceEventSubscriptionContract(t *testing.T) {
 		t.Fatalf("CreateEventSubscription returned error: %v", err)
 	}
 
-	matching, err := store.ListEventSubscriptionEvents(ctx, "sub-1", 10)
-	if err != nil {
-		t.Fatalf("ListEventSubscriptionEvents returned error: %v", err)
-	}
+	matching := readSubscriptionEvents(t, store, "sub-1", 10)
 	if len(matching) != 1 || matching[0].EventID != completed.EventID {
 		t.Fatalf("subscription events = %#v, want only completed event", matching)
 	}
@@ -63,10 +60,7 @@ func TestWorkspaceEventSubscriptionContract(t *testing.T) {
 	if err := store.AckEventSubscription(ctx, "sub-1", completed.Sequence); err != nil {
 		t.Fatalf("AckEventSubscription returned error: %v", err)
 	}
-	matching, err = store.ListEventSubscriptionEvents(ctx, "sub-1", 10)
-	if err != nil {
-		t.Fatalf("ListEventSubscriptionEvents after ack returned error: %v", err)
-	}
+	matching = readSubscriptionEvents(t, store, "sub-1", 10)
 	if len(matching) != 0 {
 		t.Fatalf("subscription events after ack = %#v, want none", matching)
 	}
@@ -77,6 +71,100 @@ func TestWorkspaceEventSubscriptionContract(t *testing.T) {
 	}
 	if subscription.CursorSequence != completed.Sequence || subscription.AckSequence != completed.Sequence {
 		t.Fatalf("subscription cursor/ack = %d/%d, want %d", subscription.CursorSequence, subscription.AckSequence, completed.Sequence)
+	}
+}
+
+func TestWorkspaceEventSubscriptionCompletionConditions(t *testing.T) {
+	store := newGlobalDBTestStore(t, "workspace-events-completion")
+	ctx := context.Background()
+	base := time.Date(2026, 6, 12, 9, 0, 0, 0, time.UTC)
+
+	if err := store.CreateWorkspace(ctx, "ws-completion", "ws-completion", t.TempDir(), "manual", "auto"); err != nil {
+		t.Fatalf("CreateWorkspace returned error: %v", err)
+	}
+	first, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-complete-a", WorkspaceID: "ws-completion", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-a", CorrelationID: "fg-completion", CreatedAt: base})
+	if err != nil {
+		t.Fatalf("AppendWorkspaceEvent first returned error: %v", err)
+	}
+	if _, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-start-b", WorkspaceID: "ws-completion", EventType: "worker.started", SubjectType: "harness_session", SubjectID: "worker-b", CorrelationID: "fg-completion", CreatedAt: base.Add(time.Second)}); err != nil {
+		t.Fatalf("AppendWorkspaceEvent started returned error: %v", err)
+	}
+	filter := mustMarshalJSON(t, EventSubscriptionFilter{EventTypes: []string{"worker.completed", "worker.failed", "worker.stopped"}, CorrelationIDs: []string{"fg-completion"}})
+	condition := mustMarshalJSON(t, EventSubscriptionCompletionCondition{Mode: "all", SubjectIDs: []string{"worker-a", "worker-b"}, TerminalEventTypes: []string{"worker.completed", "worker.failed", "worker.stopped"}})
+	if _, err := store.CreateEventSubscription(ctx, EventSubscription{SubscriptionID: "sub-completion", WorkspaceID: "ws-completion", OwnerSessionID: "orch-completion", FilterJSON: filter, CompletionConditionJSON: condition, CreatedAt: base, UpdatedAt: base}); err != nil {
+		t.Fatalf("CreateEventSubscription returned error: %v", err)
+	}
+
+	partial, err := store.ReadEventSubscription(ctx, EventSubscriptionReadRequest{SubscriptionID: "sub-completion", Limit: 10})
+	if err != nil {
+		t.Fatalf("ReadEventSubscription partial returned error: %v", err)
+	}
+	if len(partial.Events) != 1 || partial.Events[0].EventID != first.EventID || !partial.Completion.Configured || partial.Completion.Satisfied || partial.Completion.Status != EventSubscriptionWaitStatusPartial || partial.Completion.MatchedCount != 1 || partial.Completion.Required != 2 {
+		t.Fatalf("partial completion = %#v events=%#v, want one of two terminal subjects", partial.Completion, partial.Events)
+	}
+
+	second, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-complete-b", WorkspaceID: "ws-completion", EventType: "worker.failed", SubjectType: "harness_session", SubjectID: "worker-b", CorrelationID: "fg-completion", CreatedAt: base.Add(2 * time.Second)})
+	if err != nil {
+		t.Fatalf("AppendWorkspaceEvent second returned error: %v", err)
+	}
+	ready, err := store.ReadEventSubscription(ctx, EventSubscriptionReadRequest{SubscriptionID: "sub-completion", Limit: 10})
+	if err != nil {
+		t.Fatalf("ReadEventSubscription ready returned error: %v", err)
+	}
+	if len(ready.Events) != 2 || ready.Events[1].EventID != second.EventID || !ready.Completion.Satisfied || ready.Completion.Status != EventSubscriptionWaitStatusReady || ready.Completion.MatchedCount != 2 || ready.Completion.Required != 2 {
+		t.Fatalf("ready completion = %#v events=%#v, want both terminal subjects", ready.Completion, ready.Events)
+	}
+
+	count, err := store.ReadEventSubscription(ctx, EventSubscriptionReadRequest{SubscriptionID: "sub-completion", MinEvents: 2})
+	if err != nil {
+		t.Fatalf("ReadEventSubscription count returned error: %v", err)
+	}
+	if !count.Completion.Satisfied || count.Completion.Status != EventSubscriptionWaitStatusReady || count.Completion.Required != 2 {
+		t.Fatalf("transient count completion = %#v, want ready at two events", count.Completion)
+	}
+}
+
+func TestWorkspaceEventSubscriptionAllCompletionScansPastDuplicateSubjects(t *testing.T) {
+	store := newGlobalDBTestStore(t, "workspace-events-completion-duplicates")
+	ctx := context.Background()
+	base := time.Date(2026, 6, 12, 9, 30, 0, 0, time.UTC)
+
+	if err := store.CreateWorkspace(ctx, "ws-completion", "ws-completion", t.TempDir(), "manual", "auto"); err != nil {
+		t.Fatalf("CreateWorkspace returned error: %v", err)
+	}
+	for _, event := range []WorkspaceEvent{
+		{EventID: "we-complete-a-1", WorkspaceID: "ws-completion", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-a", CorrelationID: "fg-completion", CreatedAt: base},
+		{EventID: "we-complete-a-2", WorkspaceID: "ws-completion", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-a", CorrelationID: "fg-completion", CreatedAt: base.Add(time.Second)},
+		{EventID: "we-complete-b", WorkspaceID: "ws-completion", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-b", CorrelationID: "fg-completion", CreatedAt: base.Add(2 * time.Second)},
+	} {
+		if _, err := store.AppendWorkspaceEvent(ctx, event); err != nil {
+			t.Fatalf("AppendWorkspaceEvent %s returned error: %v", event.EventID, err)
+		}
+	}
+	filter := mustMarshalJSON(t, EventSubscriptionFilter{EventTypes: []string{"worker.completed"}, CorrelationIDs: []string{"fg-completion"}})
+	condition := mustMarshalJSON(t, EventSubscriptionCompletionCondition{Mode: "all", SubjectIDs: []string{"worker-a", "worker-b"}, TerminalEventTypes: []string{"worker.completed"}})
+	if _, err := store.CreateEventSubscription(ctx, EventSubscription{SubscriptionID: "sub-completion", WorkspaceID: "ws-completion", OwnerSessionID: "orch-completion", FilterJSON: filter, CompletionConditionJSON: condition, CreatedAt: base, UpdatedAt: base}); err != nil {
+		t.Fatalf("CreateEventSubscription returned error: %v", err)
+	}
+
+	ready, err := store.ReadEventSubscription(ctx, EventSubscriptionReadRequest{SubscriptionID: "sub-completion"})
+	if err != nil {
+		t.Fatalf("ReadEventSubscription returned error: %v", err)
+	}
+	if len(ready.Events) != 3 || ready.Events[2].EventID != "we-complete-b" || !ready.Completion.Satisfied || ready.Completion.Status != EventSubscriptionWaitStatusReady || ready.Completion.MatchedCount != 2 || ready.Completion.Required != 2 {
+		t.Fatalf("ready completion = %#v events=%#v, want scan through duplicate worker-a to worker-b", ready.Completion, ready.Events)
+	}
+}
+
+func TestWorkspaceEventSubscriptionRejectsInvalidCompletionCondition(t *testing.T) {
+	store := newGlobalDBTestStore(t, "workspace-events-invalid-completion")
+	ctx := context.Background()
+	base := time.Date(2026, 6, 12, 10, 0, 0, 0, time.UTC)
+	if err := store.CreateWorkspace(ctx, "ws-invalid-completion", "ws-invalid-completion", t.TempDir(), "manual", "auto"); err != nil {
+		t.Fatalf("CreateWorkspace returned error: %v", err)
+	}
+	if _, err := store.CreateEventSubscription(ctx, EventSubscription{SubscriptionID: "sub-invalid-completion", WorkspaceID: "ws-invalid-completion", OwnerSessionID: "orch-invalid", FilterJSON: `{}`, CompletionConditionJSON: `{"mode":"all"}`, CreatedAt: base, UpdatedAt: base}); err == nil {
+		t.Fatalf("CreateEventSubscription returned nil error, want invalid all completion without subject_ids")
 	}
 }
 
@@ -297,13 +385,19 @@ func TestTimedOutSubscriptionsDoNotCreateDeliveries(t *testing.T) {
 	if len(due) != 0 {
 		t.Fatalf("due deliveries after subscription timeout = %#v, want none", due)
 	}
-	matches, err := store.ListEventSubscriptionEvents(ctx, "sub-timeout-deliveries", 10)
-	if err != nil {
-		t.Fatalf("ListEventSubscriptionEvents returned error: %v", err)
-	}
+	matches := readSubscriptionEvents(t, store, "sub-timeout-deliveries", 10)
 	if len(matches) != 0 {
 		t.Fatalf("subscription events after timeout = %#v, want none", matches)
 	}
+}
+
+func readSubscriptionEvents(t *testing.T, store *Store, subscriptionID string, limit int) []WorkspaceEvent {
+	t.Helper()
+	result, err := store.ReadEventSubscription(context.Background(), EventSubscriptionReadRequest{SubscriptionID: subscriptionID, Limit: limit})
+	if err != nil {
+		t.Fatalf("ReadEventSubscription returned error: %v", err)
+	}
+	return result.Events
 }
 
 func mustMarshalJSON(t *testing.T, value any) string {

@@ -288,37 +288,26 @@ func TestOrchestratorWakesOnWatchedSessionIdle(t *testing.T) {
 	}
 }
 
-// waitForAriSubscriptionEvents blocks on the tool's server-side bounded wait
-// until the unacked window holds want events of eventType. The server cannot
-// filter by type inside one subscription, so the required total (min_events)
-// grows by one whenever a full window still lacks enough matches; all blocking
-// happens daemon-side, never as client sleeps. Reads do not advance ack state,
-// so repeated calls are deterministic against release-gated workers.
+// waitForAriSubscriptionEvents blocks once on the tool's server-side bounded
+// subscription wait. Reads do not advance ack state, so callers decide when the
+// observed window should be acknowledged.
 func waitForAriSubscriptionEvents(t *testing.T, registry *rpc.MethodRegistry, scope AriToolScope, subscriptionID, eventType string, want int) []map[string]any {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	minEvents := want
-	for {
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			t.Fatalf("subscription %q did not observe %d %s events", subscriptionID, want, eventType)
-		}
-		next := callMethod[AriToolCallResponse](t, registry, "ari.tool.call", AriToolCallRequest{Name: "ari.workspace.events.next", Scope: scope, Input: map[string]any{"subscription_id": subscriptionID, "limit": 50, "min_events": minEvents, "timeout_ms": int(remaining.Milliseconds())}})
-		events, _ := next.Output["events"].([]map[string]any)
-		matched := make([]map[string]any, 0, want)
-		for _, event := range events {
-			if event["event_type"] == eventType {
-				matched = append(matched, event)
-			}
-		}
-		if len(matched) >= want {
-			return matched
-		}
-		if next.Output["wait_timed_out"] == true {
-			t.Fatalf("subscription %q timed out with %d/%d %s events", subscriptionID, len(matched), want, eventType)
-		}
-		minEvents = len(events) + 1
+	next := callMethod[AriToolCallResponse](t, registry, "ari.tool.call", AriToolCallRequest{Name: "ari.workspace.events.next", Scope: scope, Input: map[string]any{"subscription_id": subscriptionID, "limit": 50, "min_events": want, "timeout_ms": 5000}})
+	if next.Output["wait_status"] != "ready" || next.Output["wait_timed_out"] == true {
+		t.Fatalf("subscription %q wait output = %#v, want ready", subscriptionID, next.Output)
 	}
+	events, _ := next.Output["events"].([]map[string]any)
+	matched := make([]map[string]any, 0, want)
+	for _, event := range events {
+		if event["event_type"] == eventType {
+			matched = append(matched, event)
+		}
+	}
+	if len(matched) < want {
+		t.Fatalf("subscription %q observed %d/%d %s events in %#v", subscriptionID, len(matched), want, eventType, events)
+	}
+	return matched
 }
 
 func ackAriSubscriptionThrough(t *testing.T, registry *rpc.MethodRegistry, scope AriToolScope, subscriptionID string, events []map[string]any) {

@@ -229,63 +229,16 @@ func workspaceEventsNext(ctx context.Context, store *globaldb.Store, req Workspa
 	if req.MinEvents < 0 || req.TimeoutMS < 0 {
 		return WorkspaceEventsResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "invalid_wait_request"})
 	}
-	limit := req.Limit
-	if req.MinEvents > limit {
-		limit = req.MinEvents
+	result, err := store.WaitEventSubscription(ctx, globaldb.EventSubscriptionWaitRequest{SubscriptionID: req.SubscriptionID, Limit: req.Limit, MinEvents: req.MinEvents, Timeout: time.Duration(req.TimeoutMS) * time.Millisecond})
+	if err != nil {
+		return WorkspaceEventsResponse{}, workspaceEventRPCError(err)
 	}
-	read := func() (WorkspaceEventsResponse, error) {
-		events, err := store.ListEventSubscriptionEvents(ctx, req.SubscriptionID, limit)
-		if err != nil {
-			return WorkspaceEventsResponse{}, workspaceEventRPCError(err)
-		}
-		response := WorkspaceEventsResponse{Events: workspaceEventResponses(events)}
-		if req.MinEvents > 0 {
-			response.WaitStatus = workspaceEventsWaitStatus(len(events), req.MinEvents, false)
-		}
-		return response, nil
+	response := WorkspaceEventsResponse{Events: workspaceEventResponses(result.Events)}
+	if result.Completion.Configured {
+		response.WaitStatus = result.Completion.Status
+		response.WaitTimedOut = result.Completion.TimedOut
 	}
-	if req.MinEvents <= 0 || req.TimeoutMS <= 0 {
-		return read()
-	}
-	deadline := time.Now().Add(time.Duration(req.TimeoutMS) * time.Millisecond)
-	for {
-		response, err := read()
-		if err != nil {
-			return WorkspaceEventsResponse{}, err
-		}
-		if len(response.Events) >= req.MinEvents {
-			response.WaitStatus = "ready"
-			return response, nil
-		}
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			response.WaitStatus = workspaceEventsWaitStatus(len(response.Events), req.MinEvents, true)
-			response.WaitTimedOut = true
-			return response, nil
-		}
-		pollAfter := 10 * time.Millisecond
-		if remaining < pollAfter {
-			pollAfter = remaining
-		}
-		select {
-		case <-ctx.Done():
-			return WorkspaceEventsResponse{}, ctx.Err()
-		case <-time.After(pollAfter):
-		}
-	}
-}
-
-func workspaceEventsWaitStatus(count, minEvents int, timedOut bool) string {
-	if minEvents <= 0 || count >= minEvents {
-		return "ready"
-	}
-	if count > 0 {
-		return "partial"
-	}
-	if timedOut {
-		return "timeout"
-	}
-	return "partial"
+	return response, nil
 }
 
 func workspaceEventRPCError(err error) error {

@@ -3,7 +3,6 @@ package globaldb
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb/dbsqlc"
@@ -90,12 +89,5 @@ func appendCoordinatedWorkspaceEventWithQueries(ctx context.Context, queries *db
 }
 
 func createPendingDeliveriesForCoordinatedEvent(ctx context.Context, queries *dbsqlc.Queries, event WorkspaceEvent) error {
-	if workspaceEventSkipsDeliveryFanout(event) {
-		return nil
-	}
-	return createPendingDeliveriesForWorkspaceEvent(ctx, queries, event)
-}
-
-func workspaceEventSkipsDeliveryFanout(event WorkspaceEvent) bool {
-	return strings.HasPrefix(strings.TrimSpace(event.EventType), "delivery.")
+	return newEventSubscriptionLifecycle(queries).createPendingDeliveriesForEvent(ctx, event)
 }

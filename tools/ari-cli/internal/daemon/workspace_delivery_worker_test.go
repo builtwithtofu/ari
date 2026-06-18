@@ -104,10 +104,7 @@ func TestWorkspaceDeliveryWorkerAttemptsDueDeliveries(t *testing.T) {
 				t.Fatalf("finished next_attempt_at = %v, want %v", finished.NextAttemptAt, wantNextAttempt)
 			}
 
-			unread, err := store.ListEventSubscriptionEvents(ctx, delivery.SubscriptionID, 10)
-			if err != nil {
-				t.Fatalf("ListEventSubscriptionEvents returned error: %v", err)
-			}
+			unread := readWorkspaceDeliverySubscriptionEvents(t, ctx, store, delivery.SubscriptionID, 10)
 			if gotUnread := len(unread) == 1 && unread[0].EventID == event.EventID; gotUnread != tc.wantUnread {
 				t.Fatalf("subscription unread = %#v, want unread=%t", unread, tc.wantUnread)
 			}
@@ -190,16 +187,22 @@ func TestWorkspaceDeliveryWorkerFailsRetryAfterMaxAttempts(t *testing.T) {
 	if finished.Status != "failed" || finished.Attempts != 3 || finished.LastError != "adapter still offline" {
 		t.Fatalf("finished delivery = %#v, want failed after third attempt", finished)
 	}
-	unread, err := store.ListEventSubscriptionEvents(ctx, delivery.SubscriptionID, 10)
-	if err != nil {
-		t.Fatalf("ListEventSubscriptionEvents returned error: %v", err)
-	}
+	unread := readWorkspaceDeliverySubscriptionEvents(t, ctx, store, delivery.SubscriptionID, 10)
 	if len(unread) != 1 || unread[0].EventID != event.EventID {
 		t.Fatalf("subscription unread = %#v, want original event still unread", unread)
 	}
 	if gotTypes := workspaceEventTypes(listDeliveryWorkspaceEvents(t, store, delivery.WorkspaceID, event.Sequence)); !sameStringSlice(gotTypes, []string{"delivery.retry_scheduled", "delivery.retry_scheduled", "delivery.attempted", "delivery.failed"}) {
 		t.Fatalf("delivery event types = %#v, want retry records then attempted and failed", gotTypes)
 	}
+}
+
+func readWorkspaceDeliverySubscriptionEvents(t *testing.T, ctx context.Context, store *globaldb.Store, subscriptionID string, limit int) []globaldb.WorkspaceEvent {
+	t.Helper()
+	result, err := store.ReadEventSubscription(ctx, globaldb.EventSubscriptionReadRequest{SubscriptionID: subscriptionID, Limit: limit})
+	if err != nil {
+		t.Fatalf("ReadEventSubscription returned error: %v", err)
+	}
+	return result.Events
 }
 
 func listDeliveryWorkspaceEvents(t *testing.T, store *globaldb.Store, workspaceID string, afterSequence int64) []globaldb.WorkspaceEvent {

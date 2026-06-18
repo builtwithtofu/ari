@@ -70,47 +70,6 @@ func (s *Store) AppendWorkspaceEvent(ctx context.Context, event AppendWorkspaceE
 	return s.EventCoordinator().AppendWorkspaceEvent(ctx, event)
 }
 
-func createPendingDeliveriesForWorkspaceEvent(ctx context.Context, queries *dbsqlc.Queries, event WorkspaceEvent) error {
-	if workspaceEventSkipsDeliveryFanout(event) {
-		return nil
-	}
-	rows, err := queries.ListActiveEventSubscriptionsByWorkspace(ctx, dbsqlc.ListActiveEventSubscriptionsByWorkspaceParams{WorkspaceID: event.WorkspaceID})
-	if err != nil {
-		return fmt.Errorf("list active event subscriptions for %q: %w", event.WorkspaceID, err)
-	}
-	for _, row := range rows {
-		subscription, err := eventSubscriptionFromSQLC(row)
-		if err != nil {
-			return err
-		}
-		if strings.TrimSpace(subscription.DeliveryTargetType) == "" || strings.TrimSpace(subscription.DeliveryTargetID) == "" {
-			continue
-		}
-		if subscription.TimeoutAt != nil && !subscription.TimeoutAt.After(event.CreatedAt) {
-			continue
-		}
-		if event.Sequence <= subscription.CursorSequence {
-			continue
-		}
-		filter, err := parseEventSubscriptionFilter(subscription.FilterJSON)
-		if err != nil {
-			return fmt.Errorf("parse event subscription filter %q: %w", subscription.SubscriptionID, err)
-		}
-		if !filter.matches(event) {
-			continue
-		}
-		nextAttemptAt := event.CreatedAt
-		if _, err := createPendingDeliveryWithQueries(ctx, queries, PendingDelivery{DeliveryID: pendingDeliveryIDForSubscriptionEvent(subscription.SubscriptionID, event.EventID), WorkspaceID: event.WorkspaceID, SubscriptionID: subscription.SubscriptionID, TargetType: subscription.DeliveryTargetType, TargetID: subscription.DeliveryTargetID, DeliveryPolicyJSON: subscription.DeliveryPolicyJSON, EventIDs: []string{event.EventID}, NextAttemptAt: &nextAttemptAt}); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func pendingDeliveryIDForSubscriptionEvent(subscriptionID, eventID string) string {
-	return "pd-" + strings.TrimSpace(subscriptionID) + "-" + strings.TrimSpace(eventID)
-}
-
 func createWorkspaceEventWithQueries(ctx context.Context, queries *dbsqlc.Queries, event *WorkspaceEvent) error {
 	sequence, err := queries.NextWorkspaceEventSequence(ctx, dbsqlc.NextWorkspaceEventSequenceParams{WorkspaceID: event.WorkspaceID})
 	if err != nil {
@@ -164,44 +123,11 @@ func (s *Store) CreateEventSubscription(ctx context.Context, subscription EventS
 		if err := queries.CreateEventSubscription(ctx, dbsqlc.CreateEventSubscriptionParams{SubscriptionID: subscription.SubscriptionID, WorkspaceID: subscription.WorkspaceID, OwnerSessionID: subscription.OwnerSessionID, Name: subscription.Name, FilterJson: subscription.FilterJSON, DeliveryTargetType: subscription.DeliveryTargetType, DeliveryTargetID: subscription.DeliveryTargetID, DeliveryPolicyJson: subscription.DeliveryPolicyJSON, CursorSequence: subscription.CursorSequence, AckSequence: subscription.AckSequence, Status: subscription.Status, CompletionConditionJson: subscription.CompletionConditionJSON, TimeoutAt: timeoutAt, CreatedAt: subscription.CreatedAt.UTC().Format(time.RFC3339Nano), UpdatedAt: subscription.UpdatedAt.UTC().Format(time.RFC3339Nano)}); err != nil {
 			return fmt.Errorf("create event subscription %q: %w", subscription.SubscriptionID, err)
 		}
-		return createPendingDeliveriesForExistingSubscription(ctx, queries, subscription)
+		return newEventSubscriptionLifecycle(queries).backfillPendingDeliveries(ctx, subscription)
 	}); err != nil {
 		return EventSubscription{}, err
 	}
 	return subscription, nil
-}
-
-func createPendingDeliveriesForExistingSubscription(ctx context.Context, queries *dbsqlc.Queries, subscription EventSubscription) error {
-	if subscription.Status != eventSubscriptionStatusActive || strings.TrimSpace(subscription.DeliveryTargetType) == "" || strings.TrimSpace(subscription.DeliveryTargetID) == "" {
-		return nil
-	}
-	filter, err := parseEventSubscriptionFilter(subscription.FilterJSON)
-	if err != nil {
-		return fmt.Errorf("parse event subscription filter %q: %w", subscription.SubscriptionID, err)
-	}
-	sequence := subscription.CursorSequence
-	for {
-		events, err := listWorkspaceEventsAfterSequenceWithQueries(ctx, queries, subscription.WorkspaceID, sequence, 100)
-		if err != nil {
-			return err
-		}
-		if len(events) == 0 {
-			return nil
-		}
-		for _, event := range events {
-			sequence = event.Sequence
-			if strings.HasPrefix(event.EventType, "delivery.") || (subscription.TimeoutAt != nil && !subscription.TimeoutAt.After(event.CreatedAt)) || !filter.matches(event) {
-				continue
-			}
-			nextAttemptAt := event.CreatedAt
-			if _, err := createPendingDeliveryWithQueries(ctx, queries, PendingDelivery{DeliveryID: pendingDeliveryIDForSubscriptionEvent(subscription.SubscriptionID, event.EventID), WorkspaceID: event.WorkspaceID, SubscriptionID: subscription.SubscriptionID, TargetType: subscription.DeliveryTargetType, TargetID: subscription.DeliveryTargetID, DeliveryPolicyJSON: subscription.DeliveryPolicyJSON, EventIDs: []string{event.EventID}, NextAttemptAt: &nextAttemptAt}); err != nil {
-				return err
-			}
-		}
-		if len(events) < 100 {
-			return nil
-		}
-	}
 }
 
 func (s *Store) GetEventSubscription(ctx context.Context, subscriptionID string) (EventSubscription, error) {
@@ -219,68 +145,8 @@ func (s *Store) GetEventSubscription(ctx context.Context, subscriptionID string)
 	return eventSubscriptionFromSQLC(row)
 }
 
-func (s *Store) ListEventSubscriptionEvents(ctx context.Context, subscriptionID string, limit int) ([]WorkspaceEvent, error) {
-	subscription, err := s.GetEventSubscription(ctx, subscriptionID)
-	if err != nil {
-		return nil, err
-	}
-	if subscription.Status != eventSubscriptionStatusActive {
-		return []WorkspaceEvent{}, nil
-	}
-	filter, err := parseEventSubscriptionFilter(subscription.FilterJSON)
-	if err != nil {
-		return nil, fmt.Errorf("parse event subscription filter %q: %w", subscription.SubscriptionID, err)
-	}
-	if limit <= 0 {
-		limit = 100
-	}
-	pageSize := limit * 4
-	if pageSize < 100 {
-		pageSize = 100
-	}
-	sequence := subscription.CursorSequence
-	matched := make([]WorkspaceEvent, 0, limit)
-	for len(matched) < limit {
-		events, err := s.ListWorkspaceEventsAfterSequence(ctx, subscription.WorkspaceID, sequence, pageSize)
-		if err != nil {
-			return nil, err
-		}
-		if len(events) == 0 {
-			break
-		}
-		for _, event := range events {
-			sequence = event.Sequence
-			if subscription.TimeoutAt != nil && !subscription.TimeoutAt.After(event.CreatedAt) {
-				continue
-			}
-			if filter.matches(event) {
-				matched = append(matched, event)
-				if len(matched) == limit {
-					break
-				}
-			}
-		}
-		if len(events) < pageSize {
-			break
-		}
-	}
-	return matched, nil
-}
-
 func (s *Store) AckEventSubscription(ctx context.Context, subscriptionID string, sequence int64) error {
-	subscriptionID = strings.TrimSpace(subscriptionID)
-	if subscriptionID == "" || sequence < 0 {
-		return fmt.Errorf("%w: subscription id and non-negative sequence are required", ErrInvalidInput)
-	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	rows, err := s.sqlcQueries().UpdateEventSubscriptionCursor(ctx, dbsqlc.UpdateEventSubscriptionCursorParams{CursorSequence: sequence, CursorSequence_2: sequence, AckSequence: sequence, MIN: sequence, CursorSequence_3: sequence, Column6: sequence, UpdatedAt: now, SubscriptionID: subscriptionID})
-	if err != nil {
-		return fmt.Errorf("ack event subscription %q: %w", subscriptionID, err)
-	}
-	if rows == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return newEventSubscriptionLifecycle(s.sqlcQueries()).ackReadCursor(ctx, subscriptionID, sequence, time.Now().UTC())
 }
 
 func (s *Store) CancelEventSubscription(ctx context.Context, subscriptionID string) (EventSubscription, error) {
@@ -386,6 +252,9 @@ func validateEventSubscription(subscription EventSubscription) error {
 	}
 	if !json.Valid([]byte(subscription.CompletionConditionJSON)) {
 		return fmt.Errorf("%w: event subscription completion condition json is invalid", ErrInvalidInput)
+	}
+	if _, err := ParseEventSubscriptionCompletionCondition(subscription.CompletionConditionJSON); err != nil {
+		return err
 	}
 	return nil
 }
