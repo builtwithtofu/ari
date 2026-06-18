@@ -14,14 +14,25 @@ type Projection interface {
 	ProjectWorkspaceEvent(context.Context, *dbsqlc.Queries, WorkspaceEvent) error
 }
 
+type PrefixProjection interface {
+	Projection
+	EventTypePrefixes() []string
+}
+
 type RebuildableProjection interface {
 	Projection
 	Rebuild(context.Context, *Store, string) error
 }
 
 type ProjectionRegistry struct {
-	ordered []Projection
-	byType  map[string][]Projection
+	ordered  []Projection
+	byType   map[string][]Projection
+	prefixes []projectionPrefixRegistration
+}
+
+type projectionPrefixRegistration struct {
+	prefix     string
+	projection Projection
 }
 
 func NewProjectionRegistry() *ProjectionRegistry {
@@ -32,6 +43,7 @@ func DefaultProjectionRegistry() *ProjectionRegistry {
 	registry := NewProjectionRegistry()
 	mustRegisterProjection(registry, FanoutProjection{})
 	mustRegisterProjection(registry, InboxProjection{})
+	mustRegisterProjection(registry, TimelineProjection{})
 	return registry
 }
 
@@ -65,6 +77,15 @@ func (r *ProjectionRegistry) Register(projection Projection) error {
 		}
 		r.byType[eventType] = append(r.byType[eventType], projection)
 	}
+	if prefixProjection, ok := projection.(PrefixProjection); ok {
+		for _, prefix := range prefixProjection.EventTypePrefixes() {
+			prefix = strings.TrimSpace(prefix)
+			if prefix == "" {
+				continue
+			}
+			r.prefixes = append(r.prefixes, projectionPrefixRegistration{prefix: prefix, projection: projection})
+		}
+	}
 	return nil
 }
 
@@ -77,9 +98,33 @@ func (r *ProjectionRegistry) ProjectionsForEvent(event WorkspaceEvent) []Project
 		return nil
 	}
 	projections := append([]Projection(nil), r.byType[eventType]...)
-	projections = append(projections, r.byType[""]...)
-
+	for _, registered := range r.prefixes {
+		if strings.HasPrefix(eventType, registered.prefix) && !projectionListContains(projections, registered.projection) {
+			projections = append(projections, registered.projection)
+		}
+	}
+	for _, projection := range r.byType[""] {
+		if !projectionListContains(projections, projection) {
+			projections = append(projections, projection)
+		}
+	}
 	return projections
+}
+
+func projectionListContains(projections []Projection, candidate Projection) bool {
+	if candidate == nil {
+		return false
+	}
+	candidateName := strings.TrimSpace(candidate.Name())
+	if candidateName == "" {
+		return false
+	}
+	for _, projection := range projections {
+		if projection != nil && strings.TrimSpace(projection.Name()) == candidateName {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *ProjectionRegistry) All() []Projection {

@@ -342,6 +342,23 @@ type SecretAuditEvent struct {
 	CreatedAt   string `json:"created_at"`
 }
 
+type TimelineItem struct {
+	WorkspaceID      string `json:"workspace_id"`
+	TimelineItemID   string `json:"timeline_item_id"`
+	WorkspaceEventID string `json:"workspace_event_id"`
+	Sequence         int64  `json:"sequence"`
+	RunID            string `json:"run_id"`
+	SessionID        string `json:"session_id"`
+	SourceKind       string `json:"source_kind"`
+	SourceID         string `json:"source_id"`
+	Kind             string `json:"kind"`
+	Status           string `json:"status"`
+	Text             string `json:"text"`
+	MetadataJson     string `json:"metadata_json"`
+	CreatedAt        string `json:"created_at"`
+	UpdatedAt        string `json:"updated_at"`
+}
+
 type Workspace struct {
 	WorkspaceID   string `json:"workspace_id"`
 	Name          string `json:"name"`

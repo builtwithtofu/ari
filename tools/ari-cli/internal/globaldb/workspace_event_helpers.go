@@ -11,6 +11,33 @@ const (
 	WorkspaceEventWorkerCompleted = "worker.completed"
 	WorkspaceEventWorkerFailed    = "worker.failed"
 	WorkspaceEventWorkerStopped   = "worker.stopped"
+
+	WorkspaceEventCommandStarted   = "command.started"
+	WorkspaceEventCommandCompleted = "command.completed"
+	WorkspaceEventCommandFailed    = "command.failed"
+	WorkspaceEventCommandStopped   = "command.stopped"
+	WorkspaceEventCommandUpdated   = "command.updated"
+
+	WorkspaceEventContextExcerptCreated = "context_excerpt.created"
+	WorkspaceEventMessageSent           = "message.sent"
+
+	WorkspaceEventSessionCompleted  = "session.completed"
+	WorkspaceEventSessionFailed     = "session.failed"
+	WorkspaceEventSessionStopped    = "session.stopped"
+	WorkspaceEventSessionIdle       = "session.idle"
+	WorkspaceEventSessionNeedsInput = "session.needs_input"
+
+	WorkspaceEventHarnessEventPrefix = "harness.event."
+	WorkspaceEventHarnessLifecycle   = WorkspaceEventHarnessEventPrefix + "lifecycle"
+	WorkspaceEventHarnessAgentText   = WorkspaceEventHarnessEventPrefix + "agent_text"
+	WorkspaceEventHarnessTool        = WorkspaceEventHarnessEventPrefix + "tool"
+	WorkspaceEventHarnessFileChange  = WorkspaceEventHarnessEventPrefix + "file_change"
+	WorkspaceEventHarnessApproval    = WorkspaceEventHarnessEventPrefix + "approval"
+	WorkspaceEventHarnessError       = WorkspaceEventHarnessEventPrefix + "error"
+	WorkspaceEventHarnessUsage       = WorkspaceEventHarnessEventPrefix + "usage"
+	WorkspaceEventHarnessDebug       = WorkspaceEventHarnessEventPrefix + "debug"
+
+	WorkspaceEventTimerFired = "timer.fired"
 )
 
 func IsFanoutWorkerWorkspaceEvent(eventType string) bool {

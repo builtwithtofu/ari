@@ -391,6 +391,54 @@ func (q *Queries) EnsureHarnessSessionConfig(ctx context.Context, arg EnsureHarn
 	return err
 }
 
+const getAgentMessage = `-- name: GetAgentMessage :one
+SELECT
+  agent_message_id,
+  workspace_id,
+  source_agent_id,
+  source_session_id,
+  target_agent_id,
+  target_session_id,
+  body,
+  status,
+  delivered_session_id
+FROM agent_messages
+WHERE agent_message_id = ?
+`
+
+type GetAgentMessageParams struct {
+	AgentMessageID string `json:"agent_message_id"`
+}
+
+type GetAgentMessageRow struct {
+	AgentMessageID     string `json:"agent_message_id"`
+	WorkspaceID        string `json:"workspace_id"`
+	SourceAgentID      string `json:"source_agent_id"`
+	SourceSessionID    string `json:"source_session_id"`
+	TargetAgentID      string `json:"target_agent_id"`
+	TargetSessionID    string `json:"target_session_id"`
+	Body               string `json:"body"`
+	Status             string `json:"status"`
+	DeliveredSessionID string `json:"delivered_session_id"`
+}
+
+func (q *Queries) GetAgentMessage(ctx context.Context, arg GetAgentMessageParams) (GetAgentMessageRow, error) {
+	row := q.db.QueryRowContext(ctx, getAgentMessage, arg.AgentMessageID)
+	var i GetAgentMessageRow
+	err := row.Scan(
+		&i.AgentMessageID,
+		&i.WorkspaceID,
+		&i.SourceAgentID,
+		&i.SourceSessionID,
+		&i.TargetAgentID,
+		&i.TargetSessionID,
+		&i.Body,
+		&i.Status,
+		&i.DeliveredSessionID,
+	)
+	return i, err
+}
+
 const getContextExcerpt = `-- name: GetContextExcerpt :one
 SELECT
   context_excerpt_id,
