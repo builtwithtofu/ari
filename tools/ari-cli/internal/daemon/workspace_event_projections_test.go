@@ -152,9 +152,9 @@ func TestFanoutMemberRebuildFromWorkspaceEventsMatchesMaterializedRows(t *testin
 	if err != nil {
 		t.Fatalf("ListFanoutMembers returned error: %v", err)
 	}
-	rebuilt, err := fanoutMembersFromWorkspaceEvents(ctx, store, "ws-1", "fg-rebuild")
+	rebuilt, err := globaldb.FanoutProjection{}.MembersFromWorkspaceEvents(ctx, store, "ws-1", "fg-rebuild")
 	if err != nil {
-		t.Fatalf("fanoutMembersFromWorkspaceEvents returned error: %v", err)
+		t.Fatalf("FanoutProjection.MembersFromWorkspaceEvents returned error: %v", err)
 	}
 	if len(rebuilt) != len(materialized) || len(rebuilt) != 2 {
 		t.Fatalf("rebuilt members = %#v, materialized = %#v, want replay to reproduce the projection", rebuilt, materialized)

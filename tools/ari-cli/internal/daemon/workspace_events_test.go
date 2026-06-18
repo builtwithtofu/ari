@@ -114,7 +114,7 @@ func TestWorkspaceEventSubscriptionReadsStickySessionCompletion(t *testing.T) {
 	if event.EventType != "session.completed" || event.SubjectType != "harness_session" || event.SubjectID != "planner-run" || event.ProducerType != "daemon" {
 		t.Fatalf("session completion event = %#v, want daemon-produced harness session completion", event)
 	}
-	payload := workspaceEventStringPayload(event.PayloadJSON)
+	payload := globaldb.WorkspaceEventStringPayload(event.PayloadJSON)
 	if payload["status"] != "completed" || payload["session_id"] != "planner-run" || payload["harness"] != "planner-harness" {
 		t.Fatalf("session completion payload = %#v, want completed planner-run payload", payload)
 	}
@@ -147,7 +147,7 @@ func TestEphemeralCallEmitsSessionLifecycleWorkspaceEvents(t *testing.T) {
 		if event.EventType != "session.completed" || event.SubjectType != "harness_session" || event.SubjectID != got.Run.SessionID {
 			t.Fatalf("ephemeral completion event = %#v, want session.completed for %q", event, got.Run.SessionID)
 		}
-		payload := workspaceEventStringPayload(event.PayloadJSON)
+		payload := globaldb.WorkspaceEventStringPayload(event.PayloadJSON)
 		if payload["status"] != "completed" || payload["session_id"] != got.Run.SessionID {
 			t.Fatalf("ephemeral completion payload = %#v, want completed worker session payload", payload)
 		}

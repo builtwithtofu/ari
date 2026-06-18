@@ -389,7 +389,7 @@ func agentSessionConfigMessages(ctx context.Context, store *globaldb.Store, work
 }
 
 func fanoutMemberActivity(ctx context.Context, store *globaldb.Store, workspaceID string) ([]FanoutMemberActivity, error) {
-	members, err := fanoutMemberProjectionForWorkspace(ctx, store, workspaceID)
+	members, err := store.ListFanoutMembersByWorkspace(ctx, workspaceID)
 	if err != nil {
 		return nil, err
 	}

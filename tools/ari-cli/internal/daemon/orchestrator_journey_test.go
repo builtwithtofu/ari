@@ -201,9 +201,9 @@ func TestOrchestratorJourneyFanoutPartialResultsAndCoherentProjections(t *testin
 	if err != nil {
 		t.Fatalf("ListFanoutMembers returned error: %v", err)
 	}
-	rebuilt, err := fanoutMembersFromWorkspaceEvents(ctx, store, "ws-1", "fg-journey-proof")
+	rebuilt, err := globaldb.FanoutProjection{}.MembersFromWorkspaceEvents(ctx, store, "ws-1", "fg-journey-proof")
 	if err != nil {
-		t.Fatalf("fanoutMembersFromWorkspaceEvents returned error: %v", err)
+		t.Fatalf("FanoutProjection.MembersFromWorkspaceEvents returned error: %v", err)
 	}
 	if len(rebuilt) != len(materialized) || len(rebuilt) != 3 {
 		t.Fatalf("rebuilt members = %#v, want replay to reproduce %#v", rebuilt, materialized)

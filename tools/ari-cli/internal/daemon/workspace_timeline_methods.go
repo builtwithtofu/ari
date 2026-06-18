@@ -136,7 +136,7 @@ func (p *eventTimelineProjection) projectEvent(ctx context.Context, event global
 		return p.projectAgentMessageEvent(ctx, event)
 	case event.EventType == "context_excerpt.created":
 		return p.appendContextExcerpt(ctx, event.SubjectID)
-	case isFanoutWorkerWorkspaceEvent(event.EventType):
+	case globaldb.IsFanoutWorkerWorkspaceEvent(event.EventType):
 		p.projectFanoutMemberEvent(event)
 	case strings.HasPrefix(event.EventType, workspaceEventHarnessEventPrefix):
 		p.appendItem(harnessRuntimeTimelineItemFromEvent(event))
@@ -158,7 +158,7 @@ func (p *eventTimelineProjection) appendItem(item TimelineItem) {
 }
 
 func operationTimelineItemFromEvent(event globaldb.WorkspaceEvent) TimelineItem {
-	payload := workspaceEventStringPayload(event.PayloadJSON)
+	payload := globaldb.WorkspaceEventStringPayload(event.PayloadJSON)
 	operationType := strings.TrimSpace(payload["operation_type"])
 	if operationType == "" {
 		operationType = strings.TrimPrefix(event.EventType, "operation.")
@@ -175,7 +175,7 @@ func operationTimelineItemFromEvent(event globaldb.WorkspaceEvent) TimelineItem 
 }
 
 func (p *eventTimelineProjection) commandTimelineItemFromEvent(ctx context.Context, event globaldb.WorkspaceEvent) TimelineItem {
-	payload := workspaceEventStringPayload(event.PayloadJSON)
+	payload := globaldb.WorkspaceEventStringPayload(event.PayloadJSON)
 	text := strings.TrimSpace(payload["command"])
 	if command, err := p.store.GetCommand(ctx, event.WorkspaceID, event.SubjectID); err == nil && command != nil {
 		text = commandLabel(command.Command, command.Args)
@@ -310,7 +310,7 @@ func mergeTimelineMetadata(previous, next map[string]any) map[string]any {
 }
 
 func fanoutTimelineItemFromEvent(event globaldb.WorkspaceEvent) TimelineItem {
-	payload := workspaceEventStringPayload(event.PayloadJSON)
+	payload := globaldb.WorkspaceEventStringPayload(event.PayloadJSON)
 	memberID := strings.TrimSpace(payload["fanout_member_id"])
 	if memberID == "" {
 		memberID = event.SubjectID
@@ -318,16 +318,16 @@ func fanoutTimelineItemFromEvent(event globaldb.WorkspaceEvent) TimelineItem {
 	metadata := map[string]any{"fanout_group_id": event.CorrelationID, "worker_session_id": event.SubjectID, "target_profile_id": payload["target_profile_id"]}
 	if causationID := strings.TrimSpace(event.CausationID); causationID != "" {
 		switch event.EventType {
-		case workspaceEventWorkerStarted:
+		case globaldb.WorkspaceEventWorkerStarted:
 			metadata["request_agent_message_id"] = causationID
-		case workspaceEventWorkerCompleted:
+		case globaldb.WorkspaceEventWorkerCompleted:
 			metadata["reply_agent_message_id"] = causationID
 		}
 	}
-	if finalResponseID := finalResponseIDFromWorkspaceEventRef(event.PayloadRefJSON); finalResponseID != "" {
+	if finalResponseID := globaldb.FinalResponseIDFromWorkspaceEventRef(event.PayloadRefJSON); finalResponseID != "" {
 		metadata["final_response_id"] = finalResponseID
 	}
-	return TimelineItem{ID: event.EventID, WorkspaceID: event.WorkspaceID, RunID: event.SubjectID, SessionID: event.SubjectID, SourceKind: "fanout_member", SourceID: memberID, Kind: "fanout_member", Status: workerEventStatus(event.EventType), CreatedAt: event.CreatedAt.Format(time.RFC3339Nano), Text: payload["target_profile_id"], Metadata: metadata}
+	return TimelineItem{ID: event.EventID, WorkspaceID: event.WorkspaceID, RunID: event.SubjectID, SessionID: event.SubjectID, SourceKind: "fanout_member", SourceID: memberID, Kind: "fanout_member", Status: globaldb.WorkerEventStatus(event.EventType), CreatedAt: event.CreatedAt.Format(time.RFC3339Nano), Text: payload["target_profile_id"], Metadata: metadata}
 }
 
 type harnessRuntimeTimelinePayload struct {
@@ -393,16 +393,16 @@ func harnessRuntimeTimelineItemFromEvent(event globaldb.WorkspaceEvent) Timeline
 }
 
 func harnessSessionTimelineItemFromEvent(event globaldb.WorkspaceEvent) TimelineItem {
-	payload := workspaceEventStringPayload(event.PayloadJSON)
+	payload := globaldb.WorkspaceEventStringPayload(event.PayloadJSON)
 	status := strings.TrimSpace(payload["status"])
 	if status == "" {
 		status = strings.TrimPrefix(event.EventType, "session.")
 	}
-	return TimelineItem{ID: event.EventID, WorkspaceID: event.WorkspaceID, RunID: event.SubjectID, SessionID: event.SubjectID, SourceKind: "harness_session", SourceID: event.SubjectID, Kind: "lifecycle", Status: status, CreatedAt: event.CreatedAt.Format(time.RFC3339Nano), Text: payload["harness"], Metadata: map[string]any{"event_type": event.EventType, "final_response_id": finalResponseIDFromWorkspaceEventRef(event.PayloadRefJSON)}}
+	return TimelineItem{ID: event.EventID, WorkspaceID: event.WorkspaceID, RunID: event.SubjectID, SessionID: event.SubjectID, SourceKind: "harness_session", SourceID: event.SubjectID, Kind: "lifecycle", Status: status, CreatedAt: event.CreatedAt.Format(time.RFC3339Nano), Text: payload["harness"], Metadata: map[string]any{"event_type": event.EventType, "final_response_id": globaldb.FinalResponseIDFromWorkspaceEventRef(event.PayloadRefJSON)}}
 }
 
 func genericTimelineItemFromEvent(event globaldb.WorkspaceEvent) TimelineItem {
-	payload := workspaceEventStringPayload(event.PayloadJSON)
+	payload := globaldb.WorkspaceEventStringPayload(event.PayloadJSON)
 	status := strings.TrimSpace(payload["status"])
 	if status == "" {
 		status = "recorded"

@@ -119,7 +119,7 @@ func (s *Store) CreateEventSubscription(ctx context.Context, subscription EventS
 		formatted := subscription.TimeoutAt.UTC().Format(time.RFC3339Nano)
 		timeoutAt = &formatted
 	}
-	if err := s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
+	if err := s.withImmediateQueries(ctx, func(txCtx context.Context, queries *dbsqlc.Queries) error {
 		if err := queries.CreateEventSubscription(ctx, dbsqlc.CreateEventSubscriptionParams{SubscriptionID: subscription.SubscriptionID, WorkspaceID: subscription.WorkspaceID, OwnerSessionID: subscription.OwnerSessionID, Name: subscription.Name, FilterJson: subscription.FilterJSON, DeliveryTargetType: subscription.DeliveryTargetType, DeliveryTargetID: subscription.DeliveryTargetID, DeliveryPolicyJson: subscription.DeliveryPolicyJSON, CursorSequence: subscription.CursorSequence, AckSequence: subscription.AckSequence, Status: subscription.Status, CompletionConditionJson: subscription.CompletionConditionJSON, TimeoutAt: timeoutAt, CreatedAt: subscription.CreatedAt.UTC().Format(time.RFC3339Nano), UpdatedAt: subscription.UpdatedAt.UTC().Format(time.RFC3339Nano)}); err != nil {
 			return fmt.Errorf("create event subscription %q: %w", subscription.SubscriptionID, err)
 		}
@@ -156,7 +156,7 @@ func (s *Store) CancelEventSubscription(ctx context.Context, subscriptionID stri
 	}
 	now := time.Now().UTC()
 	formatted := now.Format(time.RFC3339Nano)
-	if err := s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
+	if err := s.withImmediateQueries(ctx, func(txCtx context.Context, queries *dbsqlc.Queries) error {
 		rows, err := queries.CancelEventSubscription(ctx, dbsqlc.CancelEventSubscriptionParams{UpdatedAt: formatted, SubscriptionID: subscriptionID})
 		if err != nil {
 			return fmt.Errorf("cancel event subscription %q: %w", subscriptionID, err)

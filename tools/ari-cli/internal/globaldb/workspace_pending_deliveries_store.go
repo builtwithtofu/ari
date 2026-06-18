@@ -178,7 +178,7 @@ func (s *Store) RecordPendingDeliveryAttempt(ctx context.Context, deliveryID str
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	var delivery PendingDelivery
-	if err := s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
+	if err := s.withImmediateQueries(ctx, func(txCtx context.Context, queries *dbsqlc.Queries) error {
 		rows, err := queries.RecordPendingDeliveryAttempt(ctx, dbsqlc.RecordPendingDeliveryAttemptParams{NextAttemptAt: formatOptionalTime(nextAttemptAt), LastError: strings.TrimSpace(lastError), UpdatedAt: now, DeliveryID: deliveryID})
 		if err != nil {
 			return fmt.Errorf("record pending delivery attempt %q: %w", deliveryID, err)
@@ -208,7 +208,7 @@ func (s *Store) ClaimDuePendingDeliveryAttempt(ctx context.Context, deliveryID s
 	}
 	formatted := now.UTC().Format(time.RFC3339Nano)
 	var delivery PendingDelivery
-	if err := s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
+	if err := s.withImmediateQueries(ctx, func(txCtx context.Context, queries *dbsqlc.Queries) error {
 		rows, err := queries.ClaimDuePendingDeliveryAttempt(ctx, dbsqlc.ClaimDuePendingDeliveryAttemptParams{UpdatedAt: formatted, DeliveryID: deliveryID, NextAttemptAt: &formatted, DeadlineAt: &formatted})
 		if err != nil {
 			return fmt.Errorf("claim pending delivery attempt %q: %w", deliveryID, err)
@@ -236,7 +236,7 @@ func (s *Store) SchedulePendingDeliveryRetry(ctx context.Context, deliveryID str
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	formattedNextAttempt := nextAttemptAt.UTC().Format(time.RFC3339Nano)
 	var delivery PendingDelivery
-	if err := s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
+	if err := s.withImmediateQueries(ctx, func(txCtx context.Context, queries *dbsqlc.Queries) error {
 		rows, err := queries.SchedulePendingDeliveryRetry(ctx, dbsqlc.SchedulePendingDeliveryRetryParams{NextAttemptAt: &formattedNextAttempt, LastError: strings.TrimSpace(lastError), UpdatedAt: now, DeliveryID: deliveryID})
 		if err != nil {
 			return fmt.Errorf("schedule pending delivery retry %q: %w", deliveryID, err)
@@ -262,7 +262,7 @@ func (s *Store) CompletePendingDelivery(ctx context.Context, deliveryID string) 
 		return PendingDelivery{}, fmt.Errorf("%w: delivery id is required", ErrInvalidInput)
 	}
 	var delivery PendingDelivery
-	if err := s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
+	if err := s.withImmediateQueries(ctx, func(txCtx context.Context, queries *dbsqlc.Queries) error {
 		now := time.Now().UTC()
 		formatted := now.Format(time.RFC3339Nano)
 		rows, err := queries.CompletePendingDelivery(ctx, dbsqlc.CompletePendingDeliveryParams{UpdatedAt: formatted, TerminalAt: &formatted, DeliveryID: deliveryID})
@@ -334,7 +334,7 @@ func (s *Store) FailPendingDelivery(ctx context.Context, deliveryID, lastError s
 	now := time.Now().UTC()
 	formatted := now.Format(time.RFC3339Nano)
 	var delivery PendingDelivery
-	if err := s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
+	if err := s.withImmediateQueries(ctx, func(txCtx context.Context, queries *dbsqlc.Queries) error {
 		rows, err := queries.FailPendingDelivery(ctx, dbsqlc.FailPendingDeliveryParams{LastError: strings.TrimSpace(lastError), UpdatedAt: formatted, TerminalAt: &formatted, DeliveryID: deliveryID})
 		if err != nil {
 			return fmt.Errorf("fail pending delivery %q: %w", deliveryID, err)

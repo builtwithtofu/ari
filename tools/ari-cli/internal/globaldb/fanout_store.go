@@ -64,16 +64,6 @@ func (s *Store) GetFanoutGroup(ctx context.Context, groupID string) (FanoutGroup
 	return fanoutGroupFromSQLC(row), nil
 }
 
-// ProjectFanoutMember materializes a fanout member row from workspace event
-// history. Event facts win for status; identity and evidence links are only
-// filled in, never blanked, so replayed/late events cannot erase linkage.
-func (s *Store) ProjectFanoutMember(ctx context.Context, member FanoutMember) error {
-	if err := validateFanoutMemberProjection(member); err != nil {
-		return err
-	}
-	return upsertFanoutMemberWithQueries(ctx, s.sqlcQueries(), member)
-}
-
 func validateFanoutMemberProjection(member FanoutMember) error {
 	if strings.TrimSpace(member.FanoutMemberID) == "" || strings.TrimSpace(member.FanoutGroupID) == "" || strings.TrimSpace(member.WorkspaceID) == "" || strings.TrimSpace(member.WorkerSessionID) == "" {
 		return ErrInvalidInput

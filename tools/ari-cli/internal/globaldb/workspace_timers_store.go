@@ -120,7 +120,7 @@ func (s *Store) FireWorkspaceTimer(ctx context.Context, timerID string) (Workspa
 		return WorkspaceTimer{}, fmt.Errorf("%w: timer id is required", ErrInvalidInput)
 	}
 	var fired WorkspaceTimer
-	if err := s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
+	if err := s.withImmediateQueries(ctx, func(txCtx context.Context, queries *dbsqlc.Queries) error {
 		row, err := queries.GetWorkspaceTimer(ctx, dbsqlc.GetWorkspaceTimerParams{TimerID: timerID})
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -136,7 +136,7 @@ func (s *Store) FireWorkspaceTimer(ctx context.Context, timerID string) (Workspa
 		if err != nil {
 			return err
 		}
-		return appendCoordinatedWorkspaceEventWithQueries(ctx, queries, &event, func(ctx context.Context, queries *dbsqlc.Queries, event WorkspaceEvent) error {
+		return appendCoordinatedWorkspaceEventWithQueries(ctx, queries, &event, transactionalProjection("workspace_timer.mark_fired", func(ctx context.Context, queries *dbsqlc.Queries, event WorkspaceEvent) error {
 			now := time.Now().UTC()
 			rows, err := queries.MarkWorkspaceTimerFired(ctx, dbsqlc.MarkWorkspaceTimerFiredParams{FiredEventID: event.EventID, UpdatedAt: now.Format(time.RFC3339Nano), TimerID: timer.TimerID})
 			if err != nil {
@@ -150,7 +150,7 @@ func (s *Store) FireWorkspaceTimer(ctx context.Context, timerID string) (Workspa
 			timer.UpdatedAt = now
 			fired = timer
 			return nil
-		})
+		}))
 	}); err != nil {
 		return WorkspaceTimer{}, err
 	}

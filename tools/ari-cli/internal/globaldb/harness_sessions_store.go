@@ -590,7 +590,7 @@ func (s *Store) createContextExcerptFromMessages(ctx context.Context, spec conte
 	_, _ = fmt.Fprintf(h, "workspace:%s\x00source_run:%s\x00source_agent:%s\x00target_agent:%s\x00selector:%s\x00selector_json:%s\x00visibility:visible_context\x00appended:%s\x00", run.WorkspaceID, spec.SourceSessionID, run.AgentID, spec.TargetAgentID, spec.SelectorType, spec.SelectorJSON, spec.AppendedMessage)
 	contentHash := "sha256:" + hex.EncodeToString(h.Sum(nil))
 	excerpt := ContextExcerpt{ContextExcerptID: spec.ContextExcerptID, WorkspaceID: run.WorkspaceID, SourceSessionID: spec.SourceSessionID, SourceAgentID: run.AgentID, TargetAgentID: spec.TargetAgentID, SelectorType: spec.SelectorType, SelectorJSON: spec.SelectorJSON, Visibility: "visible_context", AppendedMessage: spec.AppendedMessage, ContentHash: contentHash, Items: items}
-	if err := s.withImmediateQueries(ctx, func(qtx *dbsqlc.Queries) error {
+	if err := s.withImmediateQueries(ctx, func(txCtx context.Context, qtx *dbsqlc.Queries) error {
 		if err := qtx.CreateContextExcerpt(ctx, dbsqlc.CreateContextExcerptParams{ContextExcerptID: spec.ContextExcerptID, WorkspaceID: run.WorkspaceID, SourceSessionID: spec.SourceSessionID, SourceAgentID: run.AgentID, TargetAgentID: spec.TargetAgentID, SelectorType: spec.SelectorType, SelectorJson: spec.SelectorJSON, AppendedMessage: spec.AppendedMessage, ContentHash: contentHash}); err != nil {
 			return err
 		}
@@ -604,7 +604,7 @@ func (s *Store) createContextExcerptFromMessages(ctx context.Context, spec conte
 		if err != nil {
 			return err
 		}
-		return appendCoordinatedWorkspaceEventWithQueries(ctx, qtx, &event, s.EventCoordinator().defaultProjections()...)
+		return appendCoordinatedWorkspaceEventWithQueries(ctx, qtx, &event)
 	}); err != nil {
 		return ContextExcerpt{}, err
 	}
@@ -630,7 +630,7 @@ func (s *Store) SendAgentMessage(ctx context.Context, params AgentMessageSendPar
 	// transaction: the workspace event sequence is a MAX+1 read that must not
 	// race concurrent appenders.
 	var message AgentMessage
-	if err := s.withImmediateQueries(ctx, func(qtx *dbsqlc.Queries) error {
+	if err := s.withImmediateQueries(ctx, func(txCtx context.Context, qtx *dbsqlc.Queries) error {
 		sent, err := sendAgentMessageWithQueries(ctx, qtx, params, targetSessionID, targetAgentID)
 		if err != nil {
 			return err

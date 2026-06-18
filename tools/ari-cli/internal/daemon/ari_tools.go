@@ -771,7 +771,7 @@ func ariFanoutMembersFromResponse(fanout AgentMessageSendResponse) []map[string]
 }
 
 func ariFanoutMembersForGroup(ctx context.Context, store *globaldb.Store, group globaldb.FanoutGroup) ([]map[string]any, error) {
-	stored, err := fanoutMemberProjectionForGroup(ctx, store, group)
+	stored, err := store.ListFanoutMembers(ctx, group.FanoutGroupID)
 	if err != nil {
 		return nil, err
 	}

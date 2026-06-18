@@ -55,14 +55,14 @@ func (s *Store) AppendOperationRecordWithWorkspaceEvent(ctx context.Context, rec
 		record.CreatedAt = time.Now().UTC()
 	}
 
-	if err := s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
+	if err := s.withImmediateQueries(ctx, func(txCtx context.Context, queries *dbsqlc.Queries) error {
 		if err := validateOperationRecordReferencesWithQueries(ctx, queries, record); err != nil {
 			return err
 		}
 		if err := insertOperationRecordWithQueries(ctx, queries, record); err != nil {
 			return err
 		}
-		return appendCoordinatedWorkspaceEventWithQueries(ctx, queries, &preparedEvent, s.EventCoordinator().defaultProjections()...)
+		return appendCoordinatedWorkspaceEventWithQueries(ctx, queries, &preparedEvent)
 	}); err != nil {
 		return OperationRecord{}, err
 	}

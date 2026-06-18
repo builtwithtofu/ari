@@ -124,7 +124,7 @@ func TestWorkspaceDeliveryWorkerAttemptsDueDeliveries(t *testing.T) {
 				if deliveryEvent.SubjectType != "pending_delivery" || deliveryEvent.SubjectID != delivery.DeliveryID || deliveryEvent.ProducerType != "daemon" {
 					t.Fatalf("delivery event = %#v, want pending delivery subject and daemon producer", deliveryEvent)
 				}
-				payload := workspaceEventStringPayload(deliveryEvent.PayloadJSON)
+				payload := globaldb.WorkspaceEventStringPayload(deliveryEvent.PayloadJSON)
 				if payload["delivery_id"] != delivery.DeliveryID || payload["subscription_id"] != delivery.SubscriptionID || payload["status"] != tc.wantDeliveryEventStatuses[i] {
 					t.Fatalf("delivery event payload = %#v, want delivery/subscription with status %q", payload, tc.wantDeliveryEventStatuses[i])
 				}

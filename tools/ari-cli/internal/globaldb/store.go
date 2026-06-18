@@ -34,16 +34,17 @@ const (
 )
 
 type Store struct {
-	db             *sql.DB
-	sqlc           *dbsqlc.Queries
-	agentMessageMu sync.Mutex
+	db                 *sql.DB
+	sqlc               *dbsqlc.Queries
+	agentMessageMu     sync.Mutex
+	projectionRegistry *ProjectionRegistry
 }
 
 func NewSQLStore(db *sql.DB) (*Store, error) {
 	if db == nil {
 		return nil, fmt.Errorf("%w: db is required", ErrInvalidInput)
 	}
-	return &Store{db: db, sqlc: dbsqlc.New(db)}, nil
+	return &Store{db: db, sqlc: dbsqlc.New(db), projectionRegistry: DefaultProjectionRegistry()}, nil
 }
 
 func (s *Store) SetMeta(ctx context.Context, key, value string) error {
@@ -111,7 +112,7 @@ func stringValue(value *string) string {
 	return *value
 }
 
-func (s *Store) withImmediateQueries(ctx context.Context, fn func(*dbsqlc.Queries) error) error {
+func (s *Store) withImmediateQueries(ctx context.Context, fn func(context.Context, *dbsqlc.Queries) error) error {
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
 		return err
@@ -126,7 +127,8 @@ func (s *Store) withImmediateQueries(ctx context.Context, fn func(*dbsqlc.Querie
 			_, _ = conn.ExecContext(ctx, "ROLLBACK")
 		}
 	}()
-	if err := fn(dbsqlc.New(conn)); err != nil {
+	txCtx := context.WithValue(ctx, projectionContextKey{}, s.workspaceProjectionRegistry())
+	if err := fn(txCtx, dbsqlc.New(conn)); err != nil {
 		return err
 	}
 	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
@@ -134,6 +136,13 @@ func (s *Store) withImmediateQueries(ctx context.Context, fn func(*dbsqlc.Querie
 	}
 	committed = true
 	return nil
+}
+
+func (s *Store) workspaceProjectionRegistry() *ProjectionRegistry {
+	if s == nil || s.projectionRegistry == nil {
+		return DefaultProjectionRegistry()
+	}
+	return s.projectionRegistry
 }
 
 func optionalInt(value *int) *int64 {

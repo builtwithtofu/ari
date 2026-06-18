@@ -10,10 +10,10 @@ import (
 )
 
 const (
-	workspaceEventWorkerStarted      = "worker.started"
-	workspaceEventWorkerCompleted    = "worker.completed"
-	workspaceEventWorkerFailed       = "worker.failed"
-	workspaceEventWorkerStopped      = "worker.stopped"
+	workspaceEventWorkerStarted      = globaldb.WorkspaceEventWorkerStarted
+	workspaceEventWorkerCompleted    = globaldb.WorkspaceEventWorkerCompleted
+	workspaceEventWorkerFailed       = globaldb.WorkspaceEventWorkerFailed
+	workspaceEventWorkerStopped      = globaldb.WorkspaceEventWorkerStopped
 	workspaceEventSessionCompleted   = "session.completed"
 	workspaceEventSessionFailed      = "session.failed"
 	workspaceEventSessionStopped     = "session.stopped"
@@ -210,7 +210,7 @@ func appendFanoutWorkerWorkspaceEvent(ctx context.Context, store *globaldb.Store
 	if store == nil {
 		return nil
 	}
-	status := workerEventStatus(eventType)
+	status := globaldb.WorkerEventStatus(eventType)
 	payload := map[string]string{
 		"status":                   status,
 		"fanout_group_id":          member.FanoutGroupID,
@@ -242,22 +242,7 @@ func appendFanoutWorkerWorkspaceEvent(ctx context.Context, store *globaldb.Store
 }
 
 func finalResponseIDFromWorkspaceEvent(event globaldb.WorkspaceEvent) string {
-	return finalResponseIDFromWorkspaceEventRef(event.PayloadRefJSON)
-}
-
-func workerEventStatus(eventType string) string {
-	switch eventType {
-	case workspaceEventWorkerStarted:
-		return "running"
-	case workspaceEventWorkerCompleted:
-		return "completed"
-	case workspaceEventWorkerFailed:
-		return "failed"
-	case workspaceEventWorkerStopped:
-		return "stopped"
-	default:
-		return strings.TrimSpace(eventType)
-	}
+	return globaldb.FinalResponseIDFromWorkspaceEventRef(event.PayloadRefJSON)
 }
 
 func workspaceEventTypeForFanoutWorkerStatus(status string) string {
