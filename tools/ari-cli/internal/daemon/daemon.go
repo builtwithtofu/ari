@@ -19,37 +19,38 @@ import (
 )
 
 type Daemon struct {
-	mu              sync.RWMutex
-	running         bool
-	startedAt       time.Time
-	socketPath      string
-	dbPath          string
-	configPath      string
-	configSource    string
-	pidPath         string
-	signalCh        <-chan os.Signal
-	version         string
-	pid             int
-	store           *globaldb.Store
-	db              *sql.DB
-	cancel          context.CancelFunc
-	stopCh          chan struct{}
-	transport       *rpc.UnixSocketTransport
-	commandMu       sync.RWMutex
-	commands        map[string]*process.Process
-	commandLogs     map[string]string
-	commandLogOrder []string
-	commandWG       sync.WaitGroup
-	harnessCtx      context.Context
-	harnessWG       sync.WaitGroup
-	activeHarnessMu sync.Mutex
-	activeHarnesses map[string]*activeHarnessRun
-	executorMu      sync.RWMutex
-	executorRuns    map[string]HarnessSession
-	executorItems   map[string][]TimelineItem
-	harnessRegistry *HarnessRegistry
-	agentProfiles   map[string]Profile
-	secretBackend   globaldb.SecretBackend
+	mu                                        sync.RWMutex
+	running                                   bool
+	startedAt                                 time.Time
+	socketPath                                string
+	dbPath                                    string
+	configPath                                string
+	configSource                              string
+	pidPath                                   string
+	signalCh                                  <-chan os.Signal
+	version                                   string
+	pid                                       int
+	store                                     *globaldb.Store
+	db                                        *sql.DB
+	cancel                                    context.CancelFunc
+	stopCh                                    chan struct{}
+	transport                                 *rpc.UnixSocketTransport
+	startWorkspaceOrchestrationRuntimeForTest func(*globaldb.Store)
+	commandMu                                 sync.RWMutex
+	commands                                  map[string]*process.Process
+	commandLogs                               map[string]string
+	commandLogOrder                           []string
+	commandWG                                 sync.WaitGroup
+	harnessCtx                                context.Context
+	harnessWG                                 sync.WaitGroup
+	activeHarnessMu                           sync.Mutex
+	activeHarnesses                           map[string]*activeHarnessRun
+	executorMu                                sync.RWMutex
+	executorRuns                              map[string]HarnessSession
+	executorItems                             map[string][]TimelineItem
+	harnessRegistry                           *HarnessRegistry
+	agentProfiles                             map[string]Profile
+	secretBackend                             globaldb.SecretBackend
 }
 
 var bootstrapDatabase = globaldb.Bootstrap
@@ -154,6 +155,12 @@ func (d *Daemon) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("open daemon database: %w", err)
 	}
+	dbConn.SetMaxOpenConns(1)
+	dbConn.SetMaxIdleConns(1)
+	if _, err := dbConn.ExecContext(ctx, "PRAGMA busy_timeout = 5000"); err != nil {
+		_ = dbConn.Close()
+		return fmt.Errorf("configure daemon database busy timeout: %w", err)
+	}
 
 	store, err := globaldb.NewSQLStore(dbConn)
 	if err != nil {
@@ -205,8 +212,13 @@ func (d *Daemon) Start(ctx context.Context) error {
 			cancel()
 		}
 	}()
-	d.startWorkspaceDeliveryWorker(store)
-	d.startWorkspaceTimerWorker(store)
+
+	boundTransport, err := transport.Bind(runCtx)
+	if err != nil {
+		cancel()
+		return err
+	}
+	d.startWorkspaceOrchestrationRuntime(store)
 
 	defer func() {
 		startupSucceeded = true
@@ -230,7 +242,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 		d.mu.Unlock()
 	}()
 
-	return transport.Run(runCtx)
+	return transport.Serve(runCtx, boundTransport)
 }
 
 func (d *Daemon) Stop() {

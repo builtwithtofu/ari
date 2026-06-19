@@ -41,23 +41,6 @@ type InboxCounts struct {
 	ReadCount   int64
 }
 
-func (s *Store) ProjectInboxItem(ctx context.Context, item InboxItem) (InboxItem, error) {
-	item = normalizeInboxItem(item)
-	if err := validateInboxItem(item); err != nil {
-		return InboxItem{}, err
-	}
-	if item.CreatedAt.IsZero() {
-		item.CreatedAt = time.Now().UTC()
-	}
-	if item.UpdatedAt.IsZero() {
-		item.UpdatedAt = item.CreatedAt
-	}
-	if err := createInboxItemWithQueries(ctx, s.sqlcQueries(), item); err != nil {
-		return InboxItem{}, err
-	}
-	return s.GetInboxItem(ctx, item.InboxItemID)
-}
-
 func createInboxItemWithQueries(ctx context.Context, queries *dbsqlc.Queries, item InboxItem) error {
 	if err := queries.CreateInboxItem(ctx, dbsqlc.CreateInboxItemParams{InboxItemID: item.InboxItemID, WorkspaceID: item.WorkspaceID, SourceSessionID: item.SourceSessionID, WorkspaceEventID: item.WorkspaceEventID, EventType: item.EventType, FanoutGroupID: item.FanoutGroupID, FanoutMemberID: item.FanoutMemberID, WorkerSessionID: item.WorkerSessionID, FinalResponseID: item.FinalResponseID, Kind: item.Kind, Status: item.Status, AttentionRequired: boolInt64(item.AttentionRequired), Summary: item.Summary, CreatedAt: item.CreatedAt.UTC().Format(time.RFC3339Nano), UpdatedAt: item.UpdatedAt.UTC().Format(time.RFC3339Nano)}); err != nil {
 		return fmt.Errorf("project inbox item %q: %w", item.InboxItemID, err)
@@ -130,7 +113,7 @@ func (s *Store) MarkInboxItemsRead(ctx context.Context, workspaceID, sourceSessi
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	var marked int64
-	if err := s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
+	if err := s.withImmediateQueries(ctx, func(ctx context.Context, queries *dbsqlc.Queries) error {
 		for _, inboxItemID := range trimmedIDs {
 			rows, err := queries.MarkInboxItemRead(ctx, dbsqlc.MarkInboxItemReadParams{UpdatedAt: now, WorkspaceID: workspaceID, SourceSessionID: sourceSessionID, InboxItemID: inboxItemID})
 			if err != nil {

@@ -50,6 +50,34 @@ WHERE pd.status = 'pending'
 ORDER BY pd.next_attempt_at ASC, pd.created_at ASC, pd.delivery_id ASC
 LIMIT ?;
 
+-- name: NextPendingDeliveryAttemptAt :one
+SELECT pd.next_attempt_at
+FROM pending_deliveries pd
+JOIN event_subscriptions es ON es.subscription_id = pd.subscription_id
+WHERE pd.status = 'pending'
+  AND es.status = 'active'
+  AND pd.next_attempt_at IS NOT NULL
+  AND (pd.deadline_at IS NULL OR pd.deadline_at > ?)
+  AND (es.timeout_at IS NULL OR es.timeout_at > ?)
+ORDER BY pd.next_attempt_at ASC, pd.created_at ASC, pd.delivery_id ASC
+LIMIT 1;
+
+-- name: NextPendingDeliveryDeadlineAt :one
+SELECT deadline_at
+FROM pending_deliveries
+WHERE status = 'pending'
+  AND deadline_at IS NOT NULL
+ORDER BY deadline_at ASC, created_at ASC, delivery_id ASC
+LIMIT 1;
+
+-- name: OldestAttemptedPendingDeliveryUpdatedAt :one
+SELECT updated_at
+FROM pending_deliveries
+WHERE status = 'attempted'
+  AND terminal_at IS NULL
+ORDER BY updated_at ASC, created_at ASC, delivery_id ASC
+LIMIT 1;
+
 -- name: ListExpiredPendingDeliveries :many
 SELECT delivery_id, workspace_id, subscription_id, target_type, target_id, delivery_policy_json, event_ids_json, status, attempts, next_attempt_at, deadline_at, last_error, created_at, updated_at, terminal_at
 FROM pending_deliveries

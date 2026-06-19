@@ -10,21 +10,6 @@ import (
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
 )
 
-type WorkspaceEventAppendRequest struct {
-	EventID           string `json:"event_id,omitempty"`
-	WorkspaceID       string `json:"workspace_id"`
-	EventType         string `json:"event_type"`
-	SubjectType       string `json:"subject_type"`
-	SubjectID         string `json:"subject_id"`
-	ProducerType      string `json:"producer_type,omitempty"`
-	ProducerID        string `json:"producer_id,omitempty"`
-	CorrelationID     string `json:"correlation_id,omitempty"`
-	CausationID       string `json:"causation_id,omitempty"`
-	PayloadJSON       string `json:"payload_json,omitempty"`
-	PayloadRefJSON    string `json:"payload_ref_json,omitempty"`
-	AttentionRequired bool   `json:"attention_required,omitempty"`
-}
-
 type WorkspaceEventsAfterRequest struct {
 	WorkspaceID   string `json:"workspace_id"`
 	AfterSequence int64  `json:"after_sequence,omitempty"`
@@ -109,33 +94,6 @@ type WorkspaceEventSubscriptionResponse struct {
 }
 
 func (d *Daemon) registerWorkspaceEventMethods(registry *rpc.MethodRegistry, store *globaldb.Store) error {
-	if err := rpc.RegisterMethod(registry, rpc.Method[WorkspaceEventAppendRequest, WorkspaceEventResponse]{
-		Name:        "workspace.events.append",
-		Description: "Append a durable workspace event",
-		Handler: func(ctx context.Context, req WorkspaceEventAppendRequest) (WorkspaceEventResponse, error) {
-			event, err := store.AppendWorkspaceEvent(ctx, globaldb.AppendWorkspaceEventParams{
-				EventID:           req.EventID,
-				WorkspaceID:       req.WorkspaceID,
-				EventType:         req.EventType,
-				SubjectType:       req.SubjectType,
-				SubjectID:         req.SubjectID,
-				ProducerType:      req.ProducerType,
-				ProducerID:        req.ProducerID,
-				CorrelationID:     req.CorrelationID,
-				CausationID:       req.CausationID,
-				PayloadJSON:       req.PayloadJSON,
-				PayloadRefJSON:    req.PayloadRefJSON,
-				AttentionRequired: req.AttentionRequired,
-			})
-			if err != nil {
-				return WorkspaceEventResponse{}, workspaceEventRPCError(err)
-			}
-			return workspaceEventResponse(event), nil
-		},
-	}); err != nil {
-		return fmt.Errorf("register workspace.events.append: %w", err)
-	}
-
 	if err := rpc.RegisterMethod(registry, rpc.Method[WorkspaceEventsAfterRequest, WorkspaceEventsResponse]{
 		Name:        "workspace.events.after",
 		Description: "List workspace events after a workspace sequence cursor",
@@ -229,63 +187,16 @@ func workspaceEventsNext(ctx context.Context, store *globaldb.Store, req Workspa
 	if req.MinEvents < 0 || req.TimeoutMS < 0 {
 		return WorkspaceEventsResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "invalid_wait_request"})
 	}
-	limit := req.Limit
-	if req.MinEvents > limit {
-		limit = req.MinEvents
+	result, err := store.WaitEventSubscription(ctx, globaldb.EventSubscriptionWaitRequest{SubscriptionID: req.SubscriptionID, Limit: req.Limit, MinEvents: req.MinEvents, Timeout: time.Duration(req.TimeoutMS) * time.Millisecond})
+	if err != nil {
+		return WorkspaceEventsResponse{}, workspaceEventRPCError(err)
 	}
-	read := func() (WorkspaceEventsResponse, error) {
-		events, err := store.ListEventSubscriptionEvents(ctx, req.SubscriptionID, limit)
-		if err != nil {
-			return WorkspaceEventsResponse{}, workspaceEventRPCError(err)
-		}
-		response := WorkspaceEventsResponse{Events: workspaceEventResponses(events)}
-		if req.MinEvents > 0 {
-			response.WaitStatus = workspaceEventsWaitStatus(len(events), req.MinEvents, false)
-		}
-		return response, nil
+	response := WorkspaceEventsResponse{Events: workspaceEventResponses(result.Events)}
+	if result.Completion.Configured {
+		response.WaitStatus = result.Completion.Status
+		response.WaitTimedOut = result.Completion.TimedOut
 	}
-	if req.MinEvents <= 0 || req.TimeoutMS <= 0 {
-		return read()
-	}
-	deadline := time.Now().Add(time.Duration(req.TimeoutMS) * time.Millisecond)
-	for {
-		response, err := read()
-		if err != nil {
-			return WorkspaceEventsResponse{}, err
-		}
-		if len(response.Events) >= req.MinEvents {
-			response.WaitStatus = "ready"
-			return response, nil
-		}
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			response.WaitStatus = workspaceEventsWaitStatus(len(response.Events), req.MinEvents, true)
-			response.WaitTimedOut = true
-			return response, nil
-		}
-		pollAfter := 10 * time.Millisecond
-		if remaining < pollAfter {
-			pollAfter = remaining
-		}
-		select {
-		case <-ctx.Done():
-			return WorkspaceEventsResponse{}, ctx.Err()
-		case <-time.After(pollAfter):
-		}
-	}
-}
-
-func workspaceEventsWaitStatus(count, minEvents int, timedOut bool) string {
-	if minEvents <= 0 || count >= minEvents {
-		return "ready"
-	}
-	if count > 0 {
-		return "partial"
-	}
-	if timedOut {
-		return "timeout"
-	}
-	return "partial"
+	return response, nil
 }
 
 func workspaceEventRPCError(err error) error {

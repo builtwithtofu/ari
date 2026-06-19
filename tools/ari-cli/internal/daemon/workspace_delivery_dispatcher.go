@@ -26,11 +26,6 @@ type activeHarnessDeliveryTarget struct {
 	executor          Executor
 }
 
-type workspaceDeliveryPolicy struct {
-	Channel     HarnessDeliveryCapability
-	MaxAttempts int64
-}
-
 func newHarnessWorkspaceDeliveryDispatcher(d *Daemon, stores ...*globaldb.Store) *harnessWorkspaceDeliveryDispatcher {
 	var store *globaldb.Store
 	if len(stores) > 0 {
@@ -175,47 +170,6 @@ func (d *Daemon) activeHarnessDeliveryTarget(sessionID string) (activeHarnessDel
 		providerSessionID = strings.TrimSpace(run.sessionID)
 	}
 	return activeHarnessDeliveryTarget{workspaceID: strings.TrimSpace(run.workspaceID), sessionID: strings.TrimSpace(run.sessionID), providerSessionID: providerSessionID, executor: run.executor}, true
-}
-
-func workspaceDeliveryCapabilityFromPolicy(raw string) (HarnessDeliveryCapability, error) {
-	policy, err := parseWorkspaceDeliveryPolicy(raw)
-	if err != nil {
-		return "", err
-	}
-	return policy.Channel, nil
-}
-
-func parseWorkspaceDeliveryPolicy(raw string) (workspaceDeliveryPolicy, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		raw = "{}"
-	}
-	var policy struct {
-		Channel     string `json:"channel"`
-		MaxAttempts int64  `json:"max_attempts"`
-	}
-	if err := json.Unmarshal([]byte(raw), &policy); err != nil {
-		return workspaceDeliveryPolicy{}, fmt.Errorf("delivery policy json is invalid: %w", err)
-	}
-	if policy.MaxAttempts < 0 {
-		return workspaceDeliveryPolicy{}, fmt.Errorf("delivery max_attempts must not be negative")
-	}
-	channel := strings.TrimSpace(policy.Channel)
-	if channel == "" {
-		channel = string(HarnessDeliveryVisiblePromptTurn)
-	}
-	switch HarnessDeliveryCapability(channel) {
-	case HarnessDeliveryVisiblePromptTurn,
-		HarnessDeliveryQueuedPromptTurn,
-		HarnessDeliveryNativeResume,
-		HarnessDeliveryHumanNotification,
-		HarnessDeliveryMCPChannel:
-		return workspaceDeliveryPolicy{Channel: HarnessDeliveryCapability(channel), MaxAttempts: policy.MaxAttempts}, nil
-	case HarnessDeliveryUnsupported:
-		return workspaceDeliveryPolicy{}, fmt.Errorf("delivery channel %q is unsupported", channel)
-	default:
-		return workspaceDeliveryPolicy{}, fmt.Errorf("delivery channel %q is not recognized", channel)
-	}
 }
 
 func activeHarnessDeclaresDeliveryCapability(executor Executor, capability HarnessDeliveryCapability) bool {

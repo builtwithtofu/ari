@@ -68,10 +68,7 @@ func TestPendingDeliveryAttemptLifecycleControlsSubscriptionAck(t *testing.T) {
 			if len(due) != 0 {
 				t.Fatalf("due pending deliveries after claim = %#v, want in-flight attempt hidden from retry queue", due)
 			}
-			unreadBeforeFinish, err := store.ListEventSubscriptionEvents(ctx, "sub-delivery-attempt", 10)
-			if err != nil {
-				t.Fatalf("ListEventSubscriptionEvents before finish returned error: %v", err)
-			}
+			unreadBeforeFinish := readSubscriptionEvents(t, store, "sub-delivery-attempt", 10)
 			if len(unreadBeforeFinish) != 1 || unreadBeforeFinish[0].EventID != event.EventID {
 				t.Fatalf("subscription events before finish = %#v, want event still unread while attempted", unreadBeforeFinish)
 			}
@@ -83,10 +80,7 @@ func TestPendingDeliveryAttemptLifecycleControlsSubscriptionAck(t *testing.T) {
 			if finished.Attempts != 1 || finished.TerminalAt == nil {
 				t.Fatalf("finished delivery = %#v, want terminal outcome preserving one recorded attempt", finished)
 			}
-			unreadAfterFinish, err := store.ListEventSubscriptionEvents(ctx, "sub-delivery-attempt", 10)
-			if err != nil {
-				t.Fatalf("ListEventSubscriptionEvents after finish returned error: %v", err)
-			}
+			unreadAfterFinish := readSubscriptionEvents(t, store, "sub-delivery-attempt", 10)
 			if gotRead := len(unreadAfterFinish) == 1; gotRead != tc.wantRead {
 				t.Fatalf("subscription unread after finish = %#v, want unread=%t", unreadAfterFinish, tc.wantRead)
 			}
@@ -139,10 +133,7 @@ func TestCompletedDeliveryAcksOnlyContiguousDeliveredEvents(t *testing.T) {
 	if subscription.CursorSequence != 0 || subscription.AckSequence != 0 {
 		t.Fatalf("subscription cursor/ack after second completion = %d/%d, want 0/0 until first event is delivered", subscription.CursorSequence, subscription.AckSequence)
 	}
-	unread, err := store.ListEventSubscriptionEvents(ctx, "sub-contiguous-ack", 10)
-	if err != nil {
-		t.Fatalf("ListEventSubscriptionEvents returned error: %v", err)
-	}
+	unread := readSubscriptionEvents(t, store, "sub-contiguous-ack", 10)
 	if len(unread) != 2 || unread[0].EventID != first.EventID || unread[1].EventID != second.EventID {
 		t.Fatalf("unread events after out-of-order completion = %#v, want both original events", unread)
 	}

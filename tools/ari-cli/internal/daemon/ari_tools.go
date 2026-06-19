@@ -712,27 +712,54 @@ func waitForAriFanoutMembers(ctx context.Context, store *globaldb.Store, fanout 
 		members := ariFanoutMembersFromResponse(fanout)
 		return fanoutWaitStatus(members), false, members, nil
 	}
-	deadline := time.Time{}
-	if wait.TimeoutMS > 0 {
-		deadline = time.Now().Add(time.Duration(wait.TimeoutMS) * time.Millisecond)
+	group, err := store.GetFanoutGroup(ctx, fanout.FanoutGroupID)
+	if err != nil {
+		return "", false, nil, err
 	}
-	for {
-		members, err := ariFanoutMembersFromStore(ctx, store, fanout.FanoutGroupID)
-		if err != nil {
-			return "", false, nil, err
-		}
-		if fanoutWaitSatisfied(wait.Mode, members) {
-			return fanoutWaitStatus(members), false, members, nil
-		}
-		if !deadline.IsZero() && !time.Now().Before(deadline) {
-			return "partial", true, members, nil
-		}
-		select {
-		case <-ctx.Done():
-			return "", false, nil, ctx.Err()
-		case <-time.After(100 * time.Millisecond):
+	workerSessionIDs := ariFanoutWorkerSessionIDs(fanout)
+	if len(workerSessionIDs) == 0 {
+		members := ariFanoutMembersFromResponse(fanout)
+		return fanoutWaitStatus(members), false, members, nil
+	}
+	filterJSON, conditionJSON, err := ariFanoutWaitSubscriptionJSON(wait.Mode, fanout.FanoutGroupID, workerSessionIDs)
+	if err != nil {
+		return "", false, nil, err
+	}
+	result, err := store.WaitEventSubscriptionCondition(ctx, globaldb.EventSubscription{WorkspaceID: group.WorkspaceID, OwnerSessionID: group.SourceSessionID, FilterJSON: filterJSON, CompletionConditionJSON: conditionJSON}, globaldb.EventSubscriptionWaitOptions{Limit: len(workerSessionIDs), Timeout: time.Duration(wait.TimeoutMS) * time.Millisecond})
+	if err != nil {
+		return "", false, nil, err
+	}
+	members, err := ariFanoutMembersForGroup(ctx, store, group)
+	if err != nil {
+		return "", false, nil, err
+	}
+	if result.Completion.TimedOut {
+		return "partial", true, members, nil
+	}
+	return fanoutWaitStatus(members), false, members, nil
+}
+
+func ariFanoutWorkerSessionIDs(fanout AgentMessageSendResponse) []string {
+	workerSessionIDs := make([]string, 0, len(fanout.FanoutMembers))
+	for _, member := range fanout.FanoutMembers {
+		if sessionID := strings.TrimSpace(member.Session.SessionID); sessionID != "" {
+			workerSessionIDs = append(workerSessionIDs, sessionID)
 		}
 	}
+	return workerSessionIDs
+}
+
+func ariFanoutWaitSubscriptionJSON(mode, fanoutGroupID string, workerSessionIDs []string) (string, string, error) {
+	terminalEventTypes := []string{workspaceEventWorkerCompleted, workspaceEventWorkerFailed, workspaceEventWorkerStopped}
+	filter, err := json.Marshal(globaldb.EventSubscriptionFilter{EventTypes: terminalEventTypes, SubjectIDs: workerSessionIDs, CorrelationIDs: []string{strings.TrimSpace(fanoutGroupID)}})
+	if err != nil {
+		return "", "", err
+	}
+	condition, err := json.Marshal(globaldb.EventSubscriptionCompletionCondition{Mode: mode, SubjectIDs: workerSessionIDs, TerminalEventTypes: terminalEventTypes})
+	if err != nil {
+		return "", "", err
+	}
+	return string(filter), string(condition), nil
 }
 
 func ariFanoutMembersFromResponse(fanout AgentMessageSendResponse) []map[string]any {
@@ -743,16 +770,8 @@ func ariFanoutMembersFromResponse(fanout AgentMessageSendResponse) []map[string]
 	return members
 }
 
-func ariFanoutMembersFromStore(ctx context.Context, store *globaldb.Store, groupID string) ([]map[string]any, error) {
-	group, err := store.GetFanoutGroup(ctx, groupID)
-	if err != nil {
-		return nil, err
-	}
-	return ariFanoutMembersForGroup(ctx, store, group)
-}
-
 func ariFanoutMembersForGroup(ctx context.Context, store *globaldb.Store, group globaldb.FanoutGroup) ([]map[string]any, error) {
-	stored, err := fanoutMemberProjectionForGroup(ctx, store, group)
+	stored, err := store.ListFanoutMembers(ctx, group.FanoutGroupID)
 	if err != nil {
 		return nil, err
 	}
@@ -761,26 +780,6 @@ func ariFanoutMembersForGroup(ctx context.Context, store *globaldb.Store, group 
 		members = append(members, map[string]any{"fanout_member_id": member.FanoutMemberID, "target_profile_id": member.TargetProfileID, "worker_session_id": member.WorkerSessionID, "request_agent_message_id": member.RequestAgentMessageID, "reply_agent_message_id": member.ReplyAgentMessageID, "final_response_id": member.FinalResponseID, "status": member.Status})
 	}
 	return members, nil
-}
-
-func fanoutWaitSatisfied(mode string, members []map[string]any) bool {
-	if len(members) == 0 {
-		return false
-	}
-	terminal := 0
-	for _, member := range members {
-		if isFanoutTerminalStatus(fmt.Sprint(member["status"])) {
-			terminal++
-		}
-	}
-	switch mode {
-	case "any":
-		return terminal > 0
-	case "all":
-		return terminal == len(members)
-	default:
-		return true
-	}
 }
 
 func fanoutWaitStatus(members []map[string]any) string {
@@ -952,7 +951,7 @@ func ariWorkspaceEventsNext(ctx context.Context, store *globaldb.Store, scope Ar
 		events = append(events, ariWorkspaceEventResponseOutput(event))
 	}
 	output := map[string]any{"subscription_id": subscription.SubscriptionID, "workspace_id": subscription.WorkspaceID, "owner_session_id": subscription.OwnerSessionID, "count": len(events), "events": events}
-	if minEvents > 0 {
+	if response.WaitStatus != "" {
 		output["wait_status"] = response.WaitStatus
 		output["wait_timed_out"] = response.WaitTimedOut
 	}

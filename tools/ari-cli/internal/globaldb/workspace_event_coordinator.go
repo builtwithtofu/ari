@@ -3,7 +3,6 @@ package globaldb
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb/dbsqlc"
@@ -37,22 +36,13 @@ func (c EventCoordinator) AppendWorkspaceEvent(ctx context.Context, event Worksp
 	if err != nil {
 		return WorkspaceEvent{}, err
 	}
-	if err := c.store.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
-		return appendCoordinatedWorkspaceEventWithQueries(ctx, queries, &prepared, c.defaultProjections()...)
+	if err := c.store.withImmediateQueries(ctx, func(ctx context.Context, queries *dbsqlc.Queries) error {
+		return appendCoordinatedWorkspaceEventWithQueries(ctx, queries, &prepared)
 	}); err != nil {
 		return WorkspaceEvent{}, err
 	}
 	return prepared, nil
 }
-
-func (c EventCoordinator) defaultProjections() []workspaceEventProjection {
-	return []workspaceEventProjection{
-		FanoutProjection{}.ProjectWorkspaceEvent,
-		InboxProjection{}.ProjectWorkspaceEvent,
-	}
-}
-
-type workspaceEventProjection func(context.Context, *dbsqlc.Queries, WorkspaceEvent) error
 
 func prepareCoordinatedWorkspaceEvent(event WorkspaceEvent) (WorkspaceEvent, error) {
 	event = normalizeWorkspaceEvent(event)
@@ -68,7 +58,7 @@ func prepareCoordinatedWorkspaceEvent(event WorkspaceEvent) (WorkspaceEvent, err
 	return event, nil
 }
 
-func appendCoordinatedWorkspaceEventWithQueries(ctx context.Context, queries *dbsqlc.Queries, event *WorkspaceEvent, projections ...workspaceEventProjection) error {
+func appendCoordinatedWorkspaceEventWithQueries(ctx context.Context, queries *dbsqlc.Queries, event *WorkspaceEvent, extraProjections ...Projection) error {
 	if event == nil {
 		return fmt.Errorf("%w: workspace event is required", ErrInvalidInput)
 	}
@@ -78,11 +68,13 @@ func appendCoordinatedWorkspaceEventWithQueries(ctx context.Context, queries *db
 	if err := createPendingDeliveriesForCoordinatedEvent(ctx, queries, *event); err != nil {
 		return err
 	}
-	for _, project := range projections {
-		if project == nil {
+	projections := projectionRegistryFromContext(ctx).ProjectionsForEvent(*event)
+	projections = append(projections, extraProjections...)
+	for _, projection := range projections {
+		if projection == nil {
 			continue
 		}
-		if err := project(ctx, queries, *event); err != nil {
+		if err := projection.ProjectWorkspaceEvent(ctx, queries, *event); err != nil {
 			return err
 		}
 	}
@@ -90,12 +82,5 @@ func appendCoordinatedWorkspaceEventWithQueries(ctx context.Context, queries *db
 }
 
 func createPendingDeliveriesForCoordinatedEvent(ctx context.Context, queries *dbsqlc.Queries, event WorkspaceEvent) error {
-	if workspaceEventSkipsDeliveryFanout(event) {
-		return nil
-	}
-	return createPendingDeliveriesForWorkspaceEvent(ctx, queries, event)
-}
-
-func workspaceEventSkipsDeliveryFanout(event WorkspaceEvent) bool {
-	return strings.HasPrefix(strings.TrimSpace(event.EventType), "delivery.")
+	return newEventSubscriptionLifecycle(queries).createPendingDeliveriesForEvent(ctx, event)
 }

@@ -17,7 +17,7 @@ func TestFanoutMembersWorkspaceIndexSupportsWorkspaceProjection(t *testing.T) {
 	}
 }
 
-func TestProjectFanoutMemberMaterializesLifecycle(t *testing.T) {
+func TestFanoutProjectionMaterializesLifecycleFromWorkspaceEvents(t *testing.T) {
 	store := newGlobalDBTestStore(t, "fanout-member-projection-lifecycle")
 	ctx := context.Background()
 	seedHarnessSessionConfigSession(t, store, ctx)
@@ -27,14 +27,14 @@ func TestProjectFanoutMemberMaterializesLifecycle(t *testing.T) {
 	if err := store.CreateFanoutGroup(ctx, FanoutGroup{FanoutGroupID: "fg-1", WorkspaceID: "ws-1", SourceSessionID: "run-1", SourceAgentID: "agent-1", RequestAgentMessageID: "request-1", Body: "compare options"}); err != nil {
 		t.Fatalf("CreateFanoutGroup returned error: %v", err)
 	}
-	if err := store.ProjectFanoutMember(ctx, FanoutMember{FanoutMemberID: "fm-1", FanoutGroupID: "fg-1", WorkspaceID: "ws-1", WorkerSessionID: "worker-1", TargetProfileID: "agent-2", RequestAgentMessageID: "request-1", Status: "running"}); err != nil {
-		t.Fatalf("ProjectFanoutMember running returned error: %v", err)
+	if _, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-fanout-started", WorkspaceID: "ws-1", EventType: WorkspaceEventWorkerStarted, SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "worker-1", CorrelationID: "fg-1", CausationID: "request-1", PayloadJSON: `{"fanout_member_id":"fm-1","fanout_group_id":"fg-1","target_profile_id":"agent-2"}`}); err != nil {
+		t.Fatalf("AppendWorkspaceEvent started returned error: %v", err)
 	}
 	if err := store.UpsertFinalResponse(ctx, FinalResponse{FinalResponseID: "fr-worker-1", HarnessSessionID: "worker-1", WorkspaceID: "ws-1", TaskID: "task-1", ContextPacketID: "ctx-1", ProfileID: "agent-2", Status: "completed", Text: "done"}); err != nil {
 		t.Fatalf("UpsertFinalResponse returned error: %v", err)
 	}
-	if err := store.ProjectFanoutMember(ctx, FanoutMember{FanoutMemberID: "fm-1", FanoutGroupID: "fg-1", WorkspaceID: "ws-1", WorkerSessionID: "worker-1", ReplyAgentMessageID: "reply-1", FinalResponseID: "fr-worker-1", Status: "completed"}); err != nil {
-		t.Fatalf("ProjectFanoutMember completed returned error: %v", err)
+	if _, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-fanout-completed", WorkspaceID: "ws-1", EventType: WorkspaceEventWorkerCompleted, SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "worker-1", CorrelationID: "fg-1", CausationID: "reply-1", PayloadJSON: `{"fanout_member_id":"fm-1","fanout_group_id":"fg-1"}`, PayloadRefJSON: `{"kind":"final_response","id":"fr-worker-1"}`}); err != nil {
+		t.Fatalf("AppendWorkspaceEvent completed returned error: %v", err)
 	}
 
 	members, err := store.ListFanoutMembers(ctx, "fg-1")
@@ -49,25 +49,17 @@ func TestProjectFanoutMemberMaterializesLifecycle(t *testing.T) {
 	}
 }
 
-func TestProjectFanoutMemberRejectsMissingIdentity(t *testing.T) {
-	store := newGlobalDBTestStore(t, "fanout-member-projection-invalid")
-	ctx := context.Background()
-	if err := store.ProjectFanoutMember(ctx, FanoutMember{FanoutMemberID: "fm-1", FanoutGroupID: "fg-1", WorkspaceID: "ws-1"}); err == nil {
-		t.Fatal("ProjectFanoutMember without worker session returned nil error, want ErrInvalidInput")
-	}
-}
-
-func TestInboxItemProjectionPreservesReadStateAndCounts(t *testing.T) {
+func TestInboxProjectionPreservesReadStateAndCounts(t *testing.T) {
 	store := newGlobalDBTestStore(t, "inbox-items-projection")
 	ctx := context.Background()
 	seedHarnessSessionConfigSession(t, store, ctx)
+	if err := store.CreateFanoutGroup(ctx, FanoutGroup{FanoutGroupID: "fg-1", WorkspaceID: "ws-1", SourceSessionID: "run-1", SourceAgentID: "agent-1", RequestAgentMessageID: "request-1", Body: "compare options"}); err != nil {
+		t.Fatalf("CreateFanoutGroup returned error: %v", err)
+	}
 
-	firstEvent, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-inbox-1", WorkspaceID: "ws-1", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "worker-1", CorrelationID: "fg-1", CausationID: "reply-1", PayloadJSON: `{"status":"completed"}`, PayloadRefJSON: `{"kind":"final_response","id":"fr-1"}`})
+	firstEvent, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-inbox-1", WorkspaceID: "ws-1", EventType: WorkspaceEventWorkerCompleted, SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "worker-1", CorrelationID: "fg-1", CausationID: "reply-1", PayloadJSON: `{"fanout_member_id":"fm-1","fanout_group_id":"fg-1","target_profile_id":"agent-2"}`, PayloadRefJSON: `{"kind":"final_response","id":"fr-1"}`})
 	if err != nil {
 		t.Fatalf("AppendWorkspaceEvent first returned error: %v", err)
-	}
-	if _, err := store.ProjectInboxItem(ctx, InboxItem{InboxItemID: "inbox-fm-1", WorkspaceID: "ws-1", SourceSessionID: "run-1", WorkspaceEventID: firstEvent.EventID, EventType: firstEvent.EventType, FanoutGroupID: "fg-1", FanoutMemberID: "fm-1", WorkerSessionID: "worker-1", FinalResponseID: "fr-1", Kind: "worker_completed", Summary: "done"}); err != nil {
-		t.Fatalf("ProjectInboxItem first returned error: %v", err)
 	}
 
 	counts, err := store.CountInboxItems(ctx, "ws-1", "run-1")
@@ -85,20 +77,20 @@ func TestInboxItemProjectionPreservesReadStateAndCounts(t *testing.T) {
 		t.Fatalf("marked = %d, want one row", marked)
 	}
 
-	secondEvent, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-inbox-2", WorkspaceID: "ws-1", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "worker-1", CorrelationID: "fg-1", CausationID: "reply-2", PayloadJSON: `{"status":"completed"}`, PayloadRefJSON: `{"kind":"final_response","id":"fr-1"}`})
+	secondEvent, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-inbox-2", WorkspaceID: "ws-1", EventType: WorkspaceEventWorkerCompleted, SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "worker-1", CorrelationID: "fg-1", CausationID: "reply-2", PayloadJSON: `{"fanout_member_id":"fm-1","fanout_group_id":"fg-1","target_profile_id":"agent-2"}`, PayloadRefJSON: `{"kind":"final_response","id":"fr-1"}`})
 	if err != nil {
 		t.Fatalf("AppendWorkspaceEvent second returned error: %v", err)
-	}
-	if _, err := store.ProjectInboxItem(ctx, InboxItem{InboxItemID: "inbox-fm-1", WorkspaceID: "ws-1", SourceSessionID: "run-1", WorkspaceEventID: secondEvent.EventID, EventType: secondEvent.EventType, FanoutGroupID: "fg-1", FanoutMemberID: "fm-1", WorkerSessionID: "worker-1", FinalResponseID: "fr-1", Kind: "worker_completed", Summary: "done again"}); err != nil {
-		t.Fatalf("ProjectInboxItem second returned error: %v", err)
 	}
 
 	item, err := store.GetInboxItem(ctx, "inbox-fm-1")
 	if err != nil {
 		t.Fatalf("GetInboxItem returned error: %v", err)
 	}
-	if item.Status != "read" || item.WorkspaceEventID != secondEvent.EventID || item.Summary != "done again" {
+	if item.Status != "read" || item.WorkspaceEventID != secondEvent.EventID || item.EventType != secondEvent.EventType || item.Kind != "worker_completed" {
 		t.Fatalf("item = %#v, want read state preserved with refreshed event evidence", item)
+	}
+	if item.WorkspaceEventID == firstEvent.EventID {
+		t.Fatalf("item = %#v, want refreshed event evidence", item)
 	}
 	counts, err = store.CountInboxItems(ctx, "ws-1", "run-1")
 	if err != nil {

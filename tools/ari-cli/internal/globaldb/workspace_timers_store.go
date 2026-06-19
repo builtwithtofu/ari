@@ -54,6 +54,7 @@ func (s *Store) CreateWorkspaceTimer(ctx context.Context, timer WorkspaceTimer) 
 	if err := s.sqlcQueries().CreateWorkspaceTimer(ctx, dbsqlc.CreateWorkspaceTimerParams{TimerID: timer.TimerID, WorkspaceID: timer.WorkspaceID, OwnerSessionID: timer.OwnerSessionID, SubscriptionID: optionalString(timer.SubscriptionID), SubjectType: timer.SubjectType, SubjectID: timer.SubjectID, Purpose: timer.Purpose, Status: timer.Status, FireAt: timer.FireAt.UTC().Format(time.RFC3339Nano), PayloadJson: timer.PayloadJSON, FiredEventID: timer.FiredEventID, CreatedAt: timer.CreatedAt.UTC().Format(time.RFC3339Nano), UpdatedAt: timer.UpdatedAt.UTC().Format(time.RFC3339Nano)}); err != nil {
 		return WorkspaceTimer{}, fmt.Errorf("create workspace timer %q: %w", timer.TimerID, err)
 	}
+	s.notifyOrchestrationWake()
 	return timer, nil
 }
 
@@ -120,7 +121,7 @@ func (s *Store) FireWorkspaceTimer(ctx context.Context, timerID string) (Workspa
 		return WorkspaceTimer{}, fmt.Errorf("%w: timer id is required", ErrInvalidInput)
 	}
 	var fired WorkspaceTimer
-	if err := s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
+	if err := s.withImmediateQueries(ctx, func(ctx context.Context, queries *dbsqlc.Queries) error {
 		row, err := queries.GetWorkspaceTimer(ctx, dbsqlc.GetWorkspaceTimerParams{TimerID: timerID})
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -136,7 +137,7 @@ func (s *Store) FireWorkspaceTimer(ctx context.Context, timerID string) (Workspa
 		if err != nil {
 			return err
 		}
-		return appendCoordinatedWorkspaceEventWithQueries(ctx, queries, &event, func(ctx context.Context, queries *dbsqlc.Queries, event WorkspaceEvent) error {
+		return appendCoordinatedWorkspaceEventWithQueries(ctx, queries, &event, transactionalProjection("workspace_timer.mark_fired", func(ctx context.Context, queries *dbsqlc.Queries, event WorkspaceEvent) error {
 			now := time.Now().UTC()
 			rows, err := queries.MarkWorkspaceTimerFired(ctx, dbsqlc.MarkWorkspaceTimerFiredParams{FiredEventID: event.EventID, UpdatedAt: now.Format(time.RFC3339Nano), TimerID: timer.TimerID})
 			if err != nil {
@@ -150,7 +151,7 @@ func (s *Store) FireWorkspaceTimer(ctx context.Context, timerID string) (Workspa
 			timer.UpdatedAt = now
 			fired = timer
 			return nil
-		})
+		}))
 	}); err != nil {
 		return WorkspaceTimer{}, err
 	}
@@ -177,6 +178,7 @@ func (s *Store) CancelWorkspaceTimer(ctx context.Context, timerID string) (Works
 		}
 		return WorkspaceTimer{}, ErrNotFound
 	}
+	s.notifyOrchestrationWake()
 	return s.GetWorkspaceTimer(ctx, timerID)
 }
 

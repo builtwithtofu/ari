@@ -9,6 +9,144 @@ import (
 	"context"
 )
 
+const deleteFanoutMembersByWorkspace = `-- name: DeleteFanoutMembersByWorkspace :execrows
+DELETE FROM fanout_members
+WHERE workspace_id = ?
+`
+
+type DeleteFanoutMembersByWorkspaceParams struct {
+	WorkspaceID string `json:"workspace_id"`
+}
+
+func (q *Queries) DeleteFanoutMembersByWorkspace(ctx context.Context, arg DeleteFanoutMembersByWorkspaceParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteFanoutMembersByWorkspace, arg.WorkspaceID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const getFanoutMemberByWorkerSession = `-- name: GetFanoutMemberByWorkerSession :one
+SELECT fanout_member_id, fanout_group_id, workspace_id, worker_session_id, target_profile_id, request_agent_message_id, reply_agent_message_id, final_response_id, status, created_at, updated_at
+FROM fanout_members
+WHERE worker_session_id = ?
+`
+
+type GetFanoutMemberByWorkerSessionParams struct {
+	WorkerSessionID string `json:"worker_session_id"`
+}
+
+func (q *Queries) GetFanoutMemberByWorkerSession(ctx context.Context, arg GetFanoutMemberByWorkerSessionParams) (FanoutMember, error) {
+	row := q.db.QueryRowContext(ctx, getFanoutMemberByWorkerSession, arg.WorkerSessionID)
+	var i FanoutMember
+	err := row.Scan(
+		&i.FanoutMemberID,
+		&i.FanoutGroupID,
+		&i.WorkspaceID,
+		&i.WorkerSessionID,
+		&i.TargetProfileID,
+		&i.RequestAgentMessageID,
+		&i.ReplyAgentMessageID,
+		&i.FinalResponseID,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const listFanoutMembersByGroup = `-- name: ListFanoutMembersByGroup :many
+SELECT fanout_member_id, fanout_group_id, workspace_id, worker_session_id, target_profile_id, request_agent_message_id, reply_agent_message_id, final_response_id, status, created_at, updated_at
+FROM fanout_members
+WHERE fanout_group_id = ?
+ORDER BY created_at ASC, fanout_member_id ASC
+`
+
+type ListFanoutMembersByGroupParams struct {
+	FanoutGroupID string `json:"fanout_group_id"`
+}
+
+func (q *Queries) ListFanoutMembersByGroup(ctx context.Context, arg ListFanoutMembersByGroupParams) ([]FanoutMember, error) {
+	rows, err := q.db.QueryContext(ctx, listFanoutMembersByGroup, arg.FanoutGroupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FanoutMember{}
+	for rows.Next() {
+		var i FanoutMember
+		if err := rows.Scan(
+			&i.FanoutMemberID,
+			&i.FanoutGroupID,
+			&i.WorkspaceID,
+			&i.WorkerSessionID,
+			&i.TargetProfileID,
+			&i.RequestAgentMessageID,
+			&i.ReplyAgentMessageID,
+			&i.FinalResponseID,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFanoutMembersByWorkspace = `-- name: ListFanoutMembersByWorkspace :many
+SELECT fanout_member_id, fanout_group_id, workspace_id, worker_session_id, target_profile_id, request_agent_message_id, reply_agent_message_id, final_response_id, status, created_at, updated_at
+FROM fanout_members
+WHERE workspace_id = ?
+ORDER BY created_at ASC, fanout_member_id ASC
+`
+
+type ListFanoutMembersByWorkspaceParams struct {
+	WorkspaceID string `json:"workspace_id"`
+}
+
+func (q *Queries) ListFanoutMembersByWorkspace(ctx context.Context, arg ListFanoutMembersByWorkspaceParams) ([]FanoutMember, error) {
+	rows, err := q.db.QueryContext(ctx, listFanoutMembersByWorkspace, arg.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FanoutMember{}
+	for rows.Next() {
+		var i FanoutMember
+		if err := rows.Scan(
+			&i.FanoutMemberID,
+			&i.FanoutGroupID,
+			&i.WorkspaceID,
+			&i.WorkerSessionID,
+			&i.TargetProfileID,
+			&i.RequestAgentMessageID,
+			&i.ReplyAgentMessageID,
+			&i.FinalResponseID,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertFanoutMember = `-- name: UpsertFanoutMember :exec
 INSERT INTO fanout_members (
   fanout_member_id,

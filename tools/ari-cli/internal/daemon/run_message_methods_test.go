@@ -1299,12 +1299,12 @@ func TestSessionFanoutToProfilesIsolatesWorkerFailure(t *testing.T) {
 	}
 	assertFanoutMemberStatuses(t, ctx, store, "fg-failure", map[string]string{"fanout-good": "completed", "fanout-bad": "failed"})
 	status := waitForProjectedFanoutMemberStatuses(t, registry, "ws-1", map[string]string{"fanout-good": "completed", "fanout-bad": "failed"})
-	assertStickyInboxKinds(t, status.StickyInbox, map[string]string{"fg-failure-mfanout-good": "worker_completed", "fg-failure-mfanout-bad": "worker_failed"})
+	assertInboxKinds(t, status.Inbox, map[string]string{"fg-failure-mfanout-good": "worker_completed", "fg-failure-mfanout-bad": "worker_failed"})
 	timeline := callMethod[WorkspaceTimelineResponse](t, registry, "workspace.timeline", WorkspaceTimelineRequest{WorkspaceID: "ws-1"})
 	assertTimelineFanoutMemberStatuses(t, timeline.Items, map[string]string{"fanout-good": "completed", "fanout-bad": "failed"})
 }
 
-func assertStickyInboxKinds(t *testing.T, items []StickyInboxActivity, want map[string]string) {
+func assertInboxKinds(t *testing.T, items []InboxActivity, want map[string]string) {
 	t.Helper()
 	got := make(map[string]string, len(items))
 	for _, item := range items {
@@ -1312,7 +1312,7 @@ func assertStickyInboxKinds(t *testing.T, items []StickyInboxActivity, want map[
 	}
 	for memberID, kind := range want {
 		if got[memberID] != kind {
-			t.Fatalf("sticky inbox = %#v, want %s=%s", items, memberID, kind)
+			t.Fatalf("inbox = %#v, want %s=%s", items, memberID, kind)
 		}
 	}
 }

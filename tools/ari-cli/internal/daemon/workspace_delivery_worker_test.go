@@ -104,10 +104,7 @@ func TestWorkspaceDeliveryWorkerAttemptsDueDeliveries(t *testing.T) {
 				t.Fatalf("finished next_attempt_at = %v, want %v", finished.NextAttemptAt, wantNextAttempt)
 			}
 
-			unread, err := store.ListEventSubscriptionEvents(ctx, delivery.SubscriptionID, 10)
-			if err != nil {
-				t.Fatalf("ListEventSubscriptionEvents returned error: %v", err)
-			}
+			unread := readWorkspaceDeliverySubscriptionEvents(t, ctx, store, delivery.SubscriptionID, 10)
 			if gotUnread := len(unread) == 1 && unread[0].EventID == event.EventID; gotUnread != tc.wantUnread {
 				t.Fatalf("subscription unread = %#v, want unread=%t", unread, tc.wantUnread)
 			}
@@ -127,7 +124,7 @@ func TestWorkspaceDeliveryWorkerAttemptsDueDeliveries(t *testing.T) {
 				if deliveryEvent.SubjectType != "pending_delivery" || deliveryEvent.SubjectID != delivery.DeliveryID || deliveryEvent.ProducerType != "daemon" {
 					t.Fatalf("delivery event = %#v, want pending delivery subject and daemon producer", deliveryEvent)
 				}
-				payload := workspaceEventStringPayload(deliveryEvent.PayloadJSON)
+				payload := globaldb.WorkspaceEventStringPayload(deliveryEvent.PayloadJSON)
 				if payload["delivery_id"] != delivery.DeliveryID || payload["subscription_id"] != delivery.SubscriptionID || payload["status"] != tc.wantDeliveryEventStatuses[i] {
 					t.Fatalf("delivery event payload = %#v, want delivery/subscription with status %q", payload, tc.wantDeliveryEventStatuses[i])
 				}
@@ -136,22 +133,20 @@ func TestWorkspaceDeliveryWorkerAttemptsDueDeliveries(t *testing.T) {
 	}
 }
 
-func TestWorkspaceDeliveryWorkerLoopAttemptsDueDeliveriesOnTicks(t *testing.T) {
+func TestWorkspaceOrchestrationRuntimeAttemptsDueDeliveries(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	base := time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC)
 	now := base.Add(time.Minute)
-	delivery, _ := seedDueWorkspaceDelivery(t, store, "loop", base)
+	delivery, _ := seedDueWorkspaceDelivery(t, store, "runtime", base)
 	dispatcher := &recordingWorkspaceDeliveryDispatcher{result: WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptCompleted}}
-	ticks := make(chan time.Time, 1)
-	ticks <- now
-	close(ticks)
+	runtime := newWorkspaceOrchestrationRuntime(store, dispatcher)
 
-	if err := runWorkspaceDeliveryWorkerLoop(ctx, store, dispatcher, ticks, 10); err != nil {
-		t.Fatalf("runWorkspaceDeliveryWorkerLoop returned error: %v", err)
+	if err := runtime.runDueOnce(ctx, now); err != nil {
+		t.Fatalf("runDueOnce returned error: %v", err)
 	}
 	if attempts := dispatcher.Attempts(); len(attempts) != 1 || attempts[0].Delivery.DeliveryID != delivery.DeliveryID {
-		t.Fatalf("dispatcher attempts = %#v, want one loop-driven attempt for %s", attempts, delivery.DeliveryID)
+		t.Fatalf("dispatcher attempts = %#v, want one runtime-driven attempt for %s", attempts, delivery.DeliveryID)
 	}
 	finished, err := store.GetPendingDelivery(ctx, delivery.DeliveryID)
 	if err != nil {
@@ -190,16 +185,22 @@ func TestWorkspaceDeliveryWorkerFailsRetryAfterMaxAttempts(t *testing.T) {
 	if finished.Status != "failed" || finished.Attempts != 3 || finished.LastError != "adapter still offline" {
 		t.Fatalf("finished delivery = %#v, want failed after third attempt", finished)
 	}
-	unread, err := store.ListEventSubscriptionEvents(ctx, delivery.SubscriptionID, 10)
-	if err != nil {
-		t.Fatalf("ListEventSubscriptionEvents returned error: %v", err)
-	}
+	unread := readWorkspaceDeliverySubscriptionEvents(t, ctx, store, delivery.SubscriptionID, 10)
 	if len(unread) != 1 || unread[0].EventID != event.EventID {
 		t.Fatalf("subscription unread = %#v, want original event still unread", unread)
 	}
 	if gotTypes := workspaceEventTypes(listDeliveryWorkspaceEvents(t, store, delivery.WorkspaceID, event.Sequence)); !sameStringSlice(gotTypes, []string{"delivery.retry_scheduled", "delivery.retry_scheduled", "delivery.attempted", "delivery.failed"}) {
 		t.Fatalf("delivery event types = %#v, want retry records then attempted and failed", gotTypes)
 	}
+}
+
+func readWorkspaceDeliverySubscriptionEvents(t *testing.T, ctx context.Context, store *globaldb.Store, subscriptionID string, limit int) []globaldb.WorkspaceEvent {
+	t.Helper()
+	result, err := store.ReadEventSubscription(ctx, globaldb.EventSubscriptionReadRequest{SubscriptionID: subscriptionID, Limit: limit})
+	if err != nil {
+		t.Fatalf("ReadEventSubscription returned error: %v", err)
+	}
+	return result.Events
 }
 
 func listDeliveryWorkspaceEvents(t *testing.T, store *globaldb.Store, workspaceID string, afterSequence int64) []globaldb.WorkspaceEvent {

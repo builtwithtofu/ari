@@ -480,6 +480,63 @@ func (q *Queries) ListPendingDeliveriesForSubscription(ctx context.Context, arg 
 	return items, nil
 }
 
+const nextPendingDeliveryAttemptAt = `-- name: NextPendingDeliveryAttemptAt :one
+SELECT pd.next_attempt_at
+FROM pending_deliveries pd
+JOIN event_subscriptions es ON es.subscription_id = pd.subscription_id
+WHERE pd.status = 'pending'
+  AND es.status = 'active'
+  AND pd.next_attempt_at IS NOT NULL
+  AND (pd.deadline_at IS NULL OR pd.deadline_at > ?)
+  AND (es.timeout_at IS NULL OR es.timeout_at > ?)
+ORDER BY pd.next_attempt_at ASC, pd.created_at ASC, pd.delivery_id ASC
+LIMIT 1
+`
+
+type NextPendingDeliveryAttemptAtParams struct {
+	DeadlineAt *string `json:"deadline_at"`
+	TimeoutAt  *string `json:"timeout_at"`
+}
+
+func (q *Queries) NextPendingDeliveryAttemptAt(ctx context.Context, arg NextPendingDeliveryAttemptAtParams) (*string, error) {
+	row := q.db.QueryRowContext(ctx, nextPendingDeliveryAttemptAt, arg.DeadlineAt, arg.TimeoutAt)
+	var next_attempt_at *string
+	err := row.Scan(&next_attempt_at)
+	return next_attempt_at, err
+}
+
+const nextPendingDeliveryDeadlineAt = `-- name: NextPendingDeliveryDeadlineAt :one
+SELECT deadline_at
+FROM pending_deliveries
+WHERE status = 'pending'
+  AND deadline_at IS NOT NULL
+ORDER BY deadline_at ASC, created_at ASC, delivery_id ASC
+LIMIT 1
+`
+
+func (q *Queries) NextPendingDeliveryDeadlineAt(ctx context.Context) (*string, error) {
+	row := q.db.QueryRowContext(ctx, nextPendingDeliveryDeadlineAt)
+	var deadline_at *string
+	err := row.Scan(&deadline_at)
+	return deadline_at, err
+}
+
+const oldestAttemptedPendingDeliveryUpdatedAt = `-- name: OldestAttemptedPendingDeliveryUpdatedAt :one
+SELECT updated_at
+FROM pending_deliveries
+WHERE status = 'attempted'
+  AND terminal_at IS NULL
+ORDER BY updated_at ASC, created_at ASC, delivery_id ASC
+LIMIT 1
+`
+
+func (q *Queries) OldestAttemptedPendingDeliveryUpdatedAt(ctx context.Context) (string, error) {
+	row := q.db.QueryRowContext(ctx, oldestAttemptedPendingDeliveryUpdatedAt)
+	var updated_at string
+	err := row.Scan(&updated_at)
+	return updated_at, err
+}
+
 const recordPendingDeliveryAttempt = `-- name: RecordPendingDeliveryAttempt :execrows
 UPDATE pending_deliveries
 SET attempts = attempts + 1,

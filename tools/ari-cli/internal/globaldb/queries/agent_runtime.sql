@@ -250,6 +250,20 @@ INSERT INTO agent_messages (
 INSERT INTO agent_message_context_excerpts (agent_message_id, context_excerpt_id, sequence)
 VALUES (?, ?, ?);
 
+-- name: GetAgentMessage :one
+SELECT
+  agent_message_id,
+  workspace_id,
+  source_agent_id,
+  source_session_id,
+  target_agent_id,
+  target_session_id,
+  body,
+  status,
+  delivered_session_id
+FROM agent_messages
+WHERE agent_message_id = ?;
+
 -- name: ListAgentMessagesByWorkspace :many
 SELECT
   agent_message_id,

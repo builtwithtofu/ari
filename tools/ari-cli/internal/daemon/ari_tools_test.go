@@ -173,7 +173,7 @@ func TestAriWorkspaceEventsNextToolBoundedWaitReturnsEventAppendedDuringWait(t *
 		resultC <- callResult{response: response, err: err}
 	}()
 	<-readyC
-	created := callMethod[WorkspaceEventResponse](t, registry, "workspace.events.append", WorkspaceEventAppendRequest{EventID: "we-tool-wait", WorkspaceID: "ws-1", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-wait"})
+	created := appendWorkspaceEventForTest(t, store, globaldb.WorkspaceEvent{EventID: "we-tool-wait", WorkspaceID: "ws-1", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-wait"})
 
 	select {
 	case result := <-resultC:

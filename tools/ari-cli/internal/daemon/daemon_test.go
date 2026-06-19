@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
 	"github.com/sourcegraph/jsonrpc2"
 )
 
@@ -76,6 +77,33 @@ func TestDaemonStatusAndStopOverRPC(t *testing.T) {
 	}
 	if _, err := os.Stat(pidPath); !os.IsNotExist(err) {
 		t.Fatalf("pid path stat error = %v, want removed after stop", err)
+	}
+}
+
+func TestDaemonStartDoesNotStartOrchestrationRuntimeWhenSocketBindFails(t *testing.T) {
+	stubBootstrap(t)
+
+	socketPath := testSocketPath(t)
+	liveListener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen live socket: %v", err)
+	}
+	defer func() { _ = liveListener.Close() }()
+
+	dbPath := filepath.Join(t.TempDir(), "ari.db")
+	pidPath := filepath.Join(t.TempDir(), "daemon.pid")
+	d := New(socketPath, dbPath, pidPath, "defaults", "defaults", "test-version")
+	var runtimeStarted atomic.Bool
+	d.startWorkspaceOrchestrationRuntimeForTest = func(*globaldb.Store) {
+		runtimeStarted.Store(true)
+	}
+
+	err = d.Start(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "daemon socket already in use") {
+		t.Fatalf("Start error = %v, want socket already in use", err)
+	}
+	if runtimeStarted.Load() {
+		t.Fatal("workspace orchestration runtime started before socket bind succeeded")
 	}
 }
 

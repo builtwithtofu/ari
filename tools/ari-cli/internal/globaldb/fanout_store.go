@@ -38,34 +38,30 @@ type FanoutMember struct {
 }
 
 func (s *Store) CreateFanoutGroup(ctx context.Context, group FanoutGroup) error {
-	if strings.TrimSpace(group.FanoutGroupID) == "" || strings.TrimSpace(group.WorkspaceID) == "" || strings.TrimSpace(group.SourceSessionID) == "" {
+	group.FanoutGroupID = strings.TrimSpace(group.FanoutGroupID)
+	group.WorkspaceID = strings.TrimSpace(group.WorkspaceID)
+	group.SourceSessionID = strings.TrimSpace(group.SourceSessionID)
+	if group.FanoutGroupID == "" || group.WorkspaceID == "" || group.SourceSessionID == "" {
 		return ErrInvalidInput
 	}
-	status := defaultString(strings.TrimSpace(group.Status), "running")
-	_, err := s.db.ExecContext(ctx, `INSERT INTO fanout_groups (fanout_group_id, workspace_id, source_session_id, source_agent_id, request_agent_message_id, status, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`, strings.TrimSpace(group.FanoutGroupID), strings.TrimSpace(group.WorkspaceID), strings.TrimSpace(group.SourceSessionID), strings.TrimSpace(group.SourceAgentID), strings.TrimSpace(group.RequestAgentMessageID), status, strings.TrimSpace(group.Body))
-	return err
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	createdAt := defaultString(strings.TrimSpace(group.CreatedAt), now)
+	updatedAt := defaultString(strings.TrimSpace(group.UpdatedAt), createdAt)
+	if err := s.sqlcQueries().CreateFanoutGroup(ctx, dbsqlc.CreateFanoutGroupParams{FanoutGroupID: group.FanoutGroupID, WorkspaceID: group.WorkspaceID, SourceSessionID: group.SourceSessionID, SourceAgentID: strings.TrimSpace(group.SourceAgentID), RequestAgentMessageID: strings.TrimSpace(group.RequestAgentMessageID), Status: defaultString(strings.TrimSpace(group.Status), "running"), Body: strings.TrimSpace(group.Body), CreatedAt: createdAt, UpdatedAt: updatedAt}); err != nil {
+		return fmt.Errorf("create fanout group %q: %w", group.FanoutGroupID, err)
+	}
+	return nil
 }
 
 func (s *Store) GetFanoutGroup(ctx context.Context, groupID string) (FanoutGroup, error) {
-	var group FanoutGroup
-	err := s.db.QueryRowContext(ctx, `SELECT fanout_group_id, workspace_id, source_session_id, source_agent_id, request_agent_message_id, status, body, created_at, updated_at FROM fanout_groups WHERE fanout_group_id = ?`, strings.TrimSpace(groupID)).Scan(&group.FanoutGroupID, &group.WorkspaceID, &group.SourceSessionID, &group.SourceAgentID, &group.RequestAgentMessageID, &group.Status, &group.Body, &group.CreatedAt, &group.UpdatedAt)
+	row, err := s.sqlcQueries().GetFanoutGroup(ctx, dbsqlc.GetFanoutGroupParams{FanoutGroupID: strings.TrimSpace(groupID)})
 	if errors.Is(err, sql.ErrNoRows) {
 		return FanoutGroup{}, ErrNotFound
 	}
 	if err != nil {
-		return FanoutGroup{}, err
+		return FanoutGroup{}, fmt.Errorf("get fanout group %q: %w", groupID, err)
 	}
-	return group, nil
-}
-
-// ProjectFanoutMember materializes a fanout member row from workspace event
-// history. Event facts win for status; identity and evidence links are only
-// filled in, never blanked, so replayed/late events cannot erase linkage.
-func (s *Store) ProjectFanoutMember(ctx context.Context, member FanoutMember) error {
-	if err := validateFanoutMemberProjection(member); err != nil {
-		return err
-	}
-	return upsertFanoutMemberWithQueries(ctx, s.sqlcQueries(), member)
+	return fanoutGroupFromSQLC(row), nil
 }
 
 func validateFanoutMemberProjection(member FanoutMember) error {
@@ -91,49 +87,46 @@ func (s *Store) GetFanoutMemberByWorkerSession(ctx context.Context, workerSessio
 	if workerSessionID == "" {
 		return FanoutMember{}, ErrInvalidInput
 	}
-	var member FanoutMember
-	err := s.db.QueryRowContext(ctx, `SELECT fanout_member_id, fanout_group_id, workspace_id, worker_session_id, target_profile_id, request_agent_message_id, reply_agent_message_id, final_response_id, status, created_at, updated_at FROM fanout_members WHERE worker_session_id = ?`, workerSessionID).Scan(&member.FanoutMemberID, &member.FanoutGroupID, &member.WorkspaceID, &member.WorkerSessionID, &member.TargetProfileID, &member.RequestAgentMessageID, &member.ReplyAgentMessageID, &member.FinalResponseID, &member.Status, &member.CreatedAt, &member.UpdatedAt)
+	row, err := s.sqlcQueries().GetFanoutMemberByWorkerSession(ctx, dbsqlc.GetFanoutMemberByWorkerSessionParams{WorkerSessionID: workerSessionID})
 	if errors.Is(err, sql.ErrNoRows) {
 		return FanoutMember{}, ErrNotFound
 	}
 	if err != nil {
-		return FanoutMember{}, err
+		return FanoutMember{}, fmt.Errorf("get fanout member for worker session %q: %w", workerSessionID, err)
 	}
-	return member, nil
+	return fanoutMemberFromSQLC(row), nil
 }
 
 func (s *Store) ListFanoutMembers(ctx context.Context, groupID string) ([]FanoutMember, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT fanout_member_id, fanout_group_id, workspace_id, worker_session_id, target_profile_id, request_agent_message_id, reply_agent_message_id, final_response_id, status, created_at, updated_at FROM fanout_members WHERE fanout_group_id = ? ORDER BY created_at ASC, fanout_member_id ASC`, strings.TrimSpace(groupID))
+	rows, err := s.sqlcQueries().ListFanoutMembersByGroup(ctx, dbsqlc.ListFanoutMembersByGroupParams{FanoutGroupID: strings.TrimSpace(groupID)})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list fanout members for group %q: %w", groupID, err)
 	}
-	defer func() { _ = rows.Close() }()
-	var members []FanoutMember
-	for rows.Next() {
-		var member FanoutMember
-		if err := rows.Scan(&member.FanoutMemberID, &member.FanoutGroupID, &member.WorkspaceID, &member.WorkerSessionID, &member.TargetProfileID, &member.RequestAgentMessageID, &member.ReplyAgentMessageID, &member.FinalResponseID, &member.Status, &member.CreatedAt, &member.UpdatedAt); err != nil {
-			return nil, err
-		}
-		members = append(members, member)
-	}
-	return members, rows.Err()
+	return fanoutMembersFromSQLC(rows), nil
 }
 
 func (s *Store) ListFanoutMembersByWorkspace(ctx context.Context, workspaceID string) ([]FanoutMember, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT fanout_member_id, fanout_group_id, workspace_id, worker_session_id, target_profile_id, request_agent_message_id, reply_agent_message_id, final_response_id, status, created_at, updated_at FROM fanout_members WHERE workspace_id = ? ORDER BY created_at ASC, fanout_member_id ASC`, strings.TrimSpace(workspaceID))
+	rows, err := s.sqlcQueries().ListFanoutMembersByWorkspace(ctx, dbsqlc.ListFanoutMembersByWorkspaceParams{WorkspaceID: strings.TrimSpace(workspaceID)})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list fanout members for workspace %q: %w", workspaceID, err)
 	}
-	defer func() { _ = rows.Close() }()
-	var members []FanoutMember
-	for rows.Next() {
-		var member FanoutMember
-		if err := rows.Scan(&member.FanoutMemberID, &member.FanoutGroupID, &member.WorkspaceID, &member.WorkerSessionID, &member.TargetProfileID, &member.RequestAgentMessageID, &member.ReplyAgentMessageID, &member.FinalResponseID, &member.Status, &member.CreatedAt, &member.UpdatedAt); err != nil {
-			return nil, err
-		}
-		members = append(members, member)
+	return fanoutMembersFromSQLC(rows), nil
+}
+
+func fanoutGroupFromSQLC(row dbsqlc.FanoutGroup) FanoutGroup {
+	return FanoutGroup{FanoutGroupID: row.FanoutGroupID, WorkspaceID: row.WorkspaceID, SourceSessionID: row.SourceSessionID, SourceAgentID: row.SourceAgentID, RequestAgentMessageID: row.RequestAgentMessageID, Status: row.Status, Body: row.Body, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+}
+
+func fanoutMemberFromSQLC(row dbsqlc.FanoutMember) FanoutMember {
+	return FanoutMember{FanoutMemberID: row.FanoutMemberID, FanoutGroupID: row.FanoutGroupID, WorkspaceID: row.WorkspaceID, WorkerSessionID: row.WorkerSessionID, TargetProfileID: row.TargetProfileID, RequestAgentMessageID: row.RequestAgentMessageID, ReplyAgentMessageID: row.ReplyAgentMessageID, FinalResponseID: row.FinalResponseID, Status: row.Status, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+}
+
+func fanoutMembersFromSQLC(rows []dbsqlc.FanoutMember) []FanoutMember {
+	members := make([]FanoutMember, 0, len(rows))
+	for _, row := range rows {
+		members = append(members, fanoutMemberFromSQLC(row))
 	}
-	return members, rows.Err()
+	return members
 }
 
 func defaultString(value, fallback string) string {

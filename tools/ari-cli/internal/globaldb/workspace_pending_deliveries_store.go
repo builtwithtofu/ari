@@ -49,7 +49,12 @@ type PendingDelivery struct {
 }
 
 func (s *Store) CreatePendingDelivery(ctx context.Context, delivery PendingDelivery) (PendingDelivery, error) {
-	return createPendingDeliveryWithQueries(ctx, s.sqlcQueries(), delivery)
+	created, err := createPendingDeliveryWithQueries(ctx, s.sqlcQueries(), delivery)
+	if err != nil {
+		return PendingDelivery{}, err
+	}
+	s.notifyOrchestrationWake()
+	return created, nil
 }
 
 func createPendingDeliveryWithQueries(ctx context.Context, queries *dbsqlc.Queries, delivery PendingDelivery) (PendingDelivery, error) {
@@ -178,7 +183,7 @@ func (s *Store) RecordPendingDeliveryAttempt(ctx context.Context, deliveryID str
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	var delivery PendingDelivery
-	if err := s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
+	if err := s.withImmediateQueries(ctx, func(ctx context.Context, queries *dbsqlc.Queries) error {
 		rows, err := queries.RecordPendingDeliveryAttempt(ctx, dbsqlc.RecordPendingDeliveryAttemptParams{NextAttemptAt: formatOptionalTime(nextAttemptAt), LastError: strings.TrimSpace(lastError), UpdatedAt: now, DeliveryID: deliveryID})
 		if err != nil {
 			return fmt.Errorf("record pending delivery attempt %q: %w", deliveryID, err)
@@ -208,7 +213,7 @@ func (s *Store) ClaimDuePendingDeliveryAttempt(ctx context.Context, deliveryID s
 	}
 	formatted := now.UTC().Format(time.RFC3339Nano)
 	var delivery PendingDelivery
-	if err := s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
+	if err := s.withImmediateQueries(ctx, func(ctx context.Context, queries *dbsqlc.Queries) error {
 		rows, err := queries.ClaimDuePendingDeliveryAttempt(ctx, dbsqlc.ClaimDuePendingDeliveryAttemptParams{UpdatedAt: formatted, DeliveryID: deliveryID, NextAttemptAt: &formatted, DeadlineAt: &formatted})
 		if err != nil {
 			return fmt.Errorf("claim pending delivery attempt %q: %w", deliveryID, err)
@@ -236,7 +241,7 @@ func (s *Store) SchedulePendingDeliveryRetry(ctx context.Context, deliveryID str
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	formattedNextAttempt := nextAttemptAt.UTC().Format(time.RFC3339Nano)
 	var delivery PendingDelivery
-	if err := s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
+	if err := s.withImmediateQueries(ctx, func(ctx context.Context, queries *dbsqlc.Queries) error {
 		rows, err := queries.SchedulePendingDeliveryRetry(ctx, dbsqlc.SchedulePendingDeliveryRetryParams{NextAttemptAt: &formattedNextAttempt, LastError: strings.TrimSpace(lastError), UpdatedAt: now, DeliveryID: deliveryID})
 		if err != nil {
 			return fmt.Errorf("schedule pending delivery retry %q: %w", deliveryID, err)
@@ -262,7 +267,7 @@ func (s *Store) CompletePendingDelivery(ctx context.Context, deliveryID string) 
 		return PendingDelivery{}, fmt.Errorf("%w: delivery id is required", ErrInvalidInput)
 	}
 	var delivery PendingDelivery
-	if err := s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
+	if err := s.withImmediateQueries(ctx, func(ctx context.Context, queries *dbsqlc.Queries) error {
 		now := time.Now().UTC()
 		formatted := now.Format(time.RFC3339Nano)
 		rows, err := queries.CompletePendingDelivery(ctx, dbsqlc.CompletePendingDeliveryParams{UpdatedAt: formatted, TerminalAt: &formatted, DeliveryID: deliveryID})
@@ -277,7 +282,7 @@ func (s *Store) CompletePendingDelivery(ctx context.Context, deliveryID string) 
 			return fmt.Errorf("get completed pending delivery %q: %w", deliveryID, err)
 		}
 		delivery = pendingDeliveryFromSQLC(row)
-		if err := ackSubscriptionForCompletedDelivery(ctx, queries, delivery, formatted); err != nil {
+		if err := newEventSubscriptionLifecycle(queries).ackCompletedDelivery(ctx, delivery, now); err != nil {
 			return err
 		}
 		return appendPendingDeliveryEventWithQueries(ctx, queries, delivery, pendingDeliveryEventCompleted, "completed", "", nil)
@@ -285,94 +290,6 @@ func (s *Store) CompletePendingDelivery(ctx context.Context, deliveryID string) 
 		return PendingDelivery{}, err
 	}
 	return delivery, nil
-}
-
-func ackSubscriptionForCompletedDelivery(ctx context.Context, queries *dbsqlc.Queries, delivery PendingDelivery, updatedAt string) error {
-	subscription, err := subscriptionByIDWithQueries(ctx, queries, delivery.SubscriptionID)
-	if err != nil {
-		return err
-	}
-	filter, err := parseEventSubscriptionFilter(subscription.FilterJSON)
-	if err != nil {
-		return fmt.Errorf("parse event subscription filter %q: %w", subscription.SubscriptionID, err)
-	}
-	completedByCurrentDelivery := make(map[string]struct{}, len(delivery.EventIDs))
-	for _, eventID := range delivery.EventIDs {
-		completedByCurrentDelivery[strings.TrimSpace(eventID)] = struct{}{}
-	}
-	sequence := subscription.CursorSequence
-	ackSequence := subscription.CursorSequence
-	for {
-		events, err := listWorkspaceEventsAfterSequenceWithQueries(ctx, queries, subscription.WorkspaceID, sequence, 100)
-		if err != nil {
-			return err
-		}
-		if len(events) == 0 {
-			break
-		}
-		for _, event := range events {
-			sequence = event.Sequence
-			if strings.HasPrefix(event.EventType, "delivery.") {
-				continue
-			}
-			if !filter.matches(event) {
-				continue
-			}
-			_, completed := completedByCurrentDelivery[event.EventID]
-			if !completed {
-				completed, err = pendingDeliveryForSubscriptionEventIsCompleted(ctx, queries, subscription.SubscriptionID, event.EventID)
-				if err != nil {
-					return err
-				}
-			}
-			if !completed {
-				goto updateCursor
-			}
-			ackSequence = event.Sequence
-		}
-		if len(events) < 100 {
-			break
-		}
-	}
-
-updateCursor:
-	if ackSequence == subscription.CursorSequence {
-		return nil
-	}
-	rows, err := queries.UpdateEventSubscriptionCursor(ctx, dbsqlc.UpdateEventSubscriptionCursorParams{CursorSequence: ackSequence, CursorSequence_2: ackSequence, AckSequence: ackSequence, MIN: ackSequence, CursorSequence_3: ackSequence, Column6: ackSequence, UpdatedAt: updatedAt, SubscriptionID: delivery.SubscriptionID})
-	if err != nil {
-		return fmt.Errorf("ack event subscription %q for delivery %q: %w", delivery.SubscriptionID, delivery.DeliveryID, err)
-	}
-	if rows == 0 {
-		return ErrNotFound
-	}
-	return nil
-}
-
-func pendingDeliveryForSubscriptionEventIsCompleted(ctx context.Context, queries *dbsqlc.Queries, subscriptionID, eventID string) (bool, error) {
-	deliveryID := pendingDeliveryIDForSubscriptionEvent(subscriptionID, eventID)
-	row, err := queries.GetPendingDelivery(ctx, dbsqlc.GetPendingDeliveryParams{DeliveryID: deliveryID})
-	if err == nil && row.Status == pendingDeliveryStatusCompleted {
-		return true, nil
-	}
-	if err != nil {
-		if !errors.Is(err, sql.ErrNoRows) {
-			return false, fmt.Errorf("get pending delivery %q: %w", deliveryID, err)
-		}
-	}
-	rows, listErr := queries.ListCompletedPendingDeliveriesForSubscription(ctx, dbsqlc.ListCompletedPendingDeliveriesForSubscriptionParams{SubscriptionID: subscriptionID})
-	if listErr != nil {
-		return false, fmt.Errorf("list completed pending deliveries for subscription %q: %w", subscriptionID, listErr)
-	}
-	for _, candidate := range rows {
-		delivery := pendingDeliveryFromSQLC(candidate)
-		for _, candidateEventID := range delivery.EventIDs {
-			if strings.TrimSpace(candidateEventID) == strings.TrimSpace(eventID) {
-				return true, nil
-			}
-		}
-	}
-	return false, nil
 }
 
 func listWorkspaceEventsAfterSequenceWithQueries(ctx context.Context, queries *dbsqlc.Queries, workspaceID string, afterSequence int64, limit int) ([]WorkspaceEvent, error) {
@@ -422,7 +339,7 @@ func (s *Store) FailPendingDelivery(ctx context.Context, deliveryID, lastError s
 	now := time.Now().UTC()
 	formatted := now.Format(time.RFC3339Nano)
 	var delivery PendingDelivery
-	if err := s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
+	if err := s.withImmediateQueries(ctx, func(ctx context.Context, queries *dbsqlc.Queries) error {
 		rows, err := queries.FailPendingDelivery(ctx, dbsqlc.FailPendingDeliveryParams{LastError: strings.TrimSpace(lastError), UpdatedAt: formatted, TerminalAt: &formatted, DeliveryID: deliveryID})
 		if err != nil {
 			return fmt.Errorf("fail pending delivery %q: %w", deliveryID, err)

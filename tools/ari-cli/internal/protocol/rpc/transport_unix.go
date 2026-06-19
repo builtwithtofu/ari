@@ -23,6 +23,10 @@ type UnixSocketTransport struct {
 	frameRouter FrameRouter
 }
 
+type UnixSocketListener struct {
+	listener *net.UnixListener
+}
+
 func NewUnixSocketTransport(path string, server *Server) *UnixSocketTransport {
 	return &UnixSocketTransport{path: path, server: server}
 }
@@ -31,44 +35,54 @@ func NewUnixSocketTransportWithFrameRouter(path string, server *Server, frameRou
 	return &UnixSocketTransport{path: path, server: server, frameRouter: frameRouter}
 }
 
-func (t *UnixSocketTransport) Run(ctx context.Context) error {
+func (t *UnixSocketTransport) Bind(ctx context.Context) (*UnixSocketListener, error) {
 	if t.server == nil {
-		return fmt.Errorf("unix socket transport server is required")
+		return nil, fmt.Errorf("unix socket transport server is required")
 	}
 
 	if t.path == "" {
-		return fmt.Errorf("unix socket path is required")
+		return nil, fmt.Errorf("unix socket path is required")
 	}
 
 	if err := os.MkdirAll(filepath.Dir(t.path), 0o755); err != nil {
-		return fmt.Errorf("create socket directory: %w", err)
+		return nil, fmt.Errorf("create socket directory: %w", err)
 	}
 
 	listener, err := listenUnixSocket(ctx, t.path)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	unixListener, ok := listener.(*net.UnixListener)
 	if !ok {
 		_ = listener.Close()
-		return fmt.Errorf("listen on unix socket: expected *net.UnixListener")
+		return nil, fmt.Errorf("listen on unix socket: expected *net.UnixListener")
 	}
 
 	unixListener.SetUnlinkOnClose(true)
+	return &UnixSocketListener{listener: unixListener}, nil
+}
+
+func (t *UnixSocketTransport) Serve(ctx context.Context, bound *UnixSocketListener) error {
+	if t.server == nil {
+		return fmt.Errorf("unix socket transport server is required")
+	}
+	if bound == nil || bound.listener == nil {
+		return fmt.Errorf("unix socket listener is required")
+	}
 
 	defer func() {
-		_ = unixListener.Close()
+		_ = bound.listener.Close()
 	}()
 
 	go func() {
 		<-ctx.Done()
-		_ = unixListener.Close()
+		_ = bound.listener.Close()
 	}()
 
 	var wg sync.WaitGroup
 	for {
-		conn, err := listener.Accept()
+		conn, err := bound.listener.Accept()
 		if err != nil {
 			if ctx.Err() != nil {
 				break
@@ -160,6 +174,14 @@ func readFirstNonSpaceByte(reader *bufio.Reader) (byte, error) {
 			return value, nil
 		}
 	}
+}
+
+func (t *UnixSocketTransport) Run(ctx context.Context) error {
+	bound, err := t.Bind(ctx)
+	if err != nil {
+		return err
+	}
+	return t.Serve(ctx, bound)
 }
 
 func ensureSocketPathAvailable(path string) error {

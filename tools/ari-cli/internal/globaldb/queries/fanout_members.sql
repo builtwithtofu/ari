@@ -20,3 +20,24 @@ ON CONFLICT(fanout_member_id) DO UPDATE SET
   final_response_id = COALESCE(NULLIF(fanout_members.final_response_id, ''), NULLIF(excluded.final_response_id, ''), ''),
   status = excluded.status,
   updated_at = excluded.updated_at;
+
+-- name: GetFanoutMemberByWorkerSession :one
+SELECT fanout_member_id, fanout_group_id, workspace_id, worker_session_id, target_profile_id, request_agent_message_id, reply_agent_message_id, final_response_id, status, created_at, updated_at
+FROM fanout_members
+WHERE worker_session_id = ?;
+
+-- name: ListFanoutMembersByGroup :many
+SELECT fanout_member_id, fanout_group_id, workspace_id, worker_session_id, target_profile_id, request_agent_message_id, reply_agent_message_id, final_response_id, status, created_at, updated_at
+FROM fanout_members
+WHERE fanout_group_id = ?
+ORDER BY created_at ASC, fanout_member_id ASC;
+
+-- name: ListFanoutMembersByWorkspace :many
+SELECT fanout_member_id, fanout_group_id, workspace_id, worker_session_id, target_profile_id, request_agent_message_id, reply_agent_message_id, final_response_id, status, created_at, updated_at
+FROM fanout_members
+WHERE workspace_id = ?
+ORDER BY created_at ASC, fanout_member_id ASC;
+
+-- name: DeleteFanoutMembersByWorkspace :execrows
+DELETE FROM fanout_members
+WHERE workspace_id = ?;

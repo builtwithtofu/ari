@@ -115,7 +115,7 @@ func (s *Store) UpdateWorkspaceStatus(ctx context.Context, id, status string) er
 		return fmt.Errorf("%w: invalid status %q", ErrInvalidInput, status)
 	}
 
-	return s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
+	return s.withImmediateQueries(ctx, func(ctx context.Context, queries *dbsqlc.Queries) error {
 		workspace, err := queries.GetWorkspaceByID(ctx, dbsqlc.GetWorkspaceByIDParams{WorkspaceID: id})
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -169,7 +169,7 @@ func (s *Store) AddFolder(ctx context.Context, workspaceID, folderPath, vcsType 
 		return fmt.Errorf("%w: invalid vcs type %q", ErrInvalidInput, vcsType)
 	}
 
-	return s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
+	return s.withImmediateQueries(ctx, func(ctx context.Context, queries *dbsqlc.Queries) error {
 		return addFolderInTransaction(ctx, queries, workspaceID, folderPath, vcsType, isPrimary)
 	})
 }
@@ -182,7 +182,7 @@ func (s *Store) RemoveFolder(ctx context.Context, workspaceID, folderPath string
 		return fmt.Errorf("%w: folder path is required", ErrInvalidInput)
 	}
 
-	return s.withImmediateQueries(ctx, func(queries *dbsqlc.Queries) error {
+	return s.withImmediateQueries(ctx, func(ctx context.Context, queries *dbsqlc.Queries) error {
 		return removeFolderInTransaction(ctx, queries, workspaceID, folderPath)
 	})
 }

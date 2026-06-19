@@ -9,9 +9,9 @@ import (
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
 )
 
-// Durable timers are daemon-owned: due timers must fire from the daemon's own
-// worker loop, not only when a client calls workspace.timers.fire_due.
-func TestWorkspaceTimerWorkerLoopFiresDueTimers(t *testing.T) {
+// Durable timers are daemon-owned: due timers fire from the daemon's
+// orchestration runtime.
+func TestWorkspaceOrchestrationRuntimeFiresDueTimers(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
@@ -21,11 +21,9 @@ func TestWorkspaceTimerWorkerLoopFiresDueTimers(t *testing.T) {
 		t.Fatalf("CreateWorkspaceTimer returned error: %v", err)
 	}
 
-	ticks := make(chan time.Time, 1)
-	ticks <- base.Add(time.Minute)
-	close(ticks)
-	if err := runWorkspaceTimerWorkerLoop(ctx, store, ticks, 10); err != nil {
-		t.Fatalf("runWorkspaceTimerWorkerLoop returned error: %v", err)
+	runtime := newWorkspaceOrchestrationRuntime(store, &recordingWorkspaceDeliveryDispatcher{})
+	if err := runtime.runDueOnce(ctx, base.Add(time.Minute)); err != nil {
+		t.Fatalf("runDueOnce returned error: %v", err)
 	}
 
 	fired, err := store.GetWorkspaceTimer(ctx, timer.TimerID)
@@ -76,9 +74,9 @@ func TestWorkspaceTimerFireCreatesPendingDeliveryForSubscription(t *testing.T) {
 	}
 }
 
-// A transient store failure must not kill the durable due-work loops: state
-// lives in the database, so the next tick retries the same work.
-func TestWorkspaceDeliveryWorkerLoopContinuesAfterStoreErrors(t *testing.T) {
+// A transient store failure must not kill the durable due-work runtime: state
+// lives in the database, so the scheduler retries after its error backoff.
+func TestWorkspaceOrchestrationRuntimeContinuesAfterStoreErrors(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open returned error: %v", err)
@@ -91,19 +89,12 @@ func TestWorkspaceDeliveryWorkerLoopContinuesAfterStoreErrors(t *testing.T) {
 		t.Fatalf("db.Close returned error: %v", err)
 	}
 
-	dispatcher := &recordingWorkspaceDeliveryDispatcher{result: WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptCompleted}}
-	deliveryTicks := make(chan time.Time, 2)
-	deliveryTicks <- time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
-	deliveryTicks <- time.Date(2026, 6, 10, 12, 0, 1, 0, time.UTC)
-	close(deliveryTicks)
-	if err := runWorkspaceDeliveryWorkerLoop(context.Background(), store, dispatcher, deliveryTicks, 10); err != nil {
-		t.Fatalf("runWorkspaceDeliveryWorkerLoop returned error %v, want loop to outlive store errors", err)
-	}
-	timerTicks := make(chan time.Time, 2)
-	timerTicks <- time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
-	timerTicks <- time.Date(2026, 6, 10, 12, 0, 1, 0, time.UTC)
-	close(timerTicks)
-	if err := runWorkspaceTimerWorkerLoop(context.Background(), store, timerTicks, 10); err != nil {
-		t.Fatalf("runWorkspaceTimerWorkerLoop returned error %v, want loop to outlive store errors", err)
+	runtime := newWorkspaceOrchestrationRuntime(store, &recordingWorkspaceDeliveryDispatcher{result: WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptCompleted}})
+	runtime.errorBackoff = 5 * time.Millisecond
+	runtime.now = func() time.Time { return time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC) }
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	if err := runtime.run(ctx); err != nil {
+		t.Fatalf("workspace orchestration runtime returned error %v, want loop to outlive store errors", err)
 	}
 }
