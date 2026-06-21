@@ -60,5 +60,13 @@ func isSubscriptionDeadlineTimerEvent(event WorkspaceEvent) bool {
 		return false
 	}
 	payload := WorkspaceEventStringPayload(event.PayloadJSON)
-	return strings.TrimSpace(payload["purpose"]) == workspaceTimerPurposeSubscriptionTimeout && strings.TrimSpace(payload["target_subscription_id"]) != ""
+	targetSubscriptionID := strings.TrimSpace(payload["target_subscription_id"])
+	if targetSubscriptionID == "" {
+		return false
+	}
+	return strings.TrimSpace(event.SubjectID) == subscriptionDeadlineTimerID(targetSubscriptionID) &&
+		strings.TrimSpace(payload["timer_id"]) == subscriptionDeadlineTimerID(targetSubscriptionID) &&
+		strings.TrimSpace(payload["reason"]) == "subscription_timeout" &&
+		strings.TrimSpace(payload["subject_type"]) == "event_subscription" &&
+		strings.TrimSpace(payload["subject_id"]) == targetSubscriptionID
 }

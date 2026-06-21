@@ -349,6 +349,9 @@ func signalSentInboxItemFromWorkspaceEvent(ctx context.Context, queries *dbsqlc.
 				}
 				return InboxItem{}, false, err
 			}
+			if strings.TrimSpace(subscription.WorkspaceID) != strings.TrimSpace(event.WorkspaceID) {
+				return InboxItem{}, false, nil
+			}
 			sourceSessionID = strings.TrimSpace(subscription.OwnerSessionID)
 		case "fanout_group":
 			group, err := queries.GetFanoutGroup(ctx, dbsqlc.GetFanoutGroupParams{FanoutGroupID: strings.TrimSpace(event.SubjectID)})

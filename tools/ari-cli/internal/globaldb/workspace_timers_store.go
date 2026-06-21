@@ -231,8 +231,16 @@ func workspaceTimerFromSQLC(row dbsqlc.WorkspaceTimer) WorkspaceTimer {
 
 func workspaceTimerFiredPayload(timer WorkspaceTimer) string {
 	payload := map[string]any{}
-	if strings.TrimSpace(timer.PayloadJSON) != "" {
-		_ = json.Unmarshal([]byte(timer.PayloadJSON), &payload)
+	if raw := strings.TrimSpace(timer.PayloadJSON); raw != "" {
+		var objectPayload map[string]any
+		if err := json.Unmarshal([]byte(raw), &objectPayload); err == nil && objectPayload != nil {
+			payload = objectPayload
+		} else {
+			var rawPayload any
+			if err := json.Unmarshal([]byte(raw), &rawPayload); err == nil {
+				payload["payload"] = rawPayload
+			}
+		}
 	}
 	payload["timer_id"] = strings.TrimSpace(timer.TimerID)
 	payload["purpose"] = strings.TrimSpace(timer.Purpose)

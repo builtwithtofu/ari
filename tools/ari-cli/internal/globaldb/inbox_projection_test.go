@@ -66,3 +66,38 @@ func assertAttentionInboxItems(t *testing.T, store *Store, ctx context.Context) 
 		t.Fatalf("delivery_failed summary = %q, want error detail", got["delivery_failed"].Summary)
 	}
 }
+
+func TestSignalInboxProjectionSkipsCrossWorkspaceResolvedTargets(t *testing.T) {
+	store := newGlobalDBTestStore(t, "signal-cross-workspace-projection")
+	ctx := context.Background()
+	base := time.Date(2026, 6, 21, 16, 0, 0, 0, time.UTC)
+	if err := store.CreateWorkspace(ctx, "ws-signal", "signal", t.TempDir(), "manual", "auto"); err != nil {
+		t.Fatalf("CreateWorkspace ws-signal returned error: %v", err)
+	}
+	if err := store.CreateWorkspace(ctx, "ws-other", "other", t.TempDir(), "manual", "auto"); err != nil {
+		t.Fatalf("CreateWorkspace ws-other returned error: %v", err)
+	}
+	if _, err := store.CreateEventSubscription(ctx, EventSubscription{SubscriptionID: "sub-other", WorkspaceID: "ws-other", OwnerSessionID: "other-run", FilterJSON: `{"event_types":["worker.completed"]}`, CreatedAt: base, UpdatedAt: base}); err != nil {
+		t.Fatalf("CreateEventSubscription returned error: %v", err)
+	}
+	if _, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-cross-sub-signal", WorkspaceID: "ws-signal", EventType: WorkspaceEventSignalSent, SubjectType: "event_subscription", SubjectID: "sub-other", ProducerType: "session", ProducerID: "run-1", PayloadJSON: `{"action":"continue"}`, AttentionRequired: true, CreatedAt: base}); err != nil {
+		t.Fatalf("AppendWorkspaceEvent returned error: %v", err)
+	}
+	items, err := store.ListInboxItems(ctx, "ws-signal", "other-run")
+	if err != nil {
+		t.Fatalf("ListInboxItems returned error: %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("items = %#v, want no cross-workspace signal inbox item", items)
+	}
+	if err := (InboxProjection{}).Rebuild(ctx, store, "ws-signal"); err != nil {
+		t.Fatalf("InboxProjection.Rebuild returned error: %v", err)
+	}
+	items, err = store.ListInboxItems(ctx, "ws-signal", "other-run")
+	if err != nil {
+		t.Fatalf("ListInboxItems after rebuild returned error: %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("rebuilt items = %#v, want no cross-workspace signal inbox item", items)
+	}
+}
