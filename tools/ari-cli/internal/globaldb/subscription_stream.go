@@ -104,7 +104,9 @@ func (s SubscriptionStream) Read(ctx context.Context, queries *dbsqlc.Queries, o
 	if err != nil {
 		return EventSubscriptionReadResult{}, err
 	}
-	return EventSubscriptionReadResult{Subscription: s.compiled.EventSubscription, Events: events, Completion: completion.evaluate(events, false)}, nil
+	timedOut := s.hasSubscriptionDeadlineEvent(events)
+	completionEvents := s.completionEvents(events)
+	return EventSubscriptionReadResult{Subscription: s.compiled.EventSubscription, Events: events, Completion: completion.evaluate(completionEvents, timedOut)}, nil
 }
 
 func (s SubscriptionStream) ScanUnreadEvents(ctx context.Context, queries *dbsqlc.Queries, limit int, completion EventSubscriptionCompletionCondition) ([]WorkspaceEvent, error) {
@@ -202,6 +204,26 @@ updateCursor:
 
 func (s SubscriptionStream) AckCursor(ctx context.Context, queries *dbsqlc.Queries, sequence int64, updatedAt time.Time) error {
 	return ackEventSubscriptionCursor(ctx, queries, s.compiled.SubscriptionID, sequence, updatedAt)
+}
+
+func (s SubscriptionStream) hasSubscriptionDeadlineEvent(events []WorkspaceEvent) bool {
+	for _, event := range events {
+		if isSubscriptionDeadlineTimerEvent(event) && WorkspaceTimerTargetSubscriptionIDFromEvent(event) == s.compiled.SubscriptionID {
+			return true
+		}
+	}
+	return false
+}
+
+func (s SubscriptionStream) completionEvents(events []WorkspaceEvent) []WorkspaceEvent {
+	out := make([]WorkspaceEvent, 0, len(events))
+	for _, event := range events {
+		if isSubscriptionDeadlineTimerEvent(event) && WorkspaceTimerTargetSubscriptionIDFromEvent(event) == s.compiled.SubscriptionID {
+			continue
+		}
+		out = append(out, event)
+	}
+	return out
 }
 
 func (s SubscriptionStream) CreatePendingDeliveryForEvent(ctx context.Context, queries *dbsqlc.Queries, event WorkspaceEvent) error {

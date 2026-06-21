@@ -107,7 +107,7 @@ CREATE TABLE IF NOT EXISTS workspace_timers (
   timer_id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,
   owner_session_id TEXT NOT NULL DEFAULT '',
-  subscription_id TEXT,
+  target_subscription_id TEXT,
   subject_type TEXT NOT NULL DEFAULT '',
   subject_id TEXT NOT NULL DEFAULT '',
   purpose TEXT NOT NULL DEFAULT '',
@@ -118,7 +118,7 @@ CREATE TABLE IF NOT EXISTS workspace_timers (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
-  FOREIGN KEY(workspace_id, subscription_id)
+  FOREIGN KEY(workspace_id, target_subscription_id)
     REFERENCES event_subscriptions(workspace_id, subscription_id) ON DELETE CASCADE
 );
 

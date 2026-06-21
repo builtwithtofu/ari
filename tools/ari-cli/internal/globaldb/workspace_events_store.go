@@ -124,6 +124,9 @@ func (s *Store) CreateEventSubscription(ctx context.Context, subscription EventS
 		if err := queries.CreateEventSubscription(ctx, dbsqlc.CreateEventSubscriptionParams{SubscriptionID: subscription.SubscriptionID, WorkspaceID: subscription.WorkspaceID, OwnerSessionID: subscription.OwnerSessionID, Name: subscription.Name, FilterJson: subscription.FilterJSON, DeliveryTargetType: subscription.DeliveryTargetType, DeliveryTargetID: subscription.DeliveryTargetID, DeliveryPolicyJson: subscription.DeliveryPolicyJSON, CursorSequence: subscription.CursorSequence, AckSequence: subscription.AckSequence, Status: subscription.Status, CompletionConditionJson: subscription.CompletionConditionJSON, TimeoutAt: timeoutAt, CreatedAt: subscription.CreatedAt.UTC().Format(time.RFC3339Nano), UpdatedAt: subscription.UpdatedAt.UTC().Format(time.RFC3339Nano)}); err != nil {
 			return fmt.Errorf("create event subscription %q: %w", subscription.SubscriptionID, err)
 		}
+		if err := createSubscriptionDeadlineTimerWithQueries(ctx, queries, subscription); err != nil {
+			return fmt.Errorf("create event subscription %q deadline timer: %w", subscription.SubscriptionID, err)
+		}
 		stream, err := NewSubscriptionStream(subscription)
 		if err != nil {
 			return err
@@ -184,6 +187,9 @@ func (s *Store) CancelEventSubscription(ctx context.Context, subscriptionID stri
 				return nil
 			}
 			return ErrNotFound
+		}
+		if err := cancelSubscriptionDeadlineTimersWithQueries(ctx, queries, subscriptionID, now); err != nil {
+			return fmt.Errorf("cancel event subscription %q deadline timers: %w", subscriptionID, err)
 		}
 		return failPendingDeliveriesForSubscriptionWithQueries(ctx, queries, subscriptionID, "event subscription canceled", now)
 	}); err != nil {

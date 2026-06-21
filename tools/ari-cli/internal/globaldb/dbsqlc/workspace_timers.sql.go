@@ -29,12 +29,32 @@ func (q *Queries) CancelWorkspaceTimer(ctx context.Context, arg CancelWorkspaceT
 	return result.RowsAffected()
 }
 
+const cancelWorkspaceTimersByTargetSubscription = `-- name: CancelWorkspaceTimersByTargetSubscription :execrows
+UPDATE workspace_timers
+SET status = 'canceled',
+    updated_at = ?
+WHERE target_subscription_id = ? AND status = 'scheduled'
+`
+
+type CancelWorkspaceTimersByTargetSubscriptionParams struct {
+	UpdatedAt            string  `json:"updated_at"`
+	TargetSubscriptionID *string `json:"target_subscription_id"`
+}
+
+func (q *Queries) CancelWorkspaceTimersByTargetSubscription(ctx context.Context, arg CancelWorkspaceTimersByTargetSubscriptionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, cancelWorkspaceTimersByTargetSubscription, arg.UpdatedAt, arg.TargetSubscriptionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const createWorkspaceTimer = `-- name: CreateWorkspaceTimer :exec
 INSERT INTO workspace_timers (
   timer_id,
   workspace_id,
   owner_session_id,
-  subscription_id,
+  target_subscription_id,
   subject_type,
   subject_id,
   purpose,
@@ -48,19 +68,19 @@ INSERT INTO workspace_timers (
 `
 
 type CreateWorkspaceTimerParams struct {
-	TimerID        string  `json:"timer_id"`
-	WorkspaceID    string  `json:"workspace_id"`
-	OwnerSessionID string  `json:"owner_session_id"`
-	SubscriptionID *string `json:"subscription_id"`
-	SubjectType    string  `json:"subject_type"`
-	SubjectID      string  `json:"subject_id"`
-	Purpose        string  `json:"purpose"`
-	Status         string  `json:"status"`
-	FireAt         string  `json:"fire_at"`
-	PayloadJson    string  `json:"payload_json"`
-	FiredEventID   string  `json:"fired_event_id"`
-	CreatedAt      string  `json:"created_at"`
-	UpdatedAt      string  `json:"updated_at"`
+	TimerID              string  `json:"timer_id"`
+	WorkspaceID          string  `json:"workspace_id"`
+	OwnerSessionID       string  `json:"owner_session_id"`
+	TargetSubscriptionID *string `json:"target_subscription_id"`
+	SubjectType          string  `json:"subject_type"`
+	SubjectID            string  `json:"subject_id"`
+	Purpose              string  `json:"purpose"`
+	Status               string  `json:"status"`
+	FireAt               string  `json:"fire_at"`
+	PayloadJson          string  `json:"payload_json"`
+	FiredEventID         string  `json:"fired_event_id"`
+	CreatedAt            string  `json:"created_at"`
+	UpdatedAt            string  `json:"updated_at"`
 }
 
 func (q *Queries) CreateWorkspaceTimer(ctx context.Context, arg CreateWorkspaceTimerParams) error {
@@ -68,7 +88,7 @@ func (q *Queries) CreateWorkspaceTimer(ctx context.Context, arg CreateWorkspaceT
 		arg.TimerID,
 		arg.WorkspaceID,
 		arg.OwnerSessionID,
-		arg.SubscriptionID,
+		arg.TargetSubscriptionID,
 		arg.SubjectType,
 		arg.SubjectID,
 		arg.Purpose,
@@ -83,7 +103,7 @@ func (q *Queries) CreateWorkspaceTimer(ctx context.Context, arg CreateWorkspaceT
 }
 
 const getWorkspaceTimer = `-- name: GetWorkspaceTimer :one
-SELECT timer_id, workspace_id, owner_session_id, subscription_id, subject_type, subject_id, purpose, status, fire_at, payload_json, fired_event_id, created_at, updated_at
+SELECT timer_id, workspace_id, owner_session_id, target_subscription_id, subject_type, subject_id, purpose, status, fire_at, payload_json, fired_event_id, created_at, updated_at
 FROM workspace_timers
 WHERE timer_id = ?
 `
@@ -99,7 +119,7 @@ func (q *Queries) GetWorkspaceTimer(ctx context.Context, arg GetWorkspaceTimerPa
 		&i.TimerID,
 		&i.WorkspaceID,
 		&i.OwnerSessionID,
-		&i.SubscriptionID,
+		&i.TargetSubscriptionID,
 		&i.SubjectType,
 		&i.SubjectID,
 		&i.Purpose,
@@ -114,7 +134,7 @@ func (q *Queries) GetWorkspaceTimer(ctx context.Context, arg GetWorkspaceTimerPa
 }
 
 const listDueWorkspaceTimers = `-- name: ListDueWorkspaceTimers :many
-SELECT timer_id, workspace_id, owner_session_id, subscription_id, subject_type, subject_id, purpose, status, fire_at, payload_json, fired_event_id, created_at, updated_at
+SELECT timer_id, workspace_id, owner_session_id, target_subscription_id, subject_type, subject_id, purpose, status, fire_at, payload_json, fired_event_id, created_at, updated_at
 FROM workspace_timers
 WHERE status = 'scheduled' AND fire_at <= ?
 ORDER BY fire_at ASC, timer_id ASC
@@ -139,7 +159,7 @@ func (q *Queries) ListDueWorkspaceTimers(ctx context.Context, arg ListDueWorkspa
 			&i.TimerID,
 			&i.WorkspaceID,
 			&i.OwnerSessionID,
-			&i.SubscriptionID,
+			&i.TargetSubscriptionID,
 			&i.SubjectType,
 			&i.SubjectID,
 			&i.Purpose,

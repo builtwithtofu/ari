@@ -135,7 +135,7 @@ func (s *Store) waitEventSubscription(ctx context.Context, subscription EventSub
 	if err != nil {
 		return EventSubscriptionReadResult{}, err
 	}
-	if !result.Completion.Configured || result.Completion.Satisfied {
+	if !result.Completion.Configured || result.Completion.Satisfied || result.Completion.TimedOut {
 		return result, nil
 	}
 	timer := time.NewTimer(options.Timeout)
@@ -151,7 +151,7 @@ func (s *Store) waitEventSubscription(ctx context.Context, subscription EventSub
 			if err != nil {
 				return EventSubscriptionReadResult{}, err
 			}
-			if result.Completion.Satisfied {
+			if result.Completion.Satisfied || result.Completion.TimedOut {
 				return result, nil
 			}
 		}
@@ -199,6 +199,9 @@ func (subscription compiledEventSubscription) matchesEvent(event WorkspaceEvent,
 	if options.applyCursor && event.Sequence <= subscription.CursorSequence {
 		return false
 	}
+	if targetSubscriptionID := WorkspaceTimerTargetSubscriptionIDFromEvent(event); targetSubscriptionID != "" {
+		return targetSubscriptionID == subscription.SubscriptionID
+	}
 	if options.applyTimeout && subscription.TimeoutAt != nil && !subscription.TimeoutAt.After(event.CreatedAt) {
 		return false
 	}
@@ -210,7 +213,7 @@ func pendingDeliveryIDForSubscriptionEvent(subscriptionID, eventID string) strin
 }
 
 func workspaceEventSkipsDeliveryFanout(event WorkspaceEvent) bool {
-	return strings.HasPrefix(strings.TrimSpace(event.EventType), "delivery.")
+	return strings.HasPrefix(strings.TrimSpace(event.EventType), "delivery.") || isSubscriptionDeadlineTimerEvent(event)
 }
 
 func pendingDeliveryForSubscriptionEventIsCompleted(ctx context.Context, queries *dbsqlc.Queries, subscriptionID, eventID string) (bool, error) {
