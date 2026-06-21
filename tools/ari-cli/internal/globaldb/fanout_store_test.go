@@ -27,13 +27,13 @@ func TestFanoutProjectionMaterializesLifecycleFromWorkspaceEvents(t *testing.T) 
 	if err := store.CreateFanoutGroup(ctx, FanoutGroup{FanoutGroupID: "fg-1", WorkspaceID: "ws-1", SourceSessionID: "run-1", SourceAgentID: "agent-1", RequestAgentMessageID: "request-1", Body: "compare options"}); err != nil {
 		t.Fatalf("CreateFanoutGroup returned error: %v", err)
 	}
-	if _, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-fanout-started", WorkspaceID: "ws-1", EventType: WorkspaceEventWorkerStarted, SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "worker-1", CorrelationID: "fg-1", CausationID: "request-1", PayloadJSON: `{"fanout_member_id":"fm-1","fanout_group_id":"fg-1","target_profile_id":"agent-2"}`}); err != nil {
+	if _, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-fanout-started", WorkspaceID: "ws-1", EventType: WorkspaceEventWorkerStarted, SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "worker-1", CorrelationID: "fg-1", CausationID: "request-1", PayloadJSON: `{"fanout_member_id":"fm-1","fanout_group_id":"fg-1","source_session_id":"run-1","target_profile_id":"agent-2"}`}); err != nil {
 		t.Fatalf("AppendWorkspaceEvent started returned error: %v", err)
 	}
 	if err := store.UpsertFinalResponse(ctx, FinalResponse{FinalResponseID: "fr-worker-1", HarnessSessionID: "worker-1", WorkspaceID: "ws-1", TaskID: "task-1", ContextPacketID: "ctx-1", ProfileID: "agent-2", Status: "completed", Text: "done"}); err != nil {
 		t.Fatalf("UpsertFinalResponse returned error: %v", err)
 	}
-	if _, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-fanout-completed", WorkspaceID: "ws-1", EventType: WorkspaceEventWorkerCompleted, SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "worker-1", CorrelationID: "fg-1", CausationID: "reply-1", PayloadJSON: `{"fanout_member_id":"fm-1","fanout_group_id":"fg-1"}`, PayloadRefJSON: `{"kind":"final_response","id":"fr-worker-1"}`}); err != nil {
+	if _, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-fanout-completed", WorkspaceID: "ws-1", EventType: WorkspaceEventWorkerCompleted, SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "worker-1", CorrelationID: "fg-1", CausationID: "reply-1", PayloadJSON: `{"fanout_member_id":"fm-1","fanout_group_id":"fg-1","source_session_id":"run-1"}`, PayloadRefJSON: `{"kind":"final_response","id":"fr-worker-1"}`}); err != nil {
 		t.Fatalf("AppendWorkspaceEvent completed returned error: %v", err)
 	}
 
@@ -57,7 +57,7 @@ func TestInboxProjectionPreservesReadStateAndCounts(t *testing.T) {
 		t.Fatalf("CreateFanoutGroup returned error: %v", err)
 	}
 
-	firstEvent, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-inbox-1", WorkspaceID: "ws-1", EventType: WorkspaceEventWorkerCompleted, SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "worker-1", CorrelationID: "fg-1", CausationID: "reply-1", PayloadJSON: `{"fanout_member_id":"fm-1","fanout_group_id":"fg-1","target_profile_id":"agent-2"}`, PayloadRefJSON: `{"kind":"final_response","id":"fr-1"}`})
+	firstEvent, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-inbox-1", WorkspaceID: "ws-1", EventType: WorkspaceEventWorkerCompleted, SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "worker-1", CorrelationID: "fg-1", CausationID: "reply-1", PayloadJSON: `{"fanout_member_id":"fm-1","fanout_group_id":"fg-1","source_session_id":"run-1","target_profile_id":"agent-2"}`, PayloadRefJSON: `{"kind":"final_response","id":"fr-1"}`})
 	if err != nil {
 		t.Fatalf("AppendWorkspaceEvent first returned error: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestInboxProjectionPreservesReadStateAndCounts(t *testing.T) {
 		t.Fatalf("marked = %d, want one row", marked)
 	}
 
-	secondEvent, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-inbox-2", WorkspaceID: "ws-1", EventType: WorkspaceEventWorkerCompleted, SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "worker-1", CorrelationID: "fg-1", CausationID: "reply-2", PayloadJSON: `{"fanout_member_id":"fm-1","fanout_group_id":"fg-1","target_profile_id":"agent-2"}`, PayloadRefJSON: `{"kind":"final_response","id":"fr-1"}`})
+	secondEvent, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-inbox-2", WorkspaceID: "ws-1", EventType: WorkspaceEventWorkerCompleted, SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "worker-1", CorrelationID: "fg-1", CausationID: "reply-2", PayloadJSON: `{"fanout_member_id":"fm-1","fanout_group_id":"fg-1","source_session_id":"run-1","target_profile_id":"agent-2"}`, PayloadRefJSON: `{"kind":"final_response","id":"fr-1"}`})
 	if err != nil {
 		t.Fatalf("AppendWorkspaceEvent second returned error: %v", err)
 	}

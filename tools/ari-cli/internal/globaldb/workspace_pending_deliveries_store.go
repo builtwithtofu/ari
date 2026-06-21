@@ -20,10 +20,10 @@ const (
 	pendingDeliveryStatusCompleted = "completed"
 	pendingDeliveryStatusFailed    = "failed"
 
-	pendingDeliveryEventAttempted      = "delivery.attempted"
-	pendingDeliveryEventCompleted      = "delivery.completed"
-	pendingDeliveryEventFailed         = "delivery.failed"
-	pendingDeliveryEventRetryScheduled = "delivery.retry_scheduled"
+	pendingDeliveryEventAttempted      = WorkspaceEventDeliveryAttempted
+	pendingDeliveryEventCompleted      = WorkspaceEventDeliveryCompleted
+	pendingDeliveryEventFailed         = WorkspaceEventDeliveryFailed
+	pendingDeliveryEventRetryScheduled = WorkspaceEventDeliveryRetryScheduled
 
 	pendingDeliverySubjectType  = "pending_delivery"
 	pendingDeliveryProducerType = "daemon"

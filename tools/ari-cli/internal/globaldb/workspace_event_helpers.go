@@ -37,7 +37,14 @@ const (
 	WorkspaceEventHarnessUsage       = WorkspaceEventHarnessEventPrefix + "usage"
 	WorkspaceEventHarnessDebug       = WorkspaceEventHarnessEventPrefix + "debug"
 
+	WorkspaceEventSignalSent = "signal.sent"
+
 	WorkspaceEventTimerFired = "timer.fired"
+
+	WorkspaceEventDeliveryAttempted      = "delivery.attempted"
+	WorkspaceEventDeliveryCompleted      = "delivery.completed"
+	WorkspaceEventDeliveryFailed         = "delivery.failed"
+	WorkspaceEventDeliveryRetryScheduled = "delivery.retry_scheduled"
 )
 
 func IsFanoutWorkerWorkspaceEvent(eventType string) bool {

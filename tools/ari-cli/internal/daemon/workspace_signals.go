@@ -33,7 +33,7 @@ func (d *Daemon) registerWorkspaceSignalMethods(registry *rpc.MethodRegistry, st
 			if producerType == "" {
 				producerType = "client"
 			}
-			event, err := store.AppendWorkspaceEvent(ctx, globaldb.WorkspaceEvent{EventID: req.EventID, WorkspaceID: req.WorkspaceID, EventType: "signal.sent", SubjectType: req.TargetType, SubjectID: req.TargetID, ProducerType: producerType, ProducerID: req.ProducerID, CorrelationID: req.CorrelationID, CausationID: req.CausationID, PayloadJSON: req.PayloadJSON})
+			event, err := store.AppendWorkspaceEvent(ctx, globaldb.WorkspaceEvent{EventID: req.EventID, WorkspaceID: req.WorkspaceID, EventType: globaldb.WorkspaceEventSignalSent, SubjectType: req.TargetType, SubjectID: req.TargetID, ProducerType: producerType, ProducerID: req.ProducerID, CorrelationID: req.CorrelationID, CausationID: req.CausationID, PayloadJSON: req.PayloadJSON, AttentionRequired: true})
 			if err != nil {
 				return WorkspaceSignalResponse{}, workspaceEventRPCError(err)
 			}

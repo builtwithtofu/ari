@@ -20,7 +20,7 @@ func TestEventCoordinatorProjectsFanoutMemberInboxAndDeliveryAtomically(t *testi
 		t.Fatalf("CreateEventSubscription returned error: %v", err)
 	}
 
-	event := WorkspaceEvent{WorkspaceID: "ws-1", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "worker-1", CorrelationID: "fg-atomic", CausationID: "reply-1", PayloadJSON: `{"status":"completed","fanout_group_id":"fg-atomic","fanout_member_id":"fg-atomic-m1","target_profile_id":"agent-2"}`, PayloadRefJSON: `{"kind":"final_response","id":"fr-1"}`}
+	event := WorkspaceEvent{WorkspaceID: "ws-1", EventType: "worker.completed", SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "worker-1", CorrelationID: "fg-atomic", CausationID: "reply-1", PayloadJSON: `{"status":"completed","fanout_group_id":"fg-atomic","fanout_member_id":"fg-atomic-m1","source_session_id":"run-1","target_profile_id":"agent-2"}`, PayloadRefJSON: `{"kind":"final_response","id":"fr-1"}`}
 
 	stored, err := store.AppendWorkspaceEvent(ctx, event)
 	if err != nil {
@@ -65,10 +65,10 @@ func TestFanoutProjectionRebuildDeletesStaleRowsAndMergesReplay(t *testing.T) {
 	if err := upsertFanoutMemberWithQueries(ctx, store.sqlcQueries(), FanoutMember{FanoutMemberID: "fm-stale", FanoutGroupID: "fg-1", WorkspaceID: "ws-1", WorkerSessionID: "stale-worker", Status: "running", CreatedAt: base.Format(time.RFC3339Nano), UpdatedAt: base.Format(time.RFC3339Nano)}); err != nil {
 		t.Fatalf("upsert stale fanout member returned error: %v", err)
 	}
-	if _, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-started", WorkspaceID: "ws-1", EventType: WorkspaceEventWorkerStarted, SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "worker-1", CorrelationID: "fg-1", CausationID: "request-1", PayloadJSON: `{"fanout_member_id":"fm-1","fanout_group_id":"fg-1","target_profile_id":"agent-2"}`, CreatedAt: base.Add(time.Second)}); err != nil {
+	if _, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-started", WorkspaceID: "ws-1", EventType: WorkspaceEventWorkerStarted, SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "worker-1", CorrelationID: "fg-1", CausationID: "request-1", PayloadJSON: `{"fanout_member_id":"fm-1","fanout_group_id":"fg-1","source_session_id":"run-1","target_profile_id":"agent-2"}`, CreatedAt: base.Add(time.Second)}); err != nil {
 		t.Fatalf("AppendWorkspaceEvent started returned error: %v", err)
 	}
-	if _, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-completed", WorkspaceID: "ws-1", EventType: WorkspaceEventWorkerCompleted, SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "worker-1", CorrelationID: "fg-1", CausationID: "reply-1", PayloadJSON: `{"fanout_member_id":"fm-1","fanout_group_id":"fg-1"}`, PayloadRefJSON: `{"kind":"final_response","id":"fr-1"}`, CreatedAt: base.Add(2 * time.Second)}); err != nil {
+	if _, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-completed", WorkspaceID: "ws-1", EventType: WorkspaceEventWorkerCompleted, SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "worker-1", CorrelationID: "fg-1", CausationID: "reply-1", PayloadJSON: `{"fanout_member_id":"fm-1","fanout_group_id":"fg-1","source_session_id":"run-1"}`, PayloadRefJSON: `{"kind":"final_response","id":"fr-1"}`, CreatedAt: base.Add(2 * time.Second)}); err != nil {
 		t.Fatalf("AppendWorkspaceEvent completed returned error: %v", err)
 	}
 

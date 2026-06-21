@@ -210,11 +210,20 @@ func appendFanoutWorkerWorkspaceEvent(ctx context.Context, store *globaldb.Store
 	if store == nil {
 		return nil
 	}
+	group, err := store.GetFanoutGroup(ctx, member.FanoutGroupID)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(group.WorkspaceID) != strings.TrimSpace(member.WorkspaceID) {
+		return fmt.Errorf("%w: fanout group workspace does not match worker event", globaldb.ErrInvalidInput)
+	}
 	status := globaldb.WorkerEventStatus(eventType)
 	payload := map[string]string{
 		"status":                   status,
 		"fanout_group_id":          member.FanoutGroupID,
 		"fanout_member_id":         member.FanoutMemberID,
+		"source_session_id":        group.SourceSessionID,
+		"source_agent_id":          group.SourceAgentID,
 		"target_profile_id":        member.TargetProfileID,
 		"request_agent_message_id": member.RequestAgentMessageID,
 	}
@@ -237,7 +246,7 @@ func appendFanoutWorkerWorkspaceEvent(ctx context.Context, store *globaldb.Store
 		PayloadRefJSON:    daemonEventPayload(finalResponsePayloadRef(finalResponseID)),
 		AttentionRequired: attentionRequired,
 	}
-	_, err := appendWorkspaceEvent(ctx, store, event)
+	_, err = appendWorkspaceEvent(ctx, store, event)
 	return err
 }
 
