@@ -82,5 +82,5 @@ func appendCoordinatedWorkspaceEventWithQueries(ctx context.Context, queries *db
 }
 
 func createPendingDeliveriesForCoordinatedEvent(ctx context.Context, queries *dbsqlc.Queries, event WorkspaceEvent) error {
-	return newEventSubscriptionLifecycle(queries).createPendingDeliveriesForEvent(ctx, event)
+	return CreatePendingDeliveriesForEvent(ctx, queries, event)
 }

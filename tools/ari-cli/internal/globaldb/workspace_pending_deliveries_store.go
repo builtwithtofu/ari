@@ -282,7 +282,15 @@ func (s *Store) CompletePendingDelivery(ctx context.Context, deliveryID string) 
 			return fmt.Errorf("get completed pending delivery %q: %w", deliveryID, err)
 		}
 		delivery = pendingDeliveryFromSQLC(row)
-		if err := newEventSubscriptionLifecycle(queries).ackCompletedDelivery(ctx, delivery, now); err != nil {
+		subscription, err := subscriptionByIDWithQueries(ctx, queries, delivery.SubscriptionID)
+		if err != nil {
+			return err
+		}
+		stream, err := NewSubscriptionStream(subscription)
+		if err != nil {
+			return err
+		}
+		if err := stream.AdvanceAckForCompletedDelivery(ctx, queries, delivery, now); err != nil {
 			return err
 		}
 		return appendPendingDeliveryEventWithQueries(ctx, queries, delivery, pendingDeliveryEventCompleted, "completed", "", nil)
