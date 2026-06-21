@@ -36,6 +36,15 @@ func TestInboxProjectionMaterializesAttentionEvents(t *testing.T) {
 		t.Fatalf("FailPendingDelivery returned error: %v", err)
 	}
 
+	assertAttentionInboxItems(t, store, ctx)
+	if err := (InboxProjection{}).Rebuild(ctx, store, "ws-1"); err != nil {
+		t.Fatalf("InboxProjection.Rebuild returned error: %v", err)
+	}
+	assertAttentionInboxItems(t, store, ctx)
+}
+
+func assertAttentionInboxItems(t *testing.T, store *Store, ctx context.Context) {
+	t.Helper()
 	items, err := store.ListInboxItems(ctx, "ws-1", "run-1")
 	if err != nil {
 		t.Fatalf("ListInboxItems returned error: %v", err)

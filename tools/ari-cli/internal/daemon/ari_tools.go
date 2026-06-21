@@ -1002,6 +1002,9 @@ func ariWorkspaceSignalSend(ctx context.Context, store *globaldb.Store, scope Ar
 		}
 		return AriToolCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "missing_required_fields", "missing_field": missing})
 	}
+	if err := validateWorkspaceSignalTarget(ctx, store, scope.WorkspaceID, targetType, targetID); err != nil {
+		return AriToolCallResponse{}, err
+	}
 	event, err := store.AppendWorkspaceEvent(ctx, globaldb.WorkspaceEvent{EventID: stringValue(body, "event_id"), WorkspaceID: scope.WorkspaceID, EventType: globaldb.WorkspaceEventSignalSent, SubjectType: targetType, SubjectID: targetID, ProducerType: workspaceEventProducerSession, ProducerID: strings.TrimSpace(scope.SourceRunID), CorrelationID: stringValue(body, "correlation_id"), CausationID: stringValue(body, "causation_id"), PayloadJSON: stringValue(body, "payload_json"), AttentionRequired: true})
 	if err != nil {
 		return AriToolCallResponse{}, workspaceEventRPCError(err)

@@ -228,6 +228,12 @@ func TestAriWorkspaceSignalAndTimerToolsMutateWorkspacePrimitives(t *testing.T) 
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-worker", WorkspaceID: "ws-1", Name: "worker", Harness: "fake"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig worker returned error: %v", err)
+	}
+	if err := store.CreateHarnessSession(ctx, globaldb.HarnessSession{SessionID: "worker-run", WorkspaceID: "ws-1", AgentID: "agent-worker", Harness: "fake", Status: "running", Usage: globaldb.HarnessSessionUsageEphemeral, CWD: t.TempDir()}); err != nil {
+		t.Fatalf("CreateHarnessSession worker returned error: %v", err)
+	}
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
 	if err := d.registerMethods(registry, store); err != nil {

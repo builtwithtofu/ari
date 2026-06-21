@@ -358,6 +358,9 @@ func signalSentInboxItemFromWorkspaceEvent(ctx context.Context, queries *dbsqlc.
 				}
 				return InboxItem{}, false, fmt.Errorf("project signal inbox item for fanout group %q: %w", event.SubjectID, err)
 			}
+			if strings.TrimSpace(group.WorkspaceID) != strings.TrimSpace(event.WorkspaceID) {
+				return InboxItem{}, false, nil
+			}
 			sourceSessionID = strings.TrimSpace(group.SourceSessionID)
 		}
 	}
