@@ -99,4 +99,14 @@ func TestInboxProjectionPreservesReadStateAndCounts(t *testing.T) {
 	if counts.TotalCount != 1 || counts.UnreadCount != 0 || counts.ReadCount != 1 {
 		t.Fatalf("counts after reprojection = %#v, want one read item", counts)
 	}
+	if err := (InboxProjection{}).Rebuild(ctx, store, "ws-1"); err != nil {
+		t.Fatalf("InboxProjection.Rebuild returned error: %v", err)
+	}
+	rebuilt, err := store.GetInboxItem(ctx, "inbox-fm-1")
+	if err != nil {
+		t.Fatalf("GetInboxItem after rebuild returned error: %v", err)
+	}
+	if rebuilt.Status != inboxItemStatusRead || rebuilt.WorkspaceEventID != secondEvent.EventID {
+		t.Fatalf("rebuilt inbox item = %#v, want read state preserved with latest event", rebuilt)
+	}
 }

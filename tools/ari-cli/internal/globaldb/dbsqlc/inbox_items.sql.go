@@ -12,10 +12,14 @@ import (
 const countInboxItemsBySession = `-- name: CountInboxItemsBySession :one
 SELECT
   COUNT(*) AS total_count,
-  COALESCE(SUM(CASE WHEN status = 'unread' THEN 1 ELSE 0 END), 0) AS unread_count,
-  COALESCE(SUM(CASE WHEN status = 'read' THEN 1 ELSE 0 END), 0) AS read_count
-FROM inbox_items
-WHERE workspace_id = ? AND source_session_id = ?
+  COALESCE(SUM(CASE WHEN COALESCE(rs.status, 'unread') = 'unread' THEN 1 ELSE 0 END), 0) AS unread_count,
+  COALESCE(SUM(CASE WHEN COALESCE(rs.status, 'unread') = 'read' THEN 1 ELSE 0 END), 0) AS read_count
+FROM inbox_items i
+LEFT JOIN inbox_item_read_states rs
+  ON rs.workspace_id = i.workspace_id
+ AND rs.source_session_id = i.source_session_id
+ AND rs.inbox_item_id = i.inbox_item_id
+WHERE i.workspace_id = ? AND i.source_session_id = ?
 `
 
 type CountInboxItemsBySessionParams struct {
@@ -48,12 +52,11 @@ INSERT INTO inbox_items (
   worker_session_id,
   final_response_id,
   kind,
-  status,
   attention_required,
   summary,
   created_at,
   updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(inbox_item_id) DO UPDATE SET
   workspace_id = excluded.workspace_id,
   source_session_id = excluded.source_session_id,
@@ -64,7 +67,6 @@ ON CONFLICT(inbox_item_id) DO UPDATE SET
   worker_session_id = excluded.worker_session_id,
   final_response_id = excluded.final_response_id,
   kind = excluded.kind,
-  status = inbox_items.status,
   attention_required = excluded.attention_required,
   summary = excluded.summary,
   updated_at = excluded.updated_at
@@ -81,7 +83,6 @@ type CreateInboxItemParams struct {
 	WorkerSessionID   string `json:"worker_session_id"`
 	FinalResponseID   string `json:"final_response_id"`
 	Kind              string `json:"kind"`
-	Status            string `json:"status"`
 	AttentionRequired int64  `json:"attention_required"`
 	Summary           string `json:"summary"`
 	CreatedAt         string `json:"created_at"`
@@ -100,7 +101,6 @@ func (q *Queries) CreateInboxItem(ctx context.Context, arg CreateInboxItemParams
 		arg.WorkerSessionID,
 		arg.FinalResponseID,
 		arg.Kind,
-		arg.Status,
 		arg.AttentionRequired,
 		arg.Summary,
 		arg.CreatedAt,
@@ -109,19 +109,73 @@ func (q *Queries) CreateInboxItem(ctx context.Context, arg CreateInboxItemParams
 	return err
 }
 
+const deleteInboxItemsByWorkspace = `-- name: DeleteInboxItemsByWorkspace :execrows
+DELETE FROM inbox_items
+WHERE workspace_id = ?
+`
+
+type DeleteInboxItemsByWorkspaceParams struct {
+	WorkspaceID string `json:"workspace_id"`
+}
+
+func (q *Queries) DeleteInboxItemsByWorkspace(ctx context.Context, arg DeleteInboxItemsByWorkspaceParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteInboxItemsByWorkspace, arg.WorkspaceID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const getInboxItem = `-- name: GetInboxItem :one
-SELECT inbox_item_id, workspace_id, source_session_id, workspace_event_id, event_type, fanout_group_id, fanout_member_id, worker_session_id, final_response_id, kind, status, attention_required, summary, created_at, updated_at
-FROM inbox_items
-WHERE inbox_item_id = ?
+SELECT
+  i.inbox_item_id,
+  i.workspace_id,
+  i.source_session_id,
+  i.workspace_event_id,
+  i.event_type,
+  i.fanout_group_id,
+  i.fanout_member_id,
+  i.worker_session_id,
+  i.final_response_id,
+  i.kind,
+  COALESCE(rs.status, 'unread') AS status,
+  i.attention_required,
+  i.summary,
+  i.created_at,
+  COALESCE(rs.updated_at, i.updated_at) AS updated_at
+FROM inbox_items i
+LEFT JOIN inbox_item_read_states rs
+  ON rs.workspace_id = i.workspace_id
+ AND rs.source_session_id = i.source_session_id
+ AND rs.inbox_item_id = i.inbox_item_id
+WHERE i.inbox_item_id = ?
 `
 
 type GetInboxItemParams struct {
 	InboxItemID string `json:"inbox_item_id"`
 }
 
-func (q *Queries) GetInboxItem(ctx context.Context, arg GetInboxItemParams) (InboxItem, error) {
+type GetInboxItemRow struct {
+	InboxItemID       string `json:"inbox_item_id"`
+	WorkspaceID       string `json:"workspace_id"`
+	SourceSessionID   string `json:"source_session_id"`
+	WorkspaceEventID  string `json:"workspace_event_id"`
+	EventType         string `json:"event_type"`
+	FanoutGroupID     string `json:"fanout_group_id"`
+	FanoutMemberID    string `json:"fanout_member_id"`
+	WorkerSessionID   string `json:"worker_session_id"`
+	FinalResponseID   string `json:"final_response_id"`
+	Kind              string `json:"kind"`
+	Status            string `json:"status"`
+	AttentionRequired int64  `json:"attention_required"`
+	Summary           string `json:"summary"`
+	CreatedAt         string `json:"created_at"`
+	UpdatedAt         string `json:"updated_at"`
+}
+
+func (q *Queries) GetInboxItem(ctx context.Context, arg GetInboxItemParams) (GetInboxItemRow, error) {
 	row := q.db.QueryRowContext(ctx, getInboxItem, arg.InboxItemID)
-	var i InboxItem
+	var i GetInboxItemRow
 	err := row.Scan(
 		&i.InboxItemID,
 		&i.WorkspaceID,
@@ -143,10 +197,29 @@ func (q *Queries) GetInboxItem(ctx context.Context, arg GetInboxItemParams) (Inb
 }
 
 const listInboxItemsBySession = `-- name: ListInboxItemsBySession :many
-SELECT inbox_item_id, workspace_id, source_session_id, workspace_event_id, event_type, fanout_group_id, fanout_member_id, worker_session_id, final_response_id, kind, status, attention_required, summary, created_at, updated_at
-FROM inbox_items
-WHERE workspace_id = ? AND source_session_id = ?
-ORDER BY created_at DESC, inbox_item_id ASC
+SELECT
+  i.inbox_item_id,
+  i.workspace_id,
+  i.source_session_id,
+  i.workspace_event_id,
+  i.event_type,
+  i.fanout_group_id,
+  i.fanout_member_id,
+  i.worker_session_id,
+  i.final_response_id,
+  i.kind,
+  COALESCE(rs.status, 'unread') AS status,
+  i.attention_required,
+  i.summary,
+  i.created_at,
+  COALESCE(rs.updated_at, i.updated_at) AS updated_at
+FROM inbox_items i
+LEFT JOIN inbox_item_read_states rs
+  ON rs.workspace_id = i.workspace_id
+ AND rs.source_session_id = i.source_session_id
+ AND rs.inbox_item_id = i.inbox_item_id
+WHERE i.workspace_id = ? AND i.source_session_id = ?
+ORDER BY i.created_at DESC, i.inbox_item_id ASC
 `
 
 type ListInboxItemsBySessionParams struct {
@@ -154,15 +227,33 @@ type ListInboxItemsBySessionParams struct {
 	SourceSessionID string `json:"source_session_id"`
 }
 
-func (q *Queries) ListInboxItemsBySession(ctx context.Context, arg ListInboxItemsBySessionParams) ([]InboxItem, error) {
+type ListInboxItemsBySessionRow struct {
+	InboxItemID       string `json:"inbox_item_id"`
+	WorkspaceID       string `json:"workspace_id"`
+	SourceSessionID   string `json:"source_session_id"`
+	WorkspaceEventID  string `json:"workspace_event_id"`
+	EventType         string `json:"event_type"`
+	FanoutGroupID     string `json:"fanout_group_id"`
+	FanoutMemberID    string `json:"fanout_member_id"`
+	WorkerSessionID   string `json:"worker_session_id"`
+	FinalResponseID   string `json:"final_response_id"`
+	Kind              string `json:"kind"`
+	Status            string `json:"status"`
+	AttentionRequired int64  `json:"attention_required"`
+	Summary           string `json:"summary"`
+	CreatedAt         string `json:"created_at"`
+	UpdatedAt         string `json:"updated_at"`
+}
+
+func (q *Queries) ListInboxItemsBySession(ctx context.Context, arg ListInboxItemsBySessionParams) ([]ListInboxItemsBySessionRow, error) {
 	rows, err := q.db.QueryContext(ctx, listInboxItemsBySession, arg.WorkspaceID, arg.SourceSessionID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []InboxItem{}
+	items := []ListInboxItemsBySessionRow{}
 	for rows.Next() {
-		var i InboxItem
+		var i ListInboxItemsBySessionRow
 		if err := rows.Scan(
 			&i.InboxItemID,
 			&i.WorkspaceID,
@@ -194,13 +285,26 @@ func (q *Queries) ListInboxItemsBySession(ctx context.Context, arg ListInboxItem
 }
 
 const markInboxItemRead = `-- name: MarkInboxItemRead :execrows
-UPDATE inbox_items
-SET status = 'read',
-    updated_at = ?
-WHERE workspace_id = ? AND source_session_id = ? AND inbox_item_id = ? AND status != 'read'
+INSERT INTO inbox_item_read_states (
+  workspace_id,
+  source_session_id,
+  inbox_item_id,
+  status,
+  read_at,
+  updated_at
+)
+SELECT i.workspace_id, i.source_session_id, i.inbox_item_id, 'read', ?, ?
+FROM inbox_items i
+WHERE i.workspace_id = ? AND i.source_session_id = ? AND i.inbox_item_id = ?
+ON CONFLICT(workspace_id, source_session_id, inbox_item_id) DO UPDATE SET
+  status = 'read',
+  read_at = excluded.read_at,
+  updated_at = excluded.updated_at
+WHERE inbox_item_read_states.status != 'read'
 `
 
 type MarkInboxItemReadParams struct {
+	ReadAt          string `json:"read_at"`
 	UpdatedAt       string `json:"updated_at"`
 	WorkspaceID     string `json:"workspace_id"`
 	SourceSessionID string `json:"source_session_id"`
@@ -209,6 +313,7 @@ type MarkInboxItemReadParams struct {
 
 func (q *Queries) MarkInboxItemRead(ctx context.Context, arg MarkInboxItemReadParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, markInboxItemRead,
+		arg.ReadAt,
 		arg.UpdatedAt,
 		arg.WorkspaceID,
 		arg.SourceSessionID,

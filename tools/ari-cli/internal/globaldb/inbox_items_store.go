@@ -42,7 +42,7 @@ type InboxCounts struct {
 }
 
 func createInboxItemWithQueries(ctx context.Context, queries *dbsqlc.Queries, item InboxItem) error {
-	if err := queries.CreateInboxItem(ctx, dbsqlc.CreateInboxItemParams{InboxItemID: item.InboxItemID, WorkspaceID: item.WorkspaceID, SourceSessionID: item.SourceSessionID, WorkspaceEventID: item.WorkspaceEventID, EventType: item.EventType, FanoutGroupID: item.FanoutGroupID, FanoutMemberID: item.FanoutMemberID, WorkerSessionID: item.WorkerSessionID, FinalResponseID: item.FinalResponseID, Kind: item.Kind, Status: item.Status, AttentionRequired: boolInt64(item.AttentionRequired), Summary: item.Summary, CreatedAt: item.CreatedAt.UTC().Format(time.RFC3339Nano), UpdatedAt: item.UpdatedAt.UTC().Format(time.RFC3339Nano)}); err != nil {
+	if err := queries.CreateInboxItem(ctx, dbsqlc.CreateInboxItemParams{InboxItemID: item.InboxItemID, WorkspaceID: item.WorkspaceID, SourceSessionID: item.SourceSessionID, WorkspaceEventID: item.WorkspaceEventID, EventType: item.EventType, FanoutGroupID: item.FanoutGroupID, FanoutMemberID: item.FanoutMemberID, WorkerSessionID: item.WorkerSessionID, FinalResponseID: item.FinalResponseID, Kind: item.Kind, AttentionRequired: boolInt64(item.AttentionRequired), Summary: item.Summary, CreatedAt: item.CreatedAt.UTC().Format(time.RFC3339Nano), UpdatedAt: item.UpdatedAt.UTC().Format(time.RFC3339Nano)}); err != nil {
 		return fmt.Errorf("project inbox item %q: %w", item.InboxItemID, err)
 	}
 	return nil
@@ -60,7 +60,7 @@ func (s *Store) GetInboxItem(ctx context.Context, inboxItemID string) (InboxItem
 		}
 		return InboxItem{}, fmt.Errorf("get inbox item %q: %w", inboxItemID, err)
 	}
-	return inboxItemFromSQLC(row), nil
+	return inboxItemFromGetRow(row), nil
 }
 
 func (s *Store) ListInboxItems(ctx context.Context, workspaceID, sourceSessionID string) ([]InboxItem, error) {
@@ -75,7 +75,7 @@ func (s *Store) ListInboxItems(ctx context.Context, workspaceID, sourceSessionID
 	}
 	items := make([]InboxItem, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, inboxItemFromSQLC(row))
+		items = append(items, inboxItemFromListRow(row))
 	}
 	return items, nil
 }
@@ -115,7 +115,7 @@ func (s *Store) MarkInboxItemsRead(ctx context.Context, workspaceID, sourceSessi
 	var marked int64
 	if err := s.withImmediateQueries(ctx, func(ctx context.Context, queries *dbsqlc.Queries) error {
 		for _, inboxItemID := range trimmedIDs {
-			rows, err := queries.MarkInboxItemRead(ctx, dbsqlc.MarkInboxItemReadParams{UpdatedAt: now, WorkspaceID: workspaceID, SourceSessionID: sourceSessionID, InboxItemID: inboxItemID})
+			rows, err := queries.MarkInboxItemRead(ctx, dbsqlc.MarkInboxItemReadParams{ReadAt: now, UpdatedAt: now, WorkspaceID: workspaceID, SourceSessionID: sourceSessionID, InboxItemID: inboxItemID})
 			if err != nil {
 				return fmt.Errorf("mark inbox item %q read: %w", inboxItemID, err)
 			}
@@ -157,10 +157,18 @@ func validateInboxItem(item InboxItem) error {
 	return nil
 }
 
-func inboxItemFromSQLC(row dbsqlc.InboxItem) InboxItem {
-	createdAt, _ := time.Parse(time.RFC3339Nano, row.CreatedAt)
-	updatedAt, _ := time.Parse(time.RFC3339Nano, row.UpdatedAt)
-	return InboxItem{InboxItemID: row.InboxItemID, WorkspaceID: row.WorkspaceID, SourceSessionID: row.SourceSessionID, WorkspaceEventID: row.WorkspaceEventID, EventType: row.EventType, FanoutGroupID: row.FanoutGroupID, FanoutMemberID: row.FanoutMemberID, WorkerSessionID: row.WorkerSessionID, FinalResponseID: row.FinalResponseID, Kind: row.Kind, Status: row.Status, AttentionRequired: row.AttentionRequired != 0, Summary: row.Summary, CreatedAt: createdAt, UpdatedAt: updatedAt}
+func inboxItemFromGetRow(row dbsqlc.GetInboxItemRow) InboxItem {
+	return inboxItemFromProjectedRow(row.InboxItemID, row.WorkspaceID, row.SourceSessionID, row.WorkspaceEventID, row.EventType, row.FanoutGroupID, row.FanoutMemberID, row.WorkerSessionID, row.FinalResponseID, row.Kind, row.Status, row.AttentionRequired, row.Summary, row.CreatedAt, row.UpdatedAt)
+}
+
+func inboxItemFromListRow(row dbsqlc.ListInboxItemsBySessionRow) InboxItem {
+	return inboxItemFromProjectedRow(row.InboxItemID, row.WorkspaceID, row.SourceSessionID, row.WorkspaceEventID, row.EventType, row.FanoutGroupID, row.FanoutMemberID, row.WorkerSessionID, row.FinalResponseID, row.Kind, row.Status, row.AttentionRequired, row.Summary, row.CreatedAt, row.UpdatedAt)
+}
+
+func inboxItemFromProjectedRow(inboxItemID, workspaceID, sourceSessionID, workspaceEventID, eventType, fanoutGroupID, fanoutMemberID, workerSessionID, finalResponseID, kind, status string, attentionRequired int64, summary, createdAtRaw, updatedAtRaw string) InboxItem {
+	createdAt, _ := time.Parse(time.RFC3339Nano, createdAtRaw)
+	updatedAt, _ := time.Parse(time.RFC3339Nano, updatedAtRaw)
+	return InboxItem{InboxItemID: inboxItemID, WorkspaceID: workspaceID, SourceSessionID: sourceSessionID, WorkspaceEventID: workspaceEventID, EventType: eventType, FanoutGroupID: fanoutGroupID, FanoutMemberID: fanoutMemberID, WorkerSessionID: workerSessionID, FinalResponseID: finalResponseID, Kind: kind, Status: status, AttentionRequired: attentionRequired != 0, Summary: summary, CreatedAt: createdAt, UpdatedAt: updatedAt}
 }
 
 func inboxSQLCountValue(value any) (int64, error) {

@@ -154,8 +154,8 @@ func mergeFanoutMember(existing, next FanoutMember) FanoutMember {
 }
 
 // InboxProjection materializes sticky-session inbox rows from terminal worker
-// workspace events. Read/unread state is consumer state and is preserved by the
-// inbox upsert while event evidence is refreshed.
+// workspace events. The rows are rebuildable event evidence; read/unread state
+// lives in separate per-consumer read state and is joined at read time.
 type InboxProjection struct{}
 
 func (InboxProjection) Name() string { return "inbox_items" }
@@ -170,6 +170,73 @@ func (InboxProjection) ProjectWorkspaceEvent(ctx context.Context, queries *dbsql
 		return err
 	}
 	return createInboxItemWithQueries(ctx, queries, item)
+}
+
+func (InboxProjection) Rebuild(ctx context.Context, store *Store, workspaceID string) error {
+	if store == nil {
+		return fmt.Errorf("%w: globaldb store is required", ErrInvalidInput)
+	}
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		return ErrInvalidInput
+	}
+	return store.withImmediateQueries(ctx, func(ctx context.Context, queries *dbsqlc.Queries) error {
+		items, err := inboxItemsFromWorkspaceEventsWithQueries(ctx, queries, workspaceID)
+		if err != nil {
+			return err
+		}
+		if _, err := queries.DeleteInboxItemsByWorkspace(ctx, dbsqlc.DeleteInboxItemsByWorkspaceParams{WorkspaceID: workspaceID}); err != nil {
+			return fmt.Errorf("delete inbox items for workspace %q: %w", workspaceID, err)
+		}
+		for _, item := range items {
+			if err := createInboxItemWithQueries(ctx, queries, item); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func inboxItemsFromWorkspaceEventsWithQueries(ctx context.Context, queries *dbsqlc.Queries, workspaceID string) ([]InboxItem, error) {
+	const pageSize = 500
+	sequence := int64(0)
+	projected := map[string]InboxItem{}
+	order := make([]string, 0)
+	for {
+		events, err := listWorkspaceEventsAfterSequenceWithQueries(ctx, queries, workspaceID, sequence, pageSize)
+		if err != nil {
+			return nil, err
+		}
+		if len(events) == 0 {
+			break
+		}
+		for _, event := range events {
+			sequence = event.Sequence
+			item, ok, err := inboxItemFromWorkspaceEvent(ctx, queries, event)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				continue
+			}
+			key := strings.TrimSpace(item.InboxItemID)
+			if key == "" {
+				continue
+			}
+			if _, ok := projected[key]; !ok {
+				order = append(order, key)
+			}
+			projected[key] = item
+		}
+		if len(events) < pageSize {
+			break
+		}
+	}
+	items := make([]InboxItem, 0, len(order))
+	for _, key := range order {
+		items = append(items, projected[key])
+	}
+	return items, nil
 }
 
 func fanoutMemberFromWorkspaceEvent(event WorkspaceEvent) (FanoutMember, bool, error) {

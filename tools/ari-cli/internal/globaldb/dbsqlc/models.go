@@ -255,11 +255,19 @@ type InboxItem struct {
 	WorkerSessionID   string `json:"worker_session_id"`
 	FinalResponseID   string `json:"final_response_id"`
 	Kind              string `json:"kind"`
-	Status            string `json:"status"`
 	AttentionRequired int64  `json:"attention_required"`
 	Summary           string `json:"summary"`
 	CreatedAt         string `json:"created_at"`
 	UpdatedAt         string `json:"updated_at"`
+}
+
+type InboxItemReadState struct {
+	WorkspaceID     string `json:"workspace_id"`
+	SourceSessionID string `json:"source_session_id"`
+	InboxItemID     string `json:"inbox_item_id"`
+	Status          string `json:"status"`
+	ReadAt          string `json:"read_at"`
+	UpdatedAt       string `json:"updated_at"`
 }
 
 type OperationRecord struct {

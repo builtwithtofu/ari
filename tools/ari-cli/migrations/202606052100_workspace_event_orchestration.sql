@@ -48,7 +48,6 @@ CREATE TABLE IF NOT EXISTS inbox_items (
   worker_session_id TEXT NOT NULL DEFAULT '',
   final_response_id TEXT NOT NULL DEFAULT '',
   kind TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'unread',
   attention_required INTEGER NOT NULL DEFAULT 0,
   summary TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
@@ -58,11 +57,25 @@ CREATE TABLE IF NOT EXISTS inbox_items (
     REFERENCES workspace_events(workspace_id, event_id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS inbox_items_session_status_idx
-  ON inbox_items(workspace_id, source_session_id, status, created_at DESC, inbox_item_id ASC);
+CREATE INDEX IF NOT EXISTS inbox_items_session_idx
+  ON inbox_items(workspace_id, source_session_id, created_at DESC, inbox_item_id ASC);
 
 CREATE INDEX IF NOT EXISTS inbox_items_event_idx
   ON inbox_items(workspace_id, workspace_event_id);
+
+CREATE TABLE IF NOT EXISTS inbox_item_read_states (
+  workspace_id TEXT NOT NULL,
+  source_session_id TEXT NOT NULL,
+  inbox_item_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'read',
+  read_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(workspace_id, source_session_id, inbox_item_id),
+  FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS inbox_item_read_states_session_status_idx
+  ON inbox_item_read_states(workspace_id, source_session_id, status, updated_at DESC, inbox_item_id ASC);
 
 CREATE TABLE IF NOT EXISTS event_subscriptions (
   subscription_id TEXT PRIMARY KEY,
