@@ -11,15 +11,15 @@ import (
 )
 
 type WorkspaceTimerCreateRequest struct {
-	TimerID        string `json:"timer_id,omitempty"`
-	WorkspaceID    string `json:"workspace_id"`
-	OwnerSessionID string `json:"owner_session_id,omitempty"`
-	SubscriptionID string `json:"subscription_id,omitempty"`
-	SubjectType    string `json:"subject_type,omitempty"`
-	SubjectID      string `json:"subject_id,omitempty"`
-	Purpose        string `json:"purpose,omitempty"`
-	FireAt         string `json:"fire_at"`
-	PayloadJSON    string `json:"payload_json,omitempty"`
+	TimerID              string `json:"timer_id,omitempty"`
+	WorkspaceID          string `json:"workspace_id"`
+	OwnerSessionID       string `json:"owner_session_id,omitempty"`
+	TargetSubscriptionID string `json:"target_subscription_id,omitempty"`
+	SubjectType          string `json:"subject_type,omitempty"`
+	SubjectID            string `json:"subject_id,omitempty"`
+	Purpose              string `json:"purpose,omitempty"`
+	FireAt               string `json:"fire_at"`
+	PayloadJSON          string `json:"payload_json,omitempty"`
 }
 
 type WorkspaceTimerGetRequest struct {
@@ -31,19 +31,19 @@ type WorkspaceTimerCancelRequest struct {
 }
 
 type WorkspaceTimerResponse struct {
-	TimerID        string `json:"timer_id"`
-	WorkspaceID    string `json:"workspace_id"`
-	OwnerSessionID string `json:"owner_session_id,omitempty"`
-	SubscriptionID string `json:"subscription_id,omitempty"`
-	SubjectType    string `json:"subject_type,omitempty"`
-	SubjectID      string `json:"subject_id,omitempty"`
-	Purpose        string `json:"purpose,omitempty"`
-	Status         string `json:"status"`
-	FireAt         string `json:"fire_at"`
-	PayloadJSON    string `json:"payload_json"`
-	FiredEventID   string `json:"fired_event_id,omitempty"`
-	CreatedAt      string `json:"created_at"`
-	UpdatedAt      string `json:"updated_at"`
+	TimerID              string `json:"timer_id"`
+	WorkspaceID          string `json:"workspace_id"`
+	OwnerSessionID       string `json:"owner_session_id,omitempty"`
+	TargetSubscriptionID string `json:"target_subscription_id,omitempty"`
+	SubjectType          string `json:"subject_type,omitempty"`
+	SubjectID            string `json:"subject_id,omitempty"`
+	Purpose              string `json:"purpose,omitempty"`
+	Status               string `json:"status"`
+	FireAt               string `json:"fire_at"`
+	PayloadJSON          string `json:"payload_json"`
+	FiredEventID         string `json:"fired_event_id,omitempty"`
+	CreatedAt            string `json:"created_at"`
+	UpdatedAt            string `json:"updated_at"`
 }
 
 func (d *Daemon) registerWorkspaceTimerMethods(registry *rpc.MethodRegistry, store *globaldb.Store) error {
@@ -55,7 +55,7 @@ func (d *Daemon) registerWorkspaceTimerMethods(registry *rpc.MethodRegistry, sto
 			if err != nil {
 				return WorkspaceTimerResponse{}, err
 			}
-			timer, err := store.CreateWorkspaceTimer(ctx, globaldb.WorkspaceTimer{TimerID: req.TimerID, WorkspaceID: req.WorkspaceID, OwnerSessionID: req.OwnerSessionID, SubscriptionID: req.SubscriptionID, SubjectType: req.SubjectType, SubjectID: req.SubjectID, Purpose: req.Purpose, FireAt: fireAt, PayloadJSON: req.PayloadJSON})
+			timer, err := store.CreateWorkspaceTimer(ctx, globaldb.WorkspaceTimer{TimerID: req.TimerID, WorkspaceID: req.WorkspaceID, OwnerSessionID: req.OwnerSessionID, TargetSubscriptionID: req.TargetSubscriptionID, SubjectType: req.SubjectType, SubjectID: req.SubjectID, Purpose: req.Purpose, FireAt: fireAt, PayloadJSON: req.PayloadJSON})
 			if err != nil {
 				return WorkspaceTimerResponse{}, workspaceTimerRPCError(err)
 			}
@@ -115,5 +115,5 @@ func workspaceTimerRPCError(err error) error {
 }
 
 func workspaceTimerResponse(timer globaldb.WorkspaceTimer) WorkspaceTimerResponse {
-	return WorkspaceTimerResponse{TimerID: timer.TimerID, WorkspaceID: timer.WorkspaceID, OwnerSessionID: timer.OwnerSessionID, SubscriptionID: timer.SubscriptionID, SubjectType: timer.SubjectType, SubjectID: timer.SubjectID, Purpose: timer.Purpose, Status: timer.Status, FireAt: timer.FireAt.Format(time.RFC3339Nano), PayloadJSON: timer.PayloadJSON, FiredEventID: timer.FiredEventID, CreatedAt: timer.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: timer.UpdatedAt.Format(time.RFC3339Nano)}
+	return WorkspaceTimerResponse{TimerID: timer.TimerID, WorkspaceID: timer.WorkspaceID, OwnerSessionID: timer.OwnerSessionID, TargetSubscriptionID: timer.TargetSubscriptionID, SubjectType: timer.SubjectType, SubjectID: timer.SubjectID, Purpose: timer.Purpose, Status: timer.Status, FireAt: timer.FireAt.Format(time.RFC3339Nano), PayloadJSON: timer.PayloadJSON, FiredEventID: timer.FiredEventID, CreatedAt: timer.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: timer.UpdatedAt.Format(time.RFC3339Nano)}
 }

@@ -42,10 +42,10 @@ func TestTimelineProjectionUpdatesFanoutMemberInPlace(t *testing.T) {
 	if err := store.CreateFanoutGroup(ctx, FanoutGroup{FanoutGroupID: "fg-1", WorkspaceID: "ws-1", SourceSessionID: "run-1", SourceAgentID: "agent-1", RequestAgentMessageID: "request-1", Body: "compare"}); err != nil {
 		t.Fatalf("CreateFanoutGroup returned error: %v", err)
 	}
-	if _, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-started", WorkspaceID: "ws-1", EventType: WorkspaceEventWorkerStarted, SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "worker-1", CorrelationID: "fg-1", CausationID: "request-1", PayloadJSON: `{"fanout_member_id":"fm-1","fanout_group_id":"fg-1","target_profile_id":"agent-2"}`, CreatedAt: base}); err != nil {
+	if _, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-started", WorkspaceID: "ws-1", EventType: WorkspaceEventWorkerStarted, SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "worker-1", CorrelationID: "fg-1", CausationID: "request-1", PayloadJSON: `{"fanout_member_id":"fm-1","fanout_group_id":"fg-1","source_session_id":"run-1","target_profile_id":"agent-2"}`, CreatedAt: base}); err != nil {
 		t.Fatalf("AppendWorkspaceEvent started returned error: %v", err)
 	}
-	completed, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-completed", WorkspaceID: "ws-1", EventType: WorkspaceEventWorkerCompleted, SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "worker-1", CorrelationID: "fg-1", CausationID: "reply-1", PayloadJSON: `{"fanout_member_id":"fm-1","fanout_group_id":"fg-1","target_profile_id":"agent-2"}`, PayloadRefJSON: `{"kind":"final_response","id":"fr-1"}`, CreatedAt: base.Add(time.Second)})
+	completed, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-completed", WorkspaceID: "ws-1", EventType: WorkspaceEventWorkerCompleted, SubjectType: "harness_session", SubjectID: "worker-1", ProducerType: "session", ProducerID: "worker-1", CorrelationID: "fg-1", CausationID: "reply-1", PayloadJSON: `{"fanout_member_id":"fm-1","fanout_group_id":"fg-1","source_session_id":"run-1","target_profile_id":"agent-2"}`, PayloadRefJSON: `{"kind":"final_response","id":"fr-1"}`, CreatedAt: base.Add(time.Second)})
 	if err != nil {
 		t.Fatalf("AppendWorkspaceEvent completed returned error: %v", err)
 	}

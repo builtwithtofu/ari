@@ -255,11 +255,19 @@ type InboxItem struct {
 	WorkerSessionID   string `json:"worker_session_id"`
 	FinalResponseID   string `json:"final_response_id"`
 	Kind              string `json:"kind"`
-	Status            string `json:"status"`
 	AttentionRequired int64  `json:"attention_required"`
 	Summary           string `json:"summary"`
 	CreatedAt         string `json:"created_at"`
 	UpdatedAt         string `json:"updated_at"`
+}
+
+type InboxItemReadState struct {
+	WorkspaceID     string `json:"workspace_id"`
+	SourceSessionID string `json:"source_session_id"`
+	InboxItemID     string `json:"inbox_item_id"`
+	Status          string `json:"status"`
+	ReadAt          string `json:"read_at"`
+	UpdatedAt       string `json:"updated_at"`
 }
 
 type OperationRecord struct {
@@ -411,17 +419,17 @@ type WorkspaceFolder struct {
 }
 
 type WorkspaceTimer struct {
-	TimerID        string  `json:"timer_id"`
-	WorkspaceID    string  `json:"workspace_id"`
-	OwnerSessionID string  `json:"owner_session_id"`
-	SubscriptionID *string `json:"subscription_id"`
-	SubjectType    string  `json:"subject_type"`
-	SubjectID      string  `json:"subject_id"`
-	Purpose        string  `json:"purpose"`
-	Status         string  `json:"status"`
-	FireAt         string  `json:"fire_at"`
-	PayloadJson    string  `json:"payload_json"`
-	FiredEventID   string  `json:"fired_event_id"`
-	CreatedAt      string  `json:"created_at"`
-	UpdatedAt      string  `json:"updated_at"`
+	TimerID              string  `json:"timer_id"`
+	WorkspaceID          string  `json:"workspace_id"`
+	OwnerSessionID       string  `json:"owner_session_id"`
+	TargetSubscriptionID *string `json:"target_subscription_id"`
+	SubjectType          string  `json:"subject_type"`
+	SubjectID            string  `json:"subject_id"`
+	Purpose              string  `json:"purpose"`
+	Status               string  `json:"status"`
+	FireAt               string  `json:"fire_at"`
+	PayloadJson          string  `json:"payload_json"`
+	FiredEventID         string  `json:"fired_event_id"`
+	CreatedAt            string  `json:"created_at"`
+	UpdatedAt            string  `json:"updated_at"`
 }

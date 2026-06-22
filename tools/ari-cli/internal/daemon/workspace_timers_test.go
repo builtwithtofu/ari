@@ -22,7 +22,7 @@ func TestWorkspaceTimerRPCCreateAndRuntimeFireProducesWorkspaceEvent(t *testing.
 	_ = callMethod[WorkspaceEventSubscriptionResponse](t, registry, "workspace.events.subscribe", WorkspaceEventSubscribeRequest{SubscriptionID: "sub-timer", WorkspaceID: "ws-timer", OwnerSessionID: "owner-timer", FilterJSON: `{"event_types":["timer.fired"]}`})
 
 	fireAt := time.Now().Add(-time.Minute).UTC()
-	created := callMethod[WorkspaceTimerResponse](t, registry, "workspace.timers.create", WorkspaceTimerCreateRequest{TimerID: "timer-1", WorkspaceID: "ws-timer", OwnerSessionID: "owner-timer", SubscriptionID: "sub-timer", SubjectType: "harness_session", SubjectID: "worker-1", Purpose: "worker-timeout", FireAt: fireAt.Format(time.RFC3339Nano), PayloadJSON: `{"reason":"timeout"}`})
+	created := callMethod[WorkspaceTimerResponse](t, registry, "workspace.timers.create", WorkspaceTimerCreateRequest{TimerID: "timer-1", WorkspaceID: "ws-timer", OwnerSessionID: "owner-timer", TargetSubscriptionID: "sub-timer", SubjectType: "harness_session", SubjectID: "worker-1", Purpose: "worker-timeout", FireAt: fireAt.Format(time.RFC3339Nano), PayloadJSON: `{"reason":"timeout"}`})
 	if created.TimerID != "timer-1" || created.Status != "scheduled" {
 		t.Fatalf("workspace.timers.create = %#v, want scheduled timer-1", created)
 	}

@@ -274,7 +274,7 @@ func TestWorkspaceEventSchemaEnforcesWorkspaceScopedReferences(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO pending_deliveries (delivery_id, workspace_id, subscription_id, target_type, target_id, event_ids_json, created_at, updated_at) VALUES ('pd-cross-fk', 'ws-fk-b', 'sub-fk', 'harness_session', 'orch-fk', '[]', ?, ?)`, base.Format(time.RFC3339Nano), base.Format(time.RFC3339Nano)); err == nil {
 		t.Fatalf("cross-workspace pending delivery insert succeeded, want FK failure")
 	}
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO workspace_timers (timer_id, workspace_id, subscription_id, fire_at, created_at, updated_at) VALUES ('timer-cross-fk', 'ws-fk-b', 'sub-fk', ?, ?, ?)`, base.Format(time.RFC3339Nano), base.Format(time.RFC3339Nano), base.Format(time.RFC3339Nano)); err == nil {
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO workspace_timers (timer_id, workspace_id, target_subscription_id, fire_at, created_at, updated_at) VALUES ('timer-cross-fk', 'ws-fk-b', 'sub-fk', ?, ?, ?)`, base.Format(time.RFC3339Nano), base.Format(time.RFC3339Nano), base.Format(time.RFC3339Nano)); err == nil {
 		t.Fatalf("cross-workspace timer insert succeeded, want FK failure")
 	}
 	if _, err := store.CreateWorkspaceTimer(ctx, WorkspaceTimer{TimerID: "timer-standalone", WorkspaceID: "ws-fk-b", FireAt: base}); err != nil {

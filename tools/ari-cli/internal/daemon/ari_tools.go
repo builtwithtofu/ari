@@ -1002,7 +1002,10 @@ func ariWorkspaceSignalSend(ctx context.Context, store *globaldb.Store, scope Ar
 		}
 		return AriToolCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "missing_required_fields", "missing_field": missing})
 	}
-	event, err := store.AppendWorkspaceEvent(ctx, globaldb.WorkspaceEvent{EventID: stringValue(body, "event_id"), WorkspaceID: scope.WorkspaceID, EventType: "signal.sent", SubjectType: targetType, SubjectID: targetID, ProducerType: workspaceEventProducerSession, ProducerID: strings.TrimSpace(scope.SourceRunID), CorrelationID: stringValue(body, "correlation_id"), CausationID: stringValue(body, "causation_id"), PayloadJSON: stringValue(body, "payload_json")})
+	if err := validateWorkspaceSignalTarget(ctx, store, scope.WorkspaceID, targetType, targetID); err != nil {
+		return AriToolCallResponse{}, err
+	}
+	event, err := store.AppendWorkspaceEvent(ctx, globaldb.WorkspaceEvent{EventID: stringValue(body, "event_id"), WorkspaceID: scope.WorkspaceID, EventType: globaldb.WorkspaceEventSignalSent, SubjectType: targetType, SubjectID: targetID, ProducerType: workspaceEventProducerSession, ProducerID: strings.TrimSpace(scope.SourceRunID), CorrelationID: stringValue(body, "correlation_id"), CausationID: stringValue(body, "causation_id"), PayloadJSON: stringValue(body, "payload_json"), AttentionRequired: true})
 	if err != nil {
 		return AriToolCallResponse{}, workspaceEventRPCError(err)
 	}
@@ -1022,7 +1025,7 @@ func ariWorkspaceTimerCreate(ctx context.Context, store *globaldb.Store, scope A
 	if err != nil {
 		return AriToolCallResponse{}, err
 	}
-	timer, err := store.CreateWorkspaceTimer(ctx, globaldb.WorkspaceTimer{TimerID: stringValue(body, "timer_id"), WorkspaceID: scope.WorkspaceID, OwnerSessionID: strings.TrimSpace(scope.SourceRunID), SubscriptionID: stringValue(body, "subscription_id"), SubjectType: stringValue(body, "subject_type"), SubjectID: stringValue(body, "subject_id"), Purpose: stringValue(body, "purpose"), FireAt: fireAt, PayloadJSON: stringValue(body, "payload_json")})
+	timer, err := store.CreateWorkspaceTimer(ctx, globaldb.WorkspaceTimer{TimerID: stringValue(body, "timer_id"), WorkspaceID: scope.WorkspaceID, OwnerSessionID: strings.TrimSpace(scope.SourceRunID), TargetSubscriptionID: stringValue(body, "target_subscription_id"), SubjectType: stringValue(body, "subject_type"), SubjectID: stringValue(body, "subject_id"), Purpose: stringValue(body, "purpose"), FireAt: fireAt, PayloadJSON: stringValue(body, "payload_json")})
 	if err != nil {
 		return AriToolCallResponse{}, workspaceTimerRPCError(err)
 	}
@@ -1164,7 +1167,7 @@ func scopedAriWorkspaceTimer(ctx context.Context, store *globaldb.Store, scope A
 }
 
 func ariWorkspaceTimerOutput(timer globaldb.WorkspaceTimer) map[string]any {
-	return map[string]any{"timer_id": timer.TimerID, "workspace_id": timer.WorkspaceID, "owner_session_id": timer.OwnerSessionID, "subscription_id": timer.SubscriptionID, "subject_type": timer.SubjectType, "subject_id": timer.SubjectID, "purpose": timer.Purpose, "status": timer.Status, "fire_at": timer.FireAt.UTC().Format(time.RFC3339Nano), "payload_json": timer.PayloadJSON, "fired_event_id": timer.FiredEventID, "created_at": timer.CreatedAt.UTC().Format(time.RFC3339Nano), "updated_at": timer.UpdatedAt.UTC().Format(time.RFC3339Nano)}
+	return map[string]any{"timer_id": timer.TimerID, "workspace_id": timer.WorkspaceID, "owner_session_id": timer.OwnerSessionID, "target_subscription_id": timer.TargetSubscriptionID, "subject_type": timer.SubjectType, "subject_id": timer.SubjectID, "purpose": timer.Purpose, "status": timer.Status, "fire_at": timer.FireAt.UTC().Format(time.RFC3339Nano), "payload_json": timer.PayloadJSON, "fired_event_id": timer.FiredEventID, "created_at": timer.CreatedAt.UTC().Format(time.RFC3339Nano), "updated_at": timer.UpdatedAt.UTC().Format(time.RFC3339Nano)}
 }
 
 func scopedAriWorkspaceDelivery(ctx context.Context, store *globaldb.Store, scope AriToolScope, deliveryID string) (globaldb.PendingDelivery, error) {

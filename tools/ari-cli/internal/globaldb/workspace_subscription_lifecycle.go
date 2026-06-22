@@ -61,10 +61,6 @@ type EventSubscriptionCompletionCondition struct {
 	TerminalEventTypes []string `json:"terminal_event_types,omitempty"`
 }
 
-type eventSubscriptionLifecycle struct {
-	queries *dbsqlc.Queries
-}
-
 type compiledEventSubscription struct {
 	EventSubscription
 	filter     EventSubscriptionFilter
@@ -77,10 +73,6 @@ type eventSubscriptionMatchOptions struct {
 	applyTimeout       bool
 }
 
-func newEventSubscriptionLifecycle(queries *dbsqlc.Queries) eventSubscriptionLifecycle {
-	return eventSubscriptionLifecycle{queries: queries}
-}
-
 func (s *Store) ReadEventSubscription(ctx context.Context, req EventSubscriptionReadRequest) (EventSubscriptionReadResult, error) {
 	if req.MinEvents < 0 {
 		return EventSubscriptionReadResult{}, fmt.Errorf("%w: min events must not be negative", ErrInvalidInput)
@@ -89,7 +81,11 @@ func (s *Store) ReadEventSubscription(ctx context.Context, req EventSubscription
 	if err != nil {
 		return EventSubscriptionReadResult{}, err
 	}
-	return newEventSubscriptionLifecycle(s.sqlcQueries()).read(ctx, subscription, eventSubscriptionReadOptions{limit: req.Limit, minEvents: req.MinEvents})
+	stream, err := NewSubscriptionStream(subscription)
+	if err != nil {
+		return EventSubscriptionReadResult{}, err
+	}
+	return stream.Read(ctx, s.sqlcQueries(), eventSubscriptionReadOptions{limit: req.Limit, minEvents: req.MinEvents})
 }
 
 func (s *Store) WaitEventSubscription(ctx context.Context, req EventSubscriptionWaitRequest) (EventSubscriptionReadResult, error) {
@@ -115,10 +111,13 @@ func (s *Store) WaitEventSubscriptionCondition(ctx context.Context, subscription
 }
 
 func (s *Store) waitEventSubscription(ctx context.Context, subscription EventSubscription, options EventSubscriptionWaitOptions) (EventSubscriptionReadResult, error) {
-	lifecycle := newEventSubscriptionLifecycle(s.sqlcQueries())
+	stream, err := NewSubscriptionStream(subscription)
+	if err != nil {
+		return EventSubscriptionReadResult{}, err
+	}
 	readOptions := eventSubscriptionReadOptions{limit: options.Limit, minEvents: options.MinEvents}
 	read := func(timedOut bool) (EventSubscriptionReadResult, error) {
-		result, err := lifecycle.read(ctx, subscription, readOptions)
+		result, err := stream.Read(ctx, s.sqlcQueries(), readOptions)
 		if err != nil {
 			return EventSubscriptionReadResult{}, err
 		}
@@ -136,7 +135,7 @@ func (s *Store) waitEventSubscription(ctx context.Context, subscription EventSub
 	if err != nil {
 		return EventSubscriptionReadResult{}, err
 	}
-	if !result.Completion.Configured || result.Completion.Satisfied {
+	if !result.Completion.Configured || result.Completion.Satisfied || result.Completion.TimedOut {
 		return result, nil
 	}
 	timer := time.NewTimer(options.Timeout)
@@ -152,71 +151,9 @@ func (s *Store) waitEventSubscription(ctx context.Context, subscription EventSub
 			if err != nil {
 				return EventSubscriptionReadResult{}, err
 			}
-			if result.Completion.Satisfied {
+			if result.Completion.Satisfied || result.Completion.TimedOut {
 				return result, nil
 			}
-		}
-	}
-}
-
-func (l eventSubscriptionLifecycle) createPendingDeliveriesForEvent(ctx context.Context, event WorkspaceEvent) error {
-	if workspaceEventSkipsDeliveryFanout(event) {
-		return nil
-	}
-	rows, err := l.queries.ListActiveEventSubscriptionsByWorkspace(ctx, dbsqlc.ListActiveEventSubscriptionsByWorkspaceParams{WorkspaceID: event.WorkspaceID})
-	if err != nil {
-		return fmt.Errorf("list active event subscriptions for %q: %w", event.WorkspaceID, err)
-	}
-	for _, row := range rows {
-		subscription, err := eventSubscriptionFromSQLC(row)
-		if err != nil {
-			return err
-		}
-		compiled, err := compileEventSubscription(subscription)
-		if err != nil {
-			return err
-		}
-		if !compiled.hasDeliveryTarget() {
-			continue
-		}
-		if !compiled.matchesEvent(event, eventSubscriptionMatchOptions{skipDeliveryEvents: true, applyCursor: true, applyTimeout: true}) {
-			continue
-		}
-		if err := l.createPendingDeliveryForEvent(ctx, compiled.EventSubscription, event); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (l eventSubscriptionLifecycle) backfillPendingDeliveries(ctx context.Context, subscription EventSubscription) error {
-	compiled, err := compileEventSubscription(subscription)
-	if err != nil {
-		return err
-	}
-	if compiled.Status != eventSubscriptionStatusActive || !compiled.hasDeliveryTarget() {
-		return nil
-	}
-	sequence := compiled.CursorSequence
-	for {
-		events, err := listWorkspaceEventsAfterSequenceWithQueries(ctx, l.queries, compiled.WorkspaceID, sequence, defaultSubscriptionEventScanPageSize)
-		if err != nil {
-			return err
-		}
-		if len(events) == 0 {
-			return nil
-		}
-		for _, event := range events {
-			sequence = event.Sequence
-			if !compiled.matchesEvent(event, eventSubscriptionMatchOptions{skipDeliveryEvents: true, applyTimeout: true}) {
-				continue
-			}
-			if err := l.createPendingDeliveryForEvent(ctx, compiled.EventSubscription, event); err != nil {
-				return err
-			}
-		}
-		if len(events) < defaultSubscriptionEventScanPageSize {
-			return nil
 		}
 	}
 }
@@ -224,23 +161,6 @@ func (l eventSubscriptionLifecycle) backfillPendingDeliveries(ctx context.Contex
 type eventSubscriptionReadOptions struct {
 	limit     int
 	minEvents int
-}
-
-func (l eventSubscriptionLifecycle) read(ctx context.Context, subscription EventSubscription, options eventSubscriptionReadOptions) (EventSubscriptionReadResult, error) {
-	compiled, err := compileEventSubscription(subscription)
-	if err != nil {
-		return EventSubscriptionReadResult{}, err
-	}
-	completion := compiled.completion
-	if options.minEvents > 0 {
-		completion = EventSubscriptionCompletionCondition{Mode: "count", MinEvents: options.minEvents}
-	}
-	limit := eventSubscriptionReadLimit(options.limit, options.minEvents, completion)
-	events, err := l.listUnreadEvents(ctx, compiled, limit, completion)
-	if err != nil {
-		return EventSubscriptionReadResult{}, err
-	}
-	return EventSubscriptionReadResult{Subscription: compiled.EventSubscription, Events: events, Completion: completion.evaluate(events, false)}, nil
 }
 
 func eventSubscriptionReadLimit(limit, minEvents int, completion EventSubscriptionCompletionCondition) int {
@@ -254,126 +174,6 @@ func eventSubscriptionReadLimit(limit, minEvents int, completion EventSubscripti
 		limit = 100
 	}
 	return limit
-}
-
-func (l eventSubscriptionLifecycle) listUnreadEvents(ctx context.Context, compiled compiledEventSubscription, limit int, completion EventSubscriptionCompletionCondition) ([]WorkspaceEvent, error) {
-	if compiled.Status == eventSubscriptionStatusCanceled {
-		return []WorkspaceEvent{}, nil
-	}
-	if limit <= 0 {
-		limit = 100
-	}
-	pageSize := limit * 4
-	if pageSize < defaultSubscriptionEventScanPageSize {
-		pageSize = defaultSubscriptionEventScanPageSize
-	}
-	completionAware := completion.requiresSubjectScan()
-	sequence := compiled.CursorSequence
-	matched := make([]WorkspaceEvent, 0, limit)
-	for {
-		events, err := listWorkspaceEventsAfterSequenceWithQueries(ctx, l.queries, compiled.WorkspaceID, sequence, pageSize)
-		if err != nil {
-			return nil, err
-		}
-		if len(events) == 0 {
-			break
-		}
-		stop := false
-		for _, event := range events {
-			sequence = event.Sequence
-			if !compiled.matchesEvent(event, eventSubscriptionMatchOptions{applyTimeout: true}) {
-				continue
-			}
-			matched = append(matched, event)
-			if completionAware {
-				if completion.evaluate(matched, false).Satisfied {
-					stop = true
-					break
-				}
-			} else if len(matched) == limit {
-				stop = true
-				break
-			}
-		}
-		if stop || len(events) < pageSize {
-			break
-		}
-	}
-	return matched, nil
-}
-
-func (l eventSubscriptionLifecycle) ackCompletedDelivery(ctx context.Context, delivery PendingDelivery, updatedAt time.Time) error {
-	subscription, err := subscriptionByIDWithQueries(ctx, l.queries, delivery.SubscriptionID)
-	if err != nil {
-		return err
-	}
-	compiled, err := compileEventSubscription(subscription)
-	if err != nil {
-		return err
-	}
-	completedByCurrentDelivery := make(map[string]struct{}, len(delivery.EventIDs))
-	for _, eventID := range delivery.EventIDs {
-		completedByCurrentDelivery[strings.TrimSpace(eventID)] = struct{}{}
-	}
-	sequence := compiled.CursorSequence
-	ackSequence := compiled.CursorSequence
-	for {
-		events, err := listWorkspaceEventsAfterSequenceWithQueries(ctx, l.queries, compiled.WorkspaceID, sequence, defaultSubscriptionEventScanPageSize)
-		if err != nil {
-			return err
-		}
-		if len(events) == 0 {
-			break
-		}
-		for _, event := range events {
-			sequence = event.Sequence
-			if !compiled.matchesEvent(event, eventSubscriptionMatchOptions{skipDeliveryEvents: true}) {
-				continue
-			}
-			_, completed := completedByCurrentDelivery[event.EventID]
-			if !completed {
-				completed, err = pendingDeliveryForSubscriptionEventIsCompleted(ctx, l.queries, compiled.SubscriptionID, event.EventID)
-				if err != nil {
-					return err
-				}
-			}
-			if !completed {
-				goto updateCursor
-			}
-			ackSequence = event.Sequence
-		}
-		if len(events) < defaultSubscriptionEventScanPageSize {
-			break
-		}
-	}
-
-updateCursor:
-	if ackSequence == compiled.CursorSequence {
-		return nil
-	}
-	if err := l.ackReadCursor(ctx, delivery.SubscriptionID, ackSequence, updatedAt); err != nil {
-		return fmt.Errorf("ack event subscription %q for delivery %q: %w", delivery.SubscriptionID, delivery.DeliveryID, err)
-	}
-	return nil
-}
-
-func (l eventSubscriptionLifecycle) ackReadCursor(ctx context.Context, subscriptionID string, sequence int64, updatedAt time.Time) error {
-	subscriptionID = strings.TrimSpace(subscriptionID)
-	if subscriptionID == "" || sequence < 0 {
-		return fmt.Errorf("%w: subscription id and non-negative sequence are required", ErrInvalidInput)
-	}
-	if updatedAt.IsZero() {
-		updatedAt = time.Now().UTC()
-	}
-	formatted := updatedAt.UTC().Format(time.RFC3339Nano)
-	rows, err := l.queries.UpdateEventSubscriptionCursor(ctx, dbsqlc.UpdateEventSubscriptionCursorParams{CursorSequence: sequence, CursorSequence_2: sequence, AckSequence: sequence, MIN: sequence, CursorSequence_3: sequence, Column6: sequence, UpdatedAt: formatted, SubscriptionID: subscriptionID})
-	if err != nil {
-		return fmt.Errorf("ack event subscription %q: %w", subscriptionID, err)
-	}
-	if rows == 0 {
-		return ErrNotFound
-	}
-	return nil
 }
 
 func compileEventSubscription(subscription EventSubscription) (compiledEventSubscription, error) {
@@ -399,16 +199,13 @@ func (subscription compiledEventSubscription) matchesEvent(event WorkspaceEvent,
 	if options.applyCursor && event.Sequence <= subscription.CursorSequence {
 		return false
 	}
+	if targetSubscriptionID := WorkspaceTimerTargetSubscriptionIDFromEvent(event); targetSubscriptionID != "" {
+		return targetSubscriptionID == subscription.SubscriptionID
+	}
 	if options.applyTimeout && subscription.TimeoutAt != nil && !subscription.TimeoutAt.After(event.CreatedAt) {
 		return false
 	}
 	return subscription.filter.matches(event)
-}
-
-func (l eventSubscriptionLifecycle) createPendingDeliveryForEvent(ctx context.Context, subscription EventSubscription, event WorkspaceEvent) error {
-	nextAttemptAt := event.CreatedAt
-	_, err := createPendingDeliveryWithQueries(ctx, l.queries, PendingDelivery{DeliveryID: pendingDeliveryIDForSubscriptionEvent(subscription.SubscriptionID, event.EventID), WorkspaceID: event.WorkspaceID, SubscriptionID: subscription.SubscriptionID, TargetType: subscription.DeliveryTargetType, TargetID: subscription.DeliveryTargetID, DeliveryPolicyJSON: subscription.DeliveryPolicyJSON, EventIDs: []string{event.EventID}, NextAttemptAt: &nextAttemptAt})
-	return err
 }
 
 func pendingDeliveryIDForSubscriptionEvent(subscriptionID, eventID string) string {
@@ -416,7 +213,7 @@ func pendingDeliveryIDForSubscriptionEvent(subscriptionID, eventID string) strin
 }
 
 func workspaceEventSkipsDeliveryFanout(event WorkspaceEvent) bool {
-	return strings.HasPrefix(strings.TrimSpace(event.EventType), "delivery.")
+	return strings.HasPrefix(strings.TrimSpace(event.EventType), "delivery.") || isSubscriptionDeadlineTimerEvent(event)
 }
 
 func pendingDeliveryForSubscriptionEventIsCompleted(ctx context.Context, queries *dbsqlc.Queries, subscriptionID, eventID string) (bool, error) {

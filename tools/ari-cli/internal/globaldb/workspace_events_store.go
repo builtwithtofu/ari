@@ -124,7 +124,14 @@ func (s *Store) CreateEventSubscription(ctx context.Context, subscription EventS
 		if err := queries.CreateEventSubscription(ctx, dbsqlc.CreateEventSubscriptionParams{SubscriptionID: subscription.SubscriptionID, WorkspaceID: subscription.WorkspaceID, OwnerSessionID: subscription.OwnerSessionID, Name: subscription.Name, FilterJson: subscription.FilterJSON, DeliveryTargetType: subscription.DeliveryTargetType, DeliveryTargetID: subscription.DeliveryTargetID, DeliveryPolicyJson: subscription.DeliveryPolicyJSON, CursorSequence: subscription.CursorSequence, AckSequence: subscription.AckSequence, Status: subscription.Status, CompletionConditionJson: subscription.CompletionConditionJSON, TimeoutAt: timeoutAt, CreatedAt: subscription.CreatedAt.UTC().Format(time.RFC3339Nano), UpdatedAt: subscription.UpdatedAt.UTC().Format(time.RFC3339Nano)}); err != nil {
 			return fmt.Errorf("create event subscription %q: %w", subscription.SubscriptionID, err)
 		}
-		return newEventSubscriptionLifecycle(queries).backfillPendingDeliveries(ctx, subscription)
+		if err := createSubscriptionDeadlineTimerWithQueries(ctx, queries, subscription); err != nil {
+			return fmt.Errorf("create event subscription %q deadline timer: %w", subscription.SubscriptionID, err)
+		}
+		stream, err := NewSubscriptionStream(subscription)
+		if err != nil {
+			return err
+		}
+		return stream.BackfillDeliveries(ctx, queries)
 	}); err != nil {
 		return EventSubscription{}, err
 	}
@@ -148,7 +155,15 @@ func (s *Store) GetEventSubscription(ctx context.Context, subscriptionID string)
 }
 
 func (s *Store) AckEventSubscription(ctx context.Context, subscriptionID string, sequence int64) error {
-	return newEventSubscriptionLifecycle(s.sqlcQueries()).ackReadCursor(ctx, subscriptionID, sequence, time.Now().UTC())
+	subscription, err := s.GetEventSubscription(ctx, subscriptionID)
+	if err != nil {
+		return err
+	}
+	stream, err := NewSubscriptionStream(subscription)
+	if err != nil {
+		return err
+	}
+	return stream.AckCursor(ctx, s.sqlcQueries(), sequence, time.Now().UTC())
 }
 
 func (s *Store) CancelEventSubscription(ctx context.Context, subscriptionID string) (EventSubscription, error) {
@@ -172,6 +187,9 @@ func (s *Store) CancelEventSubscription(ctx context.Context, subscriptionID stri
 				return nil
 			}
 			return ErrNotFound
+		}
+		if err := cancelSubscriptionDeadlineTimersWithQueries(ctx, queries, subscriptionID, now); err != nil {
+			return fmt.Errorf("cancel event subscription %q deadline timers: %w", subscriptionID, err)
 		}
 		return failPendingDeliveriesForSubscriptionWithQueries(ctx, queries, subscriptionID, "event subscription canceled", now)
 	}); err != nil {

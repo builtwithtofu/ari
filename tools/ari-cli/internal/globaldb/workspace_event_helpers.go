@@ -37,7 +37,14 @@ const (
 	WorkspaceEventHarnessUsage       = WorkspaceEventHarnessEventPrefix + "usage"
 	WorkspaceEventHarnessDebug       = WorkspaceEventHarnessEventPrefix + "debug"
 
+	WorkspaceEventSignalSent = "signal.sent"
+
 	WorkspaceEventTimerFired = "timer.fired"
+
+	WorkspaceEventDeliveryAttempted      = "delivery.attempted"
+	WorkspaceEventDeliveryCompleted      = "delivery.completed"
+	WorkspaceEventDeliveryFailed         = "delivery.failed"
+	WorkspaceEventDeliveryRetryScheduled = "delivery.retry_scheduled"
 )
 
 func IsFanoutWorkerWorkspaceEvent(eventType string) bool {
@@ -83,6 +90,14 @@ func WorkspaceEventStringPayload(raw string) map[string]string {
 		}
 	}
 	return out
+}
+
+func WorkspaceTimerTargetSubscriptionIDFromEvent(event WorkspaceEvent) string {
+	if strings.TrimSpace(event.EventType) != WorkspaceEventTimerFired {
+		return ""
+	}
+	payload := WorkspaceEventStringPayload(event.PayloadJSON)
+	return strings.TrimSpace(payload["target_subscription_id"])
 }
 
 func FinalResponseIDFromWorkspaceEventRef(raw string) string {
