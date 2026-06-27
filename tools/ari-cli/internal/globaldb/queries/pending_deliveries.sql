@@ -65,7 +65,7 @@ LIMIT 1;
 -- name: NextPendingDeliveryDeadlineAt :one
 SELECT deadline_at
 FROM pending_deliveries
-WHERE status = 'pending'
+WHERE status IN ('pending', 'attempted')
   AND deadline_at IS NOT NULL
 ORDER BY deadline_at ASC, created_at ASC, delivery_id ASC
 LIMIT 1;
@@ -81,10 +81,20 @@ LIMIT 1;
 -- name: ListExpiredPendingDeliveries :many
 SELECT delivery_id, workspace_id, subscription_id, target_type, target_id, delivery_policy_json, event_ids_json, status, attempts, next_attempt_at, deadline_at, last_error, created_at, updated_at, terminal_at
 FROM pending_deliveries
-WHERE status = 'pending'
+WHERE status IN ('pending', 'attempted')
   AND deadline_at IS NOT NULL
   AND deadline_at <= ?
 ORDER BY deadline_at ASC, created_at ASC, delivery_id ASC;
+
+-- name: ListPendingDeliveriesForTimedOutSubscriptions :many
+SELECT pd.delivery_id, pd.workspace_id, pd.subscription_id, pd.target_type, pd.target_id, pd.delivery_policy_json, pd.event_ids_json, pd.status, pd.attempts, pd.next_attempt_at, pd.deadline_at, pd.last_error, pd.created_at, pd.updated_at, pd.terminal_at
+FROM pending_deliveries pd
+JOIN event_subscriptions es ON es.subscription_id = pd.subscription_id
+WHERE pd.status IN ('pending', 'attempted')
+  AND es.status = 'active'
+  AND es.timeout_at IS NOT NULL
+  AND es.timeout_at <= ?
+ORDER BY es.timeout_at ASC, pd.created_at ASC, pd.delivery_id ASC;
 
 -- name: RequeueStaleAttemptedPendingDeliveries :execrows
 UPDATE pending_deliveries
@@ -107,14 +117,6 @@ SELECT delivery_id, workspace_id, subscription_id, target_type, target_id, deliv
 FROM pending_deliveries
 WHERE subscription_id = ? AND status = 'completed'
 ORDER BY terminal_at ASC, created_at ASC, delivery_id ASC;
-
--- name: RecordPendingDeliveryAttempt :execrows
-UPDATE pending_deliveries
-SET attempts = attempts + 1,
-    next_attempt_at = ?,
-    last_error = ?,
-    updated_at = ?
-WHERE delivery_id = ? AND status = 'pending';
 
 -- name: ClaimDuePendingDeliveryAttempt :execrows
 UPDATE pending_deliveries

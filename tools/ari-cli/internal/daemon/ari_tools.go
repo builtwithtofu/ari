@@ -632,154 +632,154 @@ func ariWorkspaceEventsNext(ctx context.Context, store *globaldb.Store, scope ar
 		output["wait_status"] = response.WaitStatus
 		output["wait_timed_out"] = response.WaitTimedOut
 	}
-	return AriToolCallResponse{Status: "ok", Output: output}, nil
+	return aritool.CallResponse{Status: "ok", Output: output}, nil
 }
 
 func ariWorkspaceEventResponseOutput(event WorkspaceEventResponse) map[string]any {
 	return map[string]any{"event_id": event.EventID, "workspace_id": event.WorkspaceID, "sequence": event.Sequence, "event_type": event.EventType, "subject_type": event.SubjectType, "subject_id": event.SubjectID, "producer_type": event.ProducerType, "producer_id": event.ProducerID, "correlation_id": event.CorrelationID, "causation_id": event.CausationID, "payload_json": event.PayloadJSON, "payload_ref_json": event.PayloadRefJSON, "attention_required": event.AttentionRequired, "created_at": event.CreatedAt}
 }
 
-func ariWorkspaceEventsAck(ctx context.Context, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
-	body, err := inputMap(input)
+func ariWorkspaceEventsAck(ctx context.Context, store *globaldb.Store, scope aritool.Scope, input any) (aritool.CallResponse, error) {
+	body, err := aritool.InputMap(input)
 	if err != nil {
-		return AriToolCallResponse{}, err
+		return aritool.CallResponse{}, err
 	}
-	subscription, err := scopedAriWorkspaceEventSubscription(ctx, store, scope, stringValue(body, "subscription_id"))
+	subscription, err := aritool.ScopedEventSubscription(ctx, store, scope, aritool.StringValueOrEmpty(body, "subscription_id"))
 	if err != nil {
-		return AriToolCallResponse{}, err
+		return aritool.CallResponse{}, err
 	}
-	sequence, ok, err := optionalNonNegativeInt64Value(body, "sequence")
+	sequence, ok, err := aritool.OptionalNonNegativeInt64Value(body, "sequence")
 	if err != nil {
-		return AriToolCallResponse{}, err
+		return aritool.CallResponse{}, err
 	}
 	if !ok {
-		return AriToolCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "missing_required_fields", "missing_field": "sequence"})
+		return aritool.CallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "missing_required_fields", "missing_field": "sequence"})
 	}
 	if err := store.AckEventSubscription(ctx, subscription.SubscriptionID, sequence); err != nil {
-		return AriToolCallResponse{}, workspaceEventRPCError(err)
+		return aritool.CallResponse{}, workspaceEventRPCError(err)
 	}
 	acked, err := store.GetEventSubscription(ctx, subscription.SubscriptionID)
 	if err != nil {
-		return AriToolCallResponse{}, workspaceEventRPCError(err)
+		return aritool.CallResponse{}, workspaceEventRPCError(err)
 	}
-	return AriToolCallResponse{Status: "ok", Output: map[string]any{"acked": true, "subscription_id": acked.SubscriptionID, "workspace_id": acked.WorkspaceID, "owner_session_id": acked.OwnerSessionID, "cursor_sequence": acked.CursorSequence, "ack_sequence": acked.AckSequence, "status": acked.Status}}, nil
+	return aritool.CallResponse{Status: "ok", Output: map[string]any{"acked": true, "subscription_id": acked.SubscriptionID, "workspace_id": acked.WorkspaceID, "owner_session_id": acked.OwnerSessionID, "cursor_sequence": acked.CursorSequence, "ack_sequence": acked.AckSequence, "status": acked.Status}}, nil
 }
 
-func ariWorkspaceSignalSend(ctx context.Context, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
-	body, err := inputMap(input)
+func ariWorkspaceSignalSend(ctx context.Context, store *globaldb.Store, scope aritool.Scope, input any) (aritool.CallResponse, error) {
+	body, err := aritool.InputMap(input)
 	if err != nil {
-		return AriToolCallResponse{}, err
+		return aritool.CallResponse{}, err
 	}
-	targetType := stringValue(body, "target_type")
-	targetID := stringValue(body, "target_id")
+	targetType := aritool.StringValueOrEmpty(body, "target_type")
+	targetID := aritool.StringValueOrEmpty(body, "target_id")
 	if targetType == "" || targetID == "" {
 		missing := "target_type"
 		if targetType != "" {
 			missing = "target_id"
 		}
-		return AriToolCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "missing_required_fields", "missing_field": missing})
+		return aritool.CallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "missing_required_fields", "missing_field": missing})
 	}
 	if err := validateWorkspaceSignalTarget(ctx, store, scope.WorkspaceID, targetType, targetID); err != nil {
-		return AriToolCallResponse{}, err
+		return aritool.CallResponse{}, err
 	}
-	event, err := store.AppendWorkspaceEvent(ctx, globaldb.WorkspaceEvent{EventID: stringValue(body, "event_id"), WorkspaceID: scope.WorkspaceID, EventType: globaldb.WorkspaceEventSignalSent, SubjectType: targetType, SubjectID: targetID, ProducerType: workspaceEventProducerSession, ProducerID: strings.TrimSpace(scope.SourceRunID), CorrelationID: stringValue(body, "correlation_id"), CausationID: stringValue(body, "causation_id"), PayloadJSON: stringValue(body, "payload_json"), AttentionRequired: true})
+	event, err := store.AppendWorkspaceEvent(ctx, globaldb.NewSignalWorkspaceEvent(globaldb.SignalWorkspaceEventParams{EventID: aritool.StringValueOrEmpty(body, "event_id"), WorkspaceID: scope.WorkspaceID, TargetType: targetType, TargetID: targetID, ProducerType: globaldb.WorkspaceEventProducerSession, ProducerID: strings.TrimSpace(scope.SourceRunID), CorrelationID: aritool.StringValueOrEmpty(body, "correlation_id"), CausationID: aritool.StringValueOrEmpty(body, "causation_id"), PayloadJSON: aritool.StringValueOrEmpty(body, "payload_json")}))
 	if err != nil {
-		return AriToolCallResponse{}, workspaceEventRPCError(err)
+		return aritool.CallResponse{}, workspaceEventRPCError(err)
 	}
-	return AriToolCallResponse{Status: "ok", Output: ariWorkspaceEventOutput(event)}, nil
+	return aritool.CallResponse{Status: "ok", Output: ariWorkspaceEventOutput(event)}, nil
 }
 
-func ariWorkspaceTimerCreate(ctx context.Context, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
-	body, err := inputMap(input)
+func ariWorkspaceTimerCreate(ctx context.Context, store *globaldb.Store, scope aritool.Scope, input any) (aritool.CallResponse, error) {
+	body, err := aritool.InputMap(input)
 	if err != nil {
-		return AriToolCallResponse{}, err
+		return aritool.CallResponse{}, err
 	}
-	fireAtRaw := stringValue(body, "fire_at")
+	fireAtRaw := aritool.StringValueOrEmpty(body, "fire_at")
 	if fireAtRaw == "" {
-		return AriToolCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "missing_required_fields", "missing_field": "fire_at"})
+		return aritool.CallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "missing_required_fields", "missing_field": "fire_at"})
 	}
 	fireAt, err := parseWorkspaceTimerTime(fireAtRaw, "invalid_fire_at")
 	if err != nil {
-		return AriToolCallResponse{}, err
+		return aritool.CallResponse{}, err
 	}
-	timer, err := store.CreateWorkspaceTimer(ctx, globaldb.WorkspaceTimer{TimerID: stringValue(body, "timer_id"), WorkspaceID: scope.WorkspaceID, OwnerSessionID: strings.TrimSpace(scope.SourceRunID), TargetSubscriptionID: stringValue(body, "target_subscription_id"), SubjectType: stringValue(body, "subject_type"), SubjectID: stringValue(body, "subject_id"), Purpose: stringValue(body, "purpose"), FireAt: fireAt, PayloadJSON: stringValue(body, "payload_json")})
+	timer, err := store.CreateWorkspaceTimer(ctx, globaldb.WorkspaceTimer{TimerID: aritool.StringValueOrEmpty(body, "timer_id"), WorkspaceID: scope.WorkspaceID, OwnerSessionID: strings.TrimSpace(scope.SourceRunID), TargetSubscriptionID: aritool.StringValueOrEmpty(body, "target_subscription_id"), SubjectType: aritool.StringValueOrEmpty(body, "subject_type"), SubjectID: aritool.StringValueOrEmpty(body, "subject_id"), Purpose: aritool.StringValueOrEmpty(body, "purpose"), FireAt: fireAt, PayloadJSON: aritool.StringValueOrEmpty(body, "payload_json")})
 	if err != nil {
-		return AriToolCallResponse{}, workspaceTimerRPCError(err)
+		return aritool.CallResponse{}, workspaceTimerRPCError(err)
 	}
-	return AriToolCallResponse{Status: "ok", Output: ariWorkspaceTimerOutput(timer)}, nil
+	return aritool.CallResponse{Status: "ok", Output: ariWorkspaceTimerOutput(timer)}, nil
 }
 
-func ariWorkspaceTimerGet(ctx context.Context, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
-	body, err := inputMap(input)
+func ariWorkspaceTimerGet(ctx context.Context, store *globaldb.Store, scope aritool.Scope, input any) (aritool.CallResponse, error) {
+	body, err := aritool.InputMap(input)
 	if err != nil {
-		return AriToolCallResponse{}, err
+		return aritool.CallResponse{}, err
 	}
-	timer, err := scopedAriWorkspaceTimer(ctx, store, scope, stringValue(body, "timer_id"), true)
+	timer, err := aritool.ScopedWorkspaceTimer(ctx, store, scope, aritool.StringValueOrEmpty(body, "timer_id"), true)
 	if err != nil {
-		return AriToolCallResponse{}, err
+		return aritool.CallResponse{}, err
 	}
-	return AriToolCallResponse{Status: "ok", Output: ariWorkspaceTimerOutput(timer)}, nil
+	return aritool.CallResponse{Status: "ok", Output: ariWorkspaceTimerOutput(timer)}, nil
 }
 
-func ariWorkspaceTimerCancel(ctx context.Context, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
-	body, err := inputMap(input)
+func ariWorkspaceTimerCancel(ctx context.Context, store *globaldb.Store, scope aritool.Scope, input any) (aritool.CallResponse, error) {
+	body, err := aritool.InputMap(input)
 	if err != nil {
-		return AriToolCallResponse{}, err
+		return aritool.CallResponse{}, err
 	}
-	timer, err := scopedAriWorkspaceTimer(ctx, store, scope, stringValue(body, "timer_id"), false)
+	timer, err := aritool.ScopedWorkspaceTimer(ctx, store, scope, aritool.StringValueOrEmpty(body, "timer_id"), false)
 	if err != nil {
-		return AriToolCallResponse{}, err
+		return aritool.CallResponse{}, err
 	}
 	canceled, err := store.CancelWorkspaceTimer(ctx, timer.TimerID)
 	if err != nil {
-		return AriToolCallResponse{}, workspaceTimerRPCError(err)
+		return aritool.CallResponse{}, workspaceTimerRPCError(err)
 	}
-	return AriToolCallResponse{Status: "ok", Output: ariWorkspaceTimerOutput(canceled)}, nil
+	return aritool.CallResponse{Status: "ok", Output: ariWorkspaceTimerOutput(canceled)}, nil
 }
 
-func ariWorkspaceDeliveryGet(ctx context.Context, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
-	body, err := inputMap(input)
+func ariWorkspaceDeliveryGet(ctx context.Context, store *globaldb.Store, scope aritool.Scope, input any) (aritool.CallResponse, error) {
+	body, err := aritool.InputMap(input)
 	if err != nil {
-		return AriToolCallResponse{}, err
+		return aritool.CallResponse{}, err
 	}
-	delivery, err := scopedAriWorkspaceDelivery(ctx, store, scope, stringValue(body, "delivery_id"))
+	delivery, err := aritool.ScopedWorkspaceDelivery(ctx, store, scope, aritool.StringValueOrEmpty(body, "delivery_id"))
 	if err != nil {
-		return AriToolCallResponse{}, err
+		return aritool.CallResponse{}, err
 	}
-	return AriToolCallResponse{Status: "ok", Output: ariWorkspaceDeliveryOutput(delivery)}, nil
+	return aritool.CallResponse{Status: "ok", Output: ariWorkspaceDeliveryOutput(delivery)}, nil
 }
 
-func ariWorkspaceDeliveriesListDue(ctx context.Context, store *globaldb.Store, scope AriToolScope, input any) (AriToolCallResponse, error) {
-	body, err := inputMap(input)
+func ariWorkspaceDeliveriesListDue(ctx context.Context, store *globaldb.Store, scope aritool.Scope, input any) (aritool.CallResponse, error) {
+	body, err := aritool.InputMap(input)
 	if err != nil {
-		return AriToolCallResponse{}, err
+		return aritool.CallResponse{}, err
 	}
 	now := time.Now().UTC()
-	if rawNow := stringValue(body, "now"); rawNow != "" {
+	if rawNow := aritool.StringValueOrEmpty(body, "now"); rawNow != "" {
 		now, err = parseWorkspaceTimerTime(rawNow, "invalid_now")
 		if err != nil {
-			return AriToolCallResponse{}, err
+			return aritool.CallResponse{}, err
 		}
 	}
-	limit, err := optionalNonNegativeIntValue(body, "limit")
+	limit, err := aritool.OptionalNonNegativeInt(body, "limit")
 	if err != nil {
-		return AriToolCallResponse{}, err
+		return aritool.CallResponse{}, err
 	}
 	if limit <= 0 {
 		limit = 100
 	}
 	if limit > ariWorkspaceDeliveriesListDueMaxLimit {
-		return AriToolCallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "invalid_limit", "limit": limit, "max_limit": ariWorkspaceDeliveriesListDueMaxLimit})
+		return aritool.CallResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "invalid_limit", "limit": limit, "max_limit": ariWorkspaceDeliveriesListDueMaxLimit})
 	}
 	due, err := store.ListDuePendingDeliveriesForScope(ctx, now, strings.TrimSpace(scope.WorkspaceID), strings.TrimSpace(scope.SourceRunID), limit)
 	if err != nil {
-		return AriToolCallResponse{}, workspaceDeliveryRPCError(err)
+		return aritool.CallResponse{}, workspaceDeliveryRPCError(err)
 	}
 	scoped := make([]globaldb.PendingDelivery, 0, limit)
 	for _, delivery := range due {
-		visible, err := ariPendingDeliveryVisibleToScope(ctx, store, scope, delivery)
+		visible, err := aritool.PendingDeliveryVisibleToScope(ctx, store, scope, delivery)
 		if err != nil {
-			return AriToolCallResponse{}, err
+			return aritool.CallResponse{}, err
 		}
 		if !visible {
 			continue

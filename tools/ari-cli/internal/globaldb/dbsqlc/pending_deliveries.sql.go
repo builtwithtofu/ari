@@ -381,7 +381,7 @@ func (q *Queries) ListDuePendingDeliveriesForScope(ctx context.Context, arg List
 const listExpiredPendingDeliveries = `-- name: ListExpiredPendingDeliveries :many
 SELECT delivery_id, workspace_id, subscription_id, target_type, target_id, delivery_policy_json, event_ids_json, status, attempts, next_attempt_at, deadline_at, last_error, created_at, updated_at, terminal_at
 FROM pending_deliveries
-WHERE status = 'pending'
+WHERE status IN ('pending', 'attempted')
   AND deadline_at IS NOT NULL
   AND deadline_at <= ?
 ORDER BY deadline_at ASC, created_at ASC, delivery_id ASC
@@ -480,6 +480,60 @@ func (q *Queries) ListPendingDeliveriesForSubscription(ctx context.Context, arg 
 	return items, nil
 }
 
+const listPendingDeliveriesForTimedOutSubscriptions = `-- name: ListPendingDeliveriesForTimedOutSubscriptions :many
+SELECT pd.delivery_id, pd.workspace_id, pd.subscription_id, pd.target_type, pd.target_id, pd.delivery_policy_json, pd.event_ids_json, pd.status, pd.attempts, pd.next_attempt_at, pd.deadline_at, pd.last_error, pd.created_at, pd.updated_at, pd.terminal_at
+FROM pending_deliveries pd
+JOIN event_subscriptions es ON es.subscription_id = pd.subscription_id
+WHERE pd.status IN ('pending', 'attempted')
+  AND es.status = 'active'
+  AND es.timeout_at IS NOT NULL
+  AND es.timeout_at <= ?
+ORDER BY es.timeout_at ASC, pd.created_at ASC, pd.delivery_id ASC
+`
+
+type ListPendingDeliveriesForTimedOutSubscriptionsParams struct {
+	TimeoutAt *string `json:"timeout_at"`
+}
+
+func (q *Queries) ListPendingDeliveriesForTimedOutSubscriptions(ctx context.Context, arg ListPendingDeliveriesForTimedOutSubscriptionsParams) ([]PendingDelivery, error) {
+	rows, err := q.db.QueryContext(ctx, listPendingDeliveriesForTimedOutSubscriptions, arg.TimeoutAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PendingDelivery{}
+	for rows.Next() {
+		var i PendingDelivery
+		if err := rows.Scan(
+			&i.DeliveryID,
+			&i.WorkspaceID,
+			&i.SubscriptionID,
+			&i.TargetType,
+			&i.TargetID,
+			&i.DeliveryPolicyJson,
+			&i.EventIdsJson,
+			&i.Status,
+			&i.Attempts,
+			&i.NextAttemptAt,
+			&i.DeadlineAt,
+			&i.LastError,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.TerminalAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const nextPendingDeliveryAttemptAt = `-- name: NextPendingDeliveryAttemptAt :one
 SELECT pd.next_attempt_at
 FROM pending_deliveries pd
@@ -508,7 +562,7 @@ func (q *Queries) NextPendingDeliveryAttemptAt(ctx context.Context, arg NextPend
 const nextPendingDeliveryDeadlineAt = `-- name: NextPendingDeliveryDeadlineAt :one
 SELECT deadline_at
 FROM pending_deliveries
-WHERE status = 'pending'
+WHERE status IN ('pending', 'attempted')
   AND deadline_at IS NOT NULL
 ORDER BY deadline_at ASC, created_at ASC, delivery_id ASC
 LIMIT 1
@@ -535,35 +589,6 @@ func (q *Queries) OldestAttemptedPendingDeliveryUpdatedAt(ctx context.Context) (
 	var updated_at string
 	err := row.Scan(&updated_at)
 	return updated_at, err
-}
-
-const recordPendingDeliveryAttempt = `-- name: RecordPendingDeliveryAttempt :execrows
-UPDATE pending_deliveries
-SET attempts = attempts + 1,
-    next_attempt_at = ?,
-    last_error = ?,
-    updated_at = ?
-WHERE delivery_id = ? AND status = 'pending'
-`
-
-type RecordPendingDeliveryAttemptParams struct {
-	NextAttemptAt *string `json:"next_attempt_at"`
-	LastError     string  `json:"last_error"`
-	UpdatedAt     string  `json:"updated_at"`
-	DeliveryID    string  `json:"delivery_id"`
-}
-
-func (q *Queries) RecordPendingDeliveryAttempt(ctx context.Context, arg RecordPendingDeliveryAttemptParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, recordPendingDeliveryAttempt,
-		arg.NextAttemptAt,
-		arg.LastError,
-		arg.UpdatedAt,
-		arg.DeliveryID,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
 }
 
 const requeueStaleAttemptedPendingDeliveries = `-- name: RequeueStaleAttemptedPendingDeliveries :execrows

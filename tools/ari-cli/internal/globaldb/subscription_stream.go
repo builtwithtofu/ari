@@ -160,8 +160,8 @@ func (s SubscriptionStream) AdvanceAckForCompletedDelivery(ctx context.Context, 
 	for _, eventID := range delivery.EventIDs {
 		completedByCurrentDelivery[strings.TrimSpace(eventID)] = struct{}{}
 	}
-	sequence := s.compiled.CursorSequence
-	ackSequence := s.compiled.CursorSequence
+	sequence := s.compiled.AckSequence
+	ackSequence := s.compiled.AckSequence
 	for {
 		events, err := listWorkspaceEventsAfterSequenceWithQueries(ctx, queries, s.compiled.WorkspaceID, sequence, defaultSubscriptionEventScanPageSize)
 		if err != nil {
@@ -193,7 +193,7 @@ func (s SubscriptionStream) AdvanceAckForCompletedDelivery(ctx context.Context, 
 	}
 
 updateCursor:
-	if ackSequence == s.compiled.CursorSequence {
+	if ackSequence == s.compiled.AckSequence {
 		return nil
 	}
 	if err := s.AckCursor(ctx, queries, ackSequence, updatedAt); err != nil {
