@@ -34,27 +34,27 @@ func newAdapterLifecycle[O any](harness string) adapterLifecycle[O] {
 }
 
 func (l *adapterLifecycle[O]) storeRun(runID string, items []TimelineItem, options O) {
+	runID = strings.TrimSpace(runID)
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if l.runs == nil {
 		l.runs = map[string][]TimelineItem{}
 	}
 	if l.deliveryOptions == nil {
 		l.deliveryOptions = map[string]O{}
 	}
-	runID = strings.TrimSpace(runID)
-	l.mu.Lock()
 	l.runs[runID] = append([]TimelineItem(nil), items...)
 	l.deliveryOptions[runID] = options
-	l.mu.Unlock()
 }
 
 func (l *adapterLifecycle[O]) appendRunItems(runID string, items ...TimelineItem) {
+	runID = strings.TrimSpace(runID)
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if l.runs == nil {
 		l.runs = map[string][]TimelineItem{}
 	}
-	runID = strings.TrimSpace(runID)
-	l.mu.Lock()
 	l.runs[runID] = append(l.runs[runID], items...)
-	l.mu.Unlock()
 }
 
 func (l *adapterLifecycle[O]) items(runID string) ([]TimelineItem, error) {
@@ -78,8 +78,7 @@ func (l *adapterLifecycle[O]) Items(ctx context.Context, runID string) ([]Timeli
 
 func (l *adapterLifecycle[O]) Stop(ctx context.Context, runID string) error {
 	_ = ctx
-	_ = runID
-	return nil
+	return fmt.Errorf("%s adapter does not implement stop for run %q", l.harness, strings.TrimSpace(runID))
 }
 
 func (l *adapterLifecycle[O]) deliveryOption(runID string) (O, bool) {

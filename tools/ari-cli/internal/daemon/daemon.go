@@ -35,7 +35,7 @@ type Daemon struct {
 	cancel                                    context.CancelFunc
 	stopCh                                    chan struct{}
 	transport                                 *rpc.UnixSocketTransport
-	startWorkspaceOrchestrationRuntimeForTest func(*globaldb.Store)
+	startWorkspaceOrchestrationServiceForTest func(*globaldb.Store)
 	commandMu                                 sync.RWMutex
 	commands                                  map[string]*process.Process
 	commandLogs                               map[string]string
@@ -218,7 +218,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 		cancel()
 		return err
 	}
-	d.startWorkspaceOrchestrationRuntime(store)
+	d.startWorkspaceOrchestrationService(store)
 
 	defer func() {
 		startupSucceeded = true

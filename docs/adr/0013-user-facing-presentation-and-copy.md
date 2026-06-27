@@ -21,7 +21,7 @@ Ari's default presentation is opinionated, user-facing, and affordance-rich.
 Rules:
 
 - **Ari language comes first.** Primary copy uses Ari product terms, not provider-native terms. Examples include Ready, Running, Needs auth, Blocked, Failed, Stopped, Sticky session, Ephemeral call, Workspace activity, Attention, Auth slot, and Harness session.
-- **Top-level statuses stay small and actionable.** Ari should prefer a stable top-level vocabulary that tells the user what they can do next. Nuance belongs in reason/detail/source fields, not in an ever-growing status enum.
+- **Top-level statuses stay small and actionable.** Ari should prefer a stable top-level vocabulary that tells the user what they can do next. Nuance belongs in detail, next-step, badge, and source fields, not in an ever-growing status enum.
 - **Every unclear state needs an affordance.** If a status may surprise the user, the presentation should include a short explanation, next step, caveat, or detail pointer. Ari copy should answer "what is happening?" and "what can I do?" before exposing raw facts.
 - **Adapters provide facts; Ari provides copy.** Harness adapters report factual identity, capability, provider/model/session/runtime metadata, and safe native details. Ari's presentation layer owns labels, badges, status copy, grouping, remediation text, and default/raw visibility policy.
 - **Native/raw detail is an explicit escape hatch.** Provider-faithful terms, raw IDs, native payload fragments, transformed request bodies, and adapter diagnostics may be exposed only through deliberate detail/debug/advanced views, API options, or configuration. They must be clearly secondary to the Ari view.
@@ -38,7 +38,7 @@ Rules:
 - Documentation, help text, errors, diagnostics, and command output should be reviewed for Ari-first language when touched.
 - Raw/native escape hatches remain necessary and valuable, but adding one requires explicit scope, labeling, and redaction.
 - Some implementation work will move logic out of client formatting and provider-specific branches into a shared presentation/read-model layer.
-- The stable top-level vocabulary may initially feel less precise than provider-native states. Ari must compensate with reason/detail fields and good explanations rather than by leaking provider terms into the primary view.
+- The stable top-level vocabulary may initially feel less precise than provider-native states. Ari must compensate with detail, next-step, source fields, and good explanations rather than by leaking provider terms into the primary view.
 
 ## Alternatives considered
 

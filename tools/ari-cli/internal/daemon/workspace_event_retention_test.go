@@ -30,7 +30,7 @@ func TestTerminalWorkspaceEventsReferenceFinalResponsesNotBodies(t *testing.T) {
 	}
 
 	member := globaldb.FanoutMember{FanoutMemberID: "fg-retention-m1", FanoutGroupID: "fg-retention", WorkspaceID: "ws-1", WorkerSessionID: "retention-worker-run", TargetProfileID: "retention-worker", RequestAgentMessageID: "request-1", Status: "running"}
-	if err := appendFanoutWorkerWorkspaceEvent(ctx, store, member, workspaceEventWorkerCompleted, "retention-worker-run", "reply-1", "fr-retention", false); err != nil {
+	if err := appendFanoutWorkerWorkspaceEvent(ctx, store, member, globaldb.WorkspaceEventWorkerCompleted, "retention-worker-run", "reply-1", "fr-retention", false); err != nil {
 		t.Fatalf("appendFanoutWorkerWorkspaceEvent returned error: %v", err)
 	}
 	if err := newHarnessLifecycle(store).markCompletedWithFinalResponse(ctx, "retention-worker-run", globaldb.FinalResponse{FinalResponseID: "fr-retention", WorkspaceID: "ws-1", TaskID: "task-retention", ContextPacketID: "ctx-retention", ProfileID: "retention-worker", Text: body}); err != nil {
@@ -47,7 +47,7 @@ func TestTerminalWorkspaceEventsReferenceFinalResponsesNotBodies(t *testing.T) {
 			continue
 		}
 		switch event.EventType {
-		case workspaceEventWorkerCompleted, workspaceEventSessionCompleted:
+		case globaldb.WorkspaceEventWorkerCompleted, globaldb.WorkspaceEventSessionCompleted:
 		default:
 			continue
 		}
@@ -55,11 +55,11 @@ func TestTerminalWorkspaceEventsReferenceFinalResponsesNotBodies(t *testing.T) {
 		if strings.Contains(event.PayloadJSON, body) || strings.Contains(event.PayloadRefJSON, body) {
 			t.Fatalf("event %s embeds the final response body: payload=%s ref=%s", event.EventType, event.PayloadJSON, event.PayloadRefJSON)
 		}
-		if id := finalResponseIDFromWorkspaceEvent(event); id != "fr-retention" {
+		if id := globaldb.FinalResponseIDFromWorkspaceEventRef(event.PayloadRefJSON); id != "fr-retention" {
 			t.Fatalf("event %s payload ref id = %q, want fr-retention", event.EventType, id)
 		}
 	}
-	if !checked[workspaceEventWorkerCompleted] || !checked[workspaceEventSessionCompleted] {
+	if !checked[globaldb.WorkspaceEventWorkerCompleted] || !checked[globaldb.WorkspaceEventSessionCompleted] {
 		t.Fatalf("checked terminal events = %#v, want both worker.completed and session.completed", checked)
 	}
 	final, err := getFinalResponse(ctx, store, FinalResponseGetRequest{SessionID: "retention-worker-run"})

@@ -423,5 +423,5 @@ func TestListenUnixSocketRecoversStaleSocketPath(t *testing.T) {
 
 func testSocketPath(t *testing.T) string {
 	t.Helper()
-	return testutil.SocketPath(t)
+	return testutil.UnixSocketPath(t)
 }

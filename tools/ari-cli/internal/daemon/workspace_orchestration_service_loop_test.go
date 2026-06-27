@@ -10,8 +10,8 @@ import (
 )
 
 // Durable timers are daemon-owned: due timers fire from the daemon's
-// orchestration runtime.
-func TestWorkspaceOrchestrationRuntimeFiresDueTimers(t *testing.T) {
+// orchestration service.
+func TestWorkspaceOrchestrationServiceFiresDueTimers(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
@@ -21,8 +21,8 @@ func TestWorkspaceOrchestrationRuntimeFiresDueTimers(t *testing.T) {
 		t.Fatalf("CreateWorkspaceTimer returned error: %v", err)
 	}
 
-	runtime := newWorkspaceOrchestrationRuntime(store, &recordingWorkspaceDeliveryDispatcher{})
-	if err := runtime.runDueOnce(ctx, base.Add(time.Minute)); err != nil {
+	service := newWorkspaceOrchestrationService(store, &recordingWorkspaceDeliveryDispatcher{})
+	if err := service.runDueOnce(ctx, base.Add(time.Minute)); err != nil {
 		t.Fatalf("runDueOnce returned error: %v", err)
 	}
 
@@ -39,7 +39,7 @@ func TestWorkspaceOrchestrationRuntimeFiresDueTimers(t *testing.T) {
 	}
 	found := false
 	for _, event := range events {
-		if event.EventType == "timer.fired" && event.SubjectID == timer.TimerID {
+		if event.EventType == globaldb.WorkspaceEventTimerFired && event.SubjectID == timer.TimerID {
 			found = true
 		}
 	}
@@ -53,7 +53,7 @@ func TestWorkspaceTimerFireCreatesPendingDeliveryForSubscription(t *testing.T) {
 	ctx := context.Background()
 	seedRunLogMessageMethodData(t, store, ctx)
 	base := time.Date(2026, 6, 11, 17, 0, 0, 0, time.UTC)
-	if _, err := store.CreateEventSubscription(ctx, globaldb.EventSubscription{SubscriptionID: "sub-timer-delivery", WorkspaceID: "ws-1", OwnerSessionID: "run-1", FilterJSON: `{"event_types":["timer.fired"]}`, DeliveryTargetType: "harness_session", DeliveryTargetID: "run-1", DeliveryPolicyJSON: `{"channel":"visible_prompt_turn"}`, CreatedAt: base, UpdatedAt: base}); err != nil {
+	if _, err := store.CreateEventSubscription(ctx, globaldb.EventSubscription{SubscriptionID: "sub-timer-delivery", WorkspaceID: "ws-1", OwnerSessionID: "run-1", FilterJSON: `{"event_types":["timer.fired"]}`, DeliveryTargetType: globaldb.WorkspaceEventSubjectHarnessSession, DeliveryTargetID: "run-1", DeliveryPolicyJSON: `{"channel":"visible_prompt_turn"}`, CreatedAt: base, UpdatedAt: base}); err != nil {
 		t.Fatalf("CreateEventSubscription returned error: %v", err)
 	}
 	timer, err := store.CreateWorkspaceTimer(ctx, globaldb.WorkspaceTimer{TimerID: "timer-delivery", WorkspaceID: "ws-1", OwnerSessionID: "run-1", Purpose: "wake", FireAt: base})
@@ -61,9 +61,13 @@ func TestWorkspaceTimerFireCreatesPendingDeliveryForSubscription(t *testing.T) {
 		t.Fatalf("CreateWorkspaceTimer returned error: %v", err)
 	}
 
-	fired, err := store.FireWorkspaceTimer(ctx, timer.TimerID)
+	service := newWorkspaceOrchestrationService(store, &recordingWorkspaceDeliveryDispatcher{})
+	if err := service.runDueOnce(ctx, base.Add(time.Minute)); err != nil {
+		t.Fatalf("runDueOnce returned error: %v", err)
+	}
+	fired, err := store.GetWorkspaceTimer(ctx, timer.TimerID)
 	if err != nil {
-		t.Fatalf("FireWorkspaceTimer returned error: %v", err)
+		t.Fatalf("GetWorkspaceTimer returned error: %v", err)
 	}
 	delivery, err := store.GetPendingDelivery(ctx, "pd-sub-timer-delivery-"+fired.FiredEventID)
 	if err != nil {
@@ -74,9 +78,9 @@ func TestWorkspaceTimerFireCreatesPendingDeliveryForSubscription(t *testing.T) {
 	}
 }
 
-// A transient store failure must not kill the durable due-work runtime: state
+// A transient store failure must not kill the durable due-work service: state
 // lives in the database, so the scheduler retries after its error backoff.
-func TestWorkspaceOrchestrationRuntimeContinuesAfterStoreErrors(t *testing.T) {
+func TestWorkspaceOrchestrationServiceContinuesAfterStoreErrors(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open returned error: %v", err)
@@ -89,12 +93,12 @@ func TestWorkspaceOrchestrationRuntimeContinuesAfterStoreErrors(t *testing.T) {
 		t.Fatalf("db.Close returned error: %v", err)
 	}
 
-	runtime := newWorkspaceOrchestrationRuntime(store, &recordingWorkspaceDeliveryDispatcher{result: WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptCompleted}})
-	runtime.errorBackoff = 5 * time.Millisecond
-	runtime.now = func() time.Time { return time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC) }
+	service := newWorkspaceOrchestrationService(store, &recordingWorkspaceDeliveryDispatcher{result: WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptCompleted}})
+	service.errorBackoff = 5 * time.Millisecond
+	service.now = func() time.Time { return time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC) }
 	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 	defer cancel()
-	if err := runtime.run(ctx); err != nil {
-		t.Fatalf("workspace orchestration runtime returned error %v, want loop to outlive store errors", err)
+	if err := service.run(ctx); err != nil {
+		t.Fatalf("workspace orchestration service returned error %v, want loop to outlive store errors", err)
 	}
 }

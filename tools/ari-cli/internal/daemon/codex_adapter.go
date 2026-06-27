@@ -43,6 +43,12 @@ type CodexExecutor struct {
 	options codexExecutorOptions
 }
 
+func (e *CodexExecutor) Stop(ctx context.Context, runID string) error {
+	_ = ctx
+	_ = runID
+	return nil
+}
+
 func NewCodexExecutor(cwd string) *CodexExecutor {
 	return newCodexExecutor(codexExecutorOptions{Executable: harnessExecutable("codex", EnvCodexExecutable), Cwd: cwd, StartTransport: startCodexAppServerTransport})
 }

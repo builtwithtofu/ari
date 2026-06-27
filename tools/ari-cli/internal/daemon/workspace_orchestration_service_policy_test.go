@@ -7,8 +7,7 @@ import (
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
 )
 
-func TestDeliveryPolicyEngineRetryDelay(t *testing.T) {
-	engine := NewDeliveryPolicyEngine()
+func TestWorkspaceDeliveryRetryDelay(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		attempts int64
@@ -23,7 +22,7 @@ func TestDeliveryPolicyEngineRetryDelay(t *testing.T) {
 		{name: "exponential caps at max", attempts: 8, policy: workspaceDeliveryPolicy{BackoffMode: workspaceDeliveryBackoffExponential, BackoffBaseMS: 100, BackoffMaxMS: 500}, want: 500 * time.Millisecond},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := engine.RetryDelay(globaldb.PendingDelivery{Attempts: tc.attempts}, tc.policy)
+			got := workspaceDeliveryRetryDelay(globaldb.PendingDelivery{Attempts: tc.attempts}, tc.policy)
 			if got != tc.want {
 				t.Fatalf("RetryDelay = %s, want %s", got, tc.want)
 			}

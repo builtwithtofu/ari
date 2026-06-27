@@ -109,6 +109,40 @@ func TestHarnessWorkspaceDeliveryDispatcherRehydratesPersistedStickyTarget(t *te
 	}
 }
 
+func TestHarnessWorkspaceDeliveryDispatcherRejectsCrossWorkspaceStickyTargetBeforeRehydrate(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	for _, workspaceID := range []string{"ws-delivery", "ws-other"} {
+		if err := store.CreateWorkspace(ctx, workspaceID, workspaceID, t.TempDir(), "manual", "auto"); err != nil {
+			t.Fatalf("CreateWorkspace(%s) returned error: %v", workspaceID, err)
+		}
+	}
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "agent-other", WorkspaceID: "ws-other", Name: "agent-other", Harness: "sticky-delivery"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig returned error: %v", err)
+	}
+	if err := store.CreateHarnessSession(ctx, globaldb.HarnessSession{SessionID: "ari-session", WorkspaceID: "ws-other", AgentID: "agent-other", Harness: "sticky-delivery", Status: "completed", Usage: globaldb.HarnessSessionUsageSticky, ProviderSessionID: "provider-session", CWD: t.TempDir()}); err != nil {
+		t.Fatalf("CreateHarnessSession returned error: %v", err)
+	}
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	factoryCalled := false
+	d.setHarnessFactoryForTest("sticky-delivery", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
+		factoryCalled = true
+		return &recordingHarnessDeliveryExecutor{result: WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptCompleted}}, nil
+	})
+	dispatcher := newHarnessWorkspaceDeliveryDispatcher(d, store)
+
+	result, err := dispatcher.AttemptWorkspaceDelivery(ctx, WorkspaceDeliveryAttempt{Delivery: globaldb.PendingDelivery{DeliveryID: "pd-cross", WorkspaceID: "ws-delivery", SubscriptionID: "sub-cross", TargetType: "harness_session", TargetID: "ari-session", DeliveryPolicyJSON: `{"channel":"visible_prompt_turn"}`, EventIDs: []string{"we-cross"}, Status: "attempted", Attempts: 1}, Now: time.Date(2026, 6, 11, 21, 31, 0, 0, time.UTC)})
+	if err != nil {
+		t.Fatalf("AttemptWorkspaceDelivery returned error: %v", err)
+	}
+	if result.Status != WorkspaceDeliveryAttemptFailed || result.LastError == "" {
+		t.Fatalf("AttemptWorkspaceDelivery result = %#v, want failed cross-workspace target", result)
+	}
+	if factoryCalled {
+		t.Fatal("harness factory called before cross-workspace target was rejected")
+	}
+}
+
 func TestHarnessWorkspaceDeliveryDispatcherRehydratesAuthProjection(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()

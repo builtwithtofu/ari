@@ -2,72 +2,19 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
 )
 
-const (
-	workspaceEventWorkerStarted      = globaldb.WorkspaceEventWorkerStarted
-	workspaceEventWorkerCompleted    = globaldb.WorkspaceEventWorkerCompleted
-	workspaceEventWorkerFailed       = globaldb.WorkspaceEventWorkerFailed
-	workspaceEventWorkerStopped      = globaldb.WorkspaceEventWorkerStopped
-	workspaceEventSessionCompleted   = "session.completed"
-	workspaceEventSessionFailed      = "session.failed"
-	workspaceEventSessionStopped     = "session.stopped"
-	workspaceEventSessionIdle        = "session.idle"
-	workspaceEventSessionNeedsInput  = "session.needs_input"
-	workspaceEventMessageSent        = "message.sent"
-	workspaceEventHarnessEventPrefix = "harness.event."
-
-	workspaceEventSubjectHarnessSession    = "harness_session"
-	workspaceEventProducerSession          = "session"
-	workspaceEventProducerDaemon           = "daemon"
-	workspaceEventProducerHarnessLifecycle = "harness_lifecycle"
-)
-
-func appendWorkspaceEvent(ctx context.Context, store *globaldb.Store, event globaldb.WorkspaceEvent) (globaldb.WorkspaceEvent, error) {
-	if store == nil {
-		return event, nil
-	}
-	return store.AppendWorkspaceEvent(ctx, event)
-}
-
 func appendHarnessSessionWorkspaceEvent(ctx context.Context, store *globaldb.Store, run HarnessSession, eventType, status, finalResponseID string, attentionRequired bool) error {
-	payload := map[string]string{
-		"session_id": strings.TrimSpace(run.HarnessSessionID),
-		"harness":    strings.TrimSpace(run.Executor),
-		"status":     strings.TrimSpace(status),
+	if store == nil {
+		return nil
 	}
-	if strings.TrimSpace(run.TaskID) != "" {
-		payload["task_id"] = strings.TrimSpace(run.TaskID)
-	}
-	_, err := appendWorkspaceEvent(ctx, store, globaldb.WorkspaceEvent{
-		WorkspaceID:       run.WorkspaceID,
-		EventType:         eventType,
-		SubjectType:       workspaceEventSubjectHarnessSession,
-		SubjectID:         run.HarnessSessionID,
-		ProducerType:      workspaceEventProducerDaemon,
-		ProducerID:        workspaceEventProducerHarnessLifecycle,
-		CorrelationID:     run.HarnessSessionID,
-		PayloadJSON:       daemonEventPayload(payload),
-		PayloadRefJSON:    daemonEventPayload(finalResponsePayloadRef(finalResponseID)),
-		AttentionRequired: attentionRequired,
-	})
+	event := globaldb.NewHarnessSessionWorkspaceEvent(globaldb.HarnessSessionWorkspaceEventParams{WorkspaceID: run.WorkspaceID, SessionID: run.HarnessSessionID, Harness: run.Executor, TaskID: run.TaskID, EventType: eventType, Status: status, FinalResponseID: finalResponseID, AttentionRequired: attentionRequired})
+	_, err := store.AppendWorkspaceEvent(ctx, event)
 	return err
-}
-
-// finalResponsePayloadRef builds the {kind, id} artifact link that keeps
-// result bodies out of event rows (ADR 0011). An empty id yields an empty ref.
-func finalResponsePayloadRef(finalResponseID string) map[string]string {
-	ref := map[string]string{}
-	if finalResponseID = strings.TrimSpace(finalResponseID); finalResponseID != "" {
-		ref["kind"] = "final_response"
-		ref["id"] = finalResponseID
-	}
-	return ref
 }
 
 func appendHarnessRuntimeWorkspaceEvents(ctx context.Context, store *globaldb.Store, run HarnessSession, events []HarnessRuntimeEvent) error {
@@ -87,31 +34,11 @@ func appendHarnessRuntimeWorkspaceEvents(ctx context.Context, store *globaldb.St
 		if runtimeEventID == "" {
 			runtimeEventID = fmt.Sprintf("%s:event-%d", sessionID, runtimeEvent.Sequence)
 		}
-		payloadJSON, err := harnessRuntimeWorkspaceEventPayload(runtimeEvent, runtimeEventID, sessionID, kind)
+		event, err := globaldb.NewHarnessRuntimeWorkspaceEvent(globaldb.HarnessRuntimeWorkspaceEventParams{EventID: runtimeEventID, WorkspaceID: run.WorkspaceID, SessionID: sessionID, RootSessionID: run.HarnessSessionID, Kind: kind, Sequence: runtimeEvent.Sequence, Payload: runtimeEvent.Payload, RunID: runtimeEvent.RunID, ProviderKind: runtimeEvent.ProviderKind, CreatedAt: runtimeEvent.CreatedAt})
 		if err != nil {
 			return err
 		}
-		payloadRef := map[string]string{
-			"kind": "harness_runtime_event",
-			"id":   runtimeEventID,
-		}
-		if runtimeEvent.Sequence > 0 {
-			payloadRef["sequence"] = fmt.Sprintf("%d", runtimeEvent.Sequence)
-		}
-		_, err = appendWorkspaceEvent(ctx, store, globaldb.WorkspaceEvent{
-			EventID:           runtimeEventID,
-			WorkspaceID:       run.WorkspaceID,
-			EventType:         workspaceEventHarnessEventPrefix + kind,
-			SubjectType:       workspaceEventSubjectHarnessSession,
-			SubjectID:         sessionID,
-			ProducerType:      workspaceEventProducerSession,
-			ProducerID:        sessionID,
-			CorrelationID:     strings.TrimSpace(run.HarnessSessionID),
-			PayloadJSON:       payloadJSON,
-			PayloadRefJSON:    daemonEventPayload(payloadRef),
-			AttentionRequired: kind == string(HarnessEventError),
-			CreatedAt:         runtimeEvent.CreatedAt,
-		})
+		_, err = store.AppendWorkspaceEvent(ctx, event)
 		if err != nil {
 			return err
 		}
@@ -128,25 +55,11 @@ func appendHarnessRuntimeWorkspaceEvents(ctx context.Context, store *globaldb.St
 // into the Ari-level session.needs_input fact so orchestrators and humans can
 // subscribe to "a session is blocked on input" without provider ontology.
 func appendSessionNeedsInputWorkspaceEvent(ctx context.Context, store *globaldb.Store, run HarnessSession, sessionID, runtimeEventID string) error {
-	payload := map[string]string{
-		"session_id":       sessionID,
-		"harness":          strings.TrimSpace(run.Executor),
-		"status":           "needs_input",
-		"harness_event_id": runtimeEventID,
+	if store == nil {
+		return nil
 	}
-	_, err := appendWorkspaceEvent(ctx, store, globaldb.WorkspaceEvent{
-		WorkspaceID:       run.WorkspaceID,
-		EventType:         workspaceEventSessionNeedsInput,
-		SubjectType:       workspaceEventSubjectHarnessSession,
-		SubjectID:         sessionID,
-		ProducerType:      workspaceEventProducerDaemon,
-		ProducerID:        workspaceEventProducerHarnessLifecycle,
-		CorrelationID:     strings.TrimSpace(run.HarnessSessionID),
-		CausationID:       runtimeEventID,
-		PayloadJSON:       daemonEventPayload(payload),
-		PayloadRefJSON:    daemonEventPayload(map[string]string{"kind": "harness_runtime_event", "id": runtimeEventID}),
-		AttentionRequired: true,
-	})
+	event := globaldb.NewSessionNeedsInputWorkspaceEvent(globaldb.SessionNeedsInputWorkspaceEventParams{WorkspaceID: run.WorkspaceID, SessionID: sessionID, RootSessionID: run.HarnessSessionID, Harness: run.Executor, HarnessEventID: runtimeEventID})
+	_, err := store.AppendWorkspaceEvent(ctx, event)
 	return err
 }
 
@@ -155,51 +68,12 @@ func appendSessionNeedsInputWorkspaceEvent(ctx context.Context, store *globaldb.
 // wake-when-idle orchestration. Ephemeral sessions terminate instead of
 // idling and must not emit it.
 func appendSessionIdleWorkspaceEvent(ctx context.Context, store *globaldb.Store, run HarnessSession) error {
-	payload := map[string]string{
-		"session_id": strings.TrimSpace(run.HarnessSessionID),
-		"harness":    strings.TrimSpace(run.Executor),
-		"status":     "idle",
+	if store == nil {
+		return nil
 	}
-	_, err := appendWorkspaceEvent(ctx, store, globaldb.WorkspaceEvent{
-		WorkspaceID:    run.WorkspaceID,
-		EventType:      workspaceEventSessionIdle,
-		SubjectType:    workspaceEventSubjectHarnessSession,
-		SubjectID:      run.HarnessSessionID,
-		ProducerType:   workspaceEventProducerDaemon,
-		ProducerID:     workspaceEventProducerHarnessLifecycle,
-		CorrelationID:  run.HarnessSessionID,
-		PayloadJSON:    daemonEventPayload(payload),
-		PayloadRefJSON: "{}",
-	})
+	event := globaldb.NewSessionIdleWorkspaceEvent(globaldb.HarnessSessionWorkspaceEventParams{WorkspaceID: run.WorkspaceID, SessionID: run.HarnessSessionID, Harness: run.Executor})
+	_, err := store.AppendWorkspaceEvent(ctx, event)
 	return err
-}
-
-func harnessRuntimeWorkspaceEventPayload(runtimeEvent HarnessRuntimeEvent, runtimeEventID, sessionID, kind string) (string, error) {
-	rawPayload := runtimeEvent.Payload
-	if len(rawPayload) == 0 {
-		rawPayload = json.RawMessage(`{}`)
-	}
-	if !json.Valid(rawPayload) {
-		return "", fmt.Errorf("harness runtime event %q payload json is invalid", runtimeEventID)
-	}
-	payload := map[string]any{
-		"harness_event_id": runtimeEventID,
-		"kind":             kind,
-		"sequence":         runtimeEvent.Sequence,
-		"session_id":       sessionID,
-		"payload":          rawPayload,
-	}
-	if runID := strings.TrimSpace(runtimeEvent.RunID); runID != "" {
-		payload["run_id"] = runID
-	}
-	if providerKind := strings.TrimSpace(runtimeEvent.ProviderKind); providerKind != "" {
-		payload["provider_kind"] = providerKind
-	}
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		return "", err
-	}
-	return string(encoded), nil
 }
 
 // appendFanoutWorkerWorkspaceEvent records a fanout worker fact: the daemon
@@ -217,52 +91,10 @@ func appendFanoutWorkerWorkspaceEvent(ctx context.Context, store *globaldb.Store
 	if strings.TrimSpace(group.WorkspaceID) != strings.TrimSpace(member.WorkspaceID) {
 		return fmt.Errorf("%w: fanout group workspace does not match worker event", globaldb.ErrInvalidInput)
 	}
-	status := globaldb.WorkerEventStatus(eventType)
-	payload := map[string]string{
-		"status":                   status,
-		"fanout_group_id":          member.FanoutGroupID,
-		"fanout_member_id":         member.FanoutMemberID,
-		"source_session_id":        group.SourceSessionID,
-		"source_agent_id":          group.SourceAgentID,
-		"target_profile_id":        member.TargetProfileID,
-		"request_agent_message_id": member.RequestAgentMessageID,
-	}
-	if strings.TrimSpace(causationID) == "" {
+	if strings.TrimSpace(causationID) == "" && eventType != globaldb.WorkspaceEventWorkerCompleted {
 		causationID = member.RequestAgentMessageID
 	}
-	if eventType == workspaceEventWorkerCompleted {
-		payload["reply_agent_message_id"] = strings.TrimSpace(causationID)
-	}
-	event := globaldb.WorkspaceEvent{
-		WorkspaceID:       member.WorkspaceID,
-		EventType:         eventType,
-		SubjectType:       workspaceEventSubjectHarnessSession,
-		SubjectID:         member.WorkerSessionID,
-		ProducerType:      workspaceEventProducerSession,
-		ProducerID:        strings.TrimSpace(producerID),
-		CorrelationID:     member.FanoutGroupID,
-		CausationID:       strings.TrimSpace(causationID),
-		PayloadJSON:       daemonEventPayload(payload),
-		PayloadRefJSON:    daemonEventPayload(finalResponsePayloadRef(finalResponseID)),
-		AttentionRequired: attentionRequired,
-	}
-	_, err = appendWorkspaceEvent(ctx, store, event)
+	event := globaldb.NewFanoutWorkerWorkspaceEvent(globaldb.FanoutWorkerWorkspaceEventParams{WorkspaceID: member.WorkspaceID, EventType: eventType, WorkerSessionID: member.WorkerSessionID, ProducerID: producerID, CausationID: causationID, FinalResponseID: finalResponseID, AttentionRequired: attentionRequired, FanoutGroupID: member.FanoutGroupID, FanoutMemberID: member.FanoutMemberID, SourceSessionID: group.SourceSessionID, SourceAgentID: group.SourceAgentID, TargetProfileID: member.TargetProfileID, RequestAgentMessageID: member.RequestAgentMessageID})
+	_, err = store.AppendWorkspaceEvent(ctx, event)
 	return err
-}
-
-func finalResponseIDFromWorkspaceEvent(event globaldb.WorkspaceEvent) string {
-	return globaldb.FinalResponseIDFromWorkspaceEventRef(event.PayloadRefJSON)
-}
-
-func workspaceEventTypeForFanoutWorkerStatus(status string) string {
-	switch strings.TrimSpace(status) {
-	case "completed":
-		return workspaceEventWorkerCompleted
-	case "failed":
-		return workspaceEventWorkerFailed
-	case "stopped":
-		return workspaceEventWorkerStopped
-	default:
-		return ""
-	}
 }

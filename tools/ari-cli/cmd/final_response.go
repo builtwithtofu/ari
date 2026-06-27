@@ -130,7 +130,7 @@ func finalResponseLookup(cmd *cobra.Command, args []string, runID string) (daemo
 }
 
 func printFinalResponse(cmd *cobra.Command, response daemon.FinalResponseResponse) error {
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "final_response\tid=%s\trun=%s\tstate=%s\n", response.FinalResponseID, response.SessionID, presentationStatusLabel(response.Presentation, response.Status)); err != nil {
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "final_response\tid=%s\trun=%s\tstatus=%s\n", response.FinalResponseID, response.SessionID, presentationStatusLabel(response.Presentation, response.Status)); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "workspace=%s\ttask=%s\tcontext_packet=%s\n", response.WorkspaceID, response.TaskID, response.ContextPacketID); err != nil {

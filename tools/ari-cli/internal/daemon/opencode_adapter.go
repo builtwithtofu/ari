@@ -37,6 +37,12 @@ type OpenCodeExecutor struct {
 	options opencodeExecutorOptions
 }
 
+func (e *OpenCodeExecutor) Stop(ctx context.Context, runID string) error {
+	_ = ctx
+	_ = runID
+	return nil
+}
+
 func NewOpenCodeExecutor(cwd string) *OpenCodeExecutor {
 	return newOpenCodeExecutor(opencodeExecutorOptions{Executable: harnessExecutable("opencode", EnvOpenCodeExecutable), Cwd: cwd, RunCommand: runOpenCodeCommand})
 }

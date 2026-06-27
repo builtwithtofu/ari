@@ -403,7 +403,9 @@ func deliveryFailedInboxItemFromWorkspaceEvent(ctx context.Context, queries *dbs
 	sourceSessionID := ""
 	if subscriptionID := decoded.SubscriptionID; subscriptionID != "" {
 		if subscription, err := subscriptionByIDWithQueries(ctx, queries, subscriptionID); err == nil {
-			sourceSessionID = strings.TrimSpace(subscription.OwnerSessionID)
+			if strings.TrimSpace(subscription.WorkspaceID) == strings.TrimSpace(event.WorkspaceID) {
+				sourceSessionID = strings.TrimSpace(subscription.OwnerSessionID)
+			}
 		} else if !errors.Is(err, ErrNotFound) {
 			return InboxItem{}, false, err
 		}

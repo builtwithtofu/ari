@@ -203,7 +203,11 @@ func TestGrokNamedSlotProjectionUsesPerSlotGrokHome(t *testing.T) {
 		t.Fatalf("ResolveNativeAuthSlotProjection returned error: %v", err)
 	}
 	home := projection.Env["GROK_HOME"]
-	if projection.Kind != HarnessAuthProjectionConfigRoot || !strings.HasPrefix(home, root) || !strings.Contains(home, "grok-work") {
+	rel, err := filepath.Rel(root, home)
+	if err != nil {
+		t.Fatalf("projection home relative path: %v", err)
+	}
+	if projection.Kind != HarnessAuthProjectionConfigRoot || rel == "." || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) || !strings.Contains(home, "grok-work") {
 		t.Fatalf("projection = %#v, want per-slot GROK_HOME under root", projection)
 	}
 }

@@ -36,18 +36,18 @@ func newHarnessWorkspaceDeliveryDispatcher(d *Daemon, stores ...*globaldb.Store)
 	if len(stores) > 0 {
 		store = stores[0]
 	}
-	return &harnessWorkspaceDeliveryDispatcher{daemon: d, store: store}
+	return &harnessWorkspaceDeliveryDispatcher{resolver: daemonDeliveryTargetResolver{daemon: d, store: store}, store: store}
 }
 
 func (d *harnessWorkspaceDeliveryDispatcher) AttemptWorkspaceDelivery(ctx context.Context, attempt WorkspaceDeliveryAttempt) (WorkspaceDeliveryAttemptResult, error) {
 	if ctx == nil {
 		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("context is required")
 	}
-	if d == nil || d.daemon == nil {
-		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("daemon is required")
+	if d == nil || d.resolver == nil {
+		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("delivery target resolver is required")
 	}
 	delivery := attempt.Delivery
-	if strings.TrimSpace(delivery.TargetType) != "harness_session" {
+	if strings.TrimSpace(delivery.TargetType) != globaldb.WorkspaceEventSubjectHarnessSession {
 		return failedWorkspaceDeliveryAttempt("unsupported delivery target type %q", delivery.TargetType), nil
 	}
 	targetSessionID := strings.TrimSpace(delivery.TargetID)
@@ -56,6 +56,9 @@ func (d *harnessWorkspaceDeliveryDispatcher) AttemptWorkspaceDelivery(ctx contex
 	}
 	if d.workspaceIsSuspended(ctx, delivery.WorkspaceID) {
 		return retryWorkspaceDeliveryAttempt("workspace %q is suspended", delivery.WorkspaceID), nil
+	}
+	if result, ok := d.deliveryTargetWorkspaceMismatch(ctx, delivery.WorkspaceID, targetSessionID); ok {
+		return result, nil
 	}
 	target, ok, err := d.resolver.ResolveDeliveryTarget(ctx, targetSessionID)
 	if !ok {
@@ -89,6 +92,23 @@ func (d *harnessWorkspaceDeliveryDispatcher) workspaceIsSuspended(ctx context.Co
 	}
 	workspace, err := d.store.GetWorkspace(ctx, strings.TrimSpace(workspaceID))
 	return err == nil && workspace != nil && workspace.Status == "suspended"
+}
+
+func (d *harnessWorkspaceDeliveryDispatcher) deliveryTargetWorkspaceMismatch(ctx context.Context, workspaceID, sessionID string) (WorkspaceDeliveryAttemptResult, bool) {
+	if d == nil || d.store == nil {
+		return WorkspaceDeliveryAttemptResult{}, false
+	}
+	session, err := d.store.GetHarnessSession(ctx, strings.TrimSpace(sessionID))
+	if err != nil {
+		if errors.Is(err, globaldb.ErrNotFound) {
+			return WorkspaceDeliveryAttemptResult{}, false
+		}
+		return retryWorkspaceDeliveryAttempt("delivery target session %q could not be loaded: %v", sessionID, err), true
+	}
+	if strings.TrimSpace(session.WorkspaceID) != strings.TrimSpace(workspaceID) {
+		return failedWorkspaceDeliveryAttempt("delivery target session %q belongs to workspace %q, not %q", sessionID, session.WorkspaceID, workspaceID), true
+	}
+	return WorkspaceDeliveryAttemptResult{}, false
 }
 
 func (r daemonDeliveryTargetResolver) ResolveDeliveryTarget(ctx context.Context, sessionID string) (activeHarnessDeliveryTarget, bool, error) {

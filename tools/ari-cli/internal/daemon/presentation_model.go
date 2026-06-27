@@ -62,17 +62,19 @@ func presentationWithLabel(label, rawStatus string) Presentation {
 
 func normalizePresentationStatus(raw string) (PresentationStatus, string) {
 	switch strings.TrimSpace(raw) {
-	case "ready", "waiting", "passed", "authenticated", "ok", "active":
+	case "ready", "waiting", "passed", "authenticated", "ok", "active", "none":
 		return PresentationStatusReady, "Ready"
 	case "running", "in_progress", "auth_in_progress", "attempted", "pending":
 		return PresentationStatusRunning, "Running"
-	case "auth_required", "needs_auth", "not_installed":
+	case "auth", "auth_required", "needs_auth", "not_installed":
 		return PresentationStatusNeedsAuth, "Needs auth"
 	case "action-required", "blocked", "reattach_required", "requires_approval":
 		return PresentationStatusBlocked, "Blocked"
 	case "failed", "auth_failed", "lost", "expired", "timed_out":
 		return PresentationStatusFailed, "Failed"
-	case "stopped", "completed", "exited", "removed", "suspended", "inactive", "none":
+	case "completed":
+		return PresentationStatusStopped, "Completed"
+	case "stopped", "exited", "removed", "suspended", "inactive":
 		return PresentationStatusStopped, "Stopped"
 	case "unknown", "":
 		return PresentationStatusUnknown, "Unknown"
@@ -112,10 +114,17 @@ func displayOrID(label, id string) string {
 	return strings.TrimSpace(id)
 }
 
-func (d *Daemon) sessionPresentation(sessionID, name, harness, usage, rawStatus string) Presentation {
+func sessionPresentation(sessionID, name, harness, usage, rawStatus string) Presentation {
 	p := presentationWithLabel(displayOrID(name, sessionID), rawStatus)
+	if usage == globaldb.HarnessSessionUsageSticky && strings.TrimSpace(rawStatus) == "completed" {
+		p.Status = PresentationStatusReady
+		p.StatusLabel = "Ready"
+	}
 	p.Summary = p.Label
-	if usage == globaldb.HarnessSessionUsageEphemeral && p.Status == PresentationStatusRunning {
+	if usage == globaldb.HarnessSessionUsageSticky && strings.TrimSpace(rawStatus) == "completed" {
+		p.Summary = "Sticky session is ready"
+		p.Badges = append(p.Badges, PresentationBadge{Label: "Sticky session", Tone: "info"})
+	} else if usage == globaldb.HarnessSessionUsageEphemeral && p.Status == PresentationStatusRunning {
 		p.Summary = "Ephemeral call is running"
 		p.Badges = append(p.Badges, PresentationBadge{Label: "Ephemeral call", Tone: "info"})
 	} else if usage == globaldb.HarnessSessionUsageSticky {
@@ -162,7 +171,7 @@ func authDisplayNameFromStatus(status HarnessAuthStatus) string {
 }
 
 func presentHarnessSession(session HarnessSession) HarnessSession {
-	session.Presentation = (&Daemon{}).sessionPresentation(session.SessionID, "", session.Executor, session.Usage, session.Status)
+	session.Presentation = sessionPresentation(session.SessionID, "", session.Executor, session.Usage, session.Status)
 	if session.Presentation.Label == "" {
 		session.Presentation.Label = displayOrID(session.HarnessSessionID, session.ProviderSessionID)
 		session.Presentation.Summary = session.Presentation.Label
@@ -221,10 +230,9 @@ func (d *Daemon) presentAuthDiagnostic(diagnostic HarnessAuthDiagnostic) Harness
 }
 
 func (d *Daemon) presentWorkspaceStatus(response WorkspaceStatusResponse) WorkspaceStatusResponse {
-	response.Presentation = presentationWithLabel(displayOrID(response.WorkspaceName, response.WorkspaceID), response.Attention.Level)
-	response.Presentation.Source = &PresentationSource{Kind: "workspace", ID: response.WorkspaceID, NativeStatus: response.Attention.Level}
-	response.VCS = presentDiffSummary(response.VCS)
 	response.Attention = presentAttention(response.Attention)
+	response.Presentation = Presentation{Label: displayOrID(response.WorkspaceName, response.WorkspaceID), Status: response.Attention.Presentation.Status, StatusLabel: response.Attention.Presentation.StatusLabel, Summary: response.Attention.Presentation.Summary, Source: &PresentationSource{Kind: "workspace", ID: response.WorkspaceID, NativeStatus: response.Attention.Level}}
+	response.VCS = presentDiffSummary(response.VCS)
 	for i := range response.Processes {
 		response.Processes[i] = presentProcessActivity(response.Processes[i])
 	}
@@ -299,7 +307,7 @@ func presentProcessActivity(activity ProcessActivity) ProcessActivity {
 }
 
 func (d *Daemon) presentSessionActivity(activity SessionActivity) SessionActivity {
-	activity.Presentation = d.sessionPresentation(activity.ID, activity.Name, activity.Executor, activity.Usage, activity.Status)
+	activity.Presentation = sessionPresentation(activity.ID, activity.Name, activity.Executor, activity.Usage, activity.Status)
 	if activity.OutputSummary != "" {
 		activity.Presentation.Detail = activity.OutputSummary
 	}

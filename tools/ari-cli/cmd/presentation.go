@@ -20,6 +20,9 @@ func presentationStatusLabel(p daemon.Presentation, fallback string) string {
 	if strings.TrimSpace(p.StatusLabel) != "" {
 		return strings.TrimSpace(p.StatusLabel)
 	}
+	if strings.TrimSpace(string(p.Status)) != "" {
+		return strings.TrimSpace(string(p.Status))
+	}
 	return strings.TrimSpace(fallback)
 }
 

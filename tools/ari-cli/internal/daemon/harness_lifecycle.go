@@ -137,12 +137,12 @@ func appendSessionTerminalEvents(ctx context.Context, store *globaldb.Store, run
 	attentionRequired := false
 	switch status {
 	case "completed":
-		workspaceEventType = workspaceEventSessionCompleted
+		workspaceEventType = globaldb.WorkspaceEventSessionCompleted
 	case "failed":
-		workspaceEventType = workspaceEventSessionFailed
+		workspaceEventType = globaldb.WorkspaceEventSessionFailed
 		attentionRequired = true
 	case "stopped":
-		workspaceEventType = workspaceEventSessionStopped
+		workspaceEventType = globaldb.WorkspaceEventSessionStopped
 	default:
 		return nil
 	}

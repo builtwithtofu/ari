@@ -67,8 +67,8 @@ func TestWorkspaceEventSubscriptionAutoDispatchesDeliveryThroughRuntimeAndComple
 		t.Fatalf("workspace.events.next before delivery complete = %#v, want completed event unread", beforeComplete)
 	}
 
-	runtime := newWorkspaceOrchestrationRuntime(store, &recordingWorkspaceDeliveryDispatcher{result: WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptCompleted}})
-	if err := runtime.runDueOnce(ctx, time.Now().UTC().Add(time.Minute)); err != nil {
+	service := newWorkspaceOrchestrationService(store, &recordingWorkspaceDeliveryDispatcher{result: WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptCompleted}})
+	if err := service.runDueOnce(ctx, time.Now().UTC().Add(time.Minute)); err != nil {
 		t.Fatalf("runDueOnce returned error: %v", err)
 	}
 	afterComplete := callMethod[WorkspaceEventsResponse](t, registry, "workspace.events.next", WorkspaceEventsNextRequest{SubscriptionID: "sub-auto-delivery", Limit: 10})
