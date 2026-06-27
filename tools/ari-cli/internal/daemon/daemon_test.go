@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/testutil"
 	"github.com/sourcegraph/jsonrpc2"
 )
 
@@ -523,17 +524,7 @@ func tryDaemonMethod(ctx context.Context, socketPath, method string, params any,
 
 func testSocketPath(t *testing.T) string {
 	t.Helper()
-
-	dir, err := os.MkdirTemp("/tmp", "ari-daemon-")
-	if err != nil {
-		t.Fatalf("create temp socket dir: %v", err)
-	}
-
-	t.Cleanup(func() {
-		_ = os.RemoveAll(dir)
-	})
-
-	return filepath.Join(dir, "s.sock")
+	return testutil.SocketPath(t)
 }
 
 func stubBootstrap(t *testing.T) {

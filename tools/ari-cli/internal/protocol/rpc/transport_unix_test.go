@@ -7,11 +7,11 @@ import (
 	"io"
 	"net"
 	"os"
-	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/testutil"
 	"github.com/sourcegraph/jsonrpc2"
 )
 
@@ -423,15 +423,5 @@ func TestListenUnixSocketRecoversStaleSocketPath(t *testing.T) {
 
 func testSocketPath(t *testing.T) string {
 	t.Helper()
-
-	dir, err := os.MkdirTemp("/tmp", "ari-rpc-")
-	if err != nil {
-		t.Fatalf("create temp socket dir: %v", err)
-	}
-
-	t.Cleanup(func() {
-		_ = os.RemoveAll(dir)
-	})
-
-	return filepath.Join(dir, "s.sock")
+	return testutil.SocketPath(t)
 }

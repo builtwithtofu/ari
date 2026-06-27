@@ -11,16 +11,14 @@ import (
 )
 
 func TestWorkspaceMatchesWorkspaceUsesDaemonResolver(t *testing.T) {
-	originalResolve := workspaceResolveRPC
 	var gotReq daemon.WorkspaceResolveRequest
-	workspaceResolveRPC = func(_ context.Context, socketPath string, req daemon.WorkspaceResolveRequest) (daemon.WorkspaceResolveResponse, error) {
+	swapTestValue(t, &workspaceResolveRPC, func(_ context.Context, socketPath string, req daemon.WorkspaceResolveRequest) (daemon.WorkspaceResolveResponse, error) {
 		if socketPath != "/tmp/daemon.sock" {
 			t.Fatalf("socket path = %q, want /tmp/daemon.sock", socketPath)
 		}
 		gotReq = req
 		return daemon.WorkspaceResolveResponse{Workspace: daemon.WorkspaceGetResponse{WorkspaceID: "ws-1"}}, nil
-	}
-	t.Cleanup(func() { workspaceResolveRPC = originalResolve })
+	})
 
 	matches, err := workspaceMatchesWorkspace(context.Background(), "/tmp/daemon.sock", "/workspace/repo", daemon.WorkspaceGetResponse{WorkspaceID: "ws-1"})
 	if err != nil {
@@ -35,12 +33,10 @@ func TestWorkspaceMatchesWorkspaceUsesDaemonResolver(t *testing.T) {
 }
 
 func TestWorkspaceMatchesWorkspaceUsesStructuredNoMatchReason(t *testing.T) {
-	originalResolve := workspaceResolveRPC
 	data := json.RawMessage(`{"reason":"no_match"}`)
-	workspaceResolveRPC = func(context.Context, string, daemon.WorkspaceResolveRequest) (daemon.WorkspaceResolveResponse, error) {
+	swapTestValue(t, &workspaceResolveRPC, func(context.Context, string, daemon.WorkspaceResolveRequest) (daemon.WorkspaceResolveResponse, error) {
 		return daemon.WorkspaceResolveResponse{}, &jsonrpc2.Error{Code: int64(rpc.InvalidParams), Message: "resolver text changed", Data: &data}
-	}
-	t.Cleanup(func() { workspaceResolveRPC = originalResolve })
+	})
 
 	matches, err := workspaceMatchesWorkspace(context.Background(), "/tmp/daemon.sock", "/tmp", daemon.WorkspaceGetResponse{WorkspaceID: "ws-1"})
 	if err != nil {
@@ -52,11 +48,9 @@ func TestWorkspaceMatchesWorkspaceUsesStructuredNoMatchReason(t *testing.T) {
 }
 
 func TestResolveWorkspaceFromCWDMapsRPCInvalidParams(t *testing.T) {
-	originalResolve := workspaceResolveRPC
-	workspaceResolveRPC = func(context.Context, string, daemon.WorkspaceResolveRequest) (daemon.WorkspaceResolveResponse, error) {
+	swapTestValue(t, &workspaceResolveRPC, func(context.Context, string, daemon.WorkspaceResolveRequest) (daemon.WorkspaceResolveResponse, error) {
 		return daemon.WorkspaceResolveResponse{}, &jsonrpc2.Error{Code: int64(rpc.InvalidParams), Message: "bad workspace list"}
-	}
-	t.Cleanup(func() { workspaceResolveRPC = originalResolve })
+	})
 
 	_, err := resolveWorkspaceFromCWD(context.Background(), "/tmp/daemon.sock", "/tmp")
 	if err == nil {

@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"os"
@@ -538,58 +537,9 @@ func TestWorkspaceCreateDoesNotReadDefaultHarnessConfig(t *testing.T) {
 	}
 }
 
-func callMethod[T any](t *testing.T, registry *rpc.MethodRegistry, methodName string, params any) T {
-	t.Helper()
-
-	spec, ok := registry.Get(methodName)
-	if !ok {
-		t.Fatalf("method %s not registered", methodName)
-	}
-
-	raw, err := json.Marshal(params)
-	if err != nil {
-		t.Fatalf("marshal params for %s: %v", methodName, err)
-	}
-
-	resultAny, err := spec.Call(context.Background(), raw)
-	if err != nil {
-		t.Fatalf("call %s returned error: %v", methodName, err)
-	}
-
-	result, ok := resultAny.(T)
-	if !ok {
-		t.Fatalf("call %s result type = %T, want %T", methodName, resultAny, *new(T))
-	}
-
-	return result
-}
-
 func newSessionMethodTestStore(t *testing.T) *globaldb.Store {
 	t.Helper()
-
-	dbPath := filepath.Join(t.TempDir(), "ari.db")
-	if err := applyMigrationSQLFiles(dbPath); err != nil {
-		t.Fatalf("apply migrations: %v", err)
-	}
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatalf("open sqlite db: %v", err)
-	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
-		t.Fatalf("set busy timeout: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = db.Close()
-	})
-
-	store, err := globaldb.NewSQLStore(db)
-	if err != nil {
-		t.Fatalf("NewSQLStore returned error: %v", err)
-	}
-
-	return store
+	return newCommandMethodTestStore(t)
 }
 
 func makeGitRoot(root string) error {
