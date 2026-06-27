@@ -69,53 +69,7 @@ func workspaceCommandDefinitionFromSQLC(row dbsqlc.WorkspaceCommandDefinition) W
 }
 
 func commandWorkspaceEvent(command Command) (WorkspaceEvent, error) {
-	payload := map[string]string{
-		"command_id": command.CommandID,
-		"command":    command.Command,
-		"args":       command.Args,
-		"status":     command.Status,
-	}
-	if command.ExitCode != nil {
-		payload["exit_code"] = fmt.Sprintf("%d", *command.ExitCode)
-	}
-	if command.FinishedAt != nil {
-		payload["finished_at"] = strings.TrimSpace(*command.FinishedAt)
-	}
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		return WorkspaceEvent{}, fmt.Errorf("marshal command workspace event payload for %q: %w", command.CommandID, err)
-	}
-	return prepareCoordinatedWorkspaceEvent(WorkspaceEvent{WorkspaceID: command.WorkspaceID, EventType: commandWorkspaceEventType(command), SubjectType: "command", SubjectID: command.CommandID, ProducerType: "daemon", ProducerID: "command", CorrelationID: command.CommandID, PayloadJSON: string(encoded), PayloadRefJSON: daemonLocalPayloadRef("command", command.CommandID), AttentionRequired: commandWorkspaceEventNeedsAttention(command)})
-}
-
-func commandWorkspaceEventType(command Command) string {
-	switch strings.TrimSpace(command.Status) {
-	case commandStatusRunning:
-		return "command.started"
-	case commandStatusStopped:
-		return "command.stopped"
-	case commandStatusLost:
-		return "command.failed"
-	case commandStatusExited:
-		if command.ExitCode != nil && *command.ExitCode != 0 {
-			return "command.failed"
-		}
-		return "command.completed"
-	default:
-		return "command.updated"
-	}
-}
-
-func commandWorkspaceEventNeedsAttention(command Command) bool {
-	if strings.TrimSpace(command.Status) == commandStatusLost {
-		return true
-	}
-	return command.ExitCode != nil && *command.ExitCode != 0
-}
-
-func daemonLocalPayloadRef(kind, id string) string {
-	encoded, _ := json.Marshal(map[string]string{"kind": strings.TrimSpace(kind), "id": strings.TrimSpace(id)})
-	return string(encoded)
+	return prepareCoordinatedWorkspaceEvent(NewCommandWorkspaceEvent(CommandWorkspaceEventParams{WorkspaceID: command.WorkspaceID, CommandID: command.CommandID, Command: command.Command, Args: command.Args, Status: command.Status, ExitCode: command.ExitCode, FinishedAt: command.FinishedAt}))
 }
 
 func (s *Store) CreateCommand(ctx context.Context, params CreateCommandParams) error {

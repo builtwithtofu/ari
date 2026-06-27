@@ -19,15 +19,6 @@ const (
 	pendingDeliveryStatusAttempted = "attempted"
 	pendingDeliveryStatusCompleted = "completed"
 	pendingDeliveryStatusFailed    = "failed"
-
-	pendingDeliveryEventAttempted      = WorkspaceEventDeliveryAttempted
-	pendingDeliveryEventCompleted      = WorkspaceEventDeliveryCompleted
-	pendingDeliveryEventFailed         = WorkspaceEventDeliveryFailed
-	pendingDeliveryEventRetryScheduled = WorkspaceEventDeliveryRetryScheduled
-
-	pendingDeliverySubjectType  = "pending_delivery"
-	pendingDeliveryProducerType = "daemon"
-	pendingDeliveryProducerID   = "workspace_delivery_worker"
 )
 
 type PendingDelivery struct {
@@ -108,12 +99,6 @@ func (s *Store) ListDuePendingDeliveries(ctx context.Context, now time.Time, lim
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	if err := s.requeueStaleAttemptedPendingDeliveries(ctx, now); err != nil {
-		return nil, err
-	}
-	if err := s.failExpiredPendingDeliveries(ctx, now); err != nil {
-		return nil, err
-	}
 	if limit <= 0 {
 		limit = 100
 	}
@@ -152,55 +137,68 @@ func (s *Store) ListDuePendingDeliveriesForScope(ctx context.Context, now time.T
 	return deliveries, nil
 }
 
-func (s *Store) requeueStaleAttemptedPendingDeliveries(ctx context.Context, now time.Time) error {
+func (s *Store) RequeueStalePendingDeliveryAttempts(ctx context.Context, now time.Time) (int64, error) {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
 	formattedNow := now.UTC().Format(time.RFC3339Nano)
 	staleBefore := now.Add(-pendingDeliveryAttemptLease).UTC().Format(time.RFC3339Nano)
-	if _, err := s.sqlcQueries().RequeueStaleAttemptedPendingDeliveries(ctx, dbsqlc.RequeueStaleAttemptedPendingDeliveriesParams{NextAttemptAt: &formattedNow, UpdatedAt: formattedNow, UpdatedAt_2: staleBefore}); err != nil {
-		return fmt.Errorf("requeue stale attempted pending deliveries: %w", err)
+	updated, err := s.sqlcQueries().RequeueStaleAttemptedPendingDeliveries(ctx, dbsqlc.RequeueStaleAttemptedPendingDeliveriesParams{NextAttemptAt: &formattedNow, UpdatedAt: formattedNow, UpdatedAt_2: staleBefore})
+	if err != nil {
+		return 0, fmt.Errorf("requeue stale attempted pending deliveries: %w", err)
 	}
-	return nil
+	if updated > 0 {
+		s.notifyOrchestrationWake()
+	}
+	return updated, nil
 }
 
-func (s *Store) failExpiredPendingDeliveries(ctx context.Context, now time.Time) error {
+func (s *Store) FailExpiredPendingDeliveries(ctx context.Context, now time.Time) ([]PendingDelivery, error) {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
 	formatted := now.UTC().Format(time.RFC3339Nano)
 	rows, err := s.sqlcQueries().ListExpiredPendingDeliveries(ctx, dbsqlc.ListExpiredPendingDeliveriesParams{DeadlineAt: &formatted})
 	if err != nil {
-		return fmt.Errorf("list expired pending deliveries: %w", err)
+		return nil, fmt.Errorf("list expired pending deliveries: %w", err)
 	}
+	failed := make([]PendingDelivery, 0, len(rows))
 	for _, row := range rows {
 		delivery := pendingDeliveryFromSQLC(row)
-		if _, err := s.FailPendingDelivery(ctx, delivery.DeliveryID, "delivery deadline exceeded"); err != nil && !errors.Is(err, ErrNotFound) {
-			return err
+		failedDelivery, err := s.FailPendingDelivery(ctx, delivery.DeliveryID, "delivery deadline exceeded")
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
+			return failed, err
 		}
+		failed = append(failed, failedDelivery)
 	}
-	return nil
+	return failed, nil
 }
 
-func (s *Store) RecordPendingDeliveryAttempt(ctx context.Context, deliveryID string, nextAttemptAt *time.Time, lastError string) (PendingDelivery, error) {
-	deliveryID = strings.TrimSpace(deliveryID)
-	if deliveryID == "" {
-		return PendingDelivery{}, fmt.Errorf("%w: delivery id is required", ErrInvalidInput)
+func (s *Store) FailTimedOutSubscriptionDeliveries(ctx context.Context, now time.Time) ([]PendingDelivery, error) {
+	if now.IsZero() {
+		now = time.Now().UTC()
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	var delivery PendingDelivery
-	if err := s.withImmediateQueries(ctx, func(ctx context.Context, queries *dbsqlc.Queries) error {
-		rows, err := queries.RecordPendingDeliveryAttempt(ctx, dbsqlc.RecordPendingDeliveryAttemptParams{NextAttemptAt: formatOptionalTime(nextAttemptAt), LastError: strings.TrimSpace(lastError), UpdatedAt: now, DeliveryID: deliveryID})
-		if err != nil {
-			return fmt.Errorf("record pending delivery attempt %q: %w", deliveryID, err)
-		}
-		if rows == 0 {
-			return ErrNotFound
-		}
-		row, err := queries.GetPendingDelivery(ctx, dbsqlc.GetPendingDeliveryParams{DeliveryID: deliveryID})
-		if err != nil {
-			return fmt.Errorf("get recorded pending delivery %q: %w", deliveryID, err)
-		}
-		delivery = pendingDeliveryFromSQLC(row)
-		return appendPendingDeliveryEventWithQueries(ctx, queries, delivery, pendingDeliveryEventRetryScheduled, "retry", delivery.LastError, delivery.NextAttemptAt)
-	}); err != nil {
-		return PendingDelivery{}, err
+	formatted := now.UTC().Format(time.RFC3339Nano)
+	rows, err := s.sqlcQueries().ListPendingDeliveriesForTimedOutSubscriptions(ctx, dbsqlc.ListPendingDeliveriesForTimedOutSubscriptionsParams{TimeoutAt: &formatted})
+	if err != nil {
+		return nil, fmt.Errorf("list pending deliveries for timed out subscriptions: %w", err)
 	}
-	return delivery, nil
+	failed := make([]PendingDelivery, 0, len(rows))
+	for _, row := range rows {
+		delivery := pendingDeliveryFromSQLC(row)
+		failedDelivery, err := s.FailPendingDelivery(ctx, delivery.DeliveryID, "event subscription timed out")
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
+			return failed, err
+		}
+		failed = append(failed, failedDelivery)
+	}
+	return failed, nil
 }
 
 func (s *Store) ClaimDuePendingDeliveryAttempt(ctx context.Context, deliveryID string, now time.Time) (PendingDelivery, error) {
@@ -226,7 +224,7 @@ func (s *Store) ClaimDuePendingDeliveryAttempt(ctx context.Context, deliveryID s
 			return fmt.Errorf("get claimed pending delivery %q: %w", deliveryID, err)
 		}
 		delivery = pendingDeliveryFromSQLC(row)
-		return appendPendingDeliveryEventWithQueries(ctx, queries, delivery, pendingDeliveryEventAttempted, "attempted", "", nil)
+		return appendPendingDeliveryEventWithQueries(ctx, queries, delivery, WorkspaceEventDeliveryAttempted, "attempted", "", nil)
 	}); err != nil {
 		return PendingDelivery{}, err
 	}
@@ -254,7 +252,7 @@ func (s *Store) SchedulePendingDeliveryRetry(ctx context.Context, deliveryID str
 			return fmt.Errorf("get retried pending delivery %q: %w", deliveryID, err)
 		}
 		delivery = pendingDeliveryFromSQLC(row)
-		return appendPendingDeliveryEventWithQueries(ctx, queries, delivery, pendingDeliveryEventRetryScheduled, "retry", delivery.LastError, delivery.NextAttemptAt)
+		return appendPendingDeliveryEventWithQueries(ctx, queries, delivery, WorkspaceEventDeliveryRetryScheduled, "retry", delivery.LastError, delivery.NextAttemptAt)
 	}); err != nil {
 		return PendingDelivery{}, err
 	}
@@ -293,7 +291,7 @@ func (s *Store) CompletePendingDelivery(ctx context.Context, deliveryID string) 
 		if err := stream.AdvanceAckForCompletedDelivery(ctx, queries, delivery, now); err != nil {
 			return err
 		}
-		return appendPendingDeliveryEventWithQueries(ctx, queries, delivery, pendingDeliveryEventCompleted, "completed", "", nil)
+		return appendPendingDeliveryEventWithQueries(ctx, queries, delivery, WorkspaceEventDeliveryCompleted, "completed", "", nil)
 	}); err != nil {
 		return PendingDelivery{}, err
 	}
@@ -336,7 +334,7 @@ func failPendingDeliveryWithQueries(ctx context.Context, queries *dbsqlc.Queries
 		return fmt.Errorf("get failed pending delivery %q: %w", deliveryID, err)
 	}
 	delivery := pendingDeliveryFromSQLC(row)
-	return appendPendingDeliveryEventWithQueries(ctx, queries, delivery, pendingDeliveryEventFailed, "failed", delivery.LastError, nil)
+	return appendPendingDeliveryEventWithQueries(ctx, queries, delivery, WorkspaceEventDeliveryFailed, "failed", delivery.LastError, nil)
 }
 
 func (s *Store) FailPendingDelivery(ctx context.Context, deliveryID, lastError string) (PendingDelivery, error) {
@@ -360,7 +358,7 @@ func (s *Store) FailPendingDelivery(ctx context.Context, deliveryID, lastError s
 			return fmt.Errorf("get failed pending delivery %q: %w", deliveryID, err)
 		}
 		delivery = pendingDeliveryFromSQLC(row)
-		return appendPendingDeliveryEventWithQueries(ctx, queries, delivery, pendingDeliveryEventFailed, "failed", delivery.LastError, nil)
+		return appendPendingDeliveryEventWithQueries(ctx, queries, delivery, WorkspaceEventDeliveryFailed, "failed", delivery.LastError, nil)
 	}); err != nil {
 		return PendingDelivery{}, err
 	}
@@ -371,44 +369,7 @@ func (s *Store) FailPendingDelivery(ctx context.Context, deliveryID, lastError s
 // workspace event history inside the same transaction as the delivery state
 // change, so delivery rows and delivery.* events can never diverge.
 func appendPendingDeliveryEventWithQueries(ctx context.Context, queries *dbsqlc.Queries, delivery PendingDelivery, eventType, status, lastError string, nextAttemptAt *time.Time) error {
-	payload := map[string]string{
-		"delivery_id":     delivery.DeliveryID,
-		"subscription_id": delivery.SubscriptionID,
-		"target_type":     delivery.TargetType,
-		"target_id":       delivery.TargetID,
-		"status":          status,
-		"attempts":        fmt.Sprintf("%d", delivery.Attempts),
-	}
-	if len(delivery.EventIDs) > 0 {
-		payload["event_ids"] = strings.Join(delivery.EventIDs, ",")
-	}
-	if lastError = strings.TrimSpace(lastError); lastError != "" {
-		payload["last_error"] = lastError
-	}
-	if nextAttemptAt != nil && !nextAttemptAt.IsZero() {
-		payload["next_attempt_at"] = nextAttemptAt.UTC().Format(time.RFC3339Nano)
-	}
-	payloadJSON, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("marshal delivery event payload for %q: %w", delivery.DeliveryID, err)
-	}
-	causationID := ""
-	if len(delivery.EventIDs) > 0 {
-		causationID = delivery.EventIDs[0]
-	}
-	event, err := prepareCoordinatedWorkspaceEvent(WorkspaceEvent{
-		EventID:           newWorkspaceEventID(),
-		WorkspaceID:       delivery.WorkspaceID,
-		EventType:         eventType,
-		SubjectType:       pendingDeliverySubjectType,
-		SubjectID:         delivery.DeliveryID,
-		ProducerType:      pendingDeliveryProducerType,
-		ProducerID:        pendingDeliveryProducerID,
-		CorrelationID:     delivery.SubscriptionID,
-		CausationID:       causationID,
-		PayloadJSON:       string(payloadJSON),
-		AttentionRequired: eventType == pendingDeliveryEventFailed,
-	})
+	event, err := prepareCoordinatedWorkspaceEvent(NewDeliveryWorkspaceEvent(DeliveryWorkspaceEventParams{WorkspaceID: delivery.WorkspaceID, DeliveryID: delivery.DeliveryID, SubscriptionID: delivery.SubscriptionID, TargetType: delivery.TargetType, TargetID: delivery.TargetID, EventIDs: delivery.EventIDs, EventType: eventType, Status: status, Attempts: delivery.Attempts, LastError: lastError, NextAttemptAt: nextAttemptAt}))
 	if err != nil {
 		return err
 	}

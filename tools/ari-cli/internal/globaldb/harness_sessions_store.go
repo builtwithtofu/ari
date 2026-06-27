@@ -153,35 +153,14 @@ type AgentMessageSendParams struct {
 	Body              string
 	ContextExcerptIDs []string
 	StartSessionID    string
-	// WorkspaceEvent, when set, customizes the message.sent fact appended to
-	// workspace event history in the same transaction as the message. The store
-	// fills missing workspace, subject, producer, correlation, and artifact ref
-	// identity from the resolved message.
-	WorkspaceEvent *WorkspaceEvent
 }
 
 func defaultAgentMessageWorkspaceEvent(params AgentMessageSendParams, workspaceID, sourceSessionID, sourceAgentID, targetSessionID string) WorkspaceEvent {
-	return WorkspaceEvent{WorkspaceID: strings.TrimSpace(workspaceID), EventType: "message.sent", SubjectType: "agent_message", SubjectID: params.AgentMessageID, ProducerType: "session", ProducerID: strings.TrimSpace(sourceSessionID), CorrelationID: targetSessionID, PayloadJSON: defaultAgentMessageWorkspaceEventPayload(params, sourceSessionID, sourceAgentID, targetSessionID), PayloadRefJSON: daemonLocalPayloadRef("agent_message", params.AgentMessageID)}
-}
-
-func defaultAgentMessageWorkspaceEventPayload(params AgentMessageSendParams, sourceSessionID, sourceAgentID, targetSessionID string) string {
-	encoded, _ := json.Marshal(map[string]string{"agent_message_id": strings.TrimSpace(params.AgentMessageID), "source_session_id": strings.TrimSpace(sourceSessionID), "source_agent_id": strings.TrimSpace(sourceAgentID), "target_agent_id": strings.TrimSpace(params.TargetAgentID), "target_session_id": strings.TrimSpace(targetSessionID), "context_excerpt_count": fmt.Sprintf("%d", len(params.ContextExcerptIDs))})
-	return string(encoded)
+	return NewAgentMessageWorkspaceEvent(AgentMessageWorkspaceEventParams{WorkspaceID: workspaceID, AgentMessageID: params.AgentMessageID, SourceSessionID: sourceSessionID, SourceAgentID: sourceAgentID, TargetAgentID: params.TargetAgentID, TargetSessionID: targetSessionID, ContextExcerptCount: len(params.ContextExcerptIDs)})
 }
 
 func contextExcerptCreatedWorkspaceEvent(excerpt ContextExcerpt) (WorkspaceEvent, error) {
-	payload, err := json.Marshal(map[string]string{
-		"context_excerpt_id": excerpt.ContextExcerptID,
-		"source_session_id":  excerpt.SourceSessionID,
-		"source_agent_id":    excerpt.SourceAgentID,
-		"target_agent_id":    excerpt.TargetAgentID,
-		"selector_type":      excerpt.SelectorType,
-		"item_count":         fmt.Sprintf("%d", len(excerpt.Items)),
-	})
-	if err != nil {
-		return WorkspaceEvent{}, err
-	}
-	return prepareCoordinatedWorkspaceEvent(WorkspaceEvent{WorkspaceID: excerpt.WorkspaceID, EventType: "context_excerpt.created", SubjectType: "context_excerpt", SubjectID: excerpt.ContextExcerptID, ProducerType: "session", ProducerID: excerpt.SourceSessionID, CorrelationID: excerpt.SourceSessionID, PayloadJSON: string(payload), PayloadRefJSON: daemonLocalPayloadRef("context_excerpt", excerpt.ContextExcerptID)})
+	return prepareCoordinatedWorkspaceEvent(NewContextExcerptCreatedWorkspaceEvent(ContextExcerptCreatedWorkspaceEventParams{WorkspaceID: excerpt.WorkspaceID, ContextExcerptID: excerpt.ContextExcerptID, SourceSessionID: excerpt.SourceSessionID, SourceAgentID: excerpt.SourceAgentID, TargetAgentID: excerpt.TargetAgentID, SelectorType: excerpt.SelectorType, ItemCount: len(excerpt.Items)}))
 }
 
 func (s *Store) CreateHarnessSessionConfig(ctx context.Context, agent HarnessSessionConfig) error {
@@ -741,27 +720,6 @@ func sendAgentMessageWithQueries(ctx context.Context, qtx *dbsqlc.Queries, param
 		return AgentMessage{}, err
 	}
 	event := defaultAgentMessageWorkspaceEvent(params, source.WorkspaceID, source.SessionID, source.AgentID, targetSessionID)
-	if params.WorkspaceEvent != nil {
-		event = *params.WorkspaceEvent
-		if strings.TrimSpace(event.EventType) == "" {
-			event.EventType = "message.sent"
-		}
-		if strings.TrimSpace(event.SubjectType) == "" {
-			event.SubjectType = "agent_message"
-		}
-		if strings.TrimSpace(event.ProducerType) == "" {
-			event.ProducerType = "session"
-		}
-		if strings.TrimSpace(event.ProducerID) == "" {
-			event.ProducerID = source.SessionID
-		}
-		if strings.TrimSpace(event.PayloadJSON) == "" || strings.TrimSpace(event.PayloadJSON) == "{}" {
-			event.PayloadJSON = defaultAgentMessageWorkspaceEventPayload(params, source.SessionID, source.AgentID, targetSessionID)
-		}
-		if strings.TrimSpace(event.PayloadRefJSON) == "" || strings.TrimSpace(event.PayloadRefJSON) == "{}" {
-			event.PayloadRefJSON = daemonLocalPayloadRef("agent_message", params.AgentMessageID)
-		}
-	}
 	if strings.TrimSpace(event.WorkspaceID) == "" {
 		event.WorkspaceID = source.WorkspaceID
 	} else if strings.TrimSpace(event.WorkspaceID) != source.WorkspaceID {

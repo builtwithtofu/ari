@@ -28,7 +28,7 @@ func createSubscriptionDeadlineTimerWithQueries(ctx context.Context, queries *db
 		WorkspaceID:          subscription.WorkspaceID,
 		OwnerSessionID:       subscription.OwnerSessionID,
 		TargetSubscriptionID: subscription.SubscriptionID,
-		SubjectType:          "event_subscription",
+		SubjectType:          WorkspaceEventSubjectEventSubscription,
 		SubjectID:            subscription.SubscriptionID,
 		Purpose:              workspaceTimerPurposeSubscriptionTimeout,
 		FireAt:               subscription.TimeoutAt.UTC(),
@@ -67,6 +67,6 @@ func isSubscriptionDeadlineTimerEvent(event WorkspaceEvent) bool {
 	return strings.TrimSpace(event.SubjectID) == subscriptionDeadlineTimerID(targetSubscriptionID) &&
 		strings.TrimSpace(payload["timer_id"]) == subscriptionDeadlineTimerID(targetSubscriptionID) &&
 		strings.TrimSpace(payload["reason"]) == "subscription_timeout" &&
-		strings.TrimSpace(payload["subject_type"]) == "event_subscription" &&
+		strings.TrimSpace(payload["subject_type"]) == WorkspaceEventSubjectEventSubscription &&
 		strings.TrimSpace(payload["subject_id"]) == targetSubscriptionID
 }

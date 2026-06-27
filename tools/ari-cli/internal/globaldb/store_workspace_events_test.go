@@ -2,7 +2,6 @@ package globaldb
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sync"
 	"testing"
@@ -180,7 +179,7 @@ func TestCreateEventSubscriptionBackfillsExistingEventDeliveries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AppendWorkspaceEvent matching returned error: %v", err)
 	}
-	if _, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-backfill-delivery", WorkspaceID: "ws-backfill", EventType: "delivery.completed", SubjectType: "pending_delivery", SubjectID: "pd-1", ProducerType: "daemon", ProducerID: "workspace_delivery_worker", CreatedAt: base.Add(2 * time.Second)}); err != nil {
+	if _, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-backfill-delivery", WorkspaceID: "ws-backfill", EventType: "delivery.completed", SubjectType: "pending_delivery", SubjectID: "pd-1", ProducerType: "daemon", ProducerID: WorkspaceEventProducerWorkspaceDelivery, CreatedAt: base.Add(2 * time.Second)}); err != nil {
 		t.Fatalf("AppendWorkspaceEvent delivery returned error: %v", err)
 	}
 
@@ -389,22 +388,4 @@ func TestTimedOutSubscriptionsDoNotCreateDeliveries(t *testing.T) {
 	if len(matches) != 0 {
 		t.Fatalf("subscription events after timeout = %#v, want none", matches)
 	}
-}
-
-func readSubscriptionEvents(t *testing.T, store *Store, subscriptionID string, limit int) []WorkspaceEvent {
-	t.Helper()
-	result, err := store.ReadEventSubscription(context.Background(), EventSubscriptionReadRequest{SubscriptionID: subscriptionID, Limit: limit})
-	if err != nil {
-		t.Fatalf("ReadEventSubscription returned error: %v", err)
-	}
-	return result.Events
-}
-
-func mustMarshalJSON(t *testing.T, value any) string {
-	t.Helper()
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		t.Fatalf("json.Marshal returned error: %v", err)
-	}
-	return string(encoded)
 }

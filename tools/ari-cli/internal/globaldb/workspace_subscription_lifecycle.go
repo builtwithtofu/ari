@@ -213,7 +213,7 @@ func pendingDeliveryIDForSubscriptionEvent(subscriptionID, eventID string) strin
 }
 
 func workspaceEventSkipsDeliveryFanout(event WorkspaceEvent) bool {
-	return strings.HasPrefix(strings.TrimSpace(event.EventType), "delivery.") || isSubscriptionDeadlineTimerEvent(event)
+	return strings.HasPrefix(strings.TrimSpace(event.EventType), WorkspaceEventDeliveryPrefix) || isSubscriptionDeadlineTimerEvent(event)
 }
 
 func pendingDeliveryForSubscriptionEventIsCompleted(ctx context.Context, queries *dbsqlc.Queries, subscriptionID, eventID string) (bool, error) {

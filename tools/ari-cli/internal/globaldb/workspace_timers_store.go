@@ -97,30 +97,6 @@ func (s *Store) ListDueWorkspaceTimers(ctx context.Context, now time.Time, limit
 	return timers, nil
 }
 
-func (s *Store) FireDueWorkspaceTimers(ctx context.Context, now time.Time, limit int) ([]WorkspaceTimer, error) {
-	due, err := s.ListDueWorkspaceTimers(ctx, now, limit)
-	if err != nil {
-		return nil, err
-	}
-	fired := make([]WorkspaceTimer, 0, len(due))
-	var fireErrs []string
-	for _, timer := range due {
-		updated, err := s.FireWorkspaceTimer(ctx, timer.TimerID)
-		if errors.Is(err, ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			fireErrs = append(fireErrs, err.Error())
-			continue
-		}
-		fired = append(fired, updated)
-	}
-	if len(fireErrs) > 0 {
-		return fired, fmt.Errorf("fire due workspace timers: %s", strings.Join(fireErrs, "; "))
-	}
-	return fired, nil
-}
-
 func (s *Store) FireWorkspaceTimer(ctx context.Context, timerID string) (WorkspaceTimer, error) {
 	timerID = strings.TrimSpace(timerID)
 	if timerID == "" {
@@ -139,7 +115,7 @@ func (s *Store) FireWorkspaceTimer(ctx context.Context, timerID string) (Workspa
 		if timer.Status != workspaceTimerStatusScheduled {
 			return ErrNotFound
 		}
-		event, err := prepareCoordinatedWorkspaceEvent(WorkspaceEvent{EventID: newWorkspaceEventID(), WorkspaceID: timer.WorkspaceID, EventType: WorkspaceEventTimerFired, SubjectType: "timer", SubjectID: timer.TimerID, ProducerType: "daemon", ProducerID: "timer", CorrelationID: defaultString(timer.Purpose, timer.TimerID), CausationID: timer.TargetSubscriptionID, PayloadJSON: workspaceTimerFiredPayload(timer), PayloadRefJSON: workspaceTimerPayloadRef(timer.TimerID), AttentionRequired: strings.TrimSpace(timer.OwnerSessionID) != "" || strings.TrimSpace(timer.TargetSubscriptionID) != ""})
+		event, err := prepareCoordinatedWorkspaceEvent(NewTimerFiredWorkspaceEvent(TimerFiredWorkspaceEventParams{WorkspaceID: timer.WorkspaceID, TimerID: timer.TimerID, Purpose: timer.Purpose, OwnerSessionID: timer.OwnerSessionID, TargetSubscriptionID: timer.TargetSubscriptionID, SubjectType: timer.SubjectType, SubjectID: timer.SubjectID, PayloadJSON: timer.PayloadJSON}))
 		if err != nil {
 			return err
 		}
@@ -227,38 +203,4 @@ func workspaceTimerFromSQLC(row dbsqlc.WorkspaceTimer) WorkspaceTimer {
 		targetSubscriptionID = *row.TargetSubscriptionID
 	}
 	return WorkspaceTimer{TimerID: row.TimerID, WorkspaceID: row.WorkspaceID, OwnerSessionID: row.OwnerSessionID, TargetSubscriptionID: targetSubscriptionID, SubjectType: row.SubjectType, SubjectID: row.SubjectID, Purpose: row.Purpose, Status: row.Status, FireAt: fireAt, PayloadJSON: row.PayloadJson, FiredEventID: row.FiredEventID, CreatedAt: createdAt, UpdatedAt: updatedAt}
-}
-
-func workspaceTimerFiredPayload(timer WorkspaceTimer) string {
-	payload := map[string]any{}
-	if raw := strings.TrimSpace(timer.PayloadJSON); raw != "" {
-		var objectPayload map[string]any
-		if err := json.Unmarshal([]byte(raw), &objectPayload); err == nil && objectPayload != nil {
-			payload = objectPayload
-		} else {
-			var rawPayload any
-			if err := json.Unmarshal([]byte(raw), &rawPayload); err == nil {
-				payload["payload"] = rawPayload
-			}
-		}
-	}
-	payload["timer_id"] = strings.TrimSpace(timer.TimerID)
-	payload["purpose"] = strings.TrimSpace(timer.Purpose)
-	payload["owner_session_id"] = strings.TrimSpace(timer.OwnerSessionID)
-	payload["target_subscription_id"] = strings.TrimSpace(timer.TargetSubscriptionID)
-	payload["subject_type"] = strings.TrimSpace(timer.SubjectType)
-	payload["subject_id"] = strings.TrimSpace(timer.SubjectID)
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		return "{}"
-	}
-	return string(encoded)
-}
-
-func workspaceTimerPayloadRef(timerID string) string {
-	encoded, err := json.Marshal(map[string]string{"kind": "timer", "id": strings.TrimSpace(timerID)})
-	if err != nil {
-		return "{}"
-	}
-	return string(encoded)
 }

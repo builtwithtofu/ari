@@ -242,38 +242,25 @@ func inboxItemsFromWorkspaceEventsWithQueries(ctx context.Context, queries *dbsq
 }
 
 func fanoutMemberFromWorkspaceEvent(event WorkspaceEvent) (FanoutMember, bool, error) {
-	if !IsFanoutWorkerWorkspaceEvent(event.EventType) {
-		return FanoutMember{}, false, nil
+	decoded, ok, err := DecodeFanoutWorkerWorkspaceEvent(event)
+	if err != nil || !ok {
+		return FanoutMember{}, false, err
 	}
-	payload := WorkspaceEventStringPayload(event.PayloadJSON)
-	memberID := strings.TrimSpace(payload["fanout_member_id"])
-	if memberID == "" {
+	if decoded.FanoutMemberID == "" {
 		return FanoutMember{}, false, nil
-	}
-	groupID := strings.TrimSpace(payload["fanout_group_id"])
-	if groupID == "" {
-		groupID = strings.TrimSpace(event.CorrelationID)
 	}
 	member := FanoutMember{
-		FanoutMemberID:        memberID,
-		FanoutGroupID:         groupID,
-		WorkspaceID:           strings.TrimSpace(event.WorkspaceID),
-		WorkerSessionID:       strings.TrimSpace(event.SubjectID),
-		TargetProfileID:       strings.TrimSpace(payload["target_profile_id"]),
-		RequestAgentMessageID: strings.TrimSpace(payload["request_agent_message_id"]),
-		ReplyAgentMessageID:   strings.TrimSpace(payload["reply_agent_message_id"]),
-		Status:                WorkerEventStatus(event.EventType),
-		CreatedAt:             event.CreatedAt.UTC().Format(time.RFC3339Nano),
-		UpdatedAt:             event.CreatedAt.UTC().Format(time.RFC3339Nano),
-	}
-	switch event.EventType {
-	case WorkspaceEventWorkerStarted:
-		member.RequestAgentMessageID = strings.TrimSpace(event.CausationID)
-	case WorkspaceEventWorkerCompleted:
-		member.ReplyAgentMessageID = strings.TrimSpace(event.CausationID)
-	}
-	if finalResponseID := FinalResponseIDFromWorkspaceEventRef(event.PayloadRefJSON); finalResponseID != "" {
-		member.FinalResponseID = finalResponseID
+		FanoutMemberID:        decoded.FanoutMemberID,
+		FanoutGroupID:         decoded.FanoutGroupID,
+		WorkspaceID:           decoded.WorkspaceID,
+		WorkerSessionID:       decoded.WorkerSessionID,
+		TargetProfileID:       decoded.TargetProfileID,
+		RequestAgentMessageID: decoded.RequestAgentMessageID,
+		ReplyAgentMessageID:   decoded.ReplyAgentMessageID,
+		FinalResponseID:       decoded.FinalResponseID,
+		Status:                decoded.Status,
+		CreatedAt:             decoded.CreatedAt.UTC().Format(time.RFC3339Nano),
+		UpdatedAt:             decoded.CreatedAt.UTC().Format(time.RFC3339Nano),
 	}
 	if err := validateFanoutMemberProjection(member); err != nil {
 		return FanoutMember{}, false, err
@@ -307,8 +294,8 @@ func fanoutWorkerInboxItemFromWorkspaceEvent(event WorkspaceEvent) (InboxItem, b
 	if err != nil || !ok {
 		return InboxItem{}, false, err
 	}
-	payload := WorkspaceEventStringPayload(event.PayloadJSON)
-	sourceSessionID := strings.TrimSpace(payload["source_session_id"])
+	decoded, _, _ := DecodeFanoutWorkerWorkspaceEvent(event)
+	sourceSessionID := decoded.SourceSessionID
 	if sourceSessionID == "" {
 		return InboxItem{}, false, fmt.Errorf("%w: fanout worker event is missing source_session_id", ErrInvalidInput)
 	}
@@ -316,32 +303,32 @@ func fanoutWorkerInboxItemFromWorkspaceEvent(event WorkspaceEvent) (InboxItem, b
 }
 
 func sessionNeedsInputInboxItemFromWorkspaceEvent(event WorkspaceEvent) (InboxItem, bool, error) {
-	payload := WorkspaceEventStringPayload(event.PayloadJSON)
+	decoded, _ := DecodeHarnessSessionWorkspaceEvent(event)
 	sessionID := strings.TrimSpace(event.SubjectID)
 	if sessionID == "" {
-		sessionID = strings.TrimSpace(payload["session_id"])
+		sessionID = decoded.SessionID
 	}
 	if sessionID == "" {
 		return InboxItem{}, false, nil
 	}
 	summary := "session needs input"
-	if harness := strings.TrimSpace(payload["harness"]); harness != "" {
+	if harness := decoded.Harness; harness != "" {
 		summary = harness + " session needs input"
 	}
 	return validateProjectedInboxItem(InboxItem{InboxItemID: "inbox-event-" + event.EventID, WorkspaceID: event.WorkspaceID, SourceSessionID: sessionID, WorkspaceEventID: event.EventID, EventType: event.EventType, WorkerSessionID: sessionID, Kind: "session_needs_input", Status: inboxItemStatusUnread, AttentionRequired: true, Summary: summary, CreatedAt: event.CreatedAt, UpdatedAt: event.CreatedAt})
 }
 
 func signalSentInboxItemFromWorkspaceEvent(ctx context.Context, queries *dbsqlc.Queries, event WorkspaceEvent) (InboxItem, bool, error) {
-	payload := WorkspaceEventStringPayload(event.PayloadJSON)
-	sourceSessionID := strings.TrimSpace(payload["source_session_id"])
+	decoded, _ := DecodeSignalWorkspaceEvent(event)
+	sourceSessionID := decoded.SourceSessionID
 	if sourceSessionID == "" {
-		sourceSessionID = strings.TrimSpace(payload["target_session_id"])
+		sourceSessionID = decoded.TargetSessionID
 	}
 	if sourceSessionID == "" {
 		switch strings.TrimSpace(event.SubjectType) {
-		case "harness_session":
+		case WorkspaceEventSubjectHarnessSession:
 			sourceSessionID = strings.TrimSpace(event.SubjectID)
-		case "event_subscription", "subscription":
+		case WorkspaceEventSubjectEventSubscription, WorkspaceEventSubjectSubscription:
 			subscription, err := subscriptionByIDWithQueries(ctx, queries, event.SubjectID)
 			if err != nil {
 				if errors.Is(err, ErrNotFound) {
@@ -353,7 +340,7 @@ func signalSentInboxItemFromWorkspaceEvent(ctx context.Context, queries *dbsqlc.
 				return InboxItem{}, false, nil
 			}
 			sourceSessionID = strings.TrimSpace(subscription.OwnerSessionID)
-		case "fanout_group":
+		case WorkspaceEventSubjectFanoutGroup:
 			group, err := queries.GetFanoutGroup(ctx, dbsqlc.GetFanoutGroupParams{FanoutGroupID: strings.TrimSpace(event.SubjectID)})
 			if err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
@@ -371,7 +358,7 @@ func signalSentInboxItemFromWorkspaceEvent(ctx context.Context, queries *dbsqlc.
 		return InboxItem{}, false, nil
 	}
 	summary := "signal sent"
-	if action := strings.TrimSpace(payload["action"]); action != "" {
+	if action := decoded.Action; action != "" {
 		summary = "signal sent: " + action
 	}
 	return validateProjectedInboxItem(InboxItem{InboxItemID: "inbox-signal-" + event.EventID, WorkspaceID: event.WorkspaceID, SourceSessionID: sourceSessionID, WorkspaceEventID: event.EventID, EventType: event.EventType, WorkerSessionID: sourceSessionID, Kind: "signal_sent", Status: inboxItemStatusUnread, AttentionRequired: true, Summary: summary, CreatedAt: event.CreatedAt, UpdatedAt: event.CreatedAt})
@@ -405,8 +392,8 @@ func timerInboxItemFromWorkspaceEvent(ctx context.Context, queries *dbsqlc.Queri
 }
 
 func deliveryFailedInboxItemFromWorkspaceEvent(ctx context.Context, queries *dbsqlc.Queries, event WorkspaceEvent) (InboxItem, bool, error) {
-	payload := WorkspaceEventStringPayload(event.PayloadJSON)
-	deliveryID := strings.TrimSpace(payload["delivery_id"])
+	decoded, _ := DecodeDeliveryWorkspaceEvent(event)
+	deliveryID := decoded.DeliveryID
 	if deliveryID == "" {
 		deliveryID = strings.TrimSpace(event.SubjectID)
 	}
@@ -414,21 +401,21 @@ func deliveryFailedInboxItemFromWorkspaceEvent(ctx context.Context, queries *dbs
 		return InboxItem{}, false, nil
 	}
 	sourceSessionID := ""
-	if subscriptionID := strings.TrimSpace(payload["subscription_id"]); subscriptionID != "" {
+	if subscriptionID := decoded.SubscriptionID; subscriptionID != "" {
 		if subscription, err := subscriptionByIDWithQueries(ctx, queries, subscriptionID); err == nil {
 			sourceSessionID = strings.TrimSpace(subscription.OwnerSessionID)
 		} else if !errors.Is(err, ErrNotFound) {
 			return InboxItem{}, false, err
 		}
 	}
-	if sourceSessionID == "" && strings.TrimSpace(payload["target_type"]) == "harness_session" {
-		sourceSessionID = strings.TrimSpace(payload["target_id"])
+	if sourceSessionID == "" && decoded.TargetType == WorkspaceEventSubjectHarnessSession {
+		sourceSessionID = decoded.TargetID
 	}
 	if sourceSessionID == "" {
 		return InboxItem{}, false, nil
 	}
 	summary := "delivery failed"
-	if lastError := strings.TrimSpace(payload["last_error"]); lastError != "" {
+	if lastError := decoded.LastError; lastError != "" {
 		summary = summary + ": " + lastError
 	}
 	return validateProjectedInboxItem(InboxItem{InboxItemID: "inbox-delivery-" + deliveryID, WorkspaceID: event.WorkspaceID, SourceSessionID: sourceSessionID, WorkspaceEventID: event.EventID, EventType: event.EventType, Kind: "delivery_failed", Status: inboxItemStatusUnread, AttentionRequired: true, Summary: summary, CreatedAt: event.CreatedAt, UpdatedAt: event.CreatedAt})

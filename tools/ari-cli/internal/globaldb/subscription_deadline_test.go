@@ -24,9 +24,17 @@ func TestSubscriptionDeadlineTimerCompletesOnlyTargetStream(t *testing.T) {
 		t.Fatalf("CreateEventSubscription other returned error: %v", err)
 	}
 
-	fired, err := store.FireDueWorkspaceTimers(ctx, timeoutAt.Add(time.Second), 10)
+	dueTimers, err := store.ListDueWorkspaceTimers(ctx, timeoutAt.Add(time.Second), 10)
 	if err != nil {
-		t.Fatalf("FireDueWorkspaceTimers returned error: %v", err)
+		t.Fatalf("ListDueWorkspaceTimers returned error: %v", err)
+	}
+	fired := make([]WorkspaceTimer, 0, len(dueTimers))
+	for _, dueTimer := range dueTimers {
+		firedTimer, err := store.FireWorkspaceTimer(ctx, dueTimer.TimerID)
+		if err != nil {
+			t.Fatalf("FireWorkspaceTimer returned error: %v", err)
+		}
+		fired = append(fired, firedTimer)
 	}
 	if len(fired) != 1 || fired[0].TargetSubscriptionID != "sub-target" {
 		t.Fatalf("fired timers = %#v, want one target subscription deadline", fired)
