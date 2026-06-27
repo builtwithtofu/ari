@@ -186,6 +186,7 @@ type HarnessAuthStatus struct {
 	Name             string                  `json:"name,omitempty"`
 	AuthSlotID       string                  `json:"auth_slot_id,omitempty"`
 	Status           HarnessAuthState        `json:"status"`
+	Presentation     Presentation            `json:"presentation"`
 	Remediation      *HarnessAuthRemediation `json:"remediation,omitempty"`
 	AriSecretStorage HarnessAriSecretStorage `json:"ari_secret_storage"`
 }
@@ -923,8 +924,9 @@ func startHarnessCallAfterCapabilityCheck(ctx context.Context, executor Executor
 				items[i].ID = agentSession.HarnessSessionID + ":" + suffix
 			}
 		}
+		items[i] = presentTimelineItem(items[i])
 	}
-	return agentSession, items, providerRun, nil
+	return presentHarnessSession(agentSession), items, providerRun, nil
 }
 
 func missingHarnessCapabilities(required, available []HarnessCapability) []HarnessCapability {

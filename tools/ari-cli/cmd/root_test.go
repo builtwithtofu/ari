@@ -411,7 +411,7 @@ func TestStatusRendersMessageWorkflowProjection(t *testing.T) {
 		_ = ctx
 		_ = socketPath
 		_ = cwd
-		return daemon.DashboardGetResponse{Status: daemon.WorkspaceStatusResponse{WorkspaceID: "ws-1", WorkspaceName: "workspace", Attention: daemon.AttentionSummary{Level: "running", Items: []daemon.AttentionItem{{Kind: "session_waiting", SourceID: "run-1", Message: "executor"}, {Kind: "ephemeral_running", SourceID: "call-1-run", Message: "reviewer"}}}, Sessions: []daemon.SessionActivity{{ID: "run-1", Status: "waiting", Executor: "codex"}, {ID: "call-1-run", Status: "running", Executor: "opencode", Usage: "ephemeral", SourceSessionID: "run-1"}}, ContextExcerpts: []daemon.ContextExcerptActivity{{ContextExcerptID: "excerpt-1", SelectorType: "last_n", ItemCount: 5, TargetAgentID: "reviewer"}}, AgentMessages: []daemon.AgentMessageActivity{{AgentMessageID: "dm-1", Status: "delivered", SourceSessionID: "run-1", TargetAgentID: "reviewer", ContextExcerptCount: 1}}}}, nil
+		return daemon.DashboardGetResponse{Status: daemon.WorkspaceStatusResponse{WorkspaceID: "ws-1", WorkspaceName: "workspace", Attention: daemon.AttentionSummary{Level: "running", Presentation: daemon.Presentation{Status: daemon.PresentationStatusRunning, StatusLabel: "Running", Summary: "Work is running"}, Items: []daemon.AttentionItem{{Kind: "session_waiting", SourceID: "run-1", Message: "executor"}, {Kind: "ephemeral_running", SourceID: "call-1-run", Message: "reviewer"}}}, Sessions: []daemon.SessionActivity{{ID: "run-1", Status: "waiting", Executor: "codex", Presentation: daemon.Presentation{Status: daemon.PresentationStatusReady, StatusLabel: "Ready", Label: "executor"}}, {ID: "call-1-run", Status: "running", Executor: "opencode", Usage: "ephemeral", SourceSessionID: "run-1", Presentation: daemon.Presentation{Status: daemon.PresentationStatusRunning, StatusLabel: "Running", Label: "reviewer"}}}, ContextExcerpts: []daemon.ContextExcerptActivity{{ContextExcerptID: "excerpt-1", SelectorType: "last_n", ItemCount: 5, TargetAgentID: "reviewer"}}, AgentMessages: []daemon.AgentMessageActivity{{AgentMessageID: "dm-1", Status: "delivered", SourceSessionID: "run-1", TargetAgentID: "reviewer", ContextExcerptCount: 1, Presentation: daemon.Presentation{StatusLabel: "Delivered"}}}}}, nil
 	}
 	replaceRootDeps(t, deps)
 
@@ -419,7 +419,7 @@ func TestStatusRendersMessageWorkflowProjection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute status returned error: %v", err)
 	}
-	for _, want := range []string{"Waiting sessions: 1", "Running ephemeral calls: 1", "Session messages: 1", "Context excerpts: 1", "Context excerpt: excerpt-1 last_n 5 -> reviewer", "Session message: dm-1 delivered run-1 -> reviewer"} {
+	for _, want := range []string{"Ready sessions: 1", "Running ephemeral calls: 1", "Session messages: 1", "Context excerpts: 1", "Context excerpt: excerpt-1 last_n 5 -> reviewer", "Session message: dm-1 Delivered run-1 -> reviewer"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("status output = %q, want %q", out, want)
 		}

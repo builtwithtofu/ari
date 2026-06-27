@@ -222,6 +222,7 @@ type FinalResponseResponse struct {
 	ContextPacketID string                      `json:"context_packet_id"`
 	ProfileID       string                      `json:"profile_id,omitempty"`
 	Status          string                      `json:"status"`
+	Presentation    Presentation                `json:"presentation"`
 	Text            string                      `json:"text"`
 	EvidenceLinks   []FinalResponseEvidenceLink `json:"evidence_links"`
 	CreatedAt       string                      `json:"created_at"`
@@ -272,7 +273,7 @@ func finalResponseResponseFromStore(stored globaldb.FinalResponse) FinalResponse
 	if stored.UpdatedAt != nil {
 		updatedAt = stored.UpdatedAt.Format(time.RFC3339Nano)
 	}
-	return FinalResponseResponse{FinalResponseID: stored.FinalResponseID, SessionID: stored.HarnessSessionID, WorkspaceID: stored.WorkspaceID, TaskID: stored.TaskID, ContextPacketID: stored.ContextPacketID, ProfileID: stored.ProfileID, Status: stored.Status, Text: stored.Text, EvidenceLinks: links, CreatedAt: stored.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: updatedAt}
+	return presentFinalResponse(FinalResponseResponse{FinalResponseID: stored.FinalResponseID, SessionID: stored.HarnessSessionID, WorkspaceID: stored.WorkspaceID, TaskID: stored.TaskID, ContextPacketID: stored.ContextPacketID, ProfileID: stored.ProfileID, Status: stored.Status, Text: stored.Text, EvidenceLinks: links, CreatedAt: stored.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: updatedAt})
 }
 
 func telemetryRollup(ctx context.Context, store *globaldb.Store, req TelemetryRollupRequest) (TelemetryRollupResponse, error) {

@@ -24,18 +24,19 @@ type WorkspaceTimelineResponse struct {
 }
 
 type TimelineItem struct {
-	ID          string         `json:"id"`
-	WorkspaceID string         `json:"workspace_id,omitempty"`
-	RunID       string         `json:"run_id,omitempty"`
-	SessionID   string         `json:"session_id,omitempty"`
-	SourceKind  string         `json:"source_kind"`
-	SourceID    string         `json:"source_id"`
-	Kind        string         `json:"kind"`
-	Status      string         `json:"status"`
-	Sequence    int            `json:"sequence"`
-	CreatedAt   string         `json:"created_at,omitempty"`
-	Text        string         `json:"text,omitempty"`
-	Metadata    map[string]any `json:"metadata,omitempty"`
+	ID           string         `json:"id"`
+	WorkspaceID  string         `json:"workspace_id,omitempty"`
+	RunID        string         `json:"run_id,omitempty"`
+	SessionID    string         `json:"session_id,omitempty"`
+	SourceKind   string         `json:"source_kind"`
+	SourceID     string         `json:"source_id"`
+	Kind         string         `json:"kind"`
+	Status       string         `json:"status"`
+	Sequence     int            `json:"sequence"`
+	CreatedAt    string         `json:"created_at,omitempty"`
+	Text         string         `json:"text,omitempty"`
+	Metadata     map[string]any `json:"metadata,omitempty"`
+	Presentation Presentation   `json:"presentation"`
 }
 
 func (d *Daemon) registerWorkspaceTimelineMethods(registry *rpc.MethodRegistry, store *globaldb.Store) error {
@@ -73,7 +74,7 @@ func (*Daemon) workspaceTimeline(ctx context.Context, store *globaldb.Store, wor
 	}
 	out := make([]TimelineItem, 0, len(items))
 	for _, item := range items {
-		out = append(out, timelineItemFromGlobalDB(item))
+		out = append(out, presentTimelineItem(timelineItemFromGlobalDB(item)))
 	}
 	return out, nil
 }

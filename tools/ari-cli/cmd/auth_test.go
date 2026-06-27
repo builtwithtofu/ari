@@ -297,11 +297,11 @@ func TestAuthDoctorCommandUsesDaemonDiagnosis(t *testing.T) {
 	}
 	got := out.String()
 	for _, want := range []string{
-		"claude\n  installed:       installed\n  status:          authenticated",
-		"codex\n  installed:       installed\n  status:          auth_required",
+		"claude\n  installed:       Installed\n  status:          authenticated",
+		"codex\n  installed:       Installed\n  status:          auth_required",
 		"  named slots:     work(chatgpt):auth_required",
 		"  next step:       Run `ari auth login --harness codex` and complete the provider's device-code login.",
-		"opencode\n  installed:       not_installed\n  status:          not_installed",
+		"opencode\n  installed:       Needs install\n  status:          not_installed",
 		"  next step:       Install OpenCode, then run `ari auth login --harness opencode`.",
 	} {
 		if !bytes.Contains([]byte(got), []byte(want)) {
@@ -380,7 +380,7 @@ func TestAuthDoctorRendersDaemonDiagnostics(t *testing.T) {
 	if err := writeAuthDoctorResponse(&out, []daemon.HarnessAuthDiagnostic{{Harness: daemon.HarnessNameClaude, Installed: true, Status: daemon.HarnessAuthUnknown, DefaultSlot: daemon.HarnessAuthStatus{Harness: daemon.HarnessNameClaude, AuthSlotID: "claude-default", Status: daemon.HarnessAuthUnknown}, Auth: daemon.HarnessAuthDescriptor{NamedSlotExecution: daemon.HarnessAuthSupportUnsupported, RiskLabels: []string{"provider_owned"}}, NextStep: "Run `ari auth login --harness claude` or check the provider's native auth setup."}}, true); err != nil {
 		t.Fatalf("writeAuthDoctorResponse returned error: %v", err)
 	}
-	if got := out.String(); !bytes.Contains([]byte(got), []byte("claude\n  installed:       installed\n  status:          unknown")) || !bytes.Contains([]byte(got), []byte("named execution: unsupported")) || !bytes.Contains([]byte(got), []byte("risks:           provider_owned")) {
+	if got := out.String(); !bytes.Contains([]byte(got), []byte("claude\n  installed:       Installed\n  status:          unknown")) || !bytes.Contains([]byte(got), []byte("named execution: unsupported")) || !bytes.Contains([]byte(got), []byte("risks:           provider_owned")) {
 		t.Fatalf("output = %q, want rendered daemon diagnostic", got)
 	}
 }

@@ -857,8 +857,8 @@ func TestCommandListShowOutputStop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute command show: %v", err)
 	}
-	if !strings.Contains(showOut, "Status: exited") {
-		t.Fatalf("command show output = %q, want status", showOut)
+	if !strings.Contains(showOut, "State: exited") {
+		t.Fatalf("command show output = %q, want state", showOut)
 	}
 
 	outputOut, err := executeRootCommand("exec", "output", "cmd-1")

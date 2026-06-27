@@ -24,8 +24,9 @@ type CommandRunRequest struct {
 }
 
 type CommandRunResponse struct {
-	CommandID string `json:"command_id"`
-	Status    string `json:"status"`
+	CommandID    string       `json:"command_id"`
+	Status       string       `json:"status"`
+	Presentation Presentation `json:"presentation"`
 }
 
 type CommandListRequest struct {
@@ -33,10 +34,11 @@ type CommandListRequest struct {
 }
 
 type CommandSummary struct {
-	CommandID string `json:"command_id"`
-	Command   string `json:"command"`
-	Status    string `json:"status"`
-	StartedAt string `json:"started_at"`
+	CommandID    string       `json:"command_id"`
+	Command      string       `json:"command"`
+	Status       string       `json:"status"`
+	Presentation Presentation `json:"presentation"`
+	StartedAt    string       `json:"started_at"`
 }
 
 type CommandListResponse struct {
@@ -49,14 +51,15 @@ type CommandGetRequest struct {
 }
 
 type CommandGetResponse struct {
-	CommandID   string `json:"command_id"`
-	WorkspaceID string `json:"workspace_id"`
-	Command     string `json:"command"`
-	Args        string `json:"args"`
-	Status      string `json:"status"`
-	ExitCode    *int   `json:"exit_code"`
-	StartedAt   string `json:"started_at"`
-	FinishedAt  string `json:"finished_at,omitempty"`
+	CommandID    string       `json:"command_id"`
+	WorkspaceID  string       `json:"workspace_id"`
+	Command      string       `json:"command"`
+	Args         string       `json:"args"`
+	Status       string       `json:"status"`
+	Presentation Presentation `json:"presentation"`
+	ExitCode     *int         `json:"exit_code"`
+	StartedAt    string       `json:"started_at"`
+	FinishedAt   string       `json:"finished_at,omitempty"`
 }
 
 type CommandOutputRequest struct {
@@ -74,7 +77,8 @@ type CommandStopRequest struct {
 }
 
 type CommandStopResponse struct {
-	Status string `json:"status"`
+	Status       string       `json:"status"`
+	Presentation Presentation `json:"presentation"`
 }
 
 type WorkspaceCommandCreateRequest struct {
@@ -130,7 +134,8 @@ type WorkspaceCommandRemoveRequest struct {
 }
 
 type WorkspaceCommandRemoveResponse struct {
-	Status string `json:"status"`
+	Status       string       `json:"status"`
+	Presentation Presentation `json:"presentation"`
 }
 
 const maxRetainedCommandLogs = 128
@@ -222,7 +227,7 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 			d.commandWG.Add(1)
 			go d.waitForCommandExit(commandID, sessionID, store, proc)
 
-			return CommandRunResponse{CommandID: commandID, Status: "running"}, nil
+			return presentCommandRun(CommandRunResponse{CommandID: commandID, Status: "running"}), nil
 		},
 	}); err != nil {
 		return fmt.Errorf("register command.run: %w", err)
@@ -251,12 +256,12 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 				if err != nil {
 					return CommandListResponse{}, fmt.Errorf("map command record to tool: %w", err)
 				}
-				out = append(out, CommandSummary{
+				out = append(out, presentCommandSummary(CommandSummary{
 					CommandID: toolRecord.ToolID,
 					Command:   toolRecord.Command.Command,
 					Status:    toolRecord.Status,
 					StartedAt: toolRecord.StartedAt,
-				})
+				}))
 			}
 
 			return CommandListResponse{Commands: out}, nil
@@ -308,7 +313,7 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 				resp.FinishedAt = *toolRecord.FinishedAt
 			}
 
-			return resp, nil
+			return presentCommandGet(resp), nil
 		},
 	}); err != nil {
 		return fmt.Errorf("register command.get: %w", err)
@@ -375,19 +380,19 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 				return CommandStopResponse{}, mapCommandStoreError(err, sessionID)
 			}
 			if commandRecord.Status != "running" {
-				return CommandStopResponse{Status: commandRecord.Status}, nil
+				return presentCommandStop(CommandStopResponse{Status: commandRecord.Status}), nil
 			}
 
 			proc, ok := d.getCommandProcess(commandID)
 			if !ok {
-				return CommandStopResponse{Status: "lost"}, nil
+				return presentCommandStop(CommandStopResponse{Status: "lost"}), nil
 			}
 
 			go func() {
 				_ = stopCommandProcess(proc)
 			}()
 
-			return CommandStopResponse{Status: "stopping"}, nil
+			return presentCommandStop(CommandStopResponse{Status: "stopping"}), nil
 		},
 	}); err != nil {
 		return fmt.Errorf("register command.stop: %w", err)
@@ -540,7 +545,7 @@ func (d *Daemon) registerCommandMethods(registry *rpc.MethodRegistry, store *glo
 				return WorkspaceCommandRemoveResponse{}, mapCommandStoreError(err, workspaceID)
 			}
 
-			return WorkspaceCommandRemoveResponse{Status: "removed"}, nil
+			return WorkspaceCommandRemoveResponse{Status: "removed", Presentation: presentationWithLabel("Workspace command", "removed")}, nil
 		},
 	}); err != nil {
 		return fmt.Errorf("register workspace.command.remove: %w", err)

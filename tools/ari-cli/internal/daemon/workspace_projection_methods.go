@@ -21,6 +21,7 @@ type WorkspaceStatusRequest struct {
 type WorkspaceStatusResponse struct {
 	WorkspaceID      string                   `json:"workspace_id"`
 	WorkspaceName    string                   `json:"workspace_name"`
+	Presentation     Presentation             `json:"presentation"`
 	VCS              DiffSummary              `json:"vcs"`
 	ActiveTaskID     string                   `json:"active_task_id,omitempty"`
 	Attention        AttentionSummary         `json:"attention"`
@@ -54,50 +55,55 @@ type WorkspaceProofsResponse struct {
 }
 
 type AttentionSummary struct {
-	Level string          `json:"level"`
-	Items []AttentionItem `json:"items"`
+	Level        string          `json:"level"`
+	Presentation Presentation    `json:"presentation"`
+	Items        []AttentionItem `json:"items"`
 }
 
 type AttentionItem struct {
-	Kind     string `json:"kind"`
-	SourceID string `json:"source_id"`
-	Message  string `json:"message"`
+	Kind         string       `json:"kind"`
+	SourceID     string       `json:"source_id"`
+	Message      string       `json:"message"`
+	Presentation Presentation `json:"presentation"`
 }
 
 type DiffSummary struct {
-	Backend      string   `json:"backend"`
-	Root         string   `json:"root"`
-	ChangedFiles int      `json:"changed_files"`
-	Files        []string `json:"files"`
-	Error        string   `json:"error,omitempty"`
+	Backend      string       `json:"backend"`
+	Root         string       `json:"root"`
+	ChangedFiles int          `json:"changed_files"`
+	Files        []string     `json:"files"`
+	Error        string       `json:"error,omitempty"`
+	Presentation Presentation `json:"presentation"`
 }
 
 type ProcessActivity struct {
-	ID            string `json:"id"`
-	Kind          string `json:"kind"`
-	Status        string `json:"status"`
-	ExitCode      *int   `json:"exit_code,omitempty"`
-	Label         string `json:"label"`
-	WorkspaceID   string `json:"workspace_id"`
-	StartedAt     string `json:"started_at"`
-	FinishedAt    string `json:"finished_at,omitempty"`
-	LastOutputAt  string `json:"last_output_at,omitempty"`
-	OutputSummary string `json:"output_summary,omitempty"`
+	ID            string       `json:"id"`
+	Kind          string       `json:"kind"`
+	Status        string       `json:"status"`
+	ExitCode      *int         `json:"exit_code,omitempty"`
+	Label         string       `json:"label"`
+	WorkspaceID   string       `json:"workspace_id"`
+	StartedAt     string       `json:"started_at"`
+	FinishedAt    string       `json:"finished_at,omitempty"`
+	LastOutputAt  string       `json:"last_output_at,omitempty"`
+	OutputSummary string       `json:"output_summary,omitempty"`
+	Presentation  Presentation `json:"presentation"`
 }
 
 type SessionActivity struct {
-	ID              string `json:"id"`
-	Name            string `json:"name,omitempty"`
-	Status          string `json:"status"`
-	Executor        string `json:"executor"`
-	WorkspaceID     string `json:"workspace_id"`
-	ActiveTaskID    string `json:"active_task_id,omitempty"`
-	StartedAt       string `json:"started_at"`
-	LastActivityAt  string `json:"last_activity_at,omitempty"`
-	OutputSummary   string `json:"output_summary,omitempty"`
-	Usage           string `json:"usage,omitempty"`
-	SourceSessionID string `json:"source_session_id,omitempty"`
-	SourceAgentID   string `json:"source_agent_id,omitempty"`
+	ID              string       `json:"id"`
+	Name            string       `json:"name,omitempty"`
+	Status          string       `json:"status"`
+	Executor        string       `json:"executor"`
+	WorkspaceID     string       `json:"workspace_id"`
+	ActiveTaskID    string       `json:"active_task_id,omitempty"`
+	StartedAt       string       `json:"started_at"`
+	LastActivityAt  string       `json:"last_activity_at,omitempty"`
+	OutputSummary   string       `json:"output_summary,omitempty"`
+	Usage           string       `json:"usage,omitempty"`
+	SourceSessionID string       `json:"source_session_id,omitempty"`
+	SourceAgentID   string       `json:"source_agent_id,omitempty"`
+	Presentation    Presentation `json:"presentation"`
 }
 
 type AgentActivity = SessionActivity
@@ -112,60 +118,65 @@ type ContextExcerptActivity struct {
 }
 
 type AgentMessageActivity struct {
-	AgentMessageID      string `json:"agent_message_id"`
-	SourceSessionID     string `json:"source_session_id"`
-	SourceAgentID       string `json:"source_agent_id"`
-	TargetSessionID     string `json:"target_session_id"`
-	TargetAgentID       string `json:"target_agent_id"`
-	Status              string `json:"status"`
-	ContextExcerptCount int    `json:"context_excerpt_count"`
+	AgentMessageID      string       `json:"agent_message_id"`
+	SourceSessionID     string       `json:"source_session_id"`
+	SourceAgentID       string       `json:"source_agent_id"`
+	TargetSessionID     string       `json:"target_session_id"`
+	TargetAgentID       string       `json:"target_agent_id"`
+	Status              string       `json:"status"`
+	ContextExcerptCount int          `json:"context_excerpt_count"`
+	Presentation        Presentation `json:"presentation"`
 }
 
 type FanoutMemberActivity struct {
-	FanoutMemberID        string `json:"fanout_member_id"`
-	FanoutGroupID         string `json:"fanout_group_id"`
-	WorkerSessionID       string `json:"worker_session_id"`
-	TargetProfileID       string `json:"target_profile_id"`
-	RequestAgentMessageID string `json:"request_agent_message_id,omitempty"`
-	ReplyAgentMessageID   string `json:"reply_agent_message_id,omitempty"`
-	FinalResponseID       string `json:"final_response_id,omitempty"`
-	Status                string `json:"status"`
+	FanoutMemberID        string       `json:"fanout_member_id"`
+	FanoutGroupID         string       `json:"fanout_group_id"`
+	WorkerSessionID       string       `json:"worker_session_id"`
+	TargetProfileID       string       `json:"target_profile_id"`
+	RequestAgentMessageID string       `json:"request_agent_message_id,omitempty"`
+	ReplyAgentMessageID   string       `json:"reply_agent_message_id,omitempty"`
+	FinalResponseID       string       `json:"final_response_id,omitempty"`
+	Status                string       `json:"status"`
+	Presentation          Presentation `json:"presentation"`
 }
 
 type InboxActivity struct {
-	InboxItemID       string `json:"inbox_item_id"`
-	TargetSessionID   string `json:"target_session_id"`
-	WorkspaceEventID  string `json:"workspace_event_id,omitempty"`
-	EventType         string `json:"event_type,omitempty"`
-	FanoutGroupID     string `json:"fanout_group_id,omitempty"`
-	FanoutMemberID    string `json:"fanout_member_id,omitempty"`
-	WorkerSessionID   string `json:"worker_session_id,omitempty"`
-	FinalResponseID   string `json:"final_response_id,omitempty"`
-	Kind              string `json:"kind"`
-	Status            string `json:"status"`
-	AttentionRequired bool   `json:"attention_required"`
-	Summary           string `json:"summary,omitempty"`
+	InboxItemID       string       `json:"inbox_item_id"`
+	TargetSessionID   string       `json:"target_session_id"`
+	WorkspaceEventID  string       `json:"workspace_event_id,omitempty"`
+	EventType         string       `json:"event_type,omitempty"`
+	FanoutGroupID     string       `json:"fanout_group_id,omitempty"`
+	FanoutMemberID    string       `json:"fanout_member_id,omitempty"`
+	WorkerSessionID   string       `json:"worker_session_id,omitempty"`
+	FinalResponseID   string       `json:"final_response_id,omitempty"`
+	Kind              string       `json:"kind"`
+	Status            string       `json:"status"`
+	AttentionRequired bool         `json:"attention_required"`
+	Summary           string       `json:"summary,omitempty"`
+	Presentation      Presentation `json:"presentation"`
 }
 
 type ProofResultSummary struct {
-	ID          string `json:"id"`
-	SourceID    string `json:"source_id"`
-	SourceKind  string `json:"source_kind"`
-	Status      string `json:"status"`
-	Command     string `json:"command,omitempty"`
-	StartedAt   string `json:"started_at,omitempty"`
-	CompletedAt string `json:"completed_at,omitempty"`
-	LogSummary  string `json:"log_summary,omitempty"`
+	ID           string       `json:"id"`
+	SourceID     string       `json:"source_id"`
+	SourceKind   string       `json:"source_kind"`
+	Status       string       `json:"status"`
+	Command      string       `json:"command,omitempty"`
+	StartedAt    string       `json:"started_at,omitempty"`
+	CompletedAt  string       `json:"completed_at,omitempty"`
+	LogSummary   string       `json:"log_summary,omitempty"`
+	Presentation Presentation `json:"presentation"`
 }
 
 type OperationActivity struct {
-	OperationID     string `json:"operation_id"`
-	OperationType   string `json:"operation_type"`
-	Source          string `json:"source"`
-	Status          string `json:"status"`
-	RequestSummary  string `json:"request_summary"`
-	RollbackPointID string `json:"rollback_point_id,omitempty"`
-	CreatedAt       string `json:"created_at"`
+	OperationID     string       `json:"operation_id"`
+	OperationType   string       `json:"operation_type"`
+	Source          string       `json:"source"`
+	Status          string       `json:"status"`
+	RequestSummary  string       `json:"request_summary"`
+	RollbackPointID string       `json:"rollback_point_id,omitempty"`
+	CreatedAt       string       `json:"created_at"`
+	Presentation    Presentation `json:"presentation"`
 }
 
 func (d *Daemon) registerWorkspaceProjectionMethods(registry *rpc.MethodRegistry, store *globaldb.Store) error {
@@ -195,7 +206,7 @@ func (d *Daemon) registerWorkspaceProjectionMethods(registry *rpc.MethodRegistry
 				return WorkspaceDiffResponse{}, err
 			}
 			_ = workspaceID
-			return WorkspaceDiffResponse{Diff: buildDiffSummary(roots)}, nil
+			return WorkspaceDiffResponse{Diff: presentDiffSummary(buildDiffSummary(roots))}, nil
 		},
 	}); err != nil {
 		return fmt.Errorf("register workspace.diff: %w", err)
@@ -274,7 +285,7 @@ func (d *Daemon) workspaceStatus(ctx context.Context, store *globaldb.Store, raw
 		return WorkspaceStatusResponse{}, err
 	}
 
-	return WorkspaceStatusResponse{
+	response := WorkspaceStatusResponse{
 		WorkspaceID:      workspaceID,
 		WorkspaceName:    session.Name,
 		VCS:              buildDiffSummary(roots),
@@ -289,7 +300,8 @@ func (d *Daemon) workspaceStatus(ctx context.Context, store *globaldb.Store, raw
 		WorkspaceRoots:   roots,
 		RecentOperations: recentOperations,
 		RecentTimeline:   recentTimeline,
-	}, nil
+	}
+	return d.presentWorkspaceStatus(response), nil
 }
 
 func workspaceOperationActivity(ctx context.Context, store *globaldb.Store, workspaceID string) ([]OperationActivity, error) {
@@ -344,7 +356,7 @@ func workspaceStateTimeline(ctx context.Context, store *globaldb.Store, session 
 	if err != nil {
 		return nil, err
 	}
-	return []TimelineItem{{
+	return []TimelineItem{presentTimelineItem(TimelineItem{
 		ID:          session.ID + ":workspace_state",
 		WorkspaceID: session.ID,
 		SourceKind:  "workspace",
@@ -361,7 +373,7 @@ func workspaceStateTimeline(ctx context.Context, store *globaldb.Store, session 
 			"session_count":   len(agentSessions),
 			"attention_level": attention.Level,
 		},
-	}}, nil
+	})}, nil
 }
 
 func workspaceContextExcerpts(ctx context.Context, store *globaldb.Store, workspaceID string) ([]ContextExcerptActivity, error) {
@@ -383,7 +395,7 @@ func agentSessionConfigMessages(ctx context.Context, store *globaldb.Store, work
 	}
 	out := make([]AgentMessageActivity, 0, len(messages))
 	for _, dm := range messages {
-		out = append(out, AgentMessageActivity{AgentMessageID: dm.AgentMessageID, SourceSessionID: dm.SourceSessionID, SourceAgentID: dm.SourceAgentID, TargetSessionID: dm.TargetSessionID, TargetAgentID: dm.TargetAgentID, Status: dm.Status, ContextExcerptCount: len(dm.ContextExcerptIDs)})
+		out = append(out, presentAgentMessageActivity(AgentMessageActivity{AgentMessageID: dm.AgentMessageID, SourceSessionID: dm.SourceSessionID, SourceAgentID: dm.SourceAgentID, TargetSessionID: dm.TargetSessionID, TargetAgentID: dm.TargetAgentID, Status: dm.Status, ContextExcerptCount: len(dm.ContextExcerptIDs)}))
 	}
 	return out, nil
 }
@@ -395,7 +407,7 @@ func fanoutMemberActivity(ctx context.Context, store *globaldb.Store, workspaceI
 	}
 	out := make([]FanoutMemberActivity, 0, len(members))
 	for _, member := range members {
-		out = append(out, FanoutMemberActivity{FanoutMemberID: member.FanoutMemberID, FanoutGroupID: member.FanoutGroupID, WorkerSessionID: member.WorkerSessionID, TargetProfileID: member.TargetProfileID, RequestAgentMessageID: member.RequestAgentMessageID, ReplyAgentMessageID: member.ReplyAgentMessageID, FinalResponseID: member.FinalResponseID, Status: member.Status})
+		out = append(out, presentFanoutMemberActivity(FanoutMemberActivity{FanoutMemberID: member.FanoutMemberID, FanoutGroupID: member.FanoutGroupID, WorkerSessionID: member.WorkerSessionID, TargetProfileID: member.TargetProfileID, RequestAgentMessageID: member.RequestAgentMessageID, ReplyAgentMessageID: member.ReplyAgentMessageID, FinalResponseID: member.FinalResponseID, Status: member.Status}))
 	}
 	return out, nil
 }
@@ -411,7 +423,7 @@ func inboxActivity(ctx context.Context, store *globaldb.Store, workspaceID strin
 			return nil, err
 		}
 		for _, item := range items {
-			out = append(out, InboxActivity{InboxItemID: item.InboxItemID, TargetSessionID: session.ID, WorkspaceEventID: item.WorkspaceEventID, EventType: item.EventType, FanoutGroupID: item.FanoutGroupID, FanoutMemberID: item.FanoutMemberID, WorkerSessionID: item.WorkerSessionID, FinalResponseID: item.FinalResponseID, Kind: item.Kind, Status: item.Status, AttentionRequired: item.AttentionRequired, Summary: item.Summary})
+			out = append(out, presentInboxActivity(InboxActivity{InboxItemID: item.InboxItemID, TargetSessionID: session.ID, WorkspaceEventID: item.WorkspaceEventID, EventType: item.EventType, FanoutGroupID: item.FanoutGroupID, FanoutMemberID: item.FanoutMemberID, WorkerSessionID: item.WorkerSessionID, FinalResponseID: item.FinalResponseID, Kind: item.Kind, Status: item.Status, AttentionRequired: item.AttentionRequired, Summary: item.Summary}))
 		}
 	}
 	return out, nil
@@ -532,7 +544,7 @@ func (d *Daemon) workspaceProcessActivity(ctx context.Context, store *globaldb.S
 			LastOutputAt:  bestTimestamp(finishedAt, command.StartedAt),
 			OutputSummary: outputSummary,
 		}
-		out = append(out, item)
+		out = append(out, presentProcessActivity(item))
 	}
 	return out, nil
 }
@@ -542,7 +554,7 @@ func (d *Daemon) workspaceSessionActivity(ctx context.Context, store *globaldb.S
 	seen := make(map[string]bool)
 	executorRuns := d.executorRunsForWorkspace(workspaceID)
 	for _, run := range executorRuns {
-		out = append(out, SessionActivity{ID: run.HarnessSessionID, Status: run.Status, Executor: run.Executor, WorkspaceID: run.WorkspaceID, ActiveTaskID: run.TaskID, StartedAt: run.StartedAt, LastActivityAt: run.StartedAt})
+		out = append(out, d.presentSessionActivity(SessionActivity{ID: run.HarnessSessionID, Status: run.Status, Executor: run.Executor, WorkspaceID: run.WorkspaceID, ActiveTaskID: run.TaskID, StartedAt: run.StartedAt, LastActivityAt: run.StartedAt}))
 		seen[run.HarnessSessionID] = true
 	}
 	persistedRuns, err := store.ListHarnessSessions(ctx, workspaceID)
@@ -553,7 +565,7 @@ func (d *Daemon) workspaceSessionActivity(ctx context.Context, store *globaldb.S
 		if seen[run.SessionID] {
 			continue
 		}
-		out = append(out, SessionActivity{ID: run.SessionID, Status: run.Status, Executor: run.Harness, WorkspaceID: run.WorkspaceID, Usage: run.Usage, SourceSessionID: run.SourceSessionID, SourceAgentID: run.SourceAgentID})
+		out = append(out, d.presentSessionActivity(SessionActivity{ID: run.SessionID, Status: run.Status, Executor: run.Harness, WorkspaceID: run.WorkspaceID, Usage: run.Usage, SourceSessionID: run.SourceSessionID, SourceAgentID: run.SourceAgentID}))
 	}
 	return out, nil
 }
@@ -588,7 +600,7 @@ func (d *Daemon) workspaceProofs(ctx context.Context, store *globaldb.Store, wor
 		if command.FinishedAt != nil {
 			completedAt = *command.FinishedAt
 		}
-		out = append(out, ProofResultSummary{
+		out = append(out, presentProofResult(ProofResultSummary{
 			ID:          "proof_" + command.CommandID,
 			SourceID:    command.CommandID,
 			SourceKind:  "command",
@@ -597,7 +609,7 @@ func (d *Daemon) workspaceProofs(ctx context.Context, store *globaldb.Store, wor
 			StartedAt:   command.StartedAt,
 			CompletedAt: completedAt,
 			LogSummary:  firstOutputLine(commandSummaryOutput(d, command.CommandID)),
-		})
+		}))
 	}
 	return out, nil
 }
