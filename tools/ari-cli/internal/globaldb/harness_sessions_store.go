@@ -155,8 +155,8 @@ type AgentMessageSendParams struct {
 	StartSessionID    string
 }
 
-func defaultAgentMessageWorkspaceEvent(params AgentMessageSendParams, workspaceID, sourceSessionID, sourceAgentID, targetSessionID string) WorkspaceEvent {
-	return NewAgentMessageWorkspaceEvent(AgentMessageWorkspaceEventParams{WorkspaceID: workspaceID, AgentMessageID: params.AgentMessageID, SourceSessionID: sourceSessionID, SourceAgentID: sourceAgentID, TargetAgentID: params.TargetAgentID, TargetSessionID: targetSessionID, ContextExcerptCount: len(params.ContextExcerptIDs)})
+func defaultAgentMessageWorkspaceEvent(params AgentMessageSendParams, workspaceID, sourceSessionID, sourceAgentID, targetSessionID, targetAgentID string) WorkspaceEvent {
+	return NewAgentMessageWorkspaceEvent(AgentMessageWorkspaceEventParams{WorkspaceID: workspaceID, AgentMessageID: params.AgentMessageID, SourceSessionID: sourceSessionID, SourceAgentID: sourceAgentID, TargetAgentID: targetAgentID, TargetSessionID: targetSessionID, ContextExcerptCount: len(params.ContextExcerptIDs)})
 }
 
 func contextExcerptCreatedWorkspaceEvent(excerpt ContextExcerpt) (WorkspaceEvent, error) {
@@ -719,7 +719,7 @@ func sendAgentMessageWithQueries(ctx context.Context, qtx *dbsqlc.Queries, param
 	if err := appendRunLogMessageTx(ctx, qtx, RunLogMessage{MessageID: params.AgentMessageID + "-message", SessionID: targetSessionID, WorkspaceID: source.WorkspaceID, AgentID: targetAgent.AgentID, Sequence: int(nextSequence), Role: "user", Status: "completed", Parts: []RunLogMessagePart{{PartID: params.AgentMessageID + "-part-1", Sequence: 1, Kind: "text", Text: params.Body}}}); err != nil {
 		return AgentMessage{}, err
 	}
-	event := defaultAgentMessageWorkspaceEvent(params, source.WorkspaceID, source.SessionID, source.AgentID, targetSessionID)
+	event := defaultAgentMessageWorkspaceEvent(params, source.WorkspaceID, source.SessionID, source.AgentID, targetSessionID, targetAgent.AgentID)
 	if strings.TrimSpace(event.WorkspaceID) == "" {
 		event.WorkspaceID = source.WorkspaceID
 	} else if strings.TrimSpace(event.WorkspaceID) != source.WorkspaceID {

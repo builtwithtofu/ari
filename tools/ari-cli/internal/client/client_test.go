@@ -2,11 +2,11 @@ package client
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/testutil"
 )
 
 type pingRequest struct {
@@ -30,7 +30,7 @@ func TestClientCall(t *testing.T) {
 		t.Fatalf("register method: %v", err)
 	}
 
-	socketPath := filepath.Join(t.TempDir(), "rpc.sock")
+	socketPath := testutil.UnixSocketPath(t)
 	transport := rpc.NewUnixSocketTransport(socketPath, rpc.NewServer(registry))
 
 	ctx, cancel := context.WithCancel(context.Background())

@@ -471,7 +471,7 @@ func sendAgentMessage(ctx context.Context, store *globaldb.Store, req AgentMessa
 			return AgentMessageSendResponse{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "source_workspace_mismatch", "source_session_id": sourceSessionID, "source_workspace_id": sourceRun.WorkspaceID, "workspace_id": workspaceID, "start_invoked": false})
 		}
 	}
-	dm, err := store.SendAgentMessage(ctx, globaldb.AgentMessageSendParams{AgentMessageID: agentMessageID, SourceSessionID: sourceSessionID, TargetAgentID: targetAgentID, TargetSessionID: targetSessionID, Body: body, ContextExcerptIDs: contextExcerptIDs, StartSessionID: startSessionID, WorkspaceEvent: &globaldb.WorkspaceEvent{EventType: workspaceEventMessageSent, SubjectType: "agent_message", SubjectID: agentMessageID, ProducerType: workspaceEventProducerSession, ProducerID: sourceSessionID, PayloadJSON: daemonEventPayload(map[string]string{"source_session_id": sourceSessionID, "target_agent_id": targetAgentID, "target_session_id": effectiveTargetSessionID})}})
+	dm, err := store.SendAgentMessage(ctx, globaldb.AgentMessageSendParams{AgentMessageID: agentMessageID, SourceSessionID: sourceSessionID, TargetAgentID: targetAgentID, TargetSessionID: targetSessionID, Body: body, ContextExcerptIDs: contextExcerptIDs, StartSessionID: startSessionID})
 	if err != nil {
 		errText := strings.ToLower(err.Error())
 		if strings.Contains(errText, "unique constraint failed") && strings.Contains(errText, "agent_messages.agent_message_id") {

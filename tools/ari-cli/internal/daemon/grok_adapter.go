@@ -39,6 +39,12 @@ type GrokExecutor struct {
 	options grokExecutorOptions
 }
 
+func (e *GrokExecutor) Stop(ctx context.Context, runID string) error {
+	_ = ctx
+	_ = runID
+	return nil
+}
+
 func NewGrokExecutor(cwd string) *GrokExecutor {
 	return newGrokExecutor(grokExecutorOptions{Executable: harnessExecutable("grok", EnvGrokExecutable), Cwd: cwd, RunCommand: runGrokCommand})
 }

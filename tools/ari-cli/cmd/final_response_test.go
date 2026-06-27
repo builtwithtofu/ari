@@ -18,7 +18,7 @@ func TestFinalResponseShowAndExportUseArtifactTextOnly(t *testing.T) {
 		if req.SessionID != "run_1" {
 			t.Fatalf("get request = %#v, want run_1", req)
 		}
-		return daemon.FinalResponseResponse{FinalResponseID: "fr_1", SessionID: "run_1", WorkspaceID: "ws-1", TaskID: "task-1", ContextPacketID: "ctx_1", Status: "completed", Text: "Excerptable answer", EvidenceLinks: []daemon.FinalResponseEvidenceLink{{Kind: "context_packet", ID: "ctx_1"}}}, nil
+		return daemon.FinalResponseResponse{FinalResponseID: "fr_1", SessionID: "run_1", WorkspaceID: "ws-1", TaskID: "task-1", ContextPacketID: "ctx_1", Status: "completed", Presentation: daemon.Presentation{StatusLabel: "Completed"}, Text: "Excerptable answer", EvidenceLinks: []daemon.FinalResponseEvidenceLink{{Kind: "context_packet", ID: "ctx_1"}}}, nil
 	})
 
 	showOut, err := h.execute("final-response", "show", "--run-id", "run_1")
@@ -27,6 +27,9 @@ func TestFinalResponseShowAndExportUseArtifactTextOnly(t *testing.T) {
 	}
 	if !strings.Contains(showOut, "Excerptable answer") || !strings.Contains(showOut, "evidence=context_packet:ctx_1") {
 		t.Fatalf("show output = %q, want text and evidence", showOut)
+	}
+	if !strings.Contains(showOut, "final_response\tid=fr_1\trun=run_1\tstatus=Completed\n") {
+		t.Fatalf("show output = %q, want stable status key", showOut)
 	}
 
 	exportOut, err := h.execute("final-response", "export", "--run-id", "run_1")

@@ -25,7 +25,7 @@ func TestFanoutWorkerWorkspaceEventsAreSoleWritePathForFanoutMembers(t *testing.
 	}
 	member := globaldb.FanoutMember{FanoutMemberID: "fg-proj-m1", FanoutGroupID: "fg-proj", WorkspaceID: "ws-1", WorkerSessionID: "worker-proj-run", TargetProfileID: "worker-profile", RequestAgentMessageID: "request-1", Status: "running"}
 
-	if err := appendFanoutWorkerWorkspaceEvent(ctx, store, member, workspaceEventWorkerStarted, "run-1", "request-1", "", false); err != nil {
+	if err := appendFanoutWorkerWorkspaceEvent(ctx, store, member, globaldb.WorkspaceEventWorkerStarted, "run-1", "request-1", "", false); err != nil {
 		t.Fatalf("appendFanoutWorkerWorkspaceEvent started returned error: %v", err)
 	}
 	stored, err := store.ListFanoutMembers(ctx, "fg-proj")
@@ -36,7 +36,7 @@ func TestFanoutWorkerWorkspaceEventsAreSoleWritePathForFanoutMembers(t *testing.
 		t.Fatalf("stored members after started event = %#v, want event append to materialize the running member", stored)
 	}
 
-	if err := appendFanoutWorkerWorkspaceEvent(ctx, store, member, workspaceEventWorkerCompleted, "worker-proj-run", "reply-1", "fr-proj", false); err != nil {
+	if err := appendFanoutWorkerWorkspaceEvent(ctx, store, member, globaldb.WorkspaceEventWorkerCompleted, "worker-proj-run", "reply-1", "fr-proj", false); err != nil {
 		t.Fatalf("appendFanoutWorkerWorkspaceEvent completed returned error: %v", err)
 	}
 	got, err := store.GetFanoutMemberByWorkerSession(ctx, "worker-proj-run")
@@ -45,6 +45,33 @@ func TestFanoutWorkerWorkspaceEventsAreSoleWritePathForFanoutMembers(t *testing.
 	}
 	if got.Status != "completed" || got.ReplyAgentMessageID != "reply-1" || got.FinalResponseID != "fr-proj" || got.RequestAgentMessageID != "request-1" {
 		t.Fatalf("member after completed event = %#v, want terminal state materialized with preserved request linkage", got)
+	}
+}
+
+func TestCompletedFanoutWorkerEventDoesNotDefaultReplyToRequest(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	if err := store.CreateFanoutGroup(ctx, globaldb.FanoutGroup{FanoutGroupID: "fg-no-reply", WorkspaceID: "ws-1", SourceSessionID: "run-1", SourceAgentID: "agent-1", RequestAgentMessageID: "request-root", Body: "fan out"}); err != nil {
+		t.Fatalf("CreateFanoutGroup returned error: %v", err)
+	}
+	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "worker-profile", WorkspaceID: "ws-1", Name: "worker", Harness: "codex"}); err != nil {
+		t.Fatalf("CreateHarnessSessionConfig worker returned error: %v", err)
+	}
+	if err := store.CreateHarnessSession(ctx, globaldb.HarnessSession{SessionID: "worker-no-reply-run", WorkspaceID: "ws-1", AgentID: "worker-profile", Harness: "codex", Status: "running", Usage: globaldb.HarnessSessionUsageEphemeral, SourceSessionID: "run-1", SourceAgentID: "agent-1", CWD: t.TempDir()}); err != nil {
+		t.Fatalf("CreateHarnessSession worker returned error: %v", err)
+	}
+	member := globaldb.FanoutMember{FanoutMemberID: "fg-no-reply-m1", FanoutGroupID: "fg-no-reply", WorkspaceID: "ws-1", WorkerSessionID: "worker-no-reply-run", TargetProfileID: "worker-profile", RequestAgentMessageID: "request-no-reply", Status: "running"}
+
+	if err := appendFanoutWorkerWorkspaceEvent(ctx, store, member, globaldb.WorkspaceEventWorkerCompleted, "worker-no-reply-run", "", "fr-no-reply", false); err != nil {
+		t.Fatalf("appendFanoutWorkerWorkspaceEvent completed returned error: %v", err)
+	}
+	got, err := store.GetFanoutMemberByWorkerSession(ctx, "worker-no-reply-run")
+	if err != nil {
+		t.Fatalf("GetFanoutMemberByWorkerSession returned error: %v", err)
+	}
+	if got.ReplyAgentMessageID != "" || got.RequestAgentMessageID != "request-no-reply" {
+		t.Fatalf("member after completed event = %#v, want empty reply id and preserved request linkage", got)
 	}
 }
 
@@ -60,7 +87,7 @@ func TestFanoutWorkerEventAppendLeavesNothingBehindWhenProjectionFails(t *testin
 	}
 	member := globaldb.FanoutMember{FanoutMemberID: "fg-missing-m1", FanoutGroupID: "fg-missing", WorkspaceID: "ws-1", WorkerSessionID: "worker-orphan-run", TargetProfileID: "agent-1", Status: "running"}
 
-	if err := appendFanoutWorkerWorkspaceEvent(ctx, store, member, workspaceEventWorkerCompleted, "worker-orphan-run", "reply-1", "fr-orphan", false); err == nil {
+	if err := appendFanoutWorkerWorkspaceEvent(ctx, store, member, globaldb.WorkspaceEventWorkerCompleted, "worker-orphan-run", "reply-1", "fr-orphan", false); err == nil {
 		t.Fatal("appendFanoutWorkerWorkspaceEvent with missing fanout group returned nil error")
 	}
 	events, err := store.ListWorkspaceEventsAfterSequence(ctx, "ws-1", 0, 50)
@@ -135,16 +162,16 @@ func TestFanoutMemberRebuildFromWorkspaceEventsMatchesMaterializedRows(t *testin
 	if err := store.CreateHarnessSessionConfig(ctx, globaldb.HarnessSessionConfig{AgentID: "worker-profile", WorkspaceID: "ws-1", Name: "worker", Harness: "codex"}); err != nil {
 		t.Fatalf("CreateHarnessSessionConfig worker returned error: %v", err)
 	}
-	for i, terminal := range []string{workspaceEventWorkerCompleted, workspaceEventWorkerFailed} {
+	for i, terminal := range []string{globaldb.WorkspaceEventWorkerCompleted, globaldb.WorkspaceEventWorkerFailed} {
 		workerSessionID := "worker-rebuild-" + string(rune('a'+i))
 		if err := store.CreateHarnessSession(ctx, globaldb.HarnessSession{SessionID: workerSessionID, WorkspaceID: "ws-1", AgentID: "worker-profile", Harness: "codex", Status: "running", Usage: globaldb.HarnessSessionUsageEphemeral, SourceSessionID: "run-1", SourceAgentID: "agent-1", CWD: t.TempDir()}); err != nil {
 			t.Fatalf("CreateHarnessSession %s returned error: %v", workerSessionID, err)
 		}
 		member := globaldb.FanoutMember{FanoutMemberID: "fg-rebuild-m" + workerSessionID, FanoutGroupID: "fg-rebuild", WorkspaceID: "ws-1", WorkerSessionID: workerSessionID, TargetProfileID: "worker-profile", RequestAgentMessageID: "request-" + workerSessionID, Status: "running"}
-		if err := appendFanoutWorkerWorkspaceEvent(ctx, store, member, workspaceEventWorkerStarted, "run-1", member.RequestAgentMessageID, "", false); err != nil {
+		if err := appendFanoutWorkerWorkspaceEvent(ctx, store, member, globaldb.WorkspaceEventWorkerStarted, "run-1", member.RequestAgentMessageID, "", false); err != nil {
 			t.Fatalf("appendFanoutWorkerWorkspaceEvent started returned error: %v", err)
 		}
-		if err := appendFanoutWorkerWorkspaceEvent(ctx, store, member, terminal, workerSessionID, "reply-"+workerSessionID, "fr-"+workerSessionID, terminal == workspaceEventWorkerFailed); err != nil {
+		if err := appendFanoutWorkerWorkspaceEvent(ctx, store, member, terminal, workerSessionID, "reply-"+workerSessionID, "fr-"+workerSessionID, terminal == globaldb.WorkspaceEventWorkerFailed); err != nil {
 			t.Fatalf("appendFanoutWorkerWorkspaceEvent terminal returned error: %v", err)
 		}
 	}

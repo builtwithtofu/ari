@@ -81,7 +81,7 @@ func TestDaemonStatusAndStopOverRPC(t *testing.T) {
 	}
 }
 
-func TestDaemonStartDoesNotStartOrchestrationRuntimeWhenSocketBindFails(t *testing.T) {
+func TestDaemonStartDoesNotStartOrchestrationServiceWhenSocketBindFails(t *testing.T) {
 	stubBootstrap(t)
 
 	socketPath := testSocketPath(t)
@@ -95,7 +95,7 @@ func TestDaemonStartDoesNotStartOrchestrationRuntimeWhenSocketBindFails(t *testi
 	pidPath := filepath.Join(t.TempDir(), "daemon.pid")
 	d := New(socketPath, dbPath, pidPath, "defaults", "defaults", "test-version")
 	var runtimeStarted atomic.Bool
-	d.startWorkspaceOrchestrationRuntimeForTest = func(*globaldb.Store) {
+	d.startWorkspaceOrchestrationServiceForTest = func(*globaldb.Store) {
 		runtimeStarted.Store(true)
 	}
 
@@ -104,7 +104,7 @@ func TestDaemonStartDoesNotStartOrchestrationRuntimeWhenSocketBindFails(t *testi
 		t.Fatalf("Start error = %v, want socket already in use", err)
 	}
 	if runtimeStarted.Load() {
-		t.Fatal("workspace orchestration runtime started before socket bind succeeded")
+		t.Fatal("workspace orchestration service started before socket bind succeeded")
 	}
 }
 
@@ -524,7 +524,7 @@ func tryDaemonMethod(ctx context.Context, socketPath, method string, params any,
 
 func testSocketPath(t *testing.T) string {
 	t.Helper()
-	return testutil.SocketPath(t)
+	return testutil.UnixSocketPath(t)
 }
 
 func stubBootstrap(t *testing.T) {

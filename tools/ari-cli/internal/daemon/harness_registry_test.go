@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -127,11 +128,41 @@ func TestHarnessRegistryStoresObservationDeliveryOnlyDescriptor(t *testing.T) {
 
 func TestDefaultHarnessRegistryProvidesProviderAuthDescriptors(t *testing.T) {
 	registry := NewDefaultHarnessRegistry()
-	for _, harness := range []string{HarnessNameClaude, HarnessNameCodex, HarnessNameOpenCode} {
+	for _, harness := range []string{HarnessNameClaude, HarnessNameCodex, HarnessNameOpenCode, HarnessNameGrok} {
 		descriptor, ok := registry.Descriptor(harness)
-		if !ok || descriptor.Auth.StatusCheck != HarnessAuthSupportSupported || descriptor.Auth.CredentialOwner != HarnessCredentialOwnerProvider {
+		if !ok || descriptor.Auth.StatusCheck == HarnessAuthSupportUnsupported || descriptor.Auth.CredentialOwner != HarnessCredentialOwnerProvider {
 			t.Fatalf("%s descriptor = %#v ok=%v, want provider auth descriptor", harness, descriptor, ok)
 		}
+	}
+}
+
+func TestHarnessRegistryReplaceForTestClearsDescriptorWhenOmitted(t *testing.T) {
+	registry := NewHarnessRegistry()
+	descriptor := HarnessAdapterDescriptor{Name: "replaceable", Auth: HarnessAuthDescriptor{StatusCheck: HarnessAuthSupportSupported}}
+	factory := func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return newRegistryDescriptorHarness(descriptor), nil
+	}
+	if err := registry.Register("replaceable", factory, descriptor); err != nil {
+		t.Fatalf("Register returned error: %v", err)
+	}
+	if _, ok := registry.Descriptor("replaceable"); !ok {
+		t.Fatal("Descriptor missing before replace")
+	}
+	if err := registry.ReplaceForTest("replaceable", factory); err != nil {
+		t.Fatalf("ReplaceForTest returned error: %v", err)
+	}
+	if got, ok := registry.Descriptor("replaceable"); ok {
+		t.Fatalf("Descriptor after replace = %#v, want cleared", got)
+	}
+}
+
+func TestAdapterLifecycleStopFailsWhenAdapterDoesNotImplementStop(t *testing.T) {
+	lifecycle := newAdapterLifecycle[struct{}]("test-harness")
+	if err := lifecycle.Stop(context.Background(), "run-1"); err == nil || !strings.Contains(err.Error(), "does not implement stop") {
+		t.Fatalf("Stop error = %v, want explicit unsupported stop", err)
 	}
 }
 

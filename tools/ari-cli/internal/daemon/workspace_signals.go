@@ -31,17 +31,13 @@ func (d *Daemon) registerWorkspaceSignalMethods(registry *rpc.MethodRegistry, st
 		Name:        "workspace.signals.send",
 		Description: "Send a fire-and-forget workspace signal",
 		Handler: func(ctx context.Context, req WorkspaceSignalSendRequest) (WorkspaceSignalResponse, error) {
-			producerType := req.ProducerType
-			if producerType == "" {
-				producerType = "client"
-			}
 			workspaceID := strings.TrimSpace(req.WorkspaceID)
 			targetType := strings.TrimSpace(req.TargetType)
 			targetID := strings.TrimSpace(req.TargetID)
 			if err := validateWorkspaceSignalTarget(ctx, store, workspaceID, targetType, targetID); err != nil {
 				return WorkspaceSignalResponse{}, err
 			}
-			event, err := store.AppendWorkspaceEvent(ctx, globaldb.WorkspaceEvent{EventID: req.EventID, WorkspaceID: workspaceID, EventType: globaldb.WorkspaceEventSignalSent, SubjectType: targetType, SubjectID: targetID, ProducerType: producerType, ProducerID: req.ProducerID, CorrelationID: req.CorrelationID, CausationID: req.CausationID, PayloadJSON: req.PayloadJSON, AttentionRequired: true})
+			event, err := store.AppendWorkspaceEvent(ctx, globaldb.NewSignalWorkspaceEvent(globaldb.SignalWorkspaceEventParams{EventID: req.EventID, WorkspaceID: workspaceID, TargetType: targetType, TargetID: targetID, ProducerType: req.ProducerType, ProducerID: req.ProducerID, CorrelationID: req.CorrelationID, CausationID: req.CausationID, PayloadJSON: req.PayloadJSON}))
 			if err != nil {
 				return WorkspaceSignalResponse{}, workspaceEventRPCError(err)
 			}
@@ -74,19 +70,19 @@ func validateWorkspaceSignalTarget(ctx context.Context, store *globaldb.Store, w
 	}
 
 	switch targetType {
-	case "fanout_group":
+	case globaldb.WorkspaceEventSubjectFanoutGroup:
 		group, err := store.GetFanoutGroup(ctx, targetID)
 		if err != nil {
 			return resourceNotFound(err)
 		}
 		return scopeMismatch(group.WorkspaceID)
-	case "harness_session":
+	case globaldb.WorkspaceEventSubjectHarnessSession:
 		session, err := store.GetHarnessSession(ctx, targetID)
 		if err != nil {
 			return resourceNotFound(err)
 		}
 		return scopeMismatch(session.WorkspaceID)
-	case "event_subscription", "subscription":
+	case globaldb.WorkspaceEventSubjectEventSubscription, globaldb.WorkspaceEventSubjectSubscription:
 		subscription, err := store.GetEventSubscription(ctx, targetID)
 		if err != nil {
 			return resourceNotFound(err)

@@ -27,8 +27,8 @@ func TestWorkspaceTimerRPCCreateAndRuntimeFireProducesWorkspaceEvent(t *testing.
 		t.Fatalf("workspace.timers.create = %#v, want scheduled timer-1", created)
 	}
 
-	runtime := newWorkspaceOrchestrationRuntime(store, &recordingWorkspaceDeliveryDispatcher{})
-	if err := runtime.runDueOnce(ctx, time.Now().UTC()); err != nil {
+	service := newWorkspaceOrchestrationService(store, &recordingWorkspaceDeliveryDispatcher{})
+	if err := service.runDueOnce(ctx, time.Now().UTC()); err != nil {
 		t.Fatalf("runDueOnce returned error: %v", err)
 	}
 	stored := callMethod[WorkspaceTimerResponse](t, registry, "workspace.timers.get", WorkspaceTimerGetRequest{TimerID: "timer-1"})
@@ -58,8 +58,8 @@ func TestWorkspaceTimerRPCCancelPreventsRuntimeFire(t *testing.T) {
 	if canceled.Status != "canceled" {
 		t.Fatalf("workspace.timers.cancel = %#v, want canceled", canceled)
 	}
-	runtime := newWorkspaceOrchestrationRuntime(store, &recordingWorkspaceDeliveryDispatcher{})
-	if err := runtime.runDueOnce(ctx, fireAt.Add(time.Hour)); err != nil {
+	service := newWorkspaceOrchestrationService(store, &recordingWorkspaceDeliveryDispatcher{})
+	if err := service.runDueOnce(ctx, fireAt.Add(time.Hour)); err != nil {
 		t.Fatalf("runDueOnce returned error: %v", err)
 	}
 	stored := callMethod[WorkspaceTimerResponse](t, registry, "workspace.timers.get", WorkspaceTimerGetRequest{TimerID: "timer-cancel"})

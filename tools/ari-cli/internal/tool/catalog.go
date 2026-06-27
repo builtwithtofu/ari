@@ -423,6 +423,9 @@ func ScopedEventSubscription(ctx context.Context, store *globaldb.Store, scope S
 	}
 	subscription, err := store.GetEventSubscription(ctx, subscriptionID)
 	if err != nil {
+		if errors.Is(err, globaldb.ErrNotFound) {
+			return globaldb.EventSubscription{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "subscription_not_found", "subscription_id": subscriptionID})
+		}
 		return globaldb.EventSubscription{}, err
 	}
 	if subscription.WorkspaceID != strings.TrimSpace(scope.WorkspaceID) {
@@ -442,6 +445,9 @@ func ScopedWorkspaceTimer(ctx context.Context, store *globaldb.Store, scope Scop
 	}
 	timer, err := store.GetWorkspaceTimer(ctx, timerID)
 	if err != nil {
+		if errors.Is(err, globaldb.ErrNotFound) {
+			return globaldb.WorkspaceTimer{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "timer_not_found", "timer_id": timerID})
+		}
 		return globaldb.WorkspaceTimer{}, err
 	}
 	if timer.WorkspaceID != strings.TrimSpace(scope.WorkspaceID) {
@@ -464,6 +470,9 @@ func ScopedWorkspaceDelivery(ctx context.Context, store *globaldb.Store, scope S
 	}
 	delivery, err := store.GetPendingDelivery(ctx, deliveryID)
 	if err != nil {
+		if errors.Is(err, globaldb.ErrNotFound) {
+			return globaldb.PendingDelivery{}, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "delivery_not_found", "delivery_id": deliveryID})
+		}
 		return globaldb.PendingDelivery{}, err
 	}
 	if delivery.WorkspaceID != strings.TrimSpace(scope.WorkspaceID) {
@@ -487,7 +496,7 @@ func PendingDeliveryVisibleToScope(ctx context.Context, store *globaldb.Store, s
 	subscription, err := store.GetEventSubscription(ctx, subscriptionID)
 	if err != nil {
 		if errors.Is(err, globaldb.ErrNotFound) {
-			return true, nil
+			return false, nil
 		}
 		return false, err
 	}
@@ -706,7 +715,7 @@ func OptionalStringSliceValue(values map[string]any, key string) ([]string, erro
 			}
 			return result, nil
 		}
-		return nil, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "invalid_string_list", "field": key, "start_invoked": false})
+		return nil, rpc.NewHandlerError(rpc.InvalidParams, globaldb.ErrInvalidInput.Error(), map[string]any{"reason": "invalid_string_list", "field": key})
 	}
 	result := make([]string, 0, len(raw))
 	for _, item := range raw {

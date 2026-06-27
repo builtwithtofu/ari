@@ -47,15 +47,15 @@ Current workspace-control projection path:
 - `workspace.proofs` -> derive harness-agnostic proof summaries from command records and retained output
 - `workspace.timeline` -> map command/harness/proof output into stable timeline items with explicit `source_kind`, `kind`, Ari-facing status/copy, and safe source detail
 - `context.project` -> build an inspectable context packet from task-like request fields, command definitions, diff summary, proof summaries, and omissions
-- `agent.run` -> start a harness-backed run from a context packet through Ari's normalized harness-call seam; Ari assigns the run identity used by timelines/activity, while provider-specific IDs remain metadata for adapter resume/debug paths
-- `agent.profile.run` -> start a run through a named Ari profile, resolving profile metadata to a harness behind the same normalized harness-call seam
+- `session.start` -> start a harness session from a context packet through Ari's normalized harness-call seam; Ari assigns the session identity used by timelines/activity, while provider-specific IDs remain metadata for adapter resume/debug paths
+- `session.start` with a named profile -> start a harness session through Ari profile metadata, resolving the profile to a harness behind the same normalized harness-call seam
 
 ## Harness Call Boundary
 
 Executor-backed runs cross an Ari-owned harness-call contract before reaching a concrete adapter.
 
 - The daemon creates Ari run/session IDs before adapter execution.
-- The daemon resolves normal user-facing profile calls through caller/config-provided profile metadata first. Raw/native harness selection is an explicit advanced/debug path, not the normal product vocabulary. Ari does not ship opinionated default profiles in this slice. `agent.profile.run` can accept an inline profile definition or top-level run defaults such as preferred harness/model/prompt so dynamic profiles do not need daemon-owned storage.
+- The daemon resolves normal user-facing profile calls through caller/config-provided profile metadata first. Raw/native harness selection is an explicit advanced/debug path, not the normal product vocabulary. Ari does not ship opinionated default profiles in this slice. `session.start` can accept profile metadata or top-level run defaults such as preferred harness/model/prompt so dynamic profiles do not need daemon-owned storage.
 - Adapters declare capabilities before `Start`; missing required capabilities fail before side effects.
 - Fake is test-only. PTY is a dev/local-command harness while Codex, Claude Code, and OpenCode adapters are added behind the same boundary.
 - Expected profile, harness, unsupported-capability, and unavailable-harness failures return machine-readable JSON-RPC error data and must not start an adapter.

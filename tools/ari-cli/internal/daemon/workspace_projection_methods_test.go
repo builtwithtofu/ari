@@ -377,6 +377,9 @@ func TestWorkspaceStatusAttentionIncludesAuthRequired(t *testing.T) {
 	if resp.Attention.Level != "auth" {
 		t.Fatalf("attention level = %q, want auth", resp.Attention.Level)
 	}
+	if resp.Presentation.Status != PresentationStatusNeedsAuth || resp.Presentation.StatusLabel != "Needs auth" {
+		t.Fatalf("workspace presentation = %#v, want needs auth", resp.Presentation)
+	}
 	if len(resp.Attention.Items) != 1 {
 		t.Fatalf("attention items len = %d, want 1", len(resp.Attention.Items))
 	}
@@ -471,6 +474,9 @@ func TestWorkspaceStatusIgnoresUnreferencedAuthSlots(t *testing.T) {
 	resp := callMethod[WorkspaceStatusResponse](t, registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-1"})
 	if resp.Attention.Level != "none" || len(resp.Attention.Items) != 0 {
 		t.Fatalf("attention = %#v, want no workspace auth attention from unreferenced slot", resp.Attention)
+	}
+	if resp.Presentation.Status != PresentationStatusReady || resp.Presentation.StatusLabel != "Ready" {
+		t.Fatalf("workspace presentation = %#v, want ready for no attention", resp.Presentation)
 	}
 }
 

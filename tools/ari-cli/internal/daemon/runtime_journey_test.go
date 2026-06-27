@@ -227,7 +227,7 @@ func TestJourneyStickyFlowFanoutSuspendResumeAndInbox(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListWorkspaceEventsAfterSequence returned error: %v", err)
 	}
-	assertSessionWorkspaceEvent(t, events, "fg-journey-c"+stableRuntimeAgentIDSegment("slow-worker")+"-run", workspaceEventSessionStopped, false)
+	assertSessionWorkspaceEvent(t, events, "fg-journey-c"+stableRuntimeAgentIDSegment("slow-worker")+"-run", globaldb.WorkspaceEventSessionStopped, false)
 	status = callMethod[WorkspaceStatusResponse](t, j.registry, "workspace.status", WorkspaceStatusRequest{WorkspaceID: "ws-1"})
 	assertProjectedFanoutMemberStatuses(t, status.FanoutMembers, map[string]string{"slow-worker": "stopped"})
 	assertInboxKinds(t, status.Inbox, map[string]string{"fg-journey-mslow-worker": "worker_stopped"})
@@ -348,10 +348,10 @@ func TestJourneyWorkspaceSuspendDoesNotFailContextCancelledFanoutWorker(t *testi
 	if err != nil {
 		t.Fatalf("ListWorkspaceEventsAfterSequence returned error: %v", err)
 	}
-	if hasSessionWorkspaceEvent(events, workerSessionID, workspaceEventSessionFailed) {
+	if hasSessionWorkspaceEvent(events, workerSessionID, globaldb.WorkspaceEventSessionFailed) {
 		t.Fatalf("workspace events = %#v, want no failed event for intentionally stopped worker", events)
 	}
-	assertSessionWorkspaceEvent(t, events, workerSessionID, workspaceEventSessionStopped, false)
+	assertSessionWorkspaceEvent(t, events, workerSessionID, globaldb.WorkspaceEventSessionStopped, false)
 }
 
 // assertSessionWorkspaceEvent asserts the session's terminal fact in
@@ -362,7 +362,7 @@ func assertSessionWorkspaceEvent(t *testing.T, events []globaldb.WorkspaceEvent,
 		if event.SubjectID != sessionID || event.EventType != eventType {
 			continue
 		}
-		if event.SubjectType != workspaceEventSubjectHarnessSession || event.AttentionRequired != attentionRequired {
+		if event.SubjectType != globaldb.WorkspaceEventSubjectHarnessSession || event.AttentionRequired != attentionRequired {
 			t.Fatalf("workspace event for %s = %#v, want harness_session subject attention=%v", sessionID, event, attentionRequired)
 		}
 		return

@@ -238,7 +238,13 @@ func (d *Daemon) setHarnessFactoryForTest(name string, factory HarnessFactory) {
 	if d.harnessRegistry == nil {
 		d.harnessRegistry = NewHarnessRegistry()
 	}
-	if err := d.harnessRegistry.ReplaceForTest(name, factory); err != nil {
+	var err error
+	if descriptor, ok := d.harnessRegistry.Descriptor(name); ok {
+		err = d.harnessRegistry.ReplaceForTest(name, factory, descriptor)
+	} else {
+		err = d.harnessRegistry.ReplaceForTest(name, factory)
+	}
+	if err != nil {
 		panic(fmt.Sprintf("set test harness factory: %v", err))
 	}
 }
@@ -751,19 +757,26 @@ func (d *Daemon) appendExecutorItems(sessionID string, items []TimelineItem) {
 	if d == nil || strings.TrimSpace(sessionID) == "" || len(items) == 0 {
 		return
 	}
+	normalized := presentedTimelineItemsCopy(items)
 	d.executorMu.Lock()
-	for i := range items {
-		items[i] = presentTimelineItem(items[i])
-	}
-	d.executorItems[sessionID] = append(d.executorItems[sessionID], items...)
-	d.updateExecutorRunStatusLocked(sessionID, items)
+	d.executorItems[sessionID] = append(d.executorItems[sessionID], normalized...)
+	d.updateExecutorRunStatusLocked(sessionID, normalized)
 	d.executorMu.Unlock()
+}
+
+func presentedTimelineItemsCopy(items []TimelineItem) []TimelineItem {
+	normalized := append([]TimelineItem(nil), items...)
+	for i := range normalized {
+		normalized[i] = presentTimelineItem(normalized[i])
+	}
+	return normalized
 }
 
 func (d *Daemon) appendExecutorItemsToStore(ctx context.Context, store *globaldb.Store) func(string, []TimelineItem) {
 	return func(sessionID string, items []TimelineItem) {
-		d.appendExecutorItems(sessionID, items)
-		if store == nil || strings.TrimSpace(sessionID) == "" || len(items) == 0 {
+		normalized := presentedTimelineItemsCopy(items)
+		d.appendExecutorItems(sessionID, normalized)
+		if store == nil || strings.TrimSpace(sessionID) == "" || len(normalized) == 0 {
 			return
 		}
 		emitCtx := ctx
@@ -782,7 +795,7 @@ func (d *Daemon) appendExecutorItemsToStore(ctx context.Context, store *globaldb
 		} else {
 			run = HarnessSession{HarnessSessionID: stored.SessionID, SessionID: stored.SessionID, WorkspaceID: stored.WorkspaceID, Executor: stored.Harness, Status: stored.Status}
 		}
-		if err := appendHarnessRuntimeWorkspaceEvents(emitCtx, store, run, harnessRuntimeEventsFromItems(run, items)); err != nil {
+		if err := appendHarnessRuntimeWorkspaceEvents(emitCtx, store, run, harnessRuntimeEventsFromItems(run, normalized)); err != nil {
 			log.Printf("append executor runtime workspace events failed: session_id=%s error=%v", sessionID, err)
 		}
 	}

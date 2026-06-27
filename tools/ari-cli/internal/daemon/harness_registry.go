@@ -84,6 +84,8 @@ func (r *HarnessRegistry) Register(name string, factory HarnessFactory, descript
 	r.factories[name] = factory
 	if len(descriptors) > 0 {
 		r.descriptors[name] = normalizeHarnessDescriptor(name, descriptors[0])
+	} else {
+		delete(r.descriptors, name)
 	}
 	return nil
 }
@@ -108,6 +110,8 @@ func (r *HarnessRegistry) ReplaceForTest(name string, factory HarnessFactory, de
 	r.factories[name] = factory
 	if len(descriptors) > 0 {
 		r.descriptors[name] = normalizeHarnessDescriptor(name, descriptors[0])
+	} else {
+		delete(r.descriptors, name)
 	}
 	return nil
 }

@@ -539,6 +539,41 @@ func TestAuthStatusPersistsProviderReadinessForStoredSlot(t *testing.T) {
 	}
 }
 
+func TestAuthStatusFallbacksIncludePresentation(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.setHarnessFactoryForTest("factory-error", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return nil, errors.New("factory unavailable")
+	})
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	for _, slot := range []globaldb.AuthSlot{
+		{AuthSlotID: "slot-missing-harness", Harness: "missing-harness", Label: "Missing", Status: "unknown"},
+		{AuthSlotID: "slot-factory-error", Harness: "factory-error", Label: "Factory", Status: "unknown"},
+	} {
+		if err := store.UpsertAuthSlot(context.Background(), slot); err != nil {
+			t.Fatalf("UpsertAuthSlot(%s) returned error: %v", slot.AuthSlotID, err)
+		}
+	}
+
+	resp := callMethod[HarnessAuthStatusResponse](t, registry, "auth.status", HarnessAuthStatusRequest{})
+	seen := map[string]HarnessAuthStatus{}
+	for _, status := range resp.Statuses {
+		seen[status.AuthSlotID] = status
+	}
+	for _, id := range []string{"slot-missing-harness", "slot-factory-error"} {
+		status := seen[id]
+		if status.Presentation.Status == "" || status.Presentation.StatusLabel == "" || status.Presentation.Source == nil {
+			t.Fatalf("status %s = %#v, want normalized presentation", id, status)
+		}
+	}
+}
+
 func TestAuthStartUsesStoredSlotAndPersistsInProgress(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
@@ -1876,12 +1911,13 @@ func TestAuthDiagnoseUsesAdapterDescriptor(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	descriptor := HarnessAdapterDescriptor{Name: HarnessNameCodex, Auth: HarnessAuthDescriptor{StatusCheck: HarnessAuthSupportSupported, NamedSlotExecution: HarnessAuthSupportUnsupported, CredentialOwner: HarnessCredentialOwnerProvider, RiskLabels: []string{"provider_owned"}}}
 	if err := d.harnessRegistry.ReplaceForTest(HarnessNameCodex, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
-		return &capturingHarness{name: HarnessNameCodex, auth: HarnessAuthDescriptor{StatusCheck: HarnessAuthSupportSupported, NamedSlotExecution: HarnessAuthSupportUnsupported, CredentialOwner: HarnessCredentialOwnerProvider, RiskLabels: []string{"provider_owned"}}, authStatuses: map[string]HarnessAuthState{"codex-default": HarnessAuthRequired}}, nil
-	}); err != nil {
+		return nil, errors.New("factory unavailable")
+	}, descriptor); err != nil {
 		t.Fatalf("ReplaceForTest returned error: %v", err)
 	}
 	if err := d.registerMethods(registry, store); err != nil {
@@ -1898,8 +1934,44 @@ func TestAuthDiagnoseUsesAdapterDescriptor(t *testing.T) {
 	if codex.Status != HarnessAuthRequired || codex.NextStep == "" {
 		t.Fatalf("codex diagnostic = %#v, want auth-required fallback", codex)
 	}
+	if codex.Installed {
+		t.Fatalf("codex diagnostic = %#v, want factory failure to mark installed false", codex)
+	}
 	if codex.Auth.NamedSlotExecution != HarnessAuthSupportUnsupported || !stringsContain(codex.Auth.RiskLabels, "provider_owned") {
 		t.Fatalf("codex auth = %#v, want registry descriptor without constructing executor", codex.Auth)
+	}
+}
+
+func TestAuthDiagnoseMarksUnresolvedHarnessNotInstalled(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	d.harnessRegistry = NewHarnessRegistry()
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+
+	resp := callMethod[HarnessAuthDiagnoseResponse](t, registry, "auth.diagnose", HarnessAuthDiagnoseRequest{})
+	if len(resp.Harnesses) == 0 {
+		t.Fatal("auth.diagnose returned no harnesses")
+	}
+	for _, diagnostic := range resp.Harnesses {
+		if diagnostic.Installed {
+			t.Fatalf("diagnostic = %#v, want unresolved harnesses marked not installed", diagnostic)
+		}
+	}
+}
+
+func TestAppendExecutorItemsDoesNotMutateCallerSlice(t *testing.T) {
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
+	items := []TimelineItem{{ID: "run-1:item", WorkspaceID: "ws-1", Status: "completed"}}
+	d.appendExecutorItems("run-1", items)
+	if items[0].Presentation.Status != "" {
+		t.Fatalf("caller item mutated with presentation: %#v", items[0])
+	}
+	stored := d.executorTimelineItems("ws-1")
+	if len(stored) != 1 || stored[0].Presentation.StatusLabel != "Completed" {
+		t.Fatalf("stored items = %#v, want presented copy", stored)
 	}
 }
 

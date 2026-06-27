@@ -46,6 +46,25 @@ func TestFanoutWorkerWorkspaceEventContractRoundTrips(t *testing.T) {
 	}
 }
 
+func TestFanoutWorkerCompletedEventDoesNotInventReplyMessageID(t *testing.T) {
+	event := NewFanoutWorkerWorkspaceEvent(FanoutWorkerWorkspaceEventParams{WorkspaceID: "ws-1", EventType: WorkspaceEventWorkerCompleted, WorkerSessionID: "worker-1", ProducerID: "worker-1", FanoutGroupID: "fg-1", FanoutMemberID: "fm-1", RequestAgentMessageID: "request-1"})
+	payload := WorkspaceEventStringPayload(event.PayloadJSON)
+	if payload["reply_agent_message_id"] != "" {
+		t.Fatalf("reply_agent_message_id = %q, want blank when no reply/causation id was supplied", payload["reply_agent_message_id"])
+	}
+	if payload["source_session_id"] == "" {
+		t.Fatalf("source_session_id blank in payload %#v", payload)
+	}
+}
+
+func TestFanoutWorkerCompletedEventPreservesExplicitReplyMessageID(t *testing.T) {
+	event := NewFanoutWorkerWorkspaceEvent(FanoutWorkerWorkspaceEventParams{WorkspaceID: "ws-1", EventType: WorkspaceEventWorkerCompleted, WorkerSessionID: "worker-1", ProducerID: "worker-1", FanoutGroupID: "fg-1", FanoutMemberID: "fm-1", RequestAgentMessageID: "request-1", CausationID: "reply-1"})
+	payload := WorkspaceEventStringPayload(event.PayloadJSON)
+	if payload["reply_agent_message_id"] != "reply-1" {
+		t.Fatalf("reply_agent_message_id = %q, want explicit reply id", payload["reply_agent_message_id"])
+	}
+}
+
 func TestHarnessRuntimeWorkspaceEventContract(t *testing.T) {
 	createdAt := time.Date(2026, 6, 26, 12, 1, 0, 0, time.UTC)
 	event, err := NewHarnessRuntimeWorkspaceEvent(HarnessRuntimeWorkspaceEventParams{EventID: "hre-1", WorkspaceID: "ws-1", SessionID: "run-1", RootSessionID: "root-1", Kind: "error", Sequence: 7, Payload: json.RawMessage(`{"message":"boom"}`), RunID: "provider-run", ProviderKind: "provider-error", CreatedAt: createdAt})
@@ -62,6 +81,13 @@ func TestHarnessRuntimeWorkspaceEventContract(t *testing.T) {
 	ref := WorkspaceEventStringPayload(event.PayloadRefJSON)
 	if ref["kind"] != WorkspaceEventPayloadRefHarnessRuntimeEvent || ref["id"] != "hre-1" || ref["sequence"] != "7" {
 		t.Fatalf("harness runtime ref = %#v", ref)
+	}
+	decoded, ok := DecodeHarnessRuntimeWorkspaceEvent(event)
+	if !ok {
+		t.Fatalf("DecodeHarnessRuntimeWorkspaceEvent ok=false")
+	}
+	if decoded.HarnessEventID != "hre-1" || decoded.Kind != "error" || decoded.SessionID != "run-1" || decoded.RunID != "provider-run" || decoded.ProviderKind != "provider-error" || decoded.Sequence != 7 || string(decoded.Payload) != `{"message":"boom"}` {
+		t.Fatalf("decoded harness runtime event = %#v", decoded)
 	}
 
 	if _, err := NewHarnessRuntimeWorkspaceEvent(HarnessRuntimeWorkspaceEventParams{EventID: "bad", Kind: "debug", Payload: json.RawMessage(`{bad`)}); err == nil {

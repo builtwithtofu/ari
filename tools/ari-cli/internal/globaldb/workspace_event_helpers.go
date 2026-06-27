@@ -312,22 +312,27 @@ type FanoutWorkerWorkspaceEventParams struct {
 
 func NewFanoutWorkerWorkspaceEvent(params FanoutWorkerWorkspaceEventParams) WorkspaceEvent {
 	eventType := strings.TrimSpace(params.EventType)
-	causationID := strings.TrimSpace(params.CausationID)
+	explicitCausationID := strings.TrimSpace(params.CausationID)
+	causationID := explicitCausationID
 	requestID := strings.TrimSpace(params.RequestAgentMessageID)
-	if causationID == "" {
+	if causationID == "" && eventType != WorkspaceEventWorkerCompleted {
 		causationID = requestID
+	}
+	sourceSessionID := strings.TrimSpace(params.SourceSessionID)
+	if sourceSessionID == "" {
+		sourceSessionID = strings.TrimSpace(params.ProducerID)
 	}
 	payload := map[string]string{
 		"status":                   WorkerEventStatus(eventType),
 		"fanout_group_id":          strings.TrimSpace(params.FanoutGroupID),
 		"fanout_member_id":         strings.TrimSpace(params.FanoutMemberID),
-		"source_session_id":        strings.TrimSpace(params.SourceSessionID),
+		"source_session_id":        sourceSessionID,
 		"source_agent_id":          strings.TrimSpace(params.SourceAgentID),
 		"target_profile_id":        strings.TrimSpace(params.TargetProfileID),
 		"request_agent_message_id": requestID,
 	}
-	if eventType == WorkspaceEventWorkerCompleted {
-		payload["reply_agent_message_id"] = causationID
+	if eventType == WorkspaceEventWorkerCompleted && explicitCausationID != "" {
+		payload["reply_agent_message_id"] = explicitCausationID
 	}
 	return WorkspaceEvent{
 		WorkspaceID:       strings.TrimSpace(params.WorkspaceID),
@@ -719,13 +724,13 @@ func DecodeHarnessSessionWorkspaceEvent(event WorkspaceEvent) (DecodedHarnessSes
 }
 
 type DecodedHarnessRuntimeWorkspaceEvent struct {
-	HarnessEventID string
-	Kind           string
-	Sequence       int
-	SessionID      string
-	RunID          string
-	Payload        json.RawMessage
-	ProviderKind   string
+	HarnessEventID string          `json:"harness_event_id"`
+	Kind           string          `json:"kind"`
+	Sequence       int             `json:"sequence"`
+	SessionID      string          `json:"session_id"`
+	RunID          string          `json:"run_id"`
+	Payload        json.RawMessage `json:"payload"`
+	ProviderKind   string          `json:"provider_kind"`
 }
 
 func DecodeHarnessRuntimeWorkspaceEvent(event WorkspaceEvent) (DecodedHarnessRuntimeWorkspaceEvent, bool) {

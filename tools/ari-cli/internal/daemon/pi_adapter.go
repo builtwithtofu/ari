@@ -34,6 +34,12 @@ type PiExecutor struct {
 	options piExecutorOptions
 }
 
+func (e *PiExecutor) Stop(ctx context.Context, runID string) error {
+	_ = ctx
+	_ = runID
+	return nil
+}
+
 func NewPiExecutor(cwd string) *PiExecutor {
 	return newPiExecutor(piExecutorOptions{Executable: harnessExecutable("pi", EnvPiExecutable), Cwd: cwd, RunCommand: runPiCommand})
 }

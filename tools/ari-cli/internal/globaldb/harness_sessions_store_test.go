@@ -678,6 +678,17 @@ func TestAgentMessageResolvesTargetAgentFromTargetSession(t *testing.T) {
 	if dm.TargetAgentID != "agent-2" || dm.TargetSessionID != "run-2" || dm.DeliveredSessionID != "run-2" {
 		t.Fatalf("direct message = %#v, want target agent resolved from target session", dm)
 	}
+	events, err := store.ListWorkspaceEventsAfterSequence(ctx, "ws-1", 0, 10)
+	if err != nil {
+		t.Fatalf("ListWorkspaceEventsAfterSequence returned error: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("workspace events = %#v, want one message.sent", events)
+	}
+	payload := WorkspaceEventStringPayload(events[0].PayloadJSON)
+	if payload["target_agent_id"] != "agent-2" || payload["target_session_id"] != "run-2" {
+		t.Fatalf("message workspace event payload = %#v, want resolved target agent and session", payload)
+	}
 }
 
 func TestAgentMessageAppendsToExistingTargetRun(t *testing.T) {

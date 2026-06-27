@@ -168,6 +168,12 @@ type PTYExecutor struct {
 	sink    func(string, []TimelineItem)
 }
 
+func (e *PTYExecutor) Stop(ctx context.Context, runID string) error {
+	_ = ctx
+	_ = runID
+	return nil
+}
+
 func (e *PTYExecutor) Descriptor() HarnessAdapterDescriptor {
 	return HarnessAdapterDescriptor{Name: "pty", Capabilities: []HarnessCapability{HarnessCapabilityHarnessSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems}}
 }

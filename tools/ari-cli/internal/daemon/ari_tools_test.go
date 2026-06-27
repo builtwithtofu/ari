@@ -14,6 +14,7 @@ import (
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
+	aritool "github.com/builtwithtofu/ari/tools/ari-cli/internal/tool"
 )
 
 func TestAriToolSchemaExposesStarterToolsAndScopeMetadata(t *testing.T) {
@@ -261,6 +262,27 @@ func TestAriWorkspaceSignalAndTimerToolsMutateWorkspacePrimitives(t *testing.T) 
 	}
 }
 
+func TestAriWorkspaceTimerCreateScopesTargetSubscription(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	base := time.Date(2026, 6, 27, 13, 0, 0, 0, time.UTC)
+	if _, err := store.CreateEventSubscription(ctx, globaldb.EventSubscription{SubscriptionID: "sub-other-owner", WorkspaceID: "ws-1", OwnerSessionID: "other-run", FilterJSON: `{}`, CreatedAt: base, UpdatedAt: base}); err != nil {
+		t.Fatalf("CreateEventSubscription returned error: %v", err)
+	}
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	scope := AriToolScope{SourceRunID: "run-1", WorkspaceID: "ws-1", ProfileID: "agent-1", ProfileName: "executor", WithinDefaultScope: true}
+
+	err := callMethodError(registry, "ari.tool.call", AriToolCallRequest{Name: "ari.workspace.timers.create", Scope: scope, Input: map[string]any{"timer_id": "timer-cross-sub", "target_subscription_id": "sub-other-owner", "fire_at": base.Add(time.Hour).Format(time.RFC3339Nano)}})
+	if data := requireHandlerErrorData(t, err); data["reason"] != "subscription_scope_mismatch" {
+		t.Fatalf("timer create error data = %#v, want subscription_scope_mismatch", data)
+	}
+}
+
 func TestAriWorkspaceDeliveryToolsInspectScopedPendingDeliveries(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	ctx := context.Background()
@@ -303,6 +325,47 @@ func TestAriWorkspaceDeliveryToolsInspectScopedPendingDeliveries(t *testing.T) {
 	deliveries, ok := due.Output["deliveries"].([]map[string]any)
 	if !ok || len(deliveries) != 1 || deliveries[0]["delivery_id"] != deliveryID || deliveries[0]["subscription_id"] != "sub-delivery-tool" {
 		t.Fatalf("deliveries.list_due output = %#v, want scoped pending delivery", due.Output["deliveries"])
+	}
+}
+
+func TestAriWorkspaceScopedLookupMissesReturnHandlerErrors(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	registry := rpc.NewMethodRegistry()
+	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
+	if err := d.registerMethods(registry, store); err != nil {
+		t.Fatalf("registerMethods returned error: %v", err)
+	}
+	scope := AriToolScope{SourceRunID: "run-1", WorkspaceID: "ws-1", ProfileID: "agent-1", ProfileName: "executor", WithinDefaultScope: true}
+
+	for _, tc := range []struct {
+		name       string
+		tool       string
+		input      map[string]any
+		wantReason string
+	}{
+		{name: "subscription", tool: "ari.workspace.events.next", input: map[string]any{"subscription_id": "missing-sub"}, wantReason: "subscription_not_found"},
+		{name: "timer", tool: "ari.workspace.timers.get", input: map[string]any{"timer_id": "missing-timer"}, wantReason: "timer_not_found"},
+		{name: "delivery", tool: "ari.workspace.deliveries.get", input: map[string]any{"delivery_id": "missing-delivery"}, wantReason: "delivery_not_found"},
+	} {
+		err := callMethodError(registry, "ari.tool.call", AriToolCallRequest{Name: tc.tool, Scope: scope, Input: tc.input})
+		if data := requireHandlerErrorData(t, err); data["reason"] != tc.wantReason {
+			t.Fatalf("%s error data = %#v, want %s", tc.name, data, tc.wantReason)
+		}
+	}
+}
+
+func TestPendingDeliveryVisibilityFailsClosedWhenSubscriptionIsMissing(t *testing.T) {
+	store := newCommandMethodTestStore(t)
+	ctx := context.Background()
+	seedRunLogMessageMethodData(t, store, ctx)
+	visible, err := aritool.PendingDeliveryVisibleToScope(ctx, store, aritool.Scope{SourceRunID: "run-1", WorkspaceID: "ws-1"}, globaldb.PendingDelivery{DeliveryID: "pd-missing-sub", WorkspaceID: "ws-1", SubscriptionID: "missing-sub"})
+	if err != nil {
+		t.Fatalf("PendingDeliveryVisibleToScope returned error: %v", err)
+	}
+	if visible {
+		t.Fatal("PendingDeliveryVisibleToScope returned visible for missing subscription")
 	}
 }
 
@@ -779,7 +842,7 @@ func TestAriFanoutStatusAndInboxListToolsReadDurableWorkerOutcomes(t *testing.T)
 		if err := store.UpsertFinalResponse(ctx, globaldb.FinalResponse{FinalResponseID: worker.finalResponseID, HarnessSessionID: worker.workerSessionID, WorkspaceID: "ws-1", TaskID: "task-" + worker.profileID, ContextPacketID: "ctx-" + worker.profileID, ProfileID: worker.profileID, Status: "completed", Text: "answer"}); err != nil {
 			t.Fatalf("UpsertFinalResponse %s returned error: %v", worker.finalResponseID, err)
 		}
-		if err := appendFanoutWorkerWorkspaceEvent(ctx, store, member, workspaceEventWorkerCompleted, worker.workerSessionID, worker.replyID, worker.finalResponseID, false); err != nil {
+		if err := appendFanoutWorkerWorkspaceEvent(ctx, store, member, globaldb.WorkspaceEventWorkerCompleted, worker.workerSessionID, worker.replyID, worker.finalResponseID, false); err != nil {
 			t.Fatalf("appendFanoutWorkerWorkspaceEvent %s returned error: %v", worker.workerSessionID, err)
 		}
 	}
@@ -810,7 +873,7 @@ func TestAriFanoutStatusAndInboxListToolsReadDurableWorkerOutcomes(t *testing.T)
 		t.Fatalf("inbox items = %#v, want two structured worker outcome items", inbox.Output["items"])
 	}
 	for _, item := range items {
-		if item["kind"] != "worker_completed" || item["status"] != "unread" || item["fanout_group_id"] != "fg-read" || item["fanout_member_id"] == "" || item["worker_session_id"] == "" || item["final_response_id"] == "" || item["workspace_event_id"] == "" || item["event_type"] != workspaceEventWorkerCompleted || item["attention_required"] != false {
+		if item["kind"] != "worker_completed" || item["status"] != "unread" || item["fanout_group_id"] != "fg-read" || item["fanout_member_id"] == "" || item["worker_session_id"] == "" || item["final_response_id"] == "" || item["workspace_event_id"] == "" || item["event_type"] != globaldb.WorkspaceEventWorkerCompleted || item["attention_required"] != false {
 			t.Fatalf("inbox item = %#v, want unread evidence-linked worker_completed", item)
 		}
 	}
@@ -840,7 +903,7 @@ func TestAriFanoutStatusAndInboxListToolsReadDurableWorkerOutcomes(t *testing.T)
 	if err != nil {
 		t.Fatalf("GetFanoutMemberByWorkerSession returned error: %v", err)
 	}
-	if err := appendFanoutWorkerWorkspaceEvent(ctx, store, member, workspaceEventWorkerCompleted, readWorkerSessionID, "reply-after-read", readFinalResponseID, false); err != nil {
+	if err := appendFanoutWorkerWorkspaceEvent(ctx, store, member, globaldb.WorkspaceEventWorkerCompleted, readWorkerSessionID, "reply-after-read", readFinalResponseID, false); err != nil {
 		t.Fatalf("appendFanoutWorkerWorkspaceEvent after mark_read returned error: %v", err)
 	}
 	all := callMethod[AriToolCallResponse](t, registry, "ari.tool.call", AriToolCallRequest{Name: "ari.inbox.list", Scope: scope, Input: map[string]any{"source_session_id": "run-1"}})
@@ -868,10 +931,10 @@ func TestAriFanoutStatusReadsLatestWorkerStateFromWorkspaceEvents(t *testing.T) 
 		t.Fatalf("CreateFanoutGroup returned error: %v", err)
 	}
 	seedMember := globaldb.FanoutMember{FanoutMemberID: "fg-events-status-mworker", FanoutGroupID: "fg-events-status", WorkspaceID: "ws-1", WorkerSessionID: "worker-run-1", TargetProfileID: "worker-profile", RequestAgentMessageID: "request-worker", Status: "running"}
-	if err := appendFanoutWorkerWorkspaceEvent(ctx, store, seedMember, workspaceEventWorkerStarted, "run-1", "request-worker", "", false); err != nil {
+	if err := appendFanoutWorkerWorkspaceEvent(ctx, store, seedMember, globaldb.WorkspaceEventWorkerStarted, "run-1", "request-worker", "", false); err != nil {
 		t.Fatalf("appendFanoutWorkerWorkspaceEvent started returned error: %v", err)
 	}
-	if err := appendFanoutWorkerWorkspaceEvent(ctx, store, seedMember, workspaceEventWorkerCompleted, "worker-run-1", "reply-worker", "fr-worker", false); err != nil {
+	if err := appendFanoutWorkerWorkspaceEvent(ctx, store, seedMember, globaldb.WorkspaceEventWorkerCompleted, "worker-run-1", "reply-worker", "fr-worker", false); err != nil {
 		t.Fatalf("appendFanoutWorkerWorkspaceEvent completed returned error: %v", err)
 	}
 	registry := rpc.NewMethodRegistry()

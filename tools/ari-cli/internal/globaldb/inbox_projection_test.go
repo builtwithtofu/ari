@@ -101,3 +101,28 @@ func TestSignalInboxProjectionSkipsCrossWorkspaceResolvedTargets(t *testing.T) {
 		t.Fatalf("rebuilt items = %#v, want no cross-workspace signal inbox item", items)
 	}
 }
+
+func TestDeliveryFailureInboxProjectionSkipsCrossWorkspaceSubscription(t *testing.T) {
+	store := newGlobalDBTestStore(t, "delivery-cross-workspace-projection")
+	ctx := context.Background()
+	base := time.Date(2026, 6, 21, 17, 0, 0, 0, time.UTC)
+	if err := store.CreateWorkspace(ctx, "ws-delivery", "delivery", t.TempDir(), "manual", "auto"); err != nil {
+		t.Fatalf("CreateWorkspace ws-delivery returned error: %v", err)
+	}
+	if err := store.CreateWorkspace(ctx, "ws-other", "other", t.TempDir(), "manual", "auto"); err != nil {
+		t.Fatalf("CreateWorkspace ws-other returned error: %v", err)
+	}
+	if _, err := store.CreateEventSubscription(ctx, EventSubscription{SubscriptionID: "sub-other-delivery", WorkspaceID: "ws-other", OwnerSessionID: "other-run", FilterJSON: `{"event_types":["worker.completed"]}`, CreatedAt: base, UpdatedAt: base}); err != nil {
+		t.Fatalf("CreateEventSubscription returned error: %v", err)
+	}
+	if _, err := store.AppendWorkspaceEvent(ctx, WorkspaceEvent{EventID: "we-cross-delivery", WorkspaceID: "ws-delivery", EventType: WorkspaceEventDeliveryFailed, SubjectType: WorkspaceEventSubjectPendingDelivery, SubjectID: "pd-cross", ProducerType: WorkspaceEventProducerDaemon, ProducerID: "daemon", PayloadJSON: `{"delivery_id":"pd-cross","subscription_id":"sub-other-delivery","target_type":"event_subscription","target_id":"sub-other-delivery","status":"failed","last_error":"nope"}`, AttentionRequired: true, CreatedAt: base}); err != nil {
+		t.Fatalf("AppendWorkspaceEvent returned error: %v", err)
+	}
+	items, err := store.ListInboxItems(ctx, "ws-delivery", "other-run")
+	if err != nil {
+		t.Fatalf("ListInboxItems returned error: %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("inbox items = %#v, want no cross-workspace delivery projection", items)
+	}
+}

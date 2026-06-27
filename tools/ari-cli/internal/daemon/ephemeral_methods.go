@@ -29,7 +29,7 @@ func (d *Daemon) callEphemeral(ctx context.Context, store *globaldb.Store, req E
 	}
 	if strings.TrimSpace(req.FanoutMemberID) != "" || strings.TrimSpace(req.FanoutGroupID) != "" {
 		member := globaldb.FanoutMember{FanoutMemberID: strings.TrimSpace(req.FanoutMemberID), FanoutGroupID: strings.TrimSpace(req.FanoutGroupID), WorkspaceID: setup.SourceRun.WorkspaceID, WorkerSessionID: setup.SessionID, TargetProfileID: setup.TargetAgent.AgentID, RequestAgentMessageID: requestDM.AgentMessageID, Status: "running"}
-		if err := appendFanoutWorkerWorkspaceEvent(ctx, store, member, workspaceEventWorkerStarted, setup.SourceRun.SessionID, requestDM.AgentMessageID, "", false); err != nil {
+		if err := appendFanoutWorkerWorkspaceEvent(ctx, store, member, globaldb.WorkspaceEventWorkerStarted, setup.SourceRun.SessionID, requestDM.AgentMessageID, "", false); err != nil {
 			_ = newHarnessLifecycle(store).markFailed(ctx, setup.SessionID)
 			return EphemeralCallResponse{}, err
 		}
@@ -69,7 +69,7 @@ func markFanoutMemberForWorkerSession(ctx context.Context, store *globaldb.Store
 		// completion over fanout projection state.
 		return
 	}
-	eventType := workspaceEventTypeForFanoutWorkerStatus(status)
+	eventType := globaldb.WorkspaceEventTypeForWorkerStatus(status)
 	if eventType == "" {
 		return
 	}

@@ -39,6 +39,12 @@ type ClaudeExecutor struct {
 	options claudeExecutorOptions
 }
 
+func (e *ClaudeExecutor) Stop(ctx context.Context, runID string) error {
+	_ = ctx
+	_ = runID
+	return nil
+}
+
 func NewClaudeExecutor(cwd string) *ClaudeExecutor {
 	return newClaudeExecutor(claudeExecutorOptions{Executable: harnessExecutable("claude", EnvClaudeExecutable), Cwd: cwd, RunCommand: runClaudeCommand})
 }

@@ -173,7 +173,7 @@ func (d *Daemon) registerAriToolMethods(registry *rpc.MethodRegistry, store *glo
 		Name:        "ari.tool.call",
 		Description: "Call an Ari-owned helper tool",
 		Handler: func(ctx context.Context, req aritool.CallRequest) (aritool.CallResponse, error) {
-			return d.callAriTool(ctx, store, req)
+			return d.callAriTool(ctx, store, toolCatalog, req)
 		},
 	}); err != nil {
 		return fmt.Errorf("register ari.tool.call: %w", err)
@@ -181,11 +181,7 @@ func (d *Daemon) registerAriToolMethods(registry *rpc.MethodRegistry, store *glo
 	return nil
 }
 
-func (d *Daemon) callAriTool(ctx context.Context, store *globaldb.Store, req aritool.CallRequest) (aritool.CallResponse, error) {
-	toolCatalog, err := aritool.NewCatalog(ariToolRegistry())
-	if err != nil {
-		return aritool.CallResponse{}, err
-	}
+func (d *Daemon) callAriTool(ctx context.Context, store *globaldb.Store, toolCatalog aritool.Catalog[*Daemon], req aritool.CallRequest) (aritool.CallResponse, error) {
 	return toolCatalog.Call(ctx, d, store, req, aritool.CallOptions{OperationSource: daemonOperationSourceTool, OperationRunner: func(ctx context.Context, record aritool.OperationRecord, fn func(context.Context) error) error {
 		return d.recordAriToolOperation(ctx, store, record, fn)
 	}})
@@ -427,7 +423,7 @@ func ariFanoutWorkerSessionIDs(fanout AgentMessageSendResponse) []string {
 }
 
 func ariFanoutWaitSubscriptionJSON(mode, fanoutGroupID string, workerSessionIDs []string) (string, string, error) {
-	terminalEventTypes := []string{workspaceEventWorkerCompleted, workspaceEventWorkerFailed, workspaceEventWorkerStopped}
+	terminalEventTypes := []string{globaldb.WorkspaceEventWorkerCompleted, globaldb.WorkspaceEventWorkerFailed, globaldb.WorkspaceEventWorkerStopped}
 	filter, err := json.Marshal(globaldb.EventSubscriptionFilter{EventTypes: terminalEventTypes, SubjectIDs: workerSessionIDs, CorrelationIDs: []string{strings.TrimSpace(fanoutGroupID)}})
 	if err != nil {
 		return "", "", err
@@ -702,7 +698,15 @@ func ariWorkspaceTimerCreate(ctx context.Context, store *globaldb.Store, scope a
 	if err != nil {
 		return aritool.CallResponse{}, err
 	}
-	timer, err := store.CreateWorkspaceTimer(ctx, globaldb.WorkspaceTimer{TimerID: aritool.StringValueOrEmpty(body, "timer_id"), WorkspaceID: scope.WorkspaceID, OwnerSessionID: strings.TrimSpace(scope.SourceRunID), TargetSubscriptionID: aritool.StringValueOrEmpty(body, "target_subscription_id"), SubjectType: aritool.StringValueOrEmpty(body, "subject_type"), SubjectID: aritool.StringValueOrEmpty(body, "subject_id"), Purpose: aritool.StringValueOrEmpty(body, "purpose"), FireAt: fireAt, PayloadJSON: aritool.StringValueOrEmpty(body, "payload_json")})
+	targetSubscriptionID := aritool.StringValueOrEmpty(body, "target_subscription_id")
+	if targetSubscriptionID != "" {
+		subscription, err := aritool.ScopedEventSubscription(ctx, store, scope, targetSubscriptionID)
+		if err != nil {
+			return aritool.CallResponse{}, err
+		}
+		targetSubscriptionID = subscription.SubscriptionID
+	}
+	timer, err := store.CreateWorkspaceTimer(ctx, globaldb.WorkspaceTimer{TimerID: aritool.StringValueOrEmpty(body, "timer_id"), WorkspaceID: scope.WorkspaceID, OwnerSessionID: strings.TrimSpace(scope.SourceRunID), TargetSubscriptionID: targetSubscriptionID, SubjectType: aritool.StringValueOrEmpty(body, "subject_type"), SubjectID: aritool.StringValueOrEmpty(body, "subject_id"), Purpose: aritool.StringValueOrEmpty(body, "purpose"), FireAt: fireAt, PayloadJSON: aritool.StringValueOrEmpty(body, "payload_json")})
 	if err != nil {
 		return aritool.CallResponse{}, workspaceTimerRPCError(err)
 	}

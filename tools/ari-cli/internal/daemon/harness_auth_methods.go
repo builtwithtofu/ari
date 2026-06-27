@@ -277,12 +277,13 @@ func (d *Daemon) harnessAuthDiagnose(ctx context.Context, store *globaldb.Store,
 		factory, ok := d.harnessRegistry.Resolve(harness)
 		if !ok {
 			status := HarnessAuthStatus{Harness: harness, AuthSlotID: authSlotIDForName(harness, "default"), Name: "default", Status: HarnessAuthUnknown, AriSecretStorage: HarnessAriSecretStorageNone}
-			resp.Harnesses = append(resp.Harnesses, d.presentAuthDiagnostic(HarnessAuthDiagnostic{Harness: harness, Installed: true, Status: HarnessAuthUnknown, DefaultSlot: status, Auth: auth, NextStep: d.authDiagnosticNextStep(status)}))
+			resp.Harnesses = append(resp.Harnesses, d.presentAuthDiagnostic(HarnessAuthDiagnostic{Harness: harness, Installed: false, Status: HarnessAuthUnknown, DefaultSlot: status, Auth: auth, NextStep: d.authDiagnosticNextStep(status)}))
 			continue
 		}
 		executor, err := factory(HarnessSessionStartRequest{Executor: harness}, primaryFolder, d.appendExecutorItems)
 		diagnostic := HarnessAuthDiagnostic{Harness: harness, Installed: true, Status: HarnessAuthUnknown, DefaultSlot: HarnessAuthStatus{Harness: harness, AuthSlotID: authSlotIDForName(harness, "default"), Name: "default", Status: HarnessAuthUnknown, AriSecretStorage: HarnessAriSecretStorageNone}, Auth: auth}
 		if err != nil {
+			diagnostic.Installed = false
 			diagnostic.DefaultSlot = NewHarnessAuthRequired(harness, diagnostic.DefaultSlot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, SecretOwnedBy: harness})
 			diagnostic.DefaultSlot.Name = "default"
 			diagnostic.Status = diagnostic.DefaultSlot.Status
@@ -463,14 +464,14 @@ func (d *Daemon) harnessAuthStatus(ctx context.Context, store *globaldb.Store, r
 		if !ok {
 			status := HarnessAuthStatus{Harness: harness, AuthSlotID: strings.TrimSpace(slot.AuthSlotID), Status: HarnessAuthUnknown, AriSecretStorage: HarnessAriSecretStorageNone}
 			status.Name = authStatusName(slot, status.Harness)
-			statuses = append(statuses, status)
+			statuses = append(statuses, presentAuthStatus(status))
 			continue
 		}
 		executor, err := factory(HarnessSessionStartRequest{Executor: harness}, primaryFolder, d.appendExecutorItems)
 		if err != nil {
 			status := NewHarnessAuthRequired(harness, slot.AuthSlotID, HarnessAuthRemediation{Kind: HarnessAuthRemediationProviderAuthFlow, SecretOwnedBy: harness})
 			status.Name = authStatusName(slot, harness)
-			statuses = append(statuses, status)
+			statuses = append(statuses, presentAuthStatus(status))
 			continue
 		}
 		status, err := executor.AuthStatus(ctx, slot)
