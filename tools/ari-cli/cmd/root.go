@@ -92,7 +92,7 @@ func renderDashboard(cmd *cobra.Command, dashboard daemon.DashboardGetResponse) 
 	if _, err := fmt.Fprintln(cmd.OutOrStdout(), "Ari workspace dashboard"); err != nil {
 		return err
 	}
-	workspaceName := status.WorkspaceName
+	workspaceName := presentationLabel(status.Presentation, status.WorkspaceName)
 	if workspaceName == "" {
 		workspaceName = status.WorkspaceID
 	}
@@ -105,23 +105,23 @@ func renderDashboard(cmd *cobra.Command, dashboard daemon.DashboardGetResponse) 
 	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Sessions: %d\n", len(status.Sessions)); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "VCS: %s (%d changed files)\n", status.VCS.Backend, status.VCS.ChangedFiles); err != nil {
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "VCS: %s (%d changed files)\n", presentationLabel(status.VCS.Presentation, status.VCS.Backend), status.VCS.ChangedFiles); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Processes: %d\n", len(status.Processes)); err != nil {
 		return err
 	}
-	waitingSessions := 0
+	readySessions := 0
 	runningEphemeral := 0
 	for _, agent := range status.Sessions {
-		if agent.Status == "waiting" {
-			waitingSessions++
+		if agent.Presentation.Status == daemon.PresentationStatusReady {
+			readySessions++
 		}
-		if agent.Usage == "ephemeral" && agent.Status == "running" {
+		if agent.Usage == "ephemeral" && agent.Presentation.Status == daemon.PresentationStatusRunning {
 			runningEphemeral++
 		}
 	}
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Waiting sessions: %d\n", waitingSessions); err != nil {
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Ready sessions: %d\n", readySessions); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Running ephemeral calls: %d\n", runningEphemeral); err != nil {
@@ -139,16 +139,16 @@ func renderDashboard(cmd *cobra.Command, dashboard daemon.DashboardGetResponse) 
 		}
 	}
 	for _, message := range status.AgentMessages {
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Session message: %s %s %s -> %s\n", message.AgentMessageID, message.Status, message.SourceSessionID, message.TargetAgentID); err != nil {
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Session message: %s %s %s -> %s\n", message.AgentMessageID, presentationStatusLabel(message.Presentation, message.Status), message.SourceSessionID, message.TargetAgentID); err != nil {
 			return err
 		}
 	}
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Attention: %s (%d items)\n", status.Attention.Level, len(status.Attention.Items)); err != nil {
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Attention: %s (%d items)\n", presentationSummary(status.Attention.Presentation, status.Attention.Level), len(status.Attention.Items)); err != nil {
 		return err
 	}
 	if len(status.Proofs) > 0 {
 		proof := status.Proofs[0]
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Latest proof: %s %s\n", proof.Status, proof.Command); err != nil {
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Latest proof: %s %s\n", presentationStatusLabel(proof.Presentation, proof.Status), presentationLabel(proof.Presentation, proof.Command)); err != nil {
 			return err
 		}
 	}
@@ -249,7 +249,7 @@ func newTimelineCmd() *cobra.Command {
 				return mapWorkspaceRPCError(err)
 			}
 			for _, item := range resp.Items {
-				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", item.ID, item.Kind, item.Status); err != nil {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", item.ID, presentationLabel(item.Presentation, item.Kind), presentationStatusLabel(item.Presentation, item.Status)); err != nil {
 					return err
 				}
 			}

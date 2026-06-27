@@ -243,7 +243,7 @@ func newWorkspaceListCmd() *cobra.Command {
 				return mapWorkspaceRPCError(err)
 			}
 
-			if _, err := fmt.Fprintln(cmd.OutOrStdout(), "ID       NAME          STATUS     FOLDERS  CREATED"); err != nil {
+			if _, err := fmt.Fprintln(cmd.OutOrStdout(), "ID       NAME          STATE      FOLDERS  CREATED"); err != nil {
 				return err
 			}
 			for _, workspace := range response.Workspaces {
@@ -251,7 +251,7 @@ func newWorkspaceListCmd() *cobra.Command {
 				if len(shortID) > 8 {
 					shortID = shortID[:8]
 				}
-				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%-8s %-13s %-10s %-7d %s\n", shortID, workspace.Name, workspace.Status, workspace.FolderCount, workspace.CreatedAt); err != nil {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%-8s %-13s %-10s %-7d %s\n", shortID, workspace.Name, presentationStatusLabel(workspace.Presentation, workspace.Status), workspace.FolderCount, workspace.CreatedAt); err != nil {
 					return err
 				}
 			}
@@ -291,7 +291,7 @@ func newWorkspaceShowCmd() *cobra.Command {
 			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Workspace: %s (%s)\n", response.Name, response.WorkspaceID); err != nil {
 				return err
 			}
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Status: %s\n", response.Status); err != nil {
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "State: %s\n", presentationStatusLabel(response.Presentation, response.Status)); err != nil {
 				return err
 			}
 			origin := response.OriginRoot
@@ -334,7 +334,7 @@ func newWorkspaceSuspendCmd() *cobra.Command {
 		if err != nil {
 			return "", err
 		}
-		return resp.Status, nil
+		return presentationStatusLabel(resp.Presentation, resp.Status), nil
 	})
 }
 
@@ -344,7 +344,7 @@ func newWorkspaceResumeCmd() *cobra.Command {
 		if err != nil {
 			return "", err
 		}
-		return resp.Status, nil
+		return presentationStatusLabel(resp.Presentation, resp.Status), nil
 	})
 }
 

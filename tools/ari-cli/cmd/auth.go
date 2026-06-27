@@ -562,7 +562,7 @@ func newAuthStatusCmd() *cobra.Command {
 				return err
 			}
 			for _, status := range resp.Statuses {
-				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\tname=%s\tsecrets=%s\n", authDoctorSafeField(status.Harness), authDoctorSafeField(string(status.Status)), authDoctorSafeField(authDisplayName(status)), authDoctorSafeField(authStatusSecretOwner(status))); err != nil {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\tname=%s\tsecrets=%s\n", authDoctorSafeField(status.Harness), authDoctorSafeField(presentationStatusLabel(status.Presentation, string(status.Status))), authDoctorSafeField(presentationLabel(status.Presentation, authDisplayName(status))), authDoctorSafeField(authStatusSecretOwner(status))); err != nil {
 					return err
 				}
 			}
@@ -587,7 +587,7 @@ func writeAuthSlotList(w io.Writer, slots []daemon.AuthSlotResponse) error {
 		if provider == "" {
 			provider = "-"
 		}
-		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\tprovider=%s\tstatus=%s\n", authDoctorSafeField(slot.Harness), label, authDoctorSafeField(slot.AuthSlotID), provider, authDoctorSafeField(slot.Status)); err != nil {
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\tprovider=%s\tstatus=%s\n", authDoctorSafeField(slot.Harness), label, authDoctorSafeField(slot.AuthSlotID), provider, authDoctorSafeField(presentationStatusLabel(slot.Presentation, slot.Status))); err != nil {
 			return err
 		}
 	}
@@ -620,17 +620,17 @@ func authHarnessOptions(statuses []daemon.HarnessAuthStatus) []string {
 
 func writeAuthDoctorResponse(w io.Writer, diagnostics []daemon.HarnessAuthDiagnostic, detailed bool) error {
 	for _, diagnostic := range diagnostics {
-		installed := "installed"
+		installed := "Installed"
 		if !diagnostic.Installed {
-			installed = "not_installed"
+			installed = "Needs install"
 		}
-		if _, err := fmt.Fprintf(w, "%s\n", authDoctorSafeField(diagnostic.Harness)); err != nil {
+		if _, err := fmt.Fprintf(w, "%s\n", authDoctorSafeField(presentationLabel(diagnostic.Presentation, diagnostic.Harness))); err != nil {
 			return err
 		}
 		fields := [][2]string{
 			{"installed", installed},
-			{"status", string(diagnostic.Status)},
-			{"default slot", authDoctorSafeField(authDisplayName(diagnostic.DefaultSlot))},
+			{"status", presentationStatusLabel(diagnostic.Presentation, string(diagnostic.Status))},
+			{"default slot", authDoctorSafeField(presentationLabel(diagnostic.DefaultSlot.Presentation, authDisplayName(diagnostic.DefaultSlot)))},
 			{"named slots", authDoctorNamedSlots(diagnostic.NamedSlots)},
 		}
 		if detailed {
@@ -715,7 +715,7 @@ func authDoctorNamedSlots(slots []daemon.AuthSlotResponse) string {
 		if provider != "" {
 			label += "(" + authDoctorSafeField(provider) + ")"
 		}
-		named = append(named, authDoctorSafeField(label)+":"+authDoctorSafeField(slot.Status))
+		named = append(named, authDoctorSafeField(label)+":"+authDoctorSafeField(presentationStatusLabel(slot.Presentation, slot.Status)))
 	}
 	if len(named) == 0 {
 		return "none"
@@ -787,7 +787,7 @@ func promptAuthHarness(cmd *cobra.Command, options []string) (string, error) {
 }
 
 func writeAuthLoginResponse(cmd *cobra.Command, status daemon.HarnessAuthStatus) error {
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s auth %s for %s\n", status.Harness, status.Status, authDisplayName(status)); err != nil {
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s auth %s for %s\n", status.Harness, presentationStatusLabel(status.Presentation, string(status.Status)), presentationLabel(status.Presentation, authDisplayName(status))); err != nil {
 		return err
 	}
 	if status.Remediation == nil {
@@ -807,7 +807,7 @@ func writeAuthLoginResponse(cmd *cobra.Command, status daemon.HarnessAuthStatus)
 }
 
 func writeAuthLogoutResponse(cmd *cobra.Command, status daemon.HarnessAuthStatus) error {
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s auth %s for %s\n", status.Harness, status.Status, authDisplayName(status)); err != nil {
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s auth %s for %s\n", status.Harness, presentationStatusLabel(status.Presentation, string(status.Status)), presentationLabel(status.Presentation, authDisplayName(status))); err != nil {
 		return err
 	}
 	if status.Status == daemon.HarnessAuthRequired {

@@ -214,7 +214,7 @@ func newWorkspaceCommandRemoveCmd() *cobra.Command {
 				return mapCommandRPCError(err)
 			}
 
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Command remove: %s\n", resp.Status)
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Command remove: %s\n", presentationStatusLabel(resp.Presentation, resp.Status))
 			return err
 		},
 	}

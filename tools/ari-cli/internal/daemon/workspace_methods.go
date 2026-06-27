@@ -48,12 +48,13 @@ type WorkspaceSetupExistingResponse struct {
 type WorkspaceListRequest struct{}
 
 type WorkspaceSummary struct {
-	WorkspaceID   string `json:"workspace_id"`
-	Name          string `json:"name"`
-	Status        string `json:"status"`
-	PrimaryFolder string `json:"primary_folder"`
-	FolderCount   int    `json:"folder_count"`
-	CreatedAt     string `json:"created_at"`
+	WorkspaceID   string       `json:"workspace_id"`
+	Name          string       `json:"name"`
+	Status        string       `json:"status"`
+	Presentation  Presentation `json:"presentation"`
+	PrimaryFolder string       `json:"primary_folder"`
+	FolderCount   int          `json:"folder_count"`
+	CreatedAt     string       `json:"created_at"`
 }
 
 type WorkspaceListResponse struct {
@@ -76,6 +77,7 @@ type WorkspaceGetResponse struct {
 	WorkspaceID   string                `json:"workspace_id"`
 	Name          string                `json:"name"`
 	Status        string                `json:"status"`
+	Presentation  Presentation          `json:"presentation"`
 	VCSPreference string                `json:"vcs_preference"`
 	OriginRoot    string                `json:"origin_root"`
 	CleanupPolicy string                `json:"cleanup_policy"`
@@ -89,7 +91,8 @@ type WorkspaceSuspendRequest struct {
 }
 
 type WorkspaceSuspendResponse struct {
-	Status string `json:"status"`
+	Status       string       `json:"status"`
+	Presentation Presentation `json:"presentation"`
 }
 
 type WorkspaceResumeRequest struct {
@@ -97,7 +100,8 @@ type WorkspaceResumeRequest struct {
 }
 
 type WorkspaceResumeResponse struct {
-	Status string `json:"status"`
+	Status       string       `json:"status"`
+	Presentation Presentation `json:"presentation"`
 }
 
 type WorkspaceAddFolderRequest struct {
@@ -170,14 +174,14 @@ func (d *Daemon) registerWorkspaceMethods(registry *rpc.MethodRegistry, store *g
 					}
 				}
 
-				out = append(out, WorkspaceSummary{
+				out = append(out, presentWorkspaceSummary(WorkspaceSummary{
 					WorkspaceID:   session.ID,
 					Name:          session.Name,
 					Status:        session.Status,
 					PrimaryFolder: primary,
 					FolderCount:   len(folders),
 					CreatedAt:     session.CreatedAt,
-				})
+				}))
 			}
 
 			return WorkspaceListResponse{Workspaces: out}, nil
@@ -224,7 +228,7 @@ func (d *Daemon) registerWorkspaceMethods(registry *rpc.MethodRegistry, store *g
 				})
 			}
 
-			return WorkspaceGetResponse{
+			return presentWorkspaceGet(WorkspaceGetResponse{
 				WorkspaceID:   session.ID,
 				Name:          session.Name,
 				Status:        session.Status,
@@ -234,7 +238,7 @@ func (d *Daemon) registerWorkspaceMethods(registry *rpc.MethodRegistry, store *g
 				CreatedAt:     session.CreatedAt,
 				UpdatedAt:     session.UpdatedAt,
 				Folders:       folderInfo,
-			}, nil
+			}), nil
 		},
 	}); err != nil {
 		return fmt.Errorf("register workspace.get: %w", err)
@@ -253,7 +257,7 @@ func (d *Daemon) registerWorkspaceMethods(registry *rpc.MethodRegistry, store *g
 			}
 			d.stopActiveHarnessesForWorkspace(ctx, store, sessionID)
 			d.stopCommandsForWorkspace(ctx, store, sessionID)
-			return WorkspaceSuspendResponse{Status: "suspended"}, nil
+			return WorkspaceSuspendResponse{Status: "suspended", Presentation: presentationWithLabel("Workspace", "suspended")}, nil
 		},
 	}); err != nil {
 		return fmt.Errorf("register workspace.suspend: %w", err)
@@ -270,7 +274,7 @@ func (d *Daemon) registerWorkspaceMethods(registry *rpc.MethodRegistry, store *g
 			if err := store.UpdateWorkspaceStatus(ctx, sessionID, "active"); err != nil {
 				return WorkspaceResumeResponse{}, mapWorkspaceStoreError(err, sessionID)
 			}
-			return WorkspaceResumeResponse{Status: "active"}, nil
+			return WorkspaceResumeResponse{Status: "active", Presentation: presentationWithLabel("Workspace", "active")}, nil
 		},
 	}); err != nil {
 		return fmt.Errorf("register workspace.resume: %w", err)

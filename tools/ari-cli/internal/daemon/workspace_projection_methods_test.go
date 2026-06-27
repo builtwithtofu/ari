@@ -55,6 +55,9 @@ func TestWorkspaceStatusProjectsCommandsAgentsProofsAndVCS(t *testing.T) {
 	if resp.VCS.Backend != "jj" {
 		t.Fatalf("vcs.backend = %q, want jj", resp.VCS.Backend)
 	}
+	if resp.Presentation.Label != "ws-1" || resp.Presentation.Status != PresentationStatusBlocked {
+		t.Fatalf("workspace presentation = %#v, want Ari-owned blocked workspace display", resp.Presentation)
+	}
 	if len(resp.Processes) != 1 {
 		t.Fatalf("processes len = %d, want 1", len(resp.Processes))
 	}
@@ -64,11 +67,17 @@ func TestWorkspaceStatusProjectsCommandsAgentsProofsAndVCS(t *testing.T) {
 	if resp.Processes[0].OutputSummary != "unit test failed" {
 		t.Fatalf("process output summary = %q, want first output line", resp.Processes[0].OutputSummary)
 	}
+	if resp.Processes[0].Presentation.StatusLabel != "Stopped" || resp.Processes[0].Presentation.Detail != "unit test failed" {
+		t.Fatalf("process presentation = %#v, want stopped display with output detail", resp.Processes[0].Presentation)
+	}
 	if len(resp.Sessions) != 1 {
 		t.Fatalf("sessions len = %d, want 1", len(resp.Sessions))
 	}
 	if resp.Sessions[0].ID != "run-1" || resp.Sessions[0].Executor != "codex" || resp.Sessions[0].Status != "running" {
 		t.Fatalf("session projection = %#v, want codex run", resp.Sessions[0])
+	}
+	if resp.Sessions[0].Presentation.Status != PresentationStatusRunning || resp.Sessions[0].Presentation.Source.Harness != "codex" {
+		t.Fatalf("session presentation = %#v, want running Ari display sourced from codex", resp.Sessions[0].Presentation)
 	}
 	if len(resp.Proofs) != 1 {
 		t.Fatalf("proofs len = %d, want 1", len(resp.Proofs))
@@ -78,6 +87,9 @@ func TestWorkspaceStatusProjectsCommandsAgentsProofsAndVCS(t *testing.T) {
 	}
 	if resp.Attention.Level != "action-required" {
 		t.Fatalf("attention level = %q, want action-required", resp.Attention.Level)
+	}
+	if resp.Attention.Presentation.Status != PresentationStatusBlocked || resp.Attention.Presentation.Summary != "Action is required" {
+		t.Fatalf("attention presentation = %#v, want blocked action affordance", resp.Attention.Presentation)
 	}
 	if len(resp.Attention.Items) != 2 || resp.Attention.Items[0].SourceID != "proof_cmd-1" || resp.Attention.Items[1].SourceID != "run-1" {
 		t.Fatalf("attention items = %#v, want failed proof and running agent items", resp.Attention.Items)

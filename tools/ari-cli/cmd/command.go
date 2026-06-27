@@ -89,7 +89,7 @@ func newCommandListCmd() *cobra.Command {
 				return err
 			}
 
-			if _, err := fmt.Fprintln(cmd.OutOrStdout(), "ID       STATUS     STARTED                COMMAND"); err != nil {
+			if _, err := fmt.Fprintln(cmd.OutOrStdout(), "ID       STATE      STARTED                COMMAND"); err != nil {
 				return err
 			}
 			for _, item := range resp.Commands {
@@ -97,7 +97,7 @@ func newCommandListCmd() *cobra.Command {
 				if len(shortID) > 8 {
 					shortID = shortID[:8]
 				}
-				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%-8s %-10s %-22s %s\n", shortID, item.Status, item.StartedAt, item.Command); err != nil {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%-8s %-10s %-22s %s\n", shortID, presentationStatusLabel(item.Presentation, item.Status), item.StartedAt, presentationLabel(item.Presentation, item.Command)); err != nil {
 					return err
 				}
 			}
@@ -130,7 +130,7 @@ func newCommandShowCmd() *cobra.Command {
 			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Command: %s (%s)\n", resp.CommandID, resp.Command); err != nil {
 				return err
 			}
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Status: %s\n", resp.Status); err != nil {
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "State: %s\n", presentationStatusLabel(resp.Presentation, resp.Status)); err != nil {
 				return err
 			}
 			if resp.ExitCode != nil {
@@ -198,7 +198,7 @@ func newCommandStopCmd() *cobra.Command {
 				return err
 			}
 
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Command stop: %s\n", resp.Status)
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Command stop: %s\n", presentationStatusLabel(resp.Presentation, resp.Status))
 			return err
 		},
 	}

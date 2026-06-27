@@ -33,6 +33,7 @@ type HarnessAuthDiagnostic struct {
 	Harness         string                              `json:"harness"`
 	Installed       bool                                `json:"installed"`
 	Status          HarnessAuthState                    `json:"status"`
+	Presentation    Presentation                        `json:"presentation"`
 	DefaultSlot     HarnessAuthStatus                   `json:"default_slot"`
 	NamedSlots      []AuthSlotResponse                  `json:"named_slots,omitempty"`
 	Auth            HarnessAuthDescriptor               `json:"auth"`
@@ -186,7 +187,7 @@ func (d *Daemon) harnessAuthStart(ctx context.Context, store *globaldb.Store, re
 			return HarnessAuthStartResponse{}, err
 		}
 	}
-	return HarnessAuthStartResponse{Status: status}, nil
+	return HarnessAuthStartResponse{Status: presentAuthStatus(status)}, nil
 }
 
 func (d *Daemon) harnessAuthCancel(ctx context.Context, store *globaldb.Store, req HarnessAuthCancelRequest) (HarnessAuthCancelResponse, error) {
@@ -231,7 +232,7 @@ func (d *Daemon) harnessAuthCancel(ctx context.Context, store *globaldb.Store, r
 			return HarnessAuthCancelResponse{}, err
 		}
 	}
-	return HarnessAuthCancelResponse{Status: status}, nil
+	return HarnessAuthCancelResponse{Status: presentAuthStatus(status)}, nil
 }
 
 func (d *Daemon) harnessAuthLogout(ctx context.Context, store *globaldb.Store, req HarnessAuthLogoutRequest) (HarnessAuthLogoutResponse, error) {
@@ -272,7 +273,7 @@ func (d *Daemon) harnessAuthLogout(ctx context.Context, store *globaldb.Store, r
 			return HarnessAuthLogoutResponse{}, rpc.NewHandlerError(rpc.InternalError, "provider logout completed but Ari could not persist auth status", map[string]any{"reason": "auth_logout_status_persist_failed", "auth_slot_id": strings.TrimSpace(slot.AuthSlotID), "harness": strings.TrimSpace(slot.Harness), "status": string(status.Status), "logout_invoked": true, "ari_secret_storage": string(HarnessAriSecretStorageNone)})
 		}
 	}
-	return HarnessAuthLogoutResponse{Status: status}, nil
+	return HarnessAuthLogoutResponse{Status: presentAuthStatus(status)}, nil
 }
 
 func (d *Daemon) harnessAuthDiagnose(ctx context.Context, store *globaldb.Store, req HarnessAuthDiagnoseRequest) (HarnessAuthDiagnoseResponse, error) {
@@ -346,7 +347,7 @@ func (d *Daemon) harnessAuthDiagnose(ctx context.Context, store *globaldb.Store,
 			}
 			diagnostic.NamedSlots = append(diagnostic.NamedSlots, authSlotResponseFromGlobal(stored))
 		}
-		resp.Harnesses = append(resp.Harnesses, diagnostic)
+		resp.Harnesses = append(resp.Harnesses, d.presentAuthDiagnostic(diagnostic))
 	}
 	return resp, nil
 }
@@ -527,7 +528,7 @@ func (d *Daemon) harnessAuthStatus(ctx context.Context, store *globaldb.Store, r
 				if err := storePersistAuthStatus(ctx, store, storedByID, slot.AuthSlotID, status.Status); err != nil {
 					return HarnessAuthStatusResponse{}, err
 				}
-				statuses = append(statuses, status)
+				statuses = append(statuses, presentAuthStatus(status))
 				continue
 			}
 			return HarnessAuthStatusResponse{}, err
@@ -539,7 +540,7 @@ func (d *Daemon) harnessAuthStatus(ctx context.Context, store *globaldb.Store, r
 			return HarnessAuthStatusResponse{}, err
 		}
 		status.Name = authStatusName(slot, status.Harness)
-		statuses = append(statuses, status)
+		statuses = append(statuses, presentAuthStatus(status))
 	}
 	return HarnessAuthStatusResponse{Statuses: statuses}, nil
 }

@@ -119,7 +119,7 @@ func newSessionListCmd() *cobra.Command {
 			if id == "" {
 				id = strings.TrimSpace(session.HarnessSessionID)
 			}
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", id, session.Status, session.Executor); err != nil {
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", id, presentationStatusLabel(session.Presentation, session.Status), presentationLabel(session.Presentation, session.Executor)); err != nil {
 				return err
 			}
 		}
@@ -151,12 +151,12 @@ func newSessionShowCmd() *cobra.Command {
 		}
 		for _, line := range []string{
 			"Session: " + id,
-			"Status: " + session.Status,
-			"Executor: " + session.Executor,
+			"Status: " + presentationStatusLabel(session.Presentation, session.Status),
+			"Harness: " + presentationLabel(session.Presentation, session.Executor),
 			"Workspace: " + session.WorkspaceID,
-			"Provider session: " + session.ProviderSessionID,
-			"Invocation mode: " + session.InvocationMode,
-			"Usage bucket: " + session.UsageBucket,
+			"Native provider session: " + session.ProviderSessionID,
+			"Native invocation mode: " + nativeSessionField(session.Presentation, "invocation_mode", session.InvocationMode),
+			"Native usage bucket: " + nativeSessionField(session.Presentation, "usage_bucket", session.UsageBucket),
 		} {
 			if _, err := fmt.Fprintln(cmd.OutOrStdout(), line); err != nil {
 				return err

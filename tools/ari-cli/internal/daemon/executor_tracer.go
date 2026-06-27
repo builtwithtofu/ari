@@ -92,6 +92,7 @@ type HarnessSession struct {
 	ExitCode          *int                  `json:"exit_code,omitempty"`
 	ProcessSample     *ProcessMetricsSample `json:"-"`
 	Capabilities      []string              `json:"capabilities"`
+	Presentation      Presentation          `json:"presentation"`
 }
 
 const (
@@ -417,7 +418,7 @@ func listWorkspaceSessions(ctx context.Context, store *globaldb.Store, req Sessi
 
 func agentSessionResponseFromStore(session globaldb.HarnessSession) HarnessSession {
 	invocationMode, usageBucket := agentSessionModeFromProviderMetadata(session.ProviderMetadataJSON)
-	return HarnessSession{HarnessSessionID: session.SessionID, SessionID: session.SessionID, WorkspaceID: session.WorkspaceID, Usage: session.Usage, SourceSessionID: session.SourceSessionID, SourceAgentID: session.SourceAgentID, Executor: session.Harness, ProviderSessionID: session.ProviderSessionID, ProviderRunID: session.ProviderRunID, InvocationMode: invocationMode, UsageBucket: usageBucket, Status: session.Status}
+	return presentHarnessSession(HarnessSession{HarnessSessionID: session.SessionID, SessionID: session.SessionID, WorkspaceID: session.WorkspaceID, Usage: session.Usage, SourceSessionID: session.SourceSessionID, SourceAgentID: session.SourceAgentID, Executor: session.Harness, ProviderSessionID: session.ProviderSessionID, ProviderRunID: session.ProviderRunID, InvocationMode: invocationMode, UsageBucket: usageBucket, Status: session.Status})
 }
 
 func agentSessionModeFromProviderMetadata(raw string) (string, string) {
@@ -731,7 +732,7 @@ func (d *Daemon) rememberStartingExecutorRun(req HarnessSessionStartRequest) {
 	}
 	d.executorMu.Lock()
 	if _, exists := d.executorRuns[req.SessionID]; !exists {
-		d.executorRuns[req.SessionID] = HarnessSession{HarnessSessionID: req.SessionID, SessionID: req.SessionID, WorkspaceID: strings.TrimSpace(req.Packet.WorkspaceID), Usage: globaldb.HarnessSessionUsageSticky, TaskID: strings.TrimSpace(req.Packet.TaskID), Executor: strings.TrimSpace(req.Executor), Status: "starting", ContextPacketID: strings.TrimSpace(req.Packet.ID), StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+		d.executorRuns[req.SessionID] = presentHarnessSession(HarnessSession{HarnessSessionID: req.SessionID, SessionID: req.SessionID, WorkspaceID: strings.TrimSpace(req.Packet.WorkspaceID), Usage: globaldb.HarnessSessionUsageSticky, TaskID: strings.TrimSpace(req.Packet.TaskID), Executor: strings.TrimSpace(req.Executor), Status: "starting", ContextPacketID: strings.TrimSpace(req.Packet.ID), StartedAt: time.Now().UTC().Format(time.RFC3339Nano)})
 	}
 	d.executorMu.Unlock()
 }
@@ -751,6 +752,9 @@ func (d *Daemon) appendExecutorItems(sessionID string, items []TimelineItem) {
 		return
 	}
 	d.executorMu.Lock()
+	for i := range items {
+		items[i] = presentTimelineItem(items[i])
+	}
 	d.executorItems[sessionID] = append(d.executorItems[sessionID], items...)
 	d.updateExecutorRunStatusLocked(sessionID, items)
 	d.executorMu.Unlock()
