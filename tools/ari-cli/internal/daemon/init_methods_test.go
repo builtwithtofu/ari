@@ -21,7 +21,7 @@ func TestInitMethodsExposeOptionsStateAndApplyThroughRPC(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "ari.db")
 	pidPath := filepath.Join(t.TempDir(), "daemon.pid")
 	d := New(socketPath, dbPath, pidPath, configPath, "test", "test-version")
-	d.setHarnessFactoryForTest("codex", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("codex", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink

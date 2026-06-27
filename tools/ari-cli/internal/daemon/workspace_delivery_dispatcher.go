@@ -10,20 +10,25 @@ import (
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
 )
 
-type workspaceDeliveryExecutor interface {
-	AttemptWorkspaceDelivery(context.Context, WorkspaceDeliveryAttempt) (WorkspaceDeliveryAttemptResult, error)
+type DeliveryTargetResolver interface {
+	ResolveDeliveryTarget(context.Context, string) (activeHarnessDeliveryTarget, bool, error)
 }
 
 type harnessWorkspaceDeliveryDispatcher struct {
-	daemon *Daemon
-	store  *globaldb.Store
+	resolver DeliveryTargetResolver
+	store    *globaldb.Store
 }
 
 type activeHarnessDeliveryTarget struct {
 	workspaceID       string
 	sessionID         string
 	providerSessionID string
-	executor          Executor
+	executor          HarnessAdapter
+}
+
+type daemonDeliveryTargetResolver struct {
+	daemon *Daemon
+	store  *globaldb.Store
 }
 
 func newHarnessWorkspaceDeliveryDispatcher(d *Daemon, stores ...*globaldb.Store) *harnessWorkspaceDeliveryDispatcher {
@@ -52,16 +57,12 @@ func (d *harnessWorkspaceDeliveryDispatcher) AttemptWorkspaceDelivery(ctx contex
 	if d.workspaceIsSuspended(ctx, delivery.WorkspaceID) {
 		return retryWorkspaceDeliveryAttempt("workspace %q is suspended", delivery.WorkspaceID), nil
 	}
-	target, ok := d.daemon.activeHarnessDeliveryTarget(targetSessionID)
+	target, ok, err := d.resolver.ResolveDeliveryTarget(ctx, targetSessionID)
 	if !ok {
-		var err error
-		target, ok, err = d.rehydrateStickyDeliveryTarget(ctx, targetSessionID)
 		if err != nil {
 			return retryWorkspaceDeliveryAttempt("delivery target session %q could not be rehydrated: %v", targetSessionID, err), nil
 		}
-		if !ok {
-			return retryWorkspaceDeliveryAttempt("delivery target session %q is not active", targetSessionID), nil
-		}
+		return retryWorkspaceDeliveryAttempt("delivery target session %q is not active", targetSessionID), nil
 	}
 	if target.workspaceID != "" && strings.TrimSpace(delivery.WorkspaceID) != target.workspaceID {
 		return failedWorkspaceDeliveryAttempt("delivery target session %q belongs to workspace %q, not %q", targetSessionID, target.workspaceID, delivery.WorkspaceID), nil
@@ -73,17 +74,13 @@ func (d *harnessWorkspaceDeliveryDispatcher) AttemptWorkspaceDelivery(ctx contex
 	if !activeHarnessDeclaresDeliveryCapability(target.executor, capability) {
 		return failedWorkspaceDeliveryAttempt("delivery target session %q does not declare %s delivery support", targetSessionID, capability), nil
 	}
-	executor, ok := target.executor.(workspaceDeliveryExecutor)
-	if !ok {
-		return failedWorkspaceDeliveryAttempt("delivery target session %q does not implement workspace delivery", targetSessionID), nil
-	}
 	if target.providerSessionID != "" {
 		delivery.TargetID = target.providerSessionID
 	} else {
 		delivery.TargetID = target.sessionID
 	}
 	attempt.Delivery = delivery
-	return executor.AttemptWorkspaceDelivery(ctx, attempt)
+	return target.executor.AttemptWorkspaceDelivery(ctx, attempt)
 }
 
 func (d *harnessWorkspaceDeliveryDispatcher) workspaceIsSuspended(ctx context.Context, workspaceID string) bool {
@@ -94,11 +91,21 @@ func (d *harnessWorkspaceDeliveryDispatcher) workspaceIsSuspended(ctx context.Co
 	return err == nil && workspace != nil && workspace.Status == "suspended"
 }
 
-func (d *harnessWorkspaceDeliveryDispatcher) rehydrateStickyDeliveryTarget(ctx context.Context, sessionID string) (activeHarnessDeliveryTarget, bool, error) {
-	if d == nil || d.store == nil || d.daemon == nil {
+func (r daemonDeliveryTargetResolver) ResolveDeliveryTarget(ctx context.Context, sessionID string) (activeHarnessDeliveryTarget, bool, error) {
+	if r.daemon == nil {
 		return activeHarnessDeliveryTarget{}, false, nil
 	}
-	session, err := d.store.GetHarnessSession(ctx, sessionID)
+	if target, ok := r.daemon.activeHarnessDeliveryTarget(sessionID); ok {
+		return target, true, nil
+	}
+	return r.rehydrateStickyDeliveryTarget(ctx, sessionID)
+}
+
+func (r daemonDeliveryTargetResolver) rehydrateStickyDeliveryTarget(ctx context.Context, sessionID string) (activeHarnessDeliveryTarget, bool, error) {
+	if r.daemon == nil || r.store == nil {
+		return activeHarnessDeliveryTarget{}, false, nil
+	}
+	session, err := r.store.GetHarnessSession(ctx, sessionID)
 	if err != nil {
 		if errors.Is(err, globaldb.ErrNotFound) {
 			return activeHarnessDeliveryTarget{}, false, nil
@@ -110,13 +117,13 @@ func (d *harnessWorkspaceDeliveryDispatcher) rehydrateStickyDeliveryTarget(ctx c
 	}
 	req := HarnessSessionStartRequest{Executor: session.Harness, SessionID: session.SessionID, WorkspaceID: session.WorkspaceID}
 	if authSlotID := harnessSessionAuthSlotID(session); authSlotID != "" {
-		projection, err := d.daemon.authProjectionForStart(ctx, d.store, session.Harness, session.WorkspaceID, authSlotID)
+		projection, err := r.daemon.authProjectionForStart(ctx, r.store, session.Harness, session.WorkspaceID, authSlotID)
 		if err != nil {
 			return activeHarnessDeliveryTarget{}, false, err
 		}
 		req.AuthProjection = projection
 	}
-	executor, err := d.daemon.resolveHarness(ctx, d.store, req, session.CWD)
+	executor, err := r.daemon.resolveHarness(ctx, r.store, req, session.CWD)
 	if err != nil {
 		return activeHarnessDeliveryTarget{}, false, err
 	}
@@ -127,8 +134,8 @@ func (d *harnessWorkspaceDeliveryDispatcher) rehydrateStickyDeliveryTarget(ctx c
 	if providerSessionID == "" {
 		providerSessionID = strings.TrimSpace(session.SessionID)
 	}
-	d.daemon.registerHarnessDeliveryTarget(session.WorkspaceID, session.SessionID, providerSessionID, executor)
-	target, ok := d.daemon.activeHarnessDeliveryTarget(session.SessionID)
+	r.daemon.registerHarnessDeliveryTarget(session.WorkspaceID, session.SessionID, providerSessionID, executor)
+	target, ok := r.daemon.activeHarnessDeliveryTarget(session.SessionID)
 	return target, ok, nil
 }
 
@@ -172,12 +179,8 @@ func (d *Daemon) activeHarnessDeliveryTarget(sessionID string) (activeHarnessDel
 	return activeHarnessDeliveryTarget{workspaceID: strings.TrimSpace(run.workspaceID), sessionID: strings.TrimSpace(run.sessionID), providerSessionID: providerSessionID, executor: run.executor}, true
 }
 
-func activeHarnessDeclaresDeliveryCapability(executor Executor, capability HarnessDeliveryCapability) bool {
-	describer, ok := executor.(HarnessDescriber)
-	if !ok {
-		return false
-	}
-	descriptor := describer.Descriptor()
+func activeHarnessDeclaresDeliveryCapability(executor HarnessAdapter, capability HarnessDeliveryCapability) bool {
+	descriptor := executor.Descriptor()
 	for _, available := range descriptor.DeliveryCapabilities {
 		if available == capability {
 			return true

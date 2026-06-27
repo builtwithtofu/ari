@@ -84,7 +84,7 @@ func TestSessionStartUsesStoredProfileAndSessionTerminology(t *testing.T) {
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	var captured ExecutorStartRequest
-	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -125,7 +125,7 @@ func TestSessionStartFromProfilePersistsDurableRunLogAndStatusProjection(t *test
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -163,7 +163,7 @@ func TestSessionStartAttachesExistingStoredProfileSessionBeforeHarnessStart(t *t
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	startInvoked := false
-	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -257,7 +257,7 @@ func TestSessionStartReattachesExistingSessionFromGlobalProfile(t *testing.T) {
 	if err := store.UpsertProfile(context.Background(), globalProfile); err != nil {
 		t.Fatalf("UpsertProfile returned error: %v", err)
 	}
-	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -286,7 +286,7 @@ func TestSessionStartUsesGlobalProfileAcrossWorkspaces(t *testing.T) {
 	if err := store.UpsertProfile(context.Background(), globaldb.Profile{ProfileID: "ap_global_executor", Name: "executor", Harness: "test-harness", Model: "model-1", Prompt: "global behavior", InvocationClass: string(HarnessInvocationSticky)}); err != nil {
 		t.Fatalf("UpsertProfile returned error: %v", err)
 	}
-	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink

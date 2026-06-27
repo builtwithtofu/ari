@@ -198,13 +198,13 @@ func TestGrokAuthStatusUsesAuthJSONPresence(t *testing.T) {
 
 func TestGrokNamedSlotProjectionUsesPerSlotGrokHome(t *testing.T) {
 	root := t.TempDir()
-	options, err := grokExecutorOptions{Executable: "grok", AuthHomeRoot: root}.withGrokAuthSlotProjection("grok-work")
+	projection, err := ResolveNativeAuthSlotProjection(HarnessAuthProjectionPlan{}, NativeAuthSlotProjectionRequest{Harness: HarnessNameGrok, AuthSlotID: "grok-work", EnvKey: "GROK_HOME", Root: root})
 	if err != nil {
-		t.Fatalf("withGrokAuthSlotProjection returned error: %v", err)
+		t.Fatalf("ResolveNativeAuthSlotProjection returned error: %v", err)
 	}
-	home := options.AuthProjection.Env["GROK_HOME"]
-	if options.AuthProjection.Kind != HarnessAuthProjectionConfigRoot || !strings.HasPrefix(home, root) || !strings.Contains(home, "grok-work") {
-		t.Fatalf("projection = %#v, want per-slot GROK_HOME under root", options.AuthProjection)
+	home := projection.Env["GROK_HOME"]
+	if projection.Kind != HarnessAuthProjectionConfigRoot || !strings.HasPrefix(home, root) || !strings.Contains(home, "grok-work") {
+		t.Fatalf("projection = %#v, want per-slot GROK_HOME under root", projection)
 	}
 }
 

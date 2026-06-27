@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
-	"sync"
 )
 
 type codexExecutorOptions struct {
@@ -40,10 +39,8 @@ type codexTransport interface {
 }
 
 type CodexExecutor struct {
-	options         codexExecutorOptions
-	mu              sync.Mutex
-	runs            map[string][]TimelineItem
-	deliveryOptions map[string]codexExecutorOptions
+	adapterLifecycle[codexExecutorOptions]
+	options codexExecutorOptions
 }
 
 func NewCodexExecutor(cwd string) *CodexExecutor {
@@ -70,27 +67,7 @@ func newCodexExecutor(options codexExecutorOptions) *CodexExecutor {
 	if options.NotificationCap <= 0 {
 		options.NotificationCap = 64
 	}
-	return &CodexExecutor{options: options, runs: map[string][]TimelineItem{}, deliveryOptions: map[string]codexExecutorOptions{}}
-}
-
-func (options codexExecutorOptions) withCodexAuthSlotProjection(authSlotID string) (codexExecutorOptions, error) {
-	authSlotID = strings.TrimSpace(authSlotID)
-	if authSlotIsDefaultForHarness(HarnessNameCodex, authSlotID) {
-		return options, nil
-	}
-	if options.AuthProjection.Kind != "" && len(options.AuthProjection.Env) > 0 {
-		return options, nil
-	}
-	home, err := options.codexAuthSlotHome(authSlotID)
-	if err != nil {
-		return codexExecutorOptions{}, err
-	}
-	options.AuthProjection = HarnessAuthProjectionPlan{Owner: HarnessAuthProjectionOwnerNative, Kind: HarnessAuthProjectionConfigRoot, Env: map[string]string{"CODEX_HOME": home}, RiskLabels: []string{"provider_owned", "native_config_root_isolation"}}
-	return options, nil
-}
-
-func (options codexExecutorOptions) codexAuthSlotHome(authSlotID string) (string, error) {
-	return harnessAuthSlotHome(HarnessNameCodex, authSlotID, options.AuthHomeRoot)
+	return &CodexExecutor{adapterLifecycle: newAdapterLifecycle[codexExecutorOptions](HarnessNameCodex), options: options}
 }
 
 func safeAuthSlotPathComponent(value string) string {
@@ -118,10 +95,12 @@ func (e *CodexExecutor) AuthStatus(ctx context.Context, slot HarnessAuthSlot) (H
 	if e == nil {
 		return HarnessAuthStatus{}, fmt.Errorf("executor is required")
 	}
-	options, err := e.options.withCodexAuthSlotProjection(slot.AuthSlotID)
+	options := e.options
+	projection, err := ResolveNativeAuthSlotProjection(options.AuthProjection, NativeAuthSlotProjectionRequest{Harness: HarnessNameCodex, AuthSlotID: slot.AuthSlotID, EnvKey: "CODEX_HOME", Root: options.AuthHomeRoot, RiskLabels: []string{"provider_owned", "native_config_root_isolation"}})
 	if err != nil {
 		return HarnessAuthStatus{}, err
 	}
+	options.AuthProjection = projection
 	result, err := options.RunAuthCommand(ctx, options, []string{"login", "status"})
 	if err == nil && result.ExitCode != nil && *result.ExitCode == 0 {
 		return HarnessAuthStatus{Harness: HarnessNameCodex, AuthSlotID: strings.TrimSpace(slot.AuthSlotID), Status: HarnessAuthAuthenticated, AriSecretStorage: HarnessAriSecretStorageNone}, nil
@@ -234,10 +213,12 @@ func (e *CodexExecutor) AuthStart(ctx context.Context, slot HarnessAuthSlot, met
 	if e == nil {
 		return HarnessAuthStatus{}, fmt.Errorf("executor is required")
 	}
-	options, err := e.options.withCodexAuthSlotProjection(slot.AuthSlotID)
+	options := e.options
+	projection, err := ResolveNativeAuthSlotProjection(options.AuthProjection, NativeAuthSlotProjectionRequest{Harness: HarnessNameCodex, AuthSlotID: slot.AuthSlotID, EnvKey: "CODEX_HOME", Root: options.AuthHomeRoot, RiskLabels: []string{"provider_owned", "native_config_root_isolation"}})
 	if err != nil {
 		return HarnessAuthStatus{}, err
 	}
+	options.AuthProjection = projection
 	method = strings.TrimSpace(method)
 	if method == "" {
 		method = "device_code"
@@ -279,10 +260,12 @@ func (e *CodexExecutor) AuthLogout(ctx context.Context, slot HarnessAuthSlot) (H
 		status.Status = HarnessAuthRequired
 		return status, nil
 	}
-	options, err := e.options.withCodexAuthSlotProjection(slot.AuthSlotID)
+	options := e.options
+	projection, err := ResolveNativeAuthSlotProjection(options.AuthProjection, NativeAuthSlotProjectionRequest{Harness: HarnessNameCodex, AuthSlotID: slot.AuthSlotID, EnvKey: "CODEX_HOME", Root: options.AuthHomeRoot, RiskLabels: []string{"provider_owned", "native_config_root_isolation"}})
 	if err != nil {
 		return HarnessAuthStatus{}, err
 	}
+	options.AuthProjection = projection
 	result, err := options.RunAuthCommand(ctx, options, []string{"logout"})
 	if result.ExitCode != nil && *result.ExitCode != 0 {
 		return HarnessAuthStatus{}, &HarnessUnavailableError{Harness: HarnessNameCodex, Reason: "auth_logout_failed", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: true}
@@ -340,10 +323,11 @@ func (e *CodexExecutor) Start(ctx context.Context, req ExecutorStartRequest) (Ex
 	options := e.options
 	options.AuthProjection = req.AuthProjection
 	var err error
-	options, err = options.withCodexAuthSlotProjection(req.AuthSlotID)
+	projection, err := ResolveNativeAuthSlotProjection(options.AuthProjection, NativeAuthSlotProjectionRequest{Harness: HarnessNameCodex, AuthSlotID: req.AuthSlotID, EnvKey: "CODEX_HOME", Root: options.AuthHomeRoot, RiskLabels: []string{"provider_owned", "native_config_root_isolation"}})
 	if err != nil {
 		return ExecutorRun{}, err
 	}
+	options.AuthProjection = projection
 	transport, err := options.StartTransport(ctx, options)
 	if err != nil {
 		return ExecutorRun{}, err
@@ -377,10 +361,7 @@ func (e *CodexExecutor) Start(ctx context.Context, req ExecutorStartRequest) (Ex
 	if err != nil {
 		return ExecutorRun{}, err
 	}
-	e.mu.Lock()
-	e.runs[threadID] = items
-	e.deliveryOptions[threadID] = options
-	e.mu.Unlock()
+	e.storeRun(threadID, items, options)
 	providerRunID := turnID
 	if providerRunID == "" {
 		providerRunID = threadID
@@ -390,26 +371,6 @@ func (e *CodexExecutor) Start(ctx context.Context, req ExecutorStartRequest) (Ex
 		run.ResumeCursor = cursor
 	}
 	return run, nil
-}
-
-func (e *CodexExecutor) Items(ctx context.Context, runID string) ([]TimelineItem, error) {
-	_ = ctx
-	if e == nil {
-		return nil, fmt.Errorf("executor is required")
-	}
-	e.mu.Lock()
-	items, ok := e.runs[strings.TrimSpace(runID)]
-	e.mu.Unlock()
-	if !ok {
-		return nil, fmt.Errorf("run %q not found", runID)
-	}
-	return append([]TimelineItem(nil), items...), nil
-}
-
-func (e *CodexExecutor) Stop(ctx context.Context, runID string) error {
-	_ = ctx
-	_ = runID
-	return nil
 }
 
 func (e *CodexExecutor) AttemptWorkspaceDelivery(ctx context.Context, attempt WorkspaceDeliveryAttempt) (WorkspaceDeliveryAttemptResult, error) {
@@ -428,11 +389,9 @@ func (e *CodexExecutor) AttemptWorkspaceDelivery(ctx context.Context, attempt Wo
 	}
 	deliveryOptions := e.options
 	if threadID := strings.TrimSpace(attempt.Delivery.TargetID); threadID != "" {
-		e.mu.Lock()
-		if options, ok := e.deliveryOptions[threadID]; ok {
+		if options, ok := e.deliveryOption(threadID); ok {
 			deliveryOptions = options
 		}
-		e.mu.Unlock()
 	}
 	commandResult, commandErr := deliveryOptions.RunDelivery(ctx, deliveryOptions, request)
 	deliveryResult, parseErr := parseCodexAppServerDeliveryOutput(commandResult.Output)

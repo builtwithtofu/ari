@@ -301,7 +301,7 @@ func (d *Daemon) runEphemeralHarness(ctx context.Context, store *globaldb.Store,
 		runCtx, cancel = context.WithCancel(ctx)
 	}
 	defer cancel()
-	executor = &trackedHarnessExecutor{Executor: executor, daemon: d, store: store, workspaceID: setup.SourceRun.WorkspaceID, sessionID: setup.SessionID, cancel: cancel}
+	executor = &trackedHarnessExecutor{HarnessAdapter: executor, daemon: d, store: store, workspaceID: setup.SourceRun.WorkspaceID, sessionID: setup.SessionID, cancel: cancel}
 	projection, err := d.authProjectionForStart(runCtx, store, setup.TargetAgent.Harness, packet.WorkspaceID, profile.AuthSlotID)
 	if err != nil {
 		return ephemeralHarnessResult{}, mapHarnessRunError(err)

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"sync"
 )
 
 type claudeExecutorOptions struct {
@@ -36,10 +35,8 @@ type (
 )
 
 type ClaudeExecutor struct {
-	options         claudeExecutorOptions
-	mu              sync.Mutex
-	runs            map[string][]TimelineItem
-	deliveryOptions map[string]claudeExecutorOptions
+	adapterLifecycle[claudeExecutorOptions]
+	options claudeExecutorOptions
 }
 
 func NewClaudeExecutor(cwd string) *ClaudeExecutor {
@@ -66,27 +63,7 @@ func newClaudeExecutor(options claudeExecutorOptions) *ClaudeExecutor {
 	if options.RunAuthCommand == nil {
 		options.RunAuthCommand = runClaudeAuthCommand
 	}
-	return &ClaudeExecutor{options: options, runs: map[string][]TimelineItem{}, deliveryOptions: map[string]claudeExecutorOptions{}}
-}
-
-func (options claudeExecutorOptions) withClaudeAuthSlotProjection(authSlotID string) (claudeExecutorOptions, error) {
-	authSlotID = strings.TrimSpace(authSlotID)
-	if authSlotIsDefaultForHarness(HarnessNameClaude, authSlotID) {
-		return options, nil
-	}
-	if options.AuthProjection.Kind == HarnessAuthProjectionConfigRoot && strings.TrimSpace(options.AuthProjection.Env["CLAUDE_CONFIG_DIR"]) != "" {
-		return options, nil
-	}
-	home, err := claudeAuthSlotHome(authSlotID)
-	if err != nil {
-		return claudeExecutorOptions{}, err
-	}
-	options.AuthProjection = HarnessAuthProjectionPlan{Owner: HarnessAuthProjectionOwnerNative, Kind: HarnessAuthProjectionConfigRoot, Env: map[string]string{"CLAUDE_CONFIG_DIR": home}, RiskLabels: []string{"provider_owned", "native_config_root_isolation", "keychain_slot_isolation_risk"}}
-	return options, nil
-}
-
-func claudeAuthSlotHome(authSlotID string) (string, error) {
-	return harnessAuthSlotHome(HarnessNameClaude, authSlotID, "")
+	return &ClaudeExecutor{adapterLifecycle: newAdapterLifecycle[claudeExecutorOptions](HarnessNameClaude), options: options}
 }
 
 func (e *ClaudeExecutor) AuthStatus(ctx context.Context, slot HarnessAuthSlot) (HarnessAuthStatus, error) {
@@ -96,10 +73,12 @@ func (e *ClaudeExecutor) AuthStatus(ctx context.Context, slot HarnessAuthSlot) (
 	if e == nil {
 		return HarnessAuthStatus{}, fmt.Errorf("executor is required")
 	}
-	options, err := e.options.withClaudeAuthSlotProjection(slot.AuthSlotID)
+	options := e.options
+	projection, err := ResolveNativeAuthSlotProjection(options.AuthProjection, NativeAuthSlotProjectionRequest{Harness: HarnessNameClaude, AuthSlotID: slot.AuthSlotID, EnvKey: "CLAUDE_CONFIG_DIR", RiskLabels: []string{"provider_owned", "native_config_root_isolation", "keychain_slot_isolation_risk"}})
 	if err != nil {
 		return HarnessAuthStatus{}, err
 	}
+	options.AuthProjection = projection
 	result, err := options.RunAuthCommand(ctx, options, []string{"auth", "status", "--json"})
 	if err != nil {
 		var unavailable *HarnessUnavailableError
@@ -120,10 +99,12 @@ func (e *ClaudeExecutor) AuthLogout(ctx context.Context, slot HarnessAuthSlot) (
 	if e == nil {
 		return HarnessAuthStatus{}, fmt.Errorf("executor is required")
 	}
-	options, err := e.options.withClaudeAuthSlotProjection(slot.AuthSlotID)
+	options := e.options
+	projection, err := ResolveNativeAuthSlotProjection(options.AuthProjection, NativeAuthSlotProjectionRequest{Harness: HarnessNameClaude, AuthSlotID: slot.AuthSlotID, EnvKey: "CLAUDE_CONFIG_DIR", RiskLabels: []string{"provider_owned", "native_config_root_isolation", "keychain_slot_isolation_risk"}})
 	if err != nil {
 		return HarnessAuthStatus{}, err
 	}
+	options.AuthProjection = projection
 	result, err := options.RunAuthCommand(ctx, options, []string{"auth", "logout"})
 	if result.ExitCode != nil && *result.ExitCode != 0 {
 		return HarnessAuthStatus{}, &HarnessUnavailableError{Harness: HarnessNameClaude, Reason: "auth_logout_failed", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: true}
@@ -185,10 +166,11 @@ func (e *ClaudeExecutor) Start(ctx context.Context, req ExecutorStartRequest) (E
 	}
 	options.SystemPrompt = strings.TrimSpace(req.Prompt)
 	options.AuthProjection = req.AuthProjection
-	options, err := options.withClaudeAuthSlotProjection(req.AuthSlotID)
+	projection, err := ResolveNativeAuthSlotProjection(options.AuthProjection, NativeAuthSlotProjectionRequest{Harness: HarnessNameClaude, AuthSlotID: req.AuthSlotID, EnvKey: "CLAUDE_CONFIG_DIR", RiskLabels: []string{"provider_owned", "native_config_root_isolation", "keychain_slot_isolation_risk"}})
 	if err != nil {
 		return ExecutorRun{}, err
 	}
+	options.AuthProjection = projection
 	commandResult, err := options.RunCommand(ctx, options, contextPacketPrompt(req))
 	if err != nil {
 		return ExecutorRun{}, err
@@ -202,10 +184,7 @@ func (e *ClaudeExecutor) Start(ctx context.Context, req ExecutorStartRequest) (E
 		return ExecutorRun{}, fmt.Errorf("claude session id is required")
 	}
 	items := claudeTimelineItemsFromResult(workspaceID, sessionID, result, options.InvocationMode)
-	e.mu.Lock()
-	e.runs[sessionID] = items
-	e.deliveryOptions[sessionID] = options
-	e.mu.Unlock()
+	e.storeRun(sessionID, items, options)
 	run := ExecutorRun{RunID: sessionID, SessionID: sessionID, Executor: HarnessNameClaude, ProviderSessionID: sessionID, ProviderRunID: sessionID, ExitCode: commandResult.ExitCode, ProcessSample: commandResult.ProcessSample, CapabilityNames: harnessCapabilitiesToStrings(e.Descriptor().Capabilities), Persistence: HarnessSessionEphemeral, ResumeMode: HarnessResumeNone}
 	if options.InvocationMode == HarnessInvocationModeBackground {
 		// Background sessions stay alive provider-side; later turns reattach
@@ -217,26 +196,6 @@ func (e *ClaudeExecutor) Start(ctx context.Context, req ExecutorStartRequest) (E
 		}
 	}
 	return run, nil
-}
-
-func (e *ClaudeExecutor) Items(ctx context.Context, runID string) ([]TimelineItem, error) {
-	_ = ctx
-	if e == nil {
-		return nil, fmt.Errorf("executor is required")
-	}
-	e.mu.Lock()
-	items, ok := e.runs[strings.TrimSpace(runID)]
-	e.mu.Unlock()
-	if !ok {
-		return nil, fmt.Errorf("run %q not found", runID)
-	}
-	return append([]TimelineItem(nil), items...), nil
-}
-
-func (e *ClaudeExecutor) Stop(ctx context.Context, runID string) error {
-	_ = ctx
-	_ = runID
-	return nil
 }
 
 func (e *ClaudeExecutor) AttemptWorkspaceDelivery(ctx context.Context, attempt WorkspaceDeliveryAttempt) (WorkspaceDeliveryAttemptResult, error) {
@@ -251,11 +210,9 @@ func (e *ClaudeExecutor) AttemptWorkspaceDelivery(ctx context.Context, attempt W
 	}
 	deliveryOptions := e.options
 	if sessionID := strings.TrimSpace(attempt.Delivery.TargetID); sessionID != "" {
-		e.mu.Lock()
-		if options, ok := e.deliveryOptions[sessionID]; ok {
+		if options, ok := e.deliveryOption(sessionID); ok {
 			deliveryOptions = options
 		}
-		e.mu.Unlock()
 	}
 	commandResult, commandErr := deliveryOptions.RunDelivery(ctx, deliveryOptions, claudeWorkspaceDeliveryTurn(attempt))
 	deliveryResult, parseErr := parseClaudeManagedPTYDeliveryOutput(commandResult.Output)

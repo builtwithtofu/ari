@@ -1,10 +1,46 @@
 package daemon
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
+
+type registryDescriptorHarness struct {
+	adapterLifecycle[struct{}]
+	descriptor HarnessAdapterDescriptor
+}
+
+func newRegistryDescriptorHarness(descriptor HarnessAdapterDescriptor) *registryDescriptorHarness {
+	name := descriptor.Name
+	if name == "" {
+		name = "test"
+	}
+	return &registryDescriptorHarness{adapterLifecycle: newAdapterLifecycle[struct{}](name), descriptor: descriptor}
+}
+
+func (h *registryDescriptorHarness) Descriptor() HarnessAdapterDescriptor {
+	return h.descriptor
+}
+
+func (h *registryDescriptorHarness) Start(ctx context.Context, req ExecutorStartRequest) (ExecutorRun, error) {
+	_ = ctx
+	return ExecutorRun{RunID: req.RunID, SessionID: req.SessionID, Executor: h.descriptor.Name}, nil
+}
+
+func (h *registryDescriptorHarness) AttemptWorkspaceDelivery(ctx context.Context, attempt WorkspaceDeliveryAttempt) (WorkspaceDeliveryAttemptResult, error) {
+	_ = ctx
+	_ = attempt
+	return failedWorkspaceDeliveryAttempt("test harness does not support workspace delivery"), nil
+}
+
+func (h *registryDescriptorHarness) AuthStatus(ctx context.Context, slot HarnessAuthSlot) (HarnessAuthStatus, error) {
+	_ = ctx
+	return unsupportedHarnessAuthStatus(h.descriptor.Name, slot), nil
+}
 
 func TestHarnessRegistryRejectsInvalidRegistration(t *testing.T) {
 	registry := NewHarnessRegistry()
-	if err := registry.Register("", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	if err := registry.Register("", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		return nil, nil
 	}); err == nil {
 		t.Fatal("Register returned nil error for empty name")
@@ -16,7 +52,7 @@ func TestHarnessRegistryRejectsInvalidRegistration(t *testing.T) {
 
 func TestHarnessRegistryRejectsDuplicateRegistration(t *testing.T) {
 	registry := NewHarnessRegistry()
-	factory := func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	factory := func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		return nil, nil
 	}
 	if err := registry.Register("test", factory); err != nil {
@@ -36,7 +72,7 @@ func TestHarnessRegistryResolveUnknownHarness(t *testing.T) {
 
 func TestHarnessRegistryReplaceForTestAllowsInjection(t *testing.T) {
 	registry := NewHarnessRegistry()
-	factory := func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	factory := func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		return nil, nil
 	}
 	if err := registry.ReplaceForTest("test", factory); err != nil {
@@ -47,45 +83,52 @@ func TestHarnessRegistryReplaceForTestAllowsInjection(t *testing.T) {
 	}
 }
 
-func TestHarnessRegistryResolvesDescriptorWithoutConstructingExecutor(t *testing.T) {
+func TestHarnessRegistryResolvesDescriptorFromAdapterContract(t *testing.T) {
 	registry := NewHarnessRegistry()
-	factory := func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
-		return nil, nil
-	}
 	descriptor := HarnessAdapterDescriptor{Name: "test", Auth: HarnessAuthDescriptor{StatusCheck: HarnessAuthSupportSupported, CredentialOwner: HarnessCredentialOwnerProvider, NamedSlotExecution: HarnessAuthSupportUnsupported}}
-	if err := registry.RegisterWithDescriptor("test", factory, descriptor); err != nil {
-		t.Fatalf("RegisterWithDescriptor returned error: %v", err)
+	factory := func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return newRegistryDescriptorHarness(descriptor), nil
+	}
+	if err := registry.Register("test", factory, descriptor); err != nil {
+		t.Fatalf("Register returned error: %v", err)
 	}
 
-	got, ok := registry.ResolveDescriptor("test")
+	got, ok := registry.Descriptor("test")
 	if !ok || got.Name != "test" || got.Auth.StatusCheck != HarnessAuthSupportSupported || got.Auth.CredentialOwner != HarnessCredentialOwnerProvider {
-		t.Fatalf("ResolveDescriptor returned %#v ok=%v, want registered auth descriptor", got, ok)
+		t.Fatalf("Descriptor returned %#v ok=%v, want registered auth descriptor", got, ok)
 	}
 }
 
 func TestHarnessRegistryStoresObservationDeliveryOnlyDescriptor(t *testing.T) {
 	registry := NewHarnessRegistry()
-	factory := func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
-		return nil, nil
-	}
 	descriptor := HarnessAdapterDescriptor{
+		Name:                    "streaming",
 		ObservationCapabilities: []HarnessObservationCapability{HarnessObservationEventStream},
 		DeliveryCapabilities:    []HarnessDeliveryCapability{HarnessDeliveryVisiblePromptTurn},
 	}
-	if err := registry.RegisterWithDescriptor("streaming", factory, descriptor); err != nil {
-		t.Fatalf("RegisterWithDescriptor returned error: %v", err)
+	factory := func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
+		_ = req
+		_ = primaryFolder
+		_ = sink
+		return newRegistryDescriptorHarness(descriptor), nil
+	}
+	if err := registry.Register("streaming", factory, descriptor); err != nil {
+		t.Fatalf("Register returned error: %v", err)
 	}
 
-	got, ok := registry.ResolveDescriptor("streaming")
+	got, ok := registry.Descriptor("streaming")
 	if !ok || got.Name != "streaming" || !harnessObservationCapabilitiesContain(got.ObservationCapabilities, HarnessObservationEventStream) || !harnessDeliveryCapabilitiesContain(got.DeliveryCapabilities, HarnessDeliveryVisiblePromptTurn) {
-		t.Fatalf("ResolveDescriptor returned %#v ok=%v, want observation/delivery descriptor", got, ok)
+		t.Fatalf("Descriptor returned %#v ok=%v, want observation/delivery descriptor", got, ok)
 	}
 }
 
 func TestDefaultHarnessRegistryProvidesProviderAuthDescriptors(t *testing.T) {
 	registry := NewDefaultHarnessRegistry()
 	for _, harness := range []string{HarnessNameClaude, HarnessNameCodex, HarnessNameOpenCode} {
-		descriptor, ok := registry.ResolveDescriptor(harness)
+		descriptor, ok := registry.Descriptor(harness)
 		if !ok || descriptor.Auth.StatusCheck != HarnessAuthSupportSupported || descriptor.Auth.CredentialOwner != HarnessCredentialOwnerProvider {
 			t.Fatalf("%s descriptor = %#v ok=%v, want provider auth descriptor", harness, descriptor, ok)
 		}

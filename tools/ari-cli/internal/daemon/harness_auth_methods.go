@@ -117,36 +117,17 @@ type AuthSlotRemoveResponse struct {
 }
 
 type AuthSlotResponse struct {
-	AuthSlotID      string `json:"auth_slot_id"`
-	Harness         string `json:"harness"`
-	Label           string `json:"label"`
-	ProviderLabel   string `json:"provider_label,omitempty"`
-	CredentialOwner string `json:"credential_owner"`
-	Status          string `json:"status"`
+	AuthSlotID      string       `json:"auth_slot_id"`
+	Harness         string       `json:"harness"`
+	Label           string       `json:"label"`
+	ProviderLabel   string       `json:"provider_label,omitempty"`
+	CredentialOwner string       `json:"credential_owner"`
+	Status          string       `json:"status"`
+	Presentation    Presentation `json:"presentation"`
 }
 
 type AuthSlotListResponse struct {
 	Slots []AuthSlotResponse `json:"slots"`
-}
-
-type harnessAuthStatuser interface {
-	AuthStatus(context.Context, HarnessAuthSlot) (HarnessAuthStatus, error)
-}
-
-type harnessAuthStarter interface {
-	AuthStart(context.Context, HarnessAuthSlot, string) (HarnessAuthStatus, error)
-}
-
-type harnessAuthCanceller interface {
-	AuthCancel(context.Context, HarnessAuthSlot, string) (HarnessAuthStatus, error)
-}
-
-type harnessAuthLoggerOuter interface {
-	AuthLogout(context.Context, HarnessAuthSlot) (HarnessAuthStatus, error)
-}
-
-type harnessAuthProviderMethodDiscoverer interface {
-	AuthProviderMethods(context.Context) (HarnessAuthProviderMethodsResponse, error)
 }
 
 func (d *Daemon) harnessAuthStart(ctx context.Context, store *globaldb.Store, req HarnessAuthStartRequest) (HarnessAuthStartResponse, error) {
@@ -173,11 +154,7 @@ func (d *Daemon) harnessAuthStart(ctx context.Context, store *globaldb.Store, re
 	if err != nil {
 		return HarnessAuthStartResponse{}, mapHarnessRunError(err)
 	}
-	starter, ok := executor.(harnessAuthStarter)
-	if !ok {
-		return HarnessAuthStartResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "harness auth start is not supported", map[string]any{"harness": strings.TrimSpace(slot.Harness), "reason": "auth_start_unsupported", "start_invoked": false})
-	}
-	status, err := starter.AuthStart(ctx, slot, req.Method)
+	status, err := executor.AuthStart(ctx, slot, req.Method)
 	if err != nil {
 		return HarnessAuthStartResponse{}, mapHarnessRunError(err)
 	}
@@ -218,11 +195,7 @@ func (d *Daemon) harnessAuthCancel(ctx context.Context, store *globaldb.Store, r
 	if err != nil {
 		return HarnessAuthCancelResponse{}, mapHarnessRunError(err)
 	}
-	canceller, ok := executor.(harnessAuthCanceller)
-	if !ok {
-		return HarnessAuthCancelResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "harness auth cancel is not supported", map[string]any{"harness": strings.TrimSpace(slot.Harness), "reason": "auth_cancel_unsupported", "cancel_invoked": false})
-	}
-	status, err := canceller.AuthCancel(ctx, slot, flowID)
+	status, err := executor.AuthCancel(ctx, slot, flowID)
 	if err != nil {
 		return HarnessAuthCancelResponse{}, mapHarnessRunError(err)
 	}
@@ -259,12 +232,12 @@ func (d *Daemon) harnessAuthLogout(ctx context.Context, store *globaldb.Store, r
 	if err != nil {
 		return HarnessAuthLogoutResponse{}, mapHarnessRunError(err)
 	}
-	loggerOuter, ok := executor.(harnessAuthLoggerOuter)
-	if !ok {
-		return HarnessAuthLogoutResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "harness auth logout is not supported", map[string]any{"harness": strings.TrimSpace(slot.Harness), "reason": "auth_logout_unsupported", "logout_invoked": false, "ari_secret_storage": string(HarnessAriSecretStorageNone)})
-	}
-	status, err := loggerOuter.AuthLogout(ctx, slot)
+	status, err := executor.AuthLogout(ctx, slot)
 	if err != nil {
+		var unavailable *HarnessUnavailableError
+		if errors.As(err, &unavailable) && unavailable.Reason == "auth_logout_unsupported" {
+			return HarnessAuthLogoutResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "harness auth logout is not supported", map[string]any{"harness": strings.TrimSpace(slot.Harness), "reason": "auth_logout_unsupported", "logout_invoked": false, "ari_secret_storage": string(HarnessAriSecretStorageNone)})
+		}
 		return HarnessAuthLogoutResponse{}, mapHarnessRunError(err)
 	}
 	if status.Status != "" && status.Status != HarnessAuthUnknown {
@@ -298,13 +271,13 @@ func (d *Daemon) harnessAuthDiagnose(ctx context.Context, store *globaldb.Store,
 	resp := HarnessAuthDiagnoseResponse{Harnesses: make([]HarnessAuthDiagnostic, 0, len(providerAuthHarnesses()))}
 	for _, harness := range providerAuthHarnesses() {
 		auth := HarnessAuthDescriptor{}
-		if descriptor, ok := d.harnessRegistry.ResolveDescriptor(harness); ok {
+		if descriptor, ok := d.harnessRegistry.Descriptor(harness); ok {
 			auth = descriptor.Auth
 		}
 		factory, ok := d.harnessRegistry.Resolve(harness)
 		if !ok {
 			status := HarnessAuthStatus{Harness: harness, AuthSlotID: authSlotIDForName(harness, "default"), Name: "default", Status: HarnessAuthUnknown, AriSecretStorage: HarnessAriSecretStorageNone}
-			resp.Harnesses = append(resp.Harnesses, HarnessAuthDiagnostic{Harness: harness, Installed: true, Status: HarnessAuthUnknown, DefaultSlot: status, Auth: auth, NextStep: d.authDiagnosticNextStep(status)})
+			resp.Harnesses = append(resp.Harnesses, d.presentAuthDiagnostic(HarnessAuthDiagnostic{Harness: harness, Installed: true, Status: HarnessAuthUnknown, DefaultSlot: status, Auth: auth, NextStep: d.authDiagnosticNextStep(status)}))
 			continue
 		}
 		executor, err := factory(HarnessSessionStartRequest{Executor: harness}, primaryFolder, d.appendExecutorItems)
@@ -314,32 +287,28 @@ func (d *Daemon) harnessAuthDiagnose(ctx context.Context, store *globaldb.Store,
 			diagnostic.DefaultSlot.Name = "default"
 			diagnostic.Status = diagnostic.DefaultSlot.Status
 			diagnostic.NextStep = d.authDiagnosticNextStep(diagnostic.DefaultSlot)
-			resp.Harnesses = append(resp.Harnesses, diagnostic)
+			resp.Harnesses = append(resp.Harnesses, d.presentAuthDiagnostic(diagnostic))
 			continue
 		}
-		if describer, ok := executor.(HarnessDescriber); ok {
-			diagnostic.Auth = describer.Descriptor().Auth
-		}
+		diagnostic.Auth = executor.Descriptor().Auth
 		defaultSlot := harnessAuthSlotFromGlobal(globaldb.AuthSlot{AuthSlotID: authSlotIDForName(harness, "default"), Harness: harness, Label: "default", CredentialOwner: string(HarnessCredentialOwnerProvider), Status: string(HarnessAuthUnknown)})
 		if stored, ok := storedByID[defaultSlot.AuthSlotID]; ok {
 			defaultSlot = harnessAuthSlotFromGlobal(stored)
 		}
-		if statuser, ok := executor.(harnessAuthStatuser); ok {
-			status, err := statuser.AuthStatus(ctx, defaultSlot)
-			if err != nil {
-				var unavailable *HarnessUnavailableError
-				if errors.As(err, &unavailable) && unavailable.Reason == "missing_executable" {
-					status = HarnessAuthStatus{Harness: harness, AuthSlotID: defaultSlot.AuthSlotID, Status: HarnessAuthNotInstalled, AriSecretStorage: HarnessAriSecretStorageNone}
-					diagnostic.Installed = false
-				} else {
-					return HarnessAuthDiagnoseResponse{}, err
-				}
+		status, err := executor.AuthStatus(ctx, defaultSlot)
+		if err != nil {
+			var unavailable *HarnessUnavailableError
+			if errors.As(err, &unavailable) && unavailable.Reason == "missing_executable" {
+				status = HarnessAuthStatus{Harness: harness, AuthSlotID: defaultSlot.AuthSlotID, Status: HarnessAuthNotInstalled, AriSecretStorage: HarnessAriSecretStorageNone}
+				diagnostic.Installed = false
+			} else {
+				return HarnessAuthDiagnoseResponse{}, err
 			}
-			status.Name = authStatusName(defaultSlot, harness)
-			diagnostic.DefaultSlot = status
-			diagnostic.Status = status.Status
-			diagnostic.NextStep = d.authDiagnosticNextStep(status)
 		}
+		status.Name = authStatusName(defaultSlot, harness)
+		diagnostic.DefaultSlot = status
+		diagnostic.Status = status.Status
+		diagnostic.NextStep = d.authDiagnosticNextStep(status)
 		diagnostic.ProviderMethods = authProviderMethodDiagnostic(ctx, executor, req.DiscoverProviderMethods)
 		for _, stored := range slotsByHarness[harness] {
 			if stored.AuthSlotID == defaultSlot.AuthSlotID {
@@ -356,15 +325,11 @@ func providerAuthHarnesses() []string {
 	return []string{HarnessNameClaude, HarnessNameCodex, HarnessNameOpenCode, HarnessNamePi, HarnessNameGrok}
 }
 
-func authProviderMethodDiagnostic(ctx context.Context, executor Executor, discover bool) HarnessAuthProviderMethodDiagnostic {
+func authProviderMethodDiagnostic(ctx context.Context, executor HarnessAdapter, discover bool) HarnessAuthProviderMethodDiagnostic {
 	if !discover {
 		return HarnessAuthProviderMethodDiagnostic{Status: "skipped"}
 	}
-	discoverer, ok := executor.(harnessAuthProviderMethodDiscoverer)
-	if !ok {
-		return HarnessAuthProviderMethodDiagnostic{Status: "unsupported"}
-	}
-	methods, err := discoverer.AuthProviderMethods(ctx)
+	methods, err := executor.AuthProviderMethods(ctx)
 	if err != nil {
 		return HarnessAuthProviderMethodDiagnostic{Status: "error"}
 	}
@@ -392,11 +357,7 @@ func (d *Daemon) harnessAuthProviderMethods(ctx context.Context, store *globaldb
 	if err != nil {
 		return HarnessAuthProviderMethodsResponse{}, mapHarnessRunError(err)
 	}
-	discoverer, ok := executor.(harnessAuthProviderMethodDiscoverer)
-	if !ok {
-		return HarnessAuthProviderMethodsResponse{}, rpc.NewHandlerError(rpc.InvalidParams, "harness auth provider methods are not supported", map[string]any{"harness": harness, "reason": "auth_provider_methods_unsupported"})
-	}
-	methods, err := discoverer.AuthProviderMethods(ctx)
+	methods, err := executor.AuthProviderMethods(ctx)
 	if err != nil {
 		return HarnessAuthProviderMethodsResponse{}, mapHarnessRunError(err)
 	}
@@ -441,7 +402,7 @@ func (d *Daemon) authDiagnosticNextStep(status HarnessAuthStatus) string {
 
 func (d *Daemon) harnessDisplayName(harness string) string {
 	if d != nil {
-		if descriptor, ok := d.harnessRegistry.ResolveDescriptor(harness); ok && strings.TrimSpace(descriptor.DisplayName) != "" {
+		if descriptor, ok := d.harnessRegistry.Descriptor(harness); ok && strings.TrimSpace(descriptor.DisplayName) != "" {
 			return descriptor.DisplayName
 		}
 	}
@@ -452,7 +413,7 @@ func (d *Daemon) harnessAuthProjectionStyle(harness string) HarnessAuthProjectio
 	if d == nil {
 		return HarnessAuthProjectionStyleNone
 	}
-	descriptor, ok := d.harnessRegistry.ResolveDescriptor(strings.TrimSpace(harness))
+	descriptor, ok := d.harnessRegistry.Descriptor(strings.TrimSpace(harness))
 	if !ok {
 		return HarnessAuthProjectionStyleNone
 	}
@@ -512,14 +473,7 @@ func (d *Daemon) harnessAuthStatus(ctx context.Context, store *globaldb.Store, r
 			statuses = append(statuses, status)
 			continue
 		}
-		statuser, ok := executor.(harnessAuthStatuser)
-		if !ok {
-			status := HarnessAuthStatus{Harness: harness, AuthSlotID: strings.TrimSpace(slot.AuthSlotID), Status: HarnessAuthUnknown, AriSecretStorage: HarnessAriSecretStorageNone}
-			status.Name = authStatusName(slot, harness)
-			statuses = append(statuses, status)
-			continue
-		}
-		status, err := statuser.AuthStatus(ctx, slot)
+		status, err := executor.AuthStatus(ctx, slot)
 		if err != nil {
 			var unavailable *HarnessUnavailableError
 			if errors.As(err, &unavailable) && unavailable.Reason == "missing_executable" {
@@ -623,20 +577,16 @@ func (d *Daemon) removeAuthSlot(ctx context.Context, store *globaldb.Store, req 
 }
 
 func authSlotResponseFromGlobal(slot globaldb.AuthSlot) AuthSlotResponse {
-	return AuthSlotResponse{AuthSlotID: slot.AuthSlotID, Harness: slot.Harness, Label: slot.Label, ProviderLabel: slot.ProviderLabel, CredentialOwner: slot.CredentialOwner, Status: slot.Status}
+	return presentAuthSlot(AuthSlotResponse{AuthSlotID: slot.AuthSlotID, Harness: slot.Harness, Label: slot.Label, ProviderLabel: slot.ProviderLabel, CredentialOwner: slot.CredentialOwner, Status: slot.Status})
 }
 
 func harnessAuthSlotFromGlobal(slot globaldb.AuthSlot) HarnessAuthSlot {
 	return HarnessAuthSlot{AuthSlotID: slot.AuthSlotID, Harness: slot.Harness, Label: slot.Label, ProviderLabel: slot.ProviderLabel, CredentialOwner: HarnessCredentialOwner(slot.CredentialOwner), Status: HarnessAuthState(slot.Status)}
 }
 
-func resolveProfileAuthSlot(ctx context.Context, store *globaldb.Store, executor Executor, harness string, profile Profile) (string, error) {
+func resolveProfileAuthSlot(ctx context.Context, store *globaldb.Store, executor HarnessAdapter, harness string, profile Profile) (string, error) {
 	if strings.TrimSpace(profile.AuthSlotID) == "" && len(profile.AuthPool.SlotIDs) == 0 {
 		return "", nil
-	}
-	statuser, ok := executor.(harnessAuthStatuser)
-	if !ok {
-		return "", &HarnessUnavailableError{Harness: harness, Reason: "auth_slot_selection_unsupported", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
 	}
 	slotIDs := []string{}
 	if strings.TrimSpace(profile.AuthSlotID) != "" {
@@ -665,7 +615,7 @@ func resolveProfileAuthSlot(ctx context.Context, store *globaldb.Store, executor
 		if strings.TrimSpace(slot.Harness) != strings.TrimSpace(harness) {
 			return "", &HarnessUnavailableError{Harness: harness, Reason: "auth_slot_harness_mismatch", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
 		}
-		status, err := statuser.AuthStatus(ctx, slot)
+		status, err := executor.AuthStatus(ctx, slot)
 		if err != nil {
 			return "", err
 		}

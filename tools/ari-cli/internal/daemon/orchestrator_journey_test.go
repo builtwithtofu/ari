@@ -41,7 +41,7 @@ func TestOrchestratorJourneyFanoutPartialResultsAndCoherentProjections(t *testin
 		releases[worker.profileID] = release
 		harness := worker.harness
 		answer := worker.answer
-		d.setHarnessFactoryForTest(harness, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		d.setHarnessFactoryForTest(harness, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 			_ = req
 			_ = primaryFolder
 			_ = sink
@@ -235,7 +235,7 @@ func TestOrchestratorWakesOnWatchedSessionIdle(t *testing.T) {
 	release := make(chan struct{})
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
-	d.setHarnessFactoryForTest("wake-idle-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("wake-idle-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink

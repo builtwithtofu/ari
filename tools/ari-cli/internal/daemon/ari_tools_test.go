@@ -368,7 +368,7 @@ func TestAriSessionFanoutToolStartsWorkersFromScopedStickySession(t *testing.T) 
 	release := make(chan struct{})
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
-	d.setHarnessFactoryForTest("fanout-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("fanout-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -423,7 +423,7 @@ func TestAriSessionFanoutToolSeparatesFanoutGroupIDFromRequestMessageEvidence(t 
 	}
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
-	d.setHarnessFactoryForTest("fanout-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("fanout-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -459,13 +459,13 @@ func TestAriSessionFanoutToolWaitsForAnyTerminalWorker(t *testing.T) {
 	slowRelease := make(chan struct{})
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
-	d.setHarnessFactoryForTest("fast-fanout-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("fast-fanout-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
 		return newFakeHarness("fast-fanout-harness", []TimelineItem{{Kind: "agent_text", Text: "fast answer"}}), nil
 	})
-	d.setHarnessFactoryForTest("slow-fanout-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("slow-fanout-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -501,7 +501,7 @@ func TestAriSessionFanoutToolWaitsForAllTerminalWorkers(t *testing.T) {
 	}
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
-	d.setHarnessFactoryForTest("done-fanout-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("done-fanout-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -533,7 +533,7 @@ func TestAriSessionFanoutToolWaitTimeoutDoesNotCancelWorkersOrCreateWorkerTimeou
 	slowRelease := make(chan struct{})
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
-	d.setHarnessFactoryForTest("slow-fanout-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("slow-fanout-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -580,7 +580,7 @@ func TestAriSessionFanoutToolRejectsUnboundedBlockingWaitBeforeStartingWorkers(t
 	starts := 0
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
-	d.setHarnessFactoryForTest("slow-fanout-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("slow-fanout-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -611,7 +611,7 @@ func TestAriSessionFanoutToolRejectsNonStringWaitModeBeforeStartingWorkers(t *te
 	starts := 0
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
-	d.setHarnessFactoryForTest("slow-fanout-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("slow-fanout-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -664,7 +664,7 @@ func TestAriSessionFanoutToolPrevalidatesDurableIDAndContextExcerptConflicts(t *
 			starts := 0
 			registry := rpc.NewMethodRegistry()
 			d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
-			d.setHarnessFactoryForTest("fanout-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+			d.setHarnessFactoryForTest("fanout-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 				_ = req
 				_ = primaryFolder
 				_ = sink
@@ -987,7 +987,7 @@ func TestAriSessionFanoutToolRejectsInvalidInputsBeforeStartingWorkers(t *testin
 			starts := 0
 			registry := rpc.NewMethodRegistry()
 			d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", filepath.Join(t.TempDir(), "config.json"), "defaults", "test-version")
-			d.setHarnessFactoryForTest("fanout-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+			d.setHarnessFactoryForTest("fanout-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 				_ = req
 				_ = primaryFolder
 				_ = sink

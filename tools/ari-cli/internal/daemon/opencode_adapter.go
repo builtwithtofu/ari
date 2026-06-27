@@ -14,7 +14,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -34,10 +33,8 @@ type (
 )
 
 type OpenCodeExecutor struct {
-	options         opencodeExecutorOptions
-	mu              sync.Mutex
-	runs            map[string][]TimelineItem
-	deliveryOptions map[string]opencodeExecutorOptions
+	adapterLifecycle[opencodeExecutorOptions]
+	options opencodeExecutorOptions
 }
 
 func NewOpenCodeExecutor(cwd string) *OpenCodeExecutor {
@@ -58,7 +55,7 @@ func newOpenCodeExecutor(options opencodeExecutorOptions) *OpenCodeExecutor {
 	if options.RunAuthCommand == nil {
 		options.RunAuthCommand = runOpenCodeAuthCommand
 	}
-	return &OpenCodeExecutor{options: options, runs: map[string][]TimelineItem{}, deliveryOptions: map[string]opencodeExecutorOptions{}}
+	return &OpenCodeExecutor{adapterLifecycle: newAdapterLifecycle[opencodeExecutorOptions](HarnessNameOpenCode), options: options}
 }
 
 func (e *OpenCodeExecutor) AuthStatus(ctx context.Context, slot HarnessAuthSlot) (HarnessAuthStatus, error) {
@@ -143,8 +140,8 @@ func (e *OpenCodeExecutor) Start(ctx context.Context, req ExecutorStartRequest) 
 	if e == nil {
 		return ExecutorRun{}, fmt.Errorf("executor is required")
 	}
-	if !authSlotIsDefaultForHarness(HarnessNameOpenCode, req.AuthSlotID) && !openCodeAuthContentProjectionReady(req.AuthProjection) {
-		return ExecutorRun{}, &HarnessUnavailableError{Harness: HarnessNameOpenCode, Reason: "auth_slot_projection_required", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+	if err := RequireProjectedAuthSlot(HarnessNameOpenCode, req.AuthSlotID, req.AuthProjection, openCodeAuthContentProjectionReady); err != nil {
+		return ExecutorRun{}, err
 	}
 	workspaceID := strings.TrimSpace(req.WorkspaceID)
 	if workspaceID == "" {
@@ -178,10 +175,7 @@ func (e *OpenCodeExecutor) Start(ctx context.Context, req ExecutorStartRequest) 
 		return ExecutorRun{}, fmt.Errorf("opencode session id is required")
 	}
 	items := opencodeTimelineItemsFromEvents(workspaceID, parsed)
-	e.mu.Lock()
-	e.runs[parsed.SessionID] = items
-	e.deliveryOptions[parsed.SessionID] = options
-	e.mu.Unlock()
+	e.storeRun(parsed.SessionID, items, options)
 	run := ExecutorRun{RunID: parsed.SessionID, SessionID: parsed.SessionID, Executor: HarnessNameOpenCode, ProviderSessionID: parsed.SessionID, ProviderRunID: parsed.SessionID, ExitCode: commandResult.ExitCode, ProcessSample: commandResult.ProcessSample, CapabilityNames: harnessCapabilitiesToStrings(e.Descriptor().Capabilities), Persistence: HarnessSessionPersistent, ResumeMode: HarnessResumeHTTPAPI}
 	if cursor, err := json.Marshal(map[string]string{"session_id": parsed.SessionID}); err == nil {
 		run.ResumeCursor = cursor
@@ -191,26 +185,6 @@ func (e *OpenCodeExecutor) Start(ctx context.Context, req ExecutorStartRequest) 
 
 func openCodeAuthContentProjectionReady(projection HarnessAuthProjectionPlan) bool {
 	return projection.Owner == HarnessAuthProjectionOwnerAri && projection.Kind == HarnessAuthProjectionAuthContent && strings.TrimSpace(projection.Env["OPENCODE_AUTH_CONTENT"]) != ""
-}
-
-func (e *OpenCodeExecutor) Items(ctx context.Context, runID string) ([]TimelineItem, error) {
-	_ = ctx
-	if e == nil {
-		return nil, fmt.Errorf("executor is required")
-	}
-	e.mu.Lock()
-	items, ok := e.runs[strings.TrimSpace(runID)]
-	e.mu.Unlock()
-	if !ok {
-		return nil, fmt.Errorf("run %q not found", runID)
-	}
-	return append([]TimelineItem(nil), items...), nil
-}
-
-func (e *OpenCodeExecutor) Stop(ctx context.Context, runID string) error {
-	_ = ctx
-	_ = runID
-	return nil
 }
 
 func (e *OpenCodeExecutor) AttemptWorkspaceDelivery(ctx context.Context, attempt WorkspaceDeliveryAttempt) (WorkspaceDeliveryAttemptResult, error) {
@@ -225,11 +199,9 @@ func (e *OpenCodeExecutor) AttemptWorkspaceDelivery(ctx context.Context, attempt
 		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("delivery target session, delivery id, and event ids are required")
 	}
 	deliveryOptions := e.options
-	e.mu.Lock()
-	if options, ok := e.deliveryOptions[sessionID]; ok {
+	if options, ok := e.deliveryOption(sessionID); ok {
 		deliveryOptions = options
 	}
-	e.mu.Unlock()
 	serverURL, stopServer, err := e.deliveryServerURL(ctx, deliveryOptions)
 	if err != nil {
 		return WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptRetry, LastError: err.Error()}, err

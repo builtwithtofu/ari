@@ -406,7 +406,7 @@ func TestHarnessAuthPoolDoesNotFailoverForInteractiveAuthRequired(t *testing.T) 
 
 func TestAuthStatusReportsMissingHarnessAsNotInstalled(t *testing.T) {
 	registry := NewHarnessRegistry()
-	if err := registry.Register("missing-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	if err := registry.Register("missing-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -445,7 +445,7 @@ func TestAuthStatusReportsMissingHarnessAsNotInstalled(t *testing.T) {
 func TestAuthStatusPersistsCodexNamedSlotReadiness(t *testing.T) {
 	exitCode := 0
 	registry := NewHarnessRegistry()
-	if err := registry.Register("codex", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	if err := registry.Register("codex", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -488,12 +488,12 @@ func TestAuthStatusPersistsCodexNamedSlotReadiness(t *testing.T) {
 
 func TestAuthStatusDoesNotReportOpenCodeNamedSlotReadyWithoutProjection(t *testing.T) {
 	registry := NewHarnessRegistry()
-	if err := registry.RegisterWithDescriptor(HarnessNameOpenCode, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	if err := registry.Register(HarnessNameOpenCode, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
-		return &capturingHarness{name: HarnessNameOpenCode, authStatuses: map[string]HarnessAuthState{"opencode-work": HarnessAuthAuthenticated}}, nil
-	}, HarnessAdapterDescriptor{AuthProjection: HarnessAuthProjectionStyleAuthContent}); err != nil {
+		return &capturingHarness{name: HarnessNameOpenCode, authStatuses: map[string]HarnessAuthState{"opencode-work": HarnessAuthAuthenticated}, descriptor: HarnessAdapterDescriptor{Name: HarnessNameOpenCode, AuthProjection: HarnessAuthProjectionStyleAuthContent}}, nil
+	}, HarnessAdapterDescriptor{Name: HarnessNameOpenCode, AuthProjection: HarnessAuthProjectionStyleAuthContent}); err != nil {
 		t.Fatalf("register harness: %v", err)
 	}
 	daemon := &Daemon{harnessRegistry: registry}
@@ -535,7 +535,7 @@ func TestAuthStatusPersistsProviderReadinessForStoredSlot(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -567,7 +567,7 @@ func TestAuthStartUsesStoredSlotAndPersistsInProgress(t *testing.T) {
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	var capturedSlot HarnessAuthSlot
 	var capturedMethod string
-	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -622,7 +622,7 @@ func TestAuthCancelUsesStoredSlotAndPersistsCancelled(t *testing.T) {
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	var capturedSlot HarnessAuthSlot
 	var capturedFlowID string
-	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -676,7 +676,7 @@ func TestAuthLogoutUsesStoredSlotAndPersistsAuthRequired(t *testing.T) {
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	var capturedSlot HarnessAuthSlot
-	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -728,7 +728,7 @@ func TestAuthLogoutUnsupportedHarnessReturnsProviderOwnedRemediation(t *testing.
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -752,7 +752,7 @@ func TestAuthLogoutReportsPartialSuccessWhenStatusPersistenceFails(t *testing.T)
 	store := newCommandMethodTestStore(t)
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	ctx, cancel := context.WithCancel(context.Background())
-	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -833,6 +833,39 @@ func (e *spyExecutor) Stop(ctx context.Context, sessionID string) error {
 	return nil
 }
 
+func (e *spyExecutor) AttemptWorkspaceDelivery(ctx context.Context, attempt WorkspaceDeliveryAttempt) (WorkspaceDeliveryAttemptResult, error) {
+	_ = ctx
+	_ = attempt
+	return failedWorkspaceDeliveryAttempt("test harness does not support workspace delivery"), nil
+}
+
+func (e *spyExecutor) AuthStatus(ctx context.Context, slot HarnessAuthSlot) (HarnessAuthStatus, error) {
+	_ = ctx
+	return unsupportedHarnessAuthStatus(e.Descriptor().Name, slot), nil
+}
+
+func (e *spyExecutor) AuthStart(ctx context.Context, slot HarnessAuthSlot, method string) (HarnessAuthStatus, error) {
+	_ = ctx
+	_ = method
+	return unsupportedHarnessAuthStatus(e.Descriptor().Name, slot), &HarnessUnavailableError{Harness: e.Descriptor().Name, Reason: "auth_start_unsupported", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+}
+
+func (e *spyExecutor) AuthCancel(ctx context.Context, slot HarnessAuthSlot, flowID string) (HarnessAuthStatus, error) {
+	_ = ctx
+	_ = flowID
+	return unsupportedHarnessAuthStatus(e.Descriptor().Name, slot), &HarnessUnavailableError{Harness: e.Descriptor().Name, Reason: "auth_cancel_unsupported", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+}
+
+func (e *spyExecutor) AuthLogout(ctx context.Context, slot HarnessAuthSlot) (HarnessAuthStatus, error) {
+	_ = ctx
+	return unsupportedHarnessAuthStatus(e.Descriptor().Name, slot), &HarnessUnavailableError{Harness: e.Descriptor().Name, Reason: "auth_logout_unsupported", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+}
+
+func (e *spyExecutor) AuthProviderMethods(ctx context.Context) (HarnessAuthProviderMethodsResponse, error) {
+	_ = ctx
+	return HarnessAuthProviderMethodsResponse{Status: "unsupported"}, nil
+}
+
 type fakeHarness struct {
 	mu                sync.Mutex
 	name              string
@@ -911,6 +944,39 @@ func (e *fakeHarness) Stop(ctx context.Context, sessionID string) error {
 	return nil
 }
 
+func (e *fakeHarness) AttemptWorkspaceDelivery(ctx context.Context, attempt WorkspaceDeliveryAttempt) (WorkspaceDeliveryAttemptResult, error) {
+	_ = ctx
+	_ = attempt
+	return failedWorkspaceDeliveryAttempt("test harness does not support workspace delivery"), nil
+}
+
+func (e *fakeHarness) AuthStatus(ctx context.Context, slot HarnessAuthSlot) (HarnessAuthStatus, error) {
+	_ = ctx
+	return unsupportedHarnessAuthStatus(e.name, slot), nil
+}
+
+func (e *fakeHarness) AuthStart(ctx context.Context, slot HarnessAuthSlot, method string) (HarnessAuthStatus, error) {
+	_ = ctx
+	_ = method
+	return unsupportedHarnessAuthStatus(e.name, slot), &HarnessUnavailableError{Harness: e.name, Reason: "auth_start_unsupported", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+}
+
+func (e *fakeHarness) AuthCancel(ctx context.Context, slot HarnessAuthSlot, flowID string) (HarnessAuthStatus, error) {
+	_ = ctx
+	_ = flowID
+	return unsupportedHarnessAuthStatus(e.name, slot), &HarnessUnavailableError{Harness: e.name, Reason: "auth_cancel_unsupported", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+}
+
+func (e *fakeHarness) AuthLogout(ctx context.Context, slot HarnessAuthSlot) (HarnessAuthStatus, error) {
+	_ = ctx
+	return unsupportedHarnessAuthStatus(e.name, slot), &HarnessUnavailableError{Harness: e.name, Reason: "auth_logout_unsupported", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+}
+
+func (e *fakeHarness) AuthProviderMethods(ctx context.Context) (HarnessAuthProviderMethodsResponse, error) {
+	_ = ctx
+	return HarnessAuthProviderMethodsResponse{Status: "unsupported"}, nil
+}
+
 type sinkOnStartHarness struct {
 	name string
 	sink func(string, []TimelineItem)
@@ -940,6 +1006,39 @@ func (e sinkOnStartHarness) Stop(ctx context.Context, sessionID string) error {
 	return nil
 }
 
+func (e sinkOnStartHarness) AttemptWorkspaceDelivery(ctx context.Context, attempt WorkspaceDeliveryAttempt) (WorkspaceDeliveryAttemptResult, error) {
+	_ = ctx
+	_ = attempt
+	return failedWorkspaceDeliveryAttempt("test harness does not support workspace delivery"), nil
+}
+
+func (e sinkOnStartHarness) AuthStatus(ctx context.Context, slot HarnessAuthSlot) (HarnessAuthStatus, error) {
+	_ = ctx
+	return unsupportedHarnessAuthStatus(e.name, slot), nil
+}
+
+func (e sinkOnStartHarness) AuthStart(ctx context.Context, slot HarnessAuthSlot, method string) (HarnessAuthStatus, error) {
+	_ = ctx
+	_ = method
+	return unsupportedHarnessAuthStatus(e.name, slot), &HarnessUnavailableError{Harness: e.name, Reason: "auth_start_unsupported", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+}
+
+func (e sinkOnStartHarness) AuthCancel(ctx context.Context, slot HarnessAuthSlot, flowID string) (HarnessAuthStatus, error) {
+	_ = ctx
+	_ = flowID
+	return unsupportedHarnessAuthStatus(e.name, slot), &HarnessUnavailableError{Harness: e.name, Reason: "auth_cancel_unsupported", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+}
+
+func (e sinkOnStartHarness) AuthLogout(ctx context.Context, slot HarnessAuthSlot) (HarnessAuthStatus, error) {
+	_ = ctx
+	return unsupportedHarnessAuthStatus(e.name, slot), &HarnessUnavailableError{Harness: e.name, Reason: "auth_logout_unsupported", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+}
+
+func (e sinkOnStartHarness) AuthProviderMethods(ctx context.Context) (HarnessAuthProviderMethodsResponse, error) {
+	_ = ctx
+	return HarnessAuthProviderMethodsResponse{Status: "unsupported"}, nil
+}
+
 type capturingHarness struct {
 	name         string
 	captured     *ExecutorStartRequest
@@ -949,9 +1048,13 @@ type capturingHarness struct {
 	authLogout   func(context.Context, HarnessAuthSlot) (HarnessAuthStatus, error)
 	authMethods  func(context.Context) (HarnessAuthProviderMethodsResponse, error)
 	auth         HarnessAuthDescriptor
+	descriptor   HarnessAdapterDescriptor
 }
 
 func (e *capturingHarness) Descriptor() HarnessAdapterDescriptor {
+	if e.descriptor.Name != "" {
+		return e.descriptor
+	}
 	return HarnessAdapterDescriptor{Name: e.name, Capabilities: []HarnessCapability{HarnessCapabilityHarnessSessionFromContext, HarnessCapabilityContextPacket, HarnessCapabilityTimelineItems}, Auth: e.auth}
 }
 
@@ -1010,17 +1113,10 @@ func (e *capturingHarness) Stop(ctx context.Context, sessionID string) error {
 	return nil
 }
 
-func callMethodError(registry *rpc.MethodRegistry, methodName string, params any) error {
-	spec, ok := registry.Get(methodName)
-	if !ok {
-		return fmt.Errorf("method %s not registered", methodName)
-	}
-	raw, err := json.Marshal(params)
-	if err != nil {
-		return err
-	}
-	_, err = spec.Call(context.Background(), raw)
-	return err
+func (e *capturingHarness) AttemptWorkspaceDelivery(ctx context.Context, attempt WorkspaceDeliveryAttempt) (WorkspaceDeliveryAttemptResult, error) {
+	_ = ctx
+	_ = attempt
+	return failedWorkspaceDeliveryAttempt("test harness does not support workspace delivery"), nil
 }
 
 func requireHandlerErrorData(t *testing.T, err error) map[string]any {
@@ -1094,7 +1190,7 @@ func TestHarnessSessionMethodUsesInjectedHarnessFactory(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = primaryFolder
 		_ = sink
 		return newFakeHarness(req.Executor, []TimelineItem{{Kind: "agent_text", Text: "done"}}), nil
@@ -1124,7 +1220,7 @@ func TestHarnessSessionMethodPersistsRepeatedNoProfileRunsAndRunLogScope(t *test
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = primaryFolder
 		_ = sink
 		return newFakeHarness(req.Executor, []TimelineItem{{Kind: "agent_text", Text: "done"}}), nil
@@ -1157,7 +1253,7 @@ func TestProfileRunUsesProfileHarness(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = primaryFolder
 		_ = sink
 		return newFakeHarness(req.Executor, []TimelineItem{{Kind: "agent_text", Text: "done"}}), nil
@@ -1188,7 +1284,7 @@ func TestProfileRunUsesStoredProfile(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = primaryFolder
 		_ = sink
 		return newFakeHarness(req.Executor, []TimelineItem{{Kind: "agent_text", Text: "done"}}), nil
@@ -1222,7 +1318,7 @@ func TestOpenCodeProfileRunBuildsAuthContentProjectionFromGrantedSecret(t *testi
 	backend := globaldb.NewMemorySecretBackend()
 	d.secretBackend = backend
 	var captured ExecutorStartRequest
-	d.setHarnessFactoryForTest(HarnessNameOpenCode, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest(HarnessNameOpenCode, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = primaryFolder
 		_ = sink
 		return &capturingHarness{name: req.Executor, captured: &captured, authStatuses: map[string]HarnessAuthState{"opencode-work": HarnessAuthAuthenticated}, auth: HarnessAuthDescriptor{StatusCheck: HarnessAuthSupportSupported, NamedSlotExecution: HarnessAuthSupportSupported, CredentialOwner: HarnessCredentialOwnerProvider}}, nil
@@ -1314,7 +1410,7 @@ func TestHarnessAuthStatusPersistsFinalProjectionGatedStatus(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	var captured ExecutorStartRequest
-	d.setHarnessFactoryForTest(HarnessNameOpenCode, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest(HarnessNameOpenCode, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		return &capturingHarness{name: HarnessNameOpenCode, captured: &captured, authStatuses: map[string]HarnessAuthState{"opencode-work": HarnessAuthAuthenticated}, auth: HarnessAuthDescriptor{StatusCheck: HarnessAuthSupportSupported, NamedSlotExecution: HarnessAuthSupportSupported, CredentialOwner: HarnessCredentialOwnerProvider}}, nil
 	})
 	if err := store.UpsertAuthSlot(ctx, globaldb.AuthSlot{AuthSlotID: "opencode-work", Harness: HarnessNameOpenCode, Label: "Work", CredentialOwner: "provider", Status: "unknown", MetadataJSON: `{}`}); err != nil {
@@ -1391,7 +1487,7 @@ func TestOpenCodeProfileRunDeniesProjectionWithoutGrant(t *testing.T) {
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	d.secretBackend = globaldb.NewMemorySecretBackend()
 	var captured ExecutorStartRequest
-	d.setHarnessFactoryForTest(HarnessNameOpenCode, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest(HarnessNameOpenCode, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = primaryFolder
 		_ = sink
 		return &capturingHarness{name: req.Executor, captured: &captured, authStatuses: map[string]HarnessAuthState{"opencode-work": HarnessAuthAuthenticated}, auth: HarnessAuthDescriptor{StatusCheck: HarnessAuthSupportSupported, NamedSlotExecution: HarnessAuthSupportSupported, CredentialOwner: HarnessCredentialOwnerProvider}}, nil
@@ -1422,7 +1518,7 @@ func TestProfileRunPersistsFinalResponseArtifact(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -1484,7 +1580,7 @@ func TestProfileRunPreservesProviderMessageFacetsAcrossHarnesses(t *testing.T) {
 			store := newCommandMethodTestStore(t)
 			registry := rpc.NewMethodRegistry()
 			d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-			d.setHarnessFactoryForTest(harness, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+			d.setHarnessFactoryForTest(harness, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 				_ = req
 				_ = primaryFolder
 				_ = sink
@@ -1522,7 +1618,7 @@ func TestProfileRunNormalizesRealCodexItemFacets(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest(HarnessNameCodex, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest(HarnessNameCodex, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -1569,7 +1665,7 @@ func TestProfileRunUsesWorkspaceScopedRuntimeAgentForGlobalProfile(t *testing.T)
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -1610,7 +1706,7 @@ func TestProfileRunPersistsMeasuredTelemetryAndProcessSample(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -1733,7 +1829,7 @@ func TestAuthStatusUsesStoredSlotsWhenNoSlotsRequested(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = primaryFolder
 		_ = sink
 		return &capturingHarness{name: req.Executor, authStatuses: map[string]HarnessAuthState{"slot-two": HarnessAuthAuthenticated}}, nil
@@ -1761,7 +1857,7 @@ func TestAuthDiagnoseComposesStatusSlotsAndCapabilities(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest(HarnessNameCodex, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest(HarnessNameCodex, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = primaryFolder
 		_ = sink
 		return &capturingHarness{name: req.Executor, authStatuses: map[string]HarnessAuthState{"codex-default": HarnessAuthRequired}, auth: HarnessAuthDescriptor{StatusCheck: HarnessAuthSupportSupported, CredentialOwner: HarnessCredentialOwnerProvider, NamedSlotExecution: HarnessAuthSupportUnsupported, RiskLabels: []string{"provider_owned"}}}, nil
@@ -1798,17 +1894,17 @@ func TestAuthDiagnoseComposesStatusSlotsAndCapabilities(t *testing.T) {
 	}
 }
 
-func TestAuthDiagnoseUsesRegistryDescriptorWhenFactoryFails(t *testing.T) {
+func TestAuthDiagnoseUsesAdapterDescriptor(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	if err := d.harnessRegistry.ReplaceForTestWithDescriptor(HarnessNameCodex, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	if err := d.harnessRegistry.ReplaceForTest(HarnessNameCodex, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
-		return nil, fmt.Errorf("factory failed")
-	}, HarnessAdapterDescriptor{Name: HarnessNameCodex, Auth: HarnessAuthDescriptor{StatusCheck: HarnessAuthSupportSupported, NamedSlotExecution: HarnessAuthSupportUnsupported, CredentialOwner: HarnessCredentialOwnerProvider, RiskLabels: []string{"provider_owned"}}}); err != nil {
-		t.Fatalf("ReplaceForTestWithDescriptor returned error: %v", err)
+		return &capturingHarness{name: HarnessNameCodex, auth: HarnessAuthDescriptor{StatusCheck: HarnessAuthSupportSupported, NamedSlotExecution: HarnessAuthSupportUnsupported, CredentialOwner: HarnessCredentialOwnerProvider, RiskLabels: []string{"provider_owned"}}, authStatuses: map[string]HarnessAuthState{"codex-default": HarnessAuthRequired}}, nil
+	}); err != nil {
+		t.Fatalf("ReplaceForTest returned error: %v", err)
 	}
 	if err := d.registerMethods(registry, store); err != nil {
 		t.Fatalf("registerMethods returned error: %v", err)
@@ -1833,7 +1929,7 @@ func TestAuthDiagnoseComposesProviderMethodsInDaemon(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest(HarnessNameOpenCode, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest(HarnessNameOpenCode, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = primaryFolder
 		_ = sink
 		return &capturingHarness{name: req.Executor, authStatuses: map[string]HarnessAuthState{"opencode-default": HarnessAuthAuthenticated}, auth: HarnessAuthDescriptor{StatusCheck: HarnessAuthSupportSupported, CredentialOwner: HarnessCredentialOwnerProvider, NamedSlotExecution: HarnessAuthSupportUnsupported, RiskLabels: []string{"provider_owned"}, Caveats: []string{"provider_methods_discovery_is_optional"}}, authMethods: func(ctx context.Context) (HarnessAuthProviderMethodsResponse, error) {
@@ -1867,7 +1963,7 @@ func TestAuthProviderMethodsPropagatesDiscoveryError(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest(HarnessNameOpenCode, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest(HarnessNameOpenCode, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -1951,7 +2047,7 @@ func TestProfileRunUsesInlineProfileDefinition(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = primaryFolder
 		_ = sink
 		return newFakeHarness(req.Executor, []TimelineItem{{Kind: "agent_text", Text: "done"}}), nil
@@ -1983,7 +2079,7 @@ func TestProfileRunUsesDefaultsOnlyHarness(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = primaryFolder
 		_ = sink
 		return newFakeHarness(req.Executor, []TimelineItem{{Kind: "agent_text", Text: "done"}}), nil
@@ -2008,7 +2104,7 @@ func TestProfileRunDefaultsFillPartialProfile(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = primaryFolder
 		_ = sink
 		return newFakeHarness(req.Executor, []TimelineItem{{Kind: "agent_text", Text: "done"}}), nil
@@ -2034,7 +2130,7 @@ func TestProfileRunPassesProfileMetadataToHarness(t *testing.T) {
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	var captured ExecutorStartRequest
-	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = primaryFolder
 		_ = sink
 		return &capturingHarness{name: req.Executor, captured: &captured}, nil
@@ -2059,7 +2155,7 @@ func TestProfileRunPassesSelectedAuthSlotToHarnessAndRun(t *testing.T) {
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	var captured ExecutorStartRequest
-	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = primaryFolder
 		_ = sink
 		return &capturingHarness{name: req.Executor, captured: &captured}, nil
@@ -2087,7 +2183,7 @@ func TestProfileRunUsesDefaultAuthSlotWhenProfileOmitsAuth(t *testing.T) {
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	var captured ExecutorStartRequest
-	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = primaryFolder
 		_ = sink
 		return &capturingHarness{name: req.Executor, captured: &captured}, nil
@@ -2116,7 +2212,7 @@ func TestProfileRunAuthPoolRecordsSafeFailoverSlot(t *testing.T) {
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	var captured ExecutorStartRequest
-	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = primaryFolder
 		_ = sink
 		return &capturingHarness{name: req.Executor, captured: &captured, authStatuses: map[string]HarnessAuthState{"slot-one": HarnessAuthNotInstalled, "slot-two": HarnessAuthAuthenticated}}, nil
@@ -2149,7 +2245,7 @@ func TestProfileRunAuthPoolSkipsMissingDBSlot(t *testing.T) {
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	var captured ExecutorStartRequest
-	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = primaryFolder
 		_ = sink
 		return &capturingHarness{name: req.Executor, captured: &captured, authStatuses: map[string]HarnessAuthState{"slot-two": HarnessAuthAuthenticated}}, nil
@@ -2176,7 +2272,7 @@ func TestProfileRunRejectsUnstoredAuthSlot(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -2278,7 +2374,7 @@ func TestProfileRunReturnsUnavailableHarnessData(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("missing-binary", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("missing-binary", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -2317,7 +2413,7 @@ func TestHarnessSessionReturnsUnsupportedCapabilitiesData(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("limited", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("limited", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -2341,7 +2437,7 @@ func TestHarnessSessionReturnsInvalidParamsForMissingPacketID(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("test-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = primaryFolder
 		_ = sink
 		return newFakeHarness(req.Executor, []TimelineItem{{Kind: "agent_text", Text: "done"}}), nil
@@ -2386,7 +2482,7 @@ func TestProfileRunReturnsUnsupportedCapabilitiesData(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	registry := rpc.NewMethodRegistry()
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("limited", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("limited", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -2456,7 +2552,7 @@ func TestHarnessSessionMethodStartsPTYExecutorFromContextPacket(t *testing.T) {
 func TestStartHarnessSessionPersistsSinkItemsBeforeSessionRowExists(t *testing.T) {
 	store := newCommandMethodTestStore(t)
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
-	d.setHarnessFactoryForTest("sink-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("sink-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		return sinkOnStartHarness{name: "sink-harness", sink: sink}, nil

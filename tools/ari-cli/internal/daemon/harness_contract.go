@@ -540,7 +540,7 @@ func NewHarnessSessionHarnessCall(packet ContextPacket, required []HarnessCapabi
 	}, nil
 }
 
-func StartHarnessCall(ctx context.Context, executor Executor, call HarnessCall) (HarnessSession, []TimelineItem, error) {
+func StartHarnessCall(ctx context.Context, executor HarnessAdapter, call HarnessCall) (HarnessSession, []TimelineItem, error) {
 	result, err := StartHarnessCallResult(ctx, executor, call)
 	if err != nil {
 		return HarnessSession{}, nil, err
@@ -548,7 +548,7 @@ func StartHarnessCall(ctx context.Context, executor Executor, call HarnessCall) 
 	return result.HarnessSession, result.Items, nil
 }
 
-func StartHarnessCallResult(ctx context.Context, executor Executor, call HarnessCall) (HarnessCallResult, error) {
+func StartHarnessCallResult(ctx context.Context, executor HarnessAdapter, call HarnessCall) (HarnessCallResult, error) {
 	startedAt := time.Now().UTC()
 	if ctx == nil {
 		return HarnessCallResult{}, fmt.Errorf("context is required")
@@ -556,11 +556,7 @@ func StartHarnessCallResult(ctx context.Context, executor Executor, call Harness
 	if executor == nil {
 		return HarnessCallResult{}, fmt.Errorf("executor is required")
 	}
-	describer, ok := executor.(HarnessDescriber)
-	if !ok {
-		return HarnessCallResult{}, fmt.Errorf("executor descriptor is required")
-	}
-	descriptor := describer.Descriptor()
+	descriptor := executor.Descriptor()
 	required := uniqueHarnessCapabilities(append([]HarnessCapability{call.Capability}, call.Required...))
 	if missing := missingHarnessCapabilities(required, descriptor.Capabilities); len(missing) > 0 {
 		return HarnessCallResult{}, &UnsupportedHarnessCapabilitiesError{Capabilities: missing}
@@ -851,7 +847,7 @@ func trimOrDefault(value, fallback string) string {
 	return value
 }
 
-func startHarnessCallAfterCapabilityCheck(ctx context.Context, executor Executor, call HarnessCall, descriptor HarnessAdapterDescriptor) (HarnessSession, []TimelineItem, ExecutorRun, error) {
+func startHarnessCallAfterCapabilityCheck(ctx context.Context, executor HarnessAdapter, call HarnessCall, descriptor HarnessAdapterDescriptor) (HarnessSession, []TimelineItem, ExecutorRun, error) {
 	ariRunID := strings.TrimSpace(call.AriSessionID)
 	if ariRunID == "" {
 		var err error

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"sync"
 )
 
 // PiExecutor integrates the pi coding agent (pi.dev). Headless calls run
@@ -31,10 +30,8 @@ type piExecutorOptions struct {
 type piCommandRunner func(context.Context, piExecutorOptions, []string, string) (commandRunResult, error)
 
 type PiExecutor struct {
-	options         piExecutorOptions
-	mu              sync.Mutex
-	runs            map[string][]TimelineItem
-	deliveryOptions map[string]piExecutorOptions
+	adapterLifecycle[piExecutorOptions]
+	options piExecutorOptions
 }
 
 func NewPiExecutor(cwd string) *PiExecutor {
@@ -58,24 +55,13 @@ func newPiExecutor(options piExecutorOptions) *PiExecutor {
 	if options.LookupEnv == nil {
 		options.LookupEnv = os.Getenv
 	}
-	return &PiExecutor{options: options, runs: map[string][]TimelineItem{}, deliveryOptions: map[string]piExecutorOptions{}}
+	return &PiExecutor{adapterLifecycle: newAdapterLifecycle[piExecutorOptions](HarnessNamePi), options: options}
 }
 
 // piProviderKeyEnvVars are the provider API key variables pi consumes. Auth
 // status is a presence probe over these (projection first, then process env);
 // pi has no provider-side status or logout command.
 var piProviderKeyEnvVars = []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY", "XAI_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY", "OPENROUTER_API_KEY"}
-
-func (options piExecutorOptions) withPiAuthSlotProjection(authSlotID string) (piExecutorOptions, error) {
-	authSlotID = strings.TrimSpace(authSlotID)
-	if authSlotIsDefaultForHarness(HarnessNamePi, authSlotID) {
-		return options, nil
-	}
-	if !piEnvProjectionReady(options.AuthProjection) {
-		return piExecutorOptions{}, &HarnessUnavailableError{Harness: HarnessNamePi, Reason: "auth_slot_projection_required", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
-	}
-	return options, nil
-}
 
 // piEnvProjectionReady reports whether a named slot carries an ari-owned env
 // projection of provider keys produced by the daemon secrets boundary.
@@ -158,8 +144,7 @@ func (e *PiExecutor) Start(ctx context.Context, req ExecutorStartRequest) (Execu
 	}
 	options.SystemPrompt = strings.TrimSpace(req.Prompt)
 	options.AuthProjection = req.AuthProjection
-	options, err := options.withPiAuthSlotProjection(req.AuthSlotID)
-	if err != nil {
+	if err := RequireProjectedAuthSlot(HarnessNamePi, req.AuthSlotID, options.AuthProjection, piEnvProjectionReady); err != nil {
 		return ExecutorRun{}, err
 	}
 	sessionID := strings.TrimSpace(req.RunID)
@@ -175,10 +160,7 @@ func (e *PiExecutor) Start(ctx context.Context, req ExecutorStartRequest) (Execu
 		return ExecutorRun{}, err
 	}
 	items := piTimelineItemsFromEvents(workspaceID, sessionID, options.InvocationMode, parsed)
-	e.mu.Lock()
-	e.runs[sessionID] = items
-	e.deliveryOptions[sessionID] = options
-	e.mu.Unlock()
+	e.storeRun(sessionID, items, options)
 	resumeMode := HarnessResumeCLIFlag
 	if options.InvocationMode == HarnessInvocationModeServer {
 		resumeMode = HarnessResumeJSONRPC
@@ -188,26 +170,6 @@ func (e *PiExecutor) Start(ctx context.Context, req ExecutorStartRequest) (Execu
 		run.ResumeCursor = cursor
 	}
 	return run, nil
-}
-
-func (e *PiExecutor) Items(ctx context.Context, runID string) ([]TimelineItem, error) {
-	_ = ctx
-	if e == nil {
-		return nil, fmt.Errorf("executor is required")
-	}
-	e.mu.Lock()
-	items, ok := e.runs[strings.TrimSpace(runID)]
-	e.mu.Unlock()
-	if !ok {
-		return nil, fmt.Errorf("run %q not found", runID)
-	}
-	return append([]TimelineItem(nil), items...), nil
-}
-
-func (e *PiExecutor) Stop(ctx context.Context, runID string) error {
-	_ = ctx
-	_ = runID
-	return nil
 }
 
 func (e *PiExecutor) AttemptWorkspaceDelivery(ctx context.Context, attempt WorkspaceDeliveryAttempt) (WorkspaceDeliveryAttemptResult, error) {
@@ -222,11 +184,9 @@ func (e *PiExecutor) AttemptWorkspaceDelivery(ctx context.Context, attempt Works
 		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("delivery target session, delivery id, and event ids are required")
 	}
 	deliveryOptions := e.options
-	e.mu.Lock()
-	if options, ok := e.deliveryOptions[sessionID]; ok {
+	if options, ok := e.deliveryOption(sessionID); ok {
 		deliveryOptions = options
 	}
-	e.mu.Unlock()
 	command, err := json.Marshal(map[string]string{"type": "prompt", "id": "ari-delivery", "message": piWorkspaceDeliveryTurn(attempt)})
 	if err != nil {
 		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("encode pi delivery prompt: %w", err)

@@ -16,21 +16,21 @@ func NewHarnessRegistry() *HarnessRegistry {
 
 func NewDefaultHarnessRegistry() *HarnessRegistry {
 	registry := NewHarnessRegistry()
-	if err := registry.RegisterWithDescriptor(HarnessNameCodex, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	if err := registry.Register(HarnessNameCodex, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = sink
 		return NewCodexExecutor(primaryFolder), nil
 	}, NewCodexExecutor("").Descriptor()); err != nil {
 		panic(fmt.Sprintf("register default Codex harness: %v", err))
 	}
-	if err := registry.RegisterWithDescriptor(HarnessNameClaude, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	if err := registry.Register(HarnessNameClaude, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = sink
 		return NewClaudeExecutor(primaryFolder), nil
 	}, NewClaudeExecutor("").Descriptor()); err != nil {
 		panic(fmt.Sprintf("register default Claude harness: %v", err))
 	}
-	if err := registry.RegisterWithDescriptor(HarnessNameOpenCode, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	if err := registry.Register(HarnessNameOpenCode, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = sink
 		executor := NewOpenCodeExecutor(primaryFolder)
 		executor.options.AuthProjection = req.AuthProjection
@@ -38,7 +38,7 @@ func NewDefaultHarnessRegistry() *HarnessRegistry {
 	}, NewOpenCodeExecutor("").Descriptor()); err != nil {
 		panic(fmt.Sprintf("register default OpenCode harness: %v", err))
 	}
-	if err := registry.RegisterWithDescriptor(HarnessNamePi, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	if err := registry.Register(HarnessNamePi, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = sink
 		executor := NewPiExecutor(primaryFolder)
 		executor.options.AuthProjection = req.AuthProjection
@@ -46,26 +46,22 @@ func NewDefaultHarnessRegistry() *HarnessRegistry {
 	}, NewPiExecutor("").Descriptor()); err != nil {
 		panic(fmt.Sprintf("register default pi harness: %v", err))
 	}
-	if err := registry.RegisterWithDescriptor(HarnessNameGrok, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	if err := registry.Register(HarnessNameGrok, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = sink
 		return NewGrokExecutor(primaryFolder), nil
 	}, NewGrokExecutor("").Descriptor()); err != nil {
 		panic(fmt.Sprintf("register default grok harness: %v", err))
 	}
-	if err := registry.Register(HarnessNamePTY, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	if err := registry.Register(HarnessNamePTY, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		return NewPTYExecutorWithSink(req.Command, req.Args, primaryFolder, sink), nil
-	}); err != nil {
+	}, NewPTYExecutor("", nil, "").Descriptor()); err != nil {
 		panic(fmt.Sprintf("register default PTY harness: %v", err))
 	}
 	return registry
 }
 
-func (r *HarnessRegistry) Register(name string, factory HarnessFactory) error {
-	return r.RegisterWithDescriptor(name, factory, HarnessAdapterDescriptor{})
-}
-
-func (r *HarnessRegistry) RegisterWithDescriptor(name string, factory HarnessFactory, descriptor HarnessAdapterDescriptor) error {
+func (r *HarnessRegistry) Register(name string, factory HarnessFactory, descriptors ...HarnessAdapterDescriptor) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return fmt.Errorf("harness name is required")
@@ -86,18 +82,13 @@ func (r *HarnessRegistry) RegisterWithDescriptor(name string, factory HarnessFac
 		return fmt.Errorf("harness %q is already registered", name)
 	}
 	r.factories[name] = factory
-	if harnessAdapterDescriptorHasContract(descriptor) {
-		descriptor.Name = name
-		r.descriptors[name] = descriptor
+	if len(descriptors) > 0 {
+		r.descriptors[name] = normalizeHarnessDescriptor(name, descriptors[0])
 	}
 	return nil
 }
 
-func (r *HarnessRegistry) ReplaceForTest(name string, factory HarnessFactory) error {
-	return r.ReplaceForTestWithDescriptor(name, factory, HarnessAdapterDescriptor{})
-}
-
-func (r *HarnessRegistry) ReplaceForTestWithDescriptor(name string, factory HarnessFactory, descriptor HarnessAdapterDescriptor) error {
+func (r *HarnessRegistry) ReplaceForTest(name string, factory HarnessFactory, descriptors ...HarnessAdapterDescriptor) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return fmt.Errorf("harness name is required")
@@ -115,22 +106,10 @@ func (r *HarnessRegistry) ReplaceForTestWithDescriptor(name string, factory Harn
 		r.descriptors = make(map[string]HarnessAdapterDescriptor)
 	}
 	r.factories[name] = factory
-	if harnessAdapterDescriptorHasContract(descriptor) {
-		descriptor.Name = name
-		r.descriptors[name] = descriptor
+	if len(descriptors) > 0 {
+		r.descriptors[name] = normalizeHarnessDescriptor(name, descriptors[0])
 	}
 	return nil
-}
-
-func harnessAdapterDescriptorHasContract(descriptor HarnessAdapterDescriptor) bool {
-	return descriptor.Name != "" ||
-		descriptor.DisplayName != "" ||
-		len(descriptor.Capabilities) > 0 ||
-		len(descriptor.ObservationCapabilities) > 0 ||
-		len(descriptor.DeliveryCapabilities) > 0 ||
-		len(descriptor.InvocationModes) > 0 ||
-		descriptor.AuthProjection != HarnessAuthProjectionStyleNone ||
-		descriptor.Auth.StatusCheck != ""
 }
 
 func (r *HarnessRegistry) Resolve(name string) (HarnessFactory, bool) {
@@ -141,10 +120,17 @@ func (r *HarnessRegistry) Resolve(name string) (HarnessFactory, bool) {
 	return factory, factory != nil
 }
 
-func (r *HarnessRegistry) ResolveDescriptor(name string) (HarnessAdapterDescriptor, bool) {
+func (r *HarnessRegistry) Descriptor(name string) (HarnessAdapterDescriptor, bool) {
 	if r == nil || r.descriptors == nil {
 		return HarnessAdapterDescriptor{}, false
 	}
 	descriptor, ok := r.descriptors[strings.TrimSpace(name)]
 	return descriptor, ok
+}
+
+func normalizeHarnessDescriptor(name string, descriptor HarnessAdapterDescriptor) HarnessAdapterDescriptor {
+	if strings.TrimSpace(descriptor.Name) == "" {
+		descriptor.Name = strings.TrimSpace(name)
+	}
+	return descriptor
 }
