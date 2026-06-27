@@ -5,7 +5,7 @@ Workspace is Ari's primary durable runtime unit.
 See also:
 
 - `docs/adr/0002-workspace-as-runtime-unit.md`
-- `.ari/plan.lock`
+- `docs/adr/0013-user-facing-presentation-and-copy.md`
 
 ## Definition
 
@@ -20,7 +20,7 @@ The workspace is where Ari gathers the facts a user returns to: harness sessions
 
 ## Lifecycle
 
-Workspace lifecycle operations are daemon-owned. Clients render and compose them.
+Workspace lifecycle operations and lifecycle presentation semantics are daemon-owned. Clients render and compose them.
 
 Core lifecycle concepts:
 
@@ -53,9 +53,9 @@ Workspace-scoped runtime state may include:
 - approvals, blockers, idle state, completions, and other attention signals;
 - final responses and shareable artifacts.
 
-Inbox, fanout status, attention, workspace status, and timeline are projections over workspace event history and its linked artifacts, not independent sources of truth. Events do not leak across workspaces.
+Inbox, fanout status, attention, workspace status, and timeline are projections over workspace event history and its linked artifacts, not independent sources of truth. Their default display uses Ari-owned presentation language, with native/raw detail exposed only through deliberate redacted detail paths. Events do not leak across workspaces.
 
-Not every runtime fact must be displayed by every client. A GUI may compose a few daemon calls into a dashboard, while the CLI may expose lower-level commands for inspection and automation.
+Not every runtime fact must be displayed by every client. A GUI may compose a few daemon calls into a dashboard, while the CLI may expose lower-level commands for inspection and automation. Those surfaces should share Ari's normalized status/copy semantics rather than inventing separate lifecycle language.
 
 ## Legacy terminology
 

@@ -88,6 +88,14 @@ The chronological normalized message and event history for a harness session.
 
 A workspace-level projection of relevant runtime activity across harness sessions, commands, outputs, attention, and artifacts.
 
+## Presentation model
+
+The Ari-owned user-facing view of runtime facts: stable labels, statuses, copy, explanations, badges, grouping, and detail affordances derived from Ari records and adapter source facts. The presentation model is what clients render by default.
+
+## Raw/native detail
+
+An explicit, redacted escape hatch for provider- or harness-faithful facts such as native IDs, source labels, capability details, or diagnostic payload fragments. Raw/native detail is secondary to Ari's presentation model and must not expose secrets.
+
 ## Attention
 
 Runtime state that should surface to a user or client, such as idle, blocked, waiting for input, auth required, failed, completed, or ready for review.

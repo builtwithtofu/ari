@@ -8,7 +8,7 @@ Date: 2026-05-04
 
 Ari supports multiple harnesses such as Claude Code, Codex, and OpenCode. Each harness has different concepts for sessions, prompts, system/developer instructions, messages, runs, events, usage, and provider IDs. If Ari exposes those differences directly, the CLI, daemon API, and future frontend will become provider-shaped instead of Ari-shaped.
 
-ADR 0001 makes the daemon API the product authority. ADR 0002 makes workspace the runtime unit. ADR 0003 defines profiles, harness sessions, messages, context excerpts, sticky sessions, and ephemeral calls as Ari product concepts. ADR 0006 says Ari enhances existing harnesses rather than replacing them. This ADR refines those decisions at the harness boundary.
+ADR 0001 makes the daemon API the product authority. ADR 0002 makes workspace the runtime unit. ADR 0003 defines profiles, harness sessions, messages, context excerpts, sticky sessions, and ephemeral calls as Ari product concepts. ADR 0006 says Ari enhances existing harnesses rather than replacing them. ADR 0013 defines Ari's user-facing presentation and copy rules. This ADR refines those decisions at the harness boundary.
 
 The immediate workspace orchestration plan needs provider-specific prompt/session behavior, especially for profile prompts. Research found:
 
@@ -20,7 +20,9 @@ The immediate workspace orchestration plan needs provider-specific prompt/sessio
 
 ## Decision
 
-Ari normalizes harness behavior into Ari-owned structures and semantics. Harness adapters translate provider details into stable Ari concepts; callers and frontends interact with Ari workspaces, profiles, harness sessions, messages, calls, context excerpts, run-log items, status, and timeline projections rather than provider-native objects.
+Ari normalizes harness behavior into Ari-owned structures and semantics. Harness adapters translate provider details into stable Ari concepts; callers and frontends interact with Ari workspaces, profiles, harness sessions, messages, calls, context excerpts, run-log items, status, timeline projections, and presentation-ready display objects rather than provider-native objects.
+
+The default Ari view is opinionated product language. Provider-native terms, ids, and payload fragments remain useful source facts for traceability, resume, attach, support, and debugging, but they are secondary detail or raw/native escape hatches. Ari owns the primary copy, labels, status language, grouping, badges, and remediation text shown by CLI, TUI, GUI, MCP, and tool surfaces.
 
 ### Stable Ari surface
 
@@ -36,6 +38,7 @@ Ari owns these concepts at the daemon/API boundary:
 - run-log message/item
 - final response/result
 - status/timeline projection
+- normalized presentation object
 
 Provider session IDs, thread IDs, run IDs, item IDs, event names, token fields, and launch flags are adapter metadata. They may be stored for traceability and resume support, but they are not the primary product interface.
 
@@ -126,16 +129,19 @@ Adapters must report Ari outcomes: pending, attempted, completed, failed, retrya
 ### Normalization rules
 
 - Adapters convert provider output into Ari run-log items with stable kinds and status values.
-- Status and timeline projections derive from Ari records, not provider-specific event names.
+- Status, timeline, and presentation projections derive from Ari records and adapter-declared source facts, not provider-specific event names.
+- Adapters provide factual identity, capability, provider/model/session/runtime metadata, and safe native details. Ari presentation code provides product copy, labels, badges, status text, grouping, and remediation.
 - Context excerpts are explicit bounded selections from Ari run-log messages.
 - Handoffs, replies, reviews, research requests, and fan-out children are ordinary Ari messages or ephemeral calls unless a later ADR introduces a durable workflow object.
 - Provider-native hierarchy, such as subagents or thread/task objects, must not leak into public Ari terminology unless a later ADR adopts it intentionally.
-- Provider-native passthrough data may be exposed when needed to achieve equivalent user functionality, but it must remain clearly secondary to Ari's normalized session/lifecycle model.
+- Provider-native passthrough data may be exposed when needed to achieve equivalent user functionality, but it must remain clearly secondary to Ari's normalized session/lifecycle/presentation model.
+- Raw/native detail must be deliberate, scoped, and redacted. It must not expose credentials, projected auth content, secret values, bearer tokens, device codes, or sensitive provider payloads.
 
 ## Consequences
 
 - CLI, API, and future frontend can stay stable while adapters evolve per provider.
 - Harness-specific details remain available for traceability, debugging, resume, and capability checks, but product behavior is Ari-owned.
+- User-facing surfaces can share Ari-owned copy and affordances while still offering native/raw detail for advanced inspection.
 - Adapter tests must prove prompt behavior reaches the provider through the intended native channel for the selected invocation mode and that task/context payloads remain visible user/context content.
 - The workspace orchestration implementation should prefer server/API integrations over weaker CLI-only paths when the server/API is needed to preserve Ari semantics.
 - Some harnesses may have weaker semantics. Ari should surface capability limitations rather than silently pretending all providers support the same behavior.

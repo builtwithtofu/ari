@@ -1,12 +1,12 @@
-# Ari Projection Contract
+# Ari Projection and Presentation Contract
 
-This document defines source-of-truth and sync behavior for Ari-owned runtime, tool, proof, timeline, context, and harness projections.
+This document defines source-of-truth, presentation, and sync behavior for Ari-owned runtime, tool, proof, timeline, context, and harness projections.
 
 ## Scope
 
-- Ari owns daemon-side projection contracts for workspace activity, diff summaries, proof summaries, structured timelines, context packets, harness runs, and workspace command tools.
+- Ari owns daemon-side projection contracts for workspace activity, diff summaries, proof summaries, structured timelines, context packets, harness runs, normalized presentation fields, and workspace command tools.
 - Workspace command definitions are one canonical input to the projection spine, not a separate source of truth.
-- Projection targets are daemon JSON-RPC responses consumed by CLI and future clients.
+- Projection targets are daemon JSON-RPC responses consumed by CLI and future clients. Responses should carry Ari-owned presentation fields by default and safe raw/native detail only through explicit detail surfaces or options.
 
 This slice does **not** define file-based harness artifact generation yet.
 
@@ -27,11 +27,11 @@ The daemon projects these records through the tool model (`tool.FromWorkspaceCom
 
 ## Projection Boundary
 
-Projection is read-time adaptation, not duplicated persistence.
+Projection is read-time adaptation, not duplicated persistence. Presentation is the user-facing layer of that adaptation: Ari records and adapter source facts become stable Ari labels, statuses, explanations, and detail/raw affordances.
 
 - Store layer persists canonical definition data only.
 - Daemon layer projects canonical data into API response shapes.
-- CLI renders daemon responses; it does not maintain a separate command-definition source.
+- CLI renders daemon responses; it does not maintain a separate command-definition source or invent independent status/copy semantics.
 - Terminal attachment remains a framed IO transport only; harness timelines, context packets, proofs, and activity summaries are JSON-RPC projections.
 
 Current command-definition projection path:
@@ -45,22 +45,22 @@ Current workspace-control projection path:
 - `workspace.activity` -> aggregate workspace, command, harness-session, process-output, proof, and VCS facts for dashboards
 - `workspace.diff` -> detect JJ first, then Git, and project changed-file summary
 - `workspace.proofs` -> derive harness-agnostic proof summaries from command records and retained output
-- `workspace.timeline` -> map command/harness/proof output into stable timeline items with explicit `source_kind` and `kind`
+- `workspace.timeline` -> map command/harness/proof output into stable timeline items with explicit `source_kind`, `kind`, Ari-facing status/copy, and safe source detail
 - `context.project` -> build an inspectable context packet from task-like request fields, command definitions, diff summary, proof summaries, and omissions
-- `agent.run` -> legacy/current method that starts a harness-backed run from a context packet through Ari's normalized harness-call seam; Ari assigns the run identity used by timelines/activity, while provider-specific IDs remain metadata for adapter resume/debug paths
-- `agent.profile.run` -> legacy/current method that starts a run through a named Ari profile, resolving profile metadata to a harness behind the same normalized harness-call seam
+- `agent.run` -> start a harness-backed run from a context packet through Ari's normalized harness-call seam; Ari assigns the run identity used by timelines/activity, while provider-specific IDs remain metadata for adapter resume/debug paths
+- `agent.profile.run` -> start a run through a named Ari profile, resolving profile metadata to a harness behind the same normalized harness-call seam
 
 ## Harness Call Boundary
 
 Executor-backed runs cross an Ari-owned harness-call contract before reaching a concrete adapter.
 
 - The daemon creates Ari run/session IDs before adapter execution.
-- The daemon resolves normal user-facing profile calls through caller/config-provided profile metadata first; raw harness selection is a low-level compatibility/debug path. Ari does not ship opinionated default profiles in this slice. `agent.profile.run` can accept an inline profile definition or top-level run defaults such as preferred harness/model/prompt so dynamic profiles do not need daemon-owned storage.
+- The daemon resolves normal user-facing profile calls through caller/config-provided profile metadata first. Raw/native harness selection is an explicit advanced/debug path, not the normal product vocabulary. Ari does not ship opinionated default profiles in this slice. `agent.profile.run` can accept an inline profile definition or top-level run defaults such as preferred harness/model/prompt so dynamic profiles do not need daemon-owned storage.
 - Adapters declare capabilities before `Start`; missing required capabilities fail before side effects.
 - Fake is test-only. PTY is a dev/local-command harness while Codex, Claude Code, and OpenCode adapters are added behind the same boundary.
 - Expected profile, harness, unsupported-capability, and unavailable-harness failures return machine-readable JSON-RPC error data and must not start an adapter.
 - Timeline and activity projections use Ari run IDs. Provider IDs such as PTY process/run identifiers are retained as metadata and must not become client routing keys.
-- Runtime output is normalized into Ari timeline/runtime-event structures before clients render it; provider-specific event names stay adapter metadata.
+- Runtime output is normalized into Ari timeline/runtime-event/presentation structures before clients render it; provider-specific event names stay adapter metadata or explicit raw/native detail.
 
 ## Harness CLI Smoke Checks
 
@@ -86,6 +86,7 @@ There is currently no generated harness artifact file to reconcile.
 - If projection fails (for example malformed canonical payload), daemon returns invalid-params style errors.
 - Projection helpers in daemon must not become parallel decoders; canonical parsing stays in `internal/tool`.
 - New projection targets must consume canonical tool projection helpers, not copy field-mapping logic.
+- New user-facing projection targets must use Ari-owned presentation language and include raw/native detail only as an explicit, redacted detail path.
 
 ## Future Extension Points
 
