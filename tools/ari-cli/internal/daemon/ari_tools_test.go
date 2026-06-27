@@ -62,7 +62,7 @@ func TestAriToolRegistryApprovalTrustInvariant(t *testing.T) {
 	if err := validateAriToolRegistry(); err != nil {
 		t.Fatalf("validateAriToolRegistry returned error: %v", err)
 	}
-	for _, definition := range ariToolRegistry {
+	for _, definition := range ariToolRegistry() {
 		if definition.Operation == nil {
 			continue
 		}
