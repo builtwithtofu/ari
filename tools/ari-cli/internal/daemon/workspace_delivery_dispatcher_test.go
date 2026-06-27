@@ -50,7 +50,7 @@ func TestStartHarnessSessionRegistersStickyDeliveryTarget(t *testing.T) {
 	}
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	executor := &recordingHarnessDeliveryExecutor{result: WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptCompleted}, items: []TimelineItem{{ID: "sticky-delivery:completed", Kind: "lifecycle", Status: "completed"}}}
-	if err := d.harnessRegistry.Register("sticky-delivery", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	if err := d.harnessRegistry.Register("sticky-delivery", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		return executor, nil
 	}); err != nil {
 		t.Fatalf("Register sticky-delivery returned error: %v", err)
@@ -88,7 +88,7 @@ func TestHarnessWorkspaceDeliveryDispatcherRehydratesPersistedStickyTarget(t *te
 	}
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	executor := &recordingHarnessDeliveryExecutor{result: WorkspaceDeliveryAttemptResult{Status: WorkspaceDeliveryAttemptCompleted}}
-	d.setHarnessFactoryForTest("sticky-delivery", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("sticky-delivery", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		if req.SessionID != "ari-session" || req.WorkspaceID != "ws-delivery" {
 			t.Fatalf("rehydrate request = %#v, want persisted session identity", req)
 		}
@@ -125,7 +125,7 @@ func TestHarnessWorkspaceDeliveryDispatcherRehydratesAuthProjection(t *testing.T
 	}
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", "defaults", "defaults", "test-version")
 	d.secretBackend = backend
-	d.setHarnessFactoryForTest(HarnessNameOpenCode, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest(HarnessNameOpenCode, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		if req.AuthProjection.Kind != HarnessAuthProjectionAuthContent || req.AuthProjection.Env["OPENCODE_AUTH_CONTENT"] == "" {
 			t.Fatalf("rehydrate auth projection = %#v, want durable named-slot projection", req.AuthProjection)
 		}
@@ -201,6 +201,33 @@ func (e *recordingHarnessDeliveryExecutor) AttemptWorkspaceDelivery(_ context.Co
 	e.attempts = append(e.attempts, attempt)
 	e.mu.Unlock()
 	return e.result, nil
+}
+
+func (e *recordingHarnessDeliveryExecutor) AuthStatus(ctx context.Context, slot HarnessAuthSlot) (HarnessAuthStatus, error) {
+	_ = ctx
+	return unsupportedHarnessAuthStatus("delivery-test", slot), nil
+}
+
+func (e *recordingHarnessDeliveryExecutor) AuthStart(ctx context.Context, slot HarnessAuthSlot, method string) (HarnessAuthStatus, error) {
+	_ = ctx
+	_ = method
+	return unsupportedHarnessAuthStatus("delivery-test", slot), &HarnessUnavailableError{Harness: "delivery-test", Reason: "auth_start_unsupported", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+}
+
+func (e *recordingHarnessDeliveryExecutor) AuthCancel(ctx context.Context, slot HarnessAuthSlot, flowID string) (HarnessAuthStatus, error) {
+	_ = ctx
+	_ = flowID
+	return unsupportedHarnessAuthStatus("delivery-test", slot), &HarnessUnavailableError{Harness: "delivery-test", Reason: "auth_cancel_unsupported", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+}
+
+func (e *recordingHarnessDeliveryExecutor) AuthLogout(ctx context.Context, slot HarnessAuthSlot) (HarnessAuthStatus, error) {
+	_ = ctx
+	return unsupportedHarnessAuthStatus("delivery-test", slot), &HarnessUnavailableError{Harness: "delivery-test", Reason: "auth_logout_unsupported", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+}
+
+func (e *recordingHarnessDeliveryExecutor) AuthProviderMethods(ctx context.Context) (HarnessAuthProviderMethodsResponse, error) {
+	_ = ctx
+	return HarnessAuthProviderMethodsResponse{Status: "unsupported"}, nil
 }
 
 func (e *recordingHarnessDeliveryExecutor) StopCount() int {

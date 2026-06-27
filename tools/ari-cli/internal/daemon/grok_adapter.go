@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 )
 
 // GrokExecutor integrates the xAI Grok CLI. Runs are headless
@@ -36,10 +35,8 @@ type grokExecutorOptions struct {
 type grokCommandRunner func(context.Context, grokExecutorOptions, []string) (commandRunResult, error)
 
 type GrokExecutor struct {
-	options         grokExecutorOptions
-	mu              sync.Mutex
-	runs            map[string][]TimelineItem
-	deliveryOptions map[string]grokExecutorOptions
+	adapterLifecycle[grokExecutorOptions]
+	options grokExecutorOptions
 }
 
 func NewGrokExecutor(cwd string) *GrokExecutor {
@@ -66,23 +63,7 @@ func newGrokExecutor(options grokExecutorOptions) *GrokExecutor {
 	if options.LookupEnv == nil {
 		options.LookupEnv = os.Getenv
 	}
-	return &GrokExecutor{options: options, runs: map[string][]TimelineItem{}, deliveryOptions: map[string]grokExecutorOptions{}}
-}
-
-func (options grokExecutorOptions) withGrokAuthSlotProjection(authSlotID string) (grokExecutorOptions, error) {
-	authSlotID = strings.TrimSpace(authSlotID)
-	if authSlotIsDefaultForHarness(HarnessNameGrok, authSlotID) {
-		return options, nil
-	}
-	if options.AuthProjection.Kind == HarnessAuthProjectionConfigRoot && strings.TrimSpace(options.AuthProjection.Env["GROK_HOME"]) != "" {
-		return options, nil
-	}
-	home, err := harnessAuthSlotHome(HarnessNameGrok, authSlotID, options.AuthHomeRoot)
-	if err != nil {
-		return grokExecutorOptions{}, err
-	}
-	options.AuthProjection = HarnessAuthProjectionPlan{Owner: HarnessAuthProjectionOwnerNative, Kind: HarnessAuthProjectionConfigRoot, Env: map[string]string{"GROK_HOME": home}, RiskLabels: []string{"provider_owned", "native_config_root_isolation"}}
-	return options, nil
+	return &GrokExecutor{adapterLifecycle: newAdapterLifecycle[grokExecutorOptions](HarnessNameGrok), options: options}
 }
 
 // grokAuthHome resolves the GROK_HOME directory auth state is read from:
@@ -108,10 +89,12 @@ func (e *GrokExecutor) AuthStatus(ctx context.Context, slot HarnessAuthSlot) (Ha
 	if e == nil {
 		return HarnessAuthStatus{}, fmt.Errorf("executor is required")
 	}
-	options, err := e.options.withGrokAuthSlotProjection(slot.AuthSlotID)
+	options := e.options
+	projection, err := ResolveNativeAuthSlotProjection(options.AuthProjection, NativeAuthSlotProjectionRequest{Harness: HarnessNameGrok, AuthSlotID: slot.AuthSlotID, EnvKey: "GROK_HOME", Root: options.AuthHomeRoot, RiskLabels: []string{"provider_owned", "native_config_root_isolation"}})
 	if err != nil {
 		return HarnessAuthStatus{}, err
 	}
+	options.AuthProjection = projection
 	authenticated := false
 	if home := options.grokAuthHome(); home != "" {
 		if _, err := os.Stat(filepath.Join(home, "auth.json")); err == nil {
@@ -143,10 +126,12 @@ func (e *GrokExecutor) AuthStart(ctx context.Context, slot HarnessAuthSlot, meth
 	if e == nil {
 		return HarnessAuthStatus{}, fmt.Errorf("executor is required")
 	}
-	options, err := e.options.withGrokAuthSlotProjection(slot.AuthSlotID)
+	options := e.options
+	projection, err := ResolveNativeAuthSlotProjection(options.AuthProjection, NativeAuthSlotProjectionRequest{Harness: HarnessNameGrok, AuthSlotID: slot.AuthSlotID, EnvKey: "GROK_HOME", Root: options.AuthHomeRoot, RiskLabels: []string{"provider_owned", "native_config_root_isolation"}})
 	if err != nil {
 		return HarnessAuthStatus{}, err
 	}
+	options.AuthProjection = projection
 	method = strings.TrimSpace(method)
 	if method == "" {
 		method = "device_code"
@@ -177,10 +162,12 @@ func (e *GrokExecutor) AuthLogout(ctx context.Context, slot HarnessAuthSlot) (Ha
 	if e == nil {
 		return HarnessAuthStatus{}, fmt.Errorf("executor is required")
 	}
-	options, err := e.options.withGrokAuthSlotProjection(slot.AuthSlotID)
+	options := e.options
+	projection, err := ResolveNativeAuthSlotProjection(options.AuthProjection, NativeAuthSlotProjectionRequest{Harness: HarnessNameGrok, AuthSlotID: slot.AuthSlotID, EnvKey: "GROK_HOME", Root: options.AuthHomeRoot, RiskLabels: []string{"provider_owned", "native_config_root_isolation"}})
 	if err != nil {
 		return HarnessAuthStatus{}, err
 	}
+	options.AuthProjection = projection
 	result, err := options.RunAuthCommand(ctx, options, []string{"logout"})
 	if result.ExitCode != nil && *result.ExitCode != 0 {
 		return HarnessAuthStatus{}, &HarnessUnavailableError{Harness: HarnessNameGrok, Reason: "auth_logout_failed", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: true}
@@ -253,10 +240,11 @@ func (e *GrokExecutor) Start(ctx context.Context, req ExecutorStartRequest) (Exe
 	}
 	options.SystemPrompt = strings.TrimSpace(req.Prompt)
 	options.AuthProjection = req.AuthProjection
-	options, err := options.withGrokAuthSlotProjection(req.AuthSlotID)
+	projection, err := ResolveNativeAuthSlotProjection(options.AuthProjection, NativeAuthSlotProjectionRequest{Harness: HarnessNameGrok, AuthSlotID: req.AuthSlotID, EnvKey: "GROK_HOME", Root: options.AuthHomeRoot, RiskLabels: []string{"provider_owned", "native_config_root_isolation"}})
 	if err != nil {
 		return ExecutorRun{}, err
 	}
+	options.AuthProjection = projection
 	commandResult, err := options.RunCommand(ctx, options, grokStartArgs(options, contextPacketPrompt(req)))
 	if err != nil {
 		return ExecutorRun{}, err
@@ -273,35 +261,12 @@ func (e *GrokExecutor) Start(ctx context.Context, req ExecutorStartRequest) (Exe
 		return ExecutorRun{}, fmt.Errorf("grok session id is required")
 	}
 	items := grokTimelineItemsFromEvents(workspaceID, sessionID, parsed)
-	e.mu.Lock()
-	e.runs[sessionID] = items
-	e.deliveryOptions[sessionID] = options
-	e.mu.Unlock()
+	e.storeRun(sessionID, items, options)
 	run := ExecutorRun{RunID: sessionID, SessionID: sessionID, Executor: HarnessNameGrok, ProviderSessionID: sessionID, ProviderRunID: strings.TrimSpace(parsed.RequestID), ExitCode: commandResult.ExitCode, ProcessSample: commandResult.ProcessSample, CapabilityNames: harnessCapabilitiesToStrings(e.Descriptor().Capabilities), Persistence: HarnessSessionPersistent, ResumeMode: HarnessResumeCLIFlag}
 	if cursor, err := json.Marshal(map[string]string{"session_id": sessionID}); err == nil {
 		run.ResumeCursor = cursor
 	}
 	return run, nil
-}
-
-func (e *GrokExecutor) Items(ctx context.Context, runID string) ([]TimelineItem, error) {
-	_ = ctx
-	if e == nil {
-		return nil, fmt.Errorf("executor is required")
-	}
-	e.mu.Lock()
-	items, ok := e.runs[strings.TrimSpace(runID)]
-	e.mu.Unlock()
-	if !ok {
-		return nil, fmt.Errorf("run %q not found", runID)
-	}
-	return append([]TimelineItem(nil), items...), nil
-}
-
-func (e *GrokExecutor) Stop(ctx context.Context, runID string) error {
-	_ = ctx
-	_ = runID
-	return nil
 }
 
 func (e *GrokExecutor) AttemptWorkspaceDelivery(ctx context.Context, attempt WorkspaceDeliveryAttempt) (WorkspaceDeliveryAttemptResult, error) {
@@ -316,11 +281,9 @@ func (e *GrokExecutor) AttemptWorkspaceDelivery(ctx context.Context, attempt Wor
 		return WorkspaceDeliveryAttemptResult{}, fmt.Errorf("delivery target session, delivery id, and event ids are required")
 	}
 	deliveryOptions := e.options
-	e.mu.Lock()
-	if options, ok := e.deliveryOptions[sessionID]; ok {
+	if options, ok := e.deliveryOption(sessionID); ok {
 		deliveryOptions = options
 	}
-	e.mu.Unlock()
 	args := []string{"-r", sessionID, "-p", grokWorkspaceDeliveryTurn(attempt), "--output-format", "streaming-json", "--no-auto-update"}
 	commandResult, commandErr := deliveryOptions.RunCommand(ctx, deliveryOptions, args)
 	deliveryResult, parseErr := parseGrokDeliveryOutput(commandResult.Output)

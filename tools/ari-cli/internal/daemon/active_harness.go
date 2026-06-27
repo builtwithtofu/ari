@@ -12,14 +12,14 @@ type activeHarnessRun struct {
 	workspaceID       string
 	sessionID         string
 	providerSessionID string
-	executor          Executor
+	executor          HarnessAdapter
 	cancel            context.CancelFunc
 	stopOnSuspend     bool
 	once              sync.Once
 }
 
 type trackedHarnessExecutor struct {
-	Executor
+	HarnessAdapter
 	daemon      *Daemon
 	store       *globaldb.Store
 	workspaceID string
@@ -29,7 +29,7 @@ type trackedHarnessExecutor struct {
 }
 
 func (e *trackedHarnessExecutor) Start(ctx context.Context, req ExecutorStartRequest) (ExecutorRun, error) {
-	run, err := e.Executor.Start(ctx, req)
+	run, err := e.HarnessAdapter.Start(ctx, req)
 	if err != nil {
 		return run, err
 	}
@@ -43,15 +43,8 @@ func (e *trackedHarnessExecutor) Start(ctx context.Context, req ExecutorStartReq
 	if providerSessionID == "" {
 		providerSessionID = strings.TrimSpace(run.ProviderRunID)
 	}
-	e.unregister = e.daemon.registerActiveHarnessRun(e.workspaceID, e.sessionID, providerSessionID, e.Executor, e.cancel)
+	e.unregister = e.daemon.registerActiveHarnessRun(e.workspaceID, e.sessionID, providerSessionID, e.HarnessAdapter, e.cancel)
 	return run, nil
-}
-
-func (e *trackedHarnessExecutor) Descriptor() HarnessAdapterDescriptor {
-	if describer, ok := e.Executor.(HarnessDescriber); ok {
-		return describer.Descriptor()
-	}
-	return HarnessAdapterDescriptor{}
 }
 
 func (e *trackedHarnessExecutor) Items(ctx context.Context, sessionID string) ([]TimelineItem, error) {
@@ -60,18 +53,18 @@ func (e *trackedHarnessExecutor) Items(ctx context.Context, sessionID string) ([
 			e.unregister()
 		}
 	}()
-	return e.Executor.Items(ctx, sessionID)
+	return e.HarnessAdapter.Items(ctx, sessionID)
 }
 
-func (d *Daemon) registerActiveHarnessRun(workspaceID, sessionID, providerSessionID string, executor Executor, cancel context.CancelFunc) func() {
+func (d *Daemon) registerActiveHarnessRun(workspaceID, sessionID, providerSessionID string, executor HarnessAdapter, cancel context.CancelFunc) func() {
 	return d.registerHarnessRun(workspaceID, sessionID, providerSessionID, executor, cancel, true)
 }
 
-func (d *Daemon) registerHarnessDeliveryTarget(workspaceID, sessionID, providerSessionID string, executor Executor) func() {
+func (d *Daemon) registerHarnessDeliveryTarget(workspaceID, sessionID, providerSessionID string, executor HarnessAdapter) func() {
 	return d.registerHarnessRun(workspaceID, sessionID, providerSessionID, executor, nil, false)
 }
 
-func (d *Daemon) registerHarnessRun(workspaceID, sessionID, providerSessionID string, executor Executor, cancel context.CancelFunc, stopOnSuspend bool) func() {
+func (d *Daemon) registerHarnessRun(workspaceID, sessionID, providerSessionID string, executor HarnessAdapter, cancel context.CancelFunc, stopOnSuspend bool) func() {
 	if d == nil || executor == nil {
 		return func() {}
 	}

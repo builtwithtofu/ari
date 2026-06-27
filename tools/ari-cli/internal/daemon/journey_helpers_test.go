@@ -26,7 +26,7 @@ func newJourneyHarnessFactory(t *testing.T, harness string, items []TimelineItem
 
 func (f *journeyHarnessFactory) register(d *Daemon) {
 	f.t.Helper()
-	d.setHarnessFactoryForTest(f.harness, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest(f.harness, func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink

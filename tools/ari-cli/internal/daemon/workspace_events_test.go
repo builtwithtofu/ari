@@ -60,7 +60,7 @@ func TestWorkspaceEventSubscriptionReadsFanoutWorkerLifecycle(t *testing.T) {
 	j.createSessionConfig("planner", "ws-1", "planner", "planner-harness")
 	j.createHarnessSession("planner-run", "ws-1", "planner", "planner-harness", "waiting", globaldb.HarnessSessionUsageSticky)
 	j.createSessionConfig("worker", "ws-1", "worker", "worker-harness")
-	j.daemon.setHarnessFactoryForTest("worker-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	j.daemon.setHarnessFactoryForTest("worker-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -93,7 +93,7 @@ func TestWorkspaceEventSubscriptionReadsFanoutWorkerLifecycle(t *testing.T) {
 func TestWorkspaceEventSubscriptionReadsStickySessionCompletion(t *testing.T) {
 	j := newJourneyRuntime(t)
 	j.seedWorkspace("ws-1", t.TempDir())
-	j.daemon.setHarnessFactoryForTest("planner-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	j.daemon.setHarnessFactoryForTest("planner-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -131,7 +131,7 @@ func TestEphemeralCallEmitsSessionLifecycleWorkspaceEvents(t *testing.T) {
 		j.createSessionConfig("planner", "ws-eph-events", "planner", "planner-harness")
 		j.createHarnessSession("planner-run", "ws-eph-events", "planner", "planner-harness", "waiting", globaldb.HarnessSessionUsageSticky)
 		j.createSessionConfig("worker", "ws-eph-events", "worker", "eph-events-harness")
-		j.daemon.setHarnessFactoryForTest("eph-events-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		j.daemon.setHarnessFactoryForTest("eph-events-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 			_ = req
 			_ = primaryFolder
 			_ = sink
@@ -164,7 +164,7 @@ func TestEphemeralCallEmitsSessionLifecycleWorkspaceEvents(t *testing.T) {
 		j.createSessionConfig("planner", "ws-eph-failed", "planner", "planner-harness")
 		j.createHarnessSession("planner-run", "ws-eph-failed", "planner", "planner-harness", "waiting", globaldb.HarnessSessionUsageSticky)
 		j.createSessionConfig("worker", "ws-eph-failed", "worker", "eph-fail-harness")
-		j.daemon.setHarnessFactoryForTest("eph-fail-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		j.daemon.setHarnessFactoryForTest("eph-fail-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 			_ = req
 			_ = primaryFolder
 			_ = sink
@@ -218,7 +218,7 @@ func assertSingleTerminalSessionWorkspaceEvent(t *testing.T, ctx context.Context
 func TestStickySessionEmitsIdleAndNeedsInputWorkspaceEvents(t *testing.T) {
 	j := newJourneyRuntime(t)
 	j.seedWorkspace("ws-idle", t.TempDir())
-	j.daemon.setHarnessFactoryForTest("idle-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	j.daemon.setHarnessFactoryForTest("idle-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -256,7 +256,7 @@ func TestEphemeralCallDoesNotEmitSessionIdle(t *testing.T) {
 	j.createSessionConfig("planner", "ws-eph-no-idle", "planner", "planner-harness")
 	j.createHarnessSession("planner-run", "ws-eph-no-idle", "planner", "planner-harness", "waiting", globaldb.HarnessSessionUsageSticky)
 	j.createSessionConfig("worker", "ws-eph-no-idle", "worker", "eph-no-idle-harness")
-	j.daemon.setHarnessFactoryForTest("eph-no-idle-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	j.daemon.setHarnessFactoryForTest("eph-no-idle-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -288,7 +288,7 @@ func TestWorkspaceEventSubscriptionReadsHarnessRuntimeEvents(t *testing.T) {
 	t.Run("sticky session", func(t *testing.T) {
 		j := newJourneyRuntime(t)
 		j.seedWorkspace("ws-runtime-sticky", t.TempDir())
-		j.daemon.setHarnessFactoryForTest("runtime-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		j.daemon.setHarnessFactoryForTest("runtime-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 			_ = req
 			_ = primaryFolder
 			_ = sink
@@ -311,7 +311,7 @@ func TestWorkspaceEventSubscriptionReadsHarnessRuntimeEvents(t *testing.T) {
 		j.createSessionConfig("planner", "ws-runtime-ephemeral", "planner", "planner-harness")
 		j.createHarnessSession("planner-run", "ws-runtime-ephemeral", "planner", "planner-harness", "waiting", globaldb.HarnessSessionUsageSticky)
 		j.createSessionConfig("worker", "ws-runtime-ephemeral", "worker", "runtime-harness")
-		j.daemon.setHarnessFactoryForTest("runtime-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+		j.daemon.setHarnessFactoryForTest("runtime-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 			_ = req
 			_ = primaryFolder
 			_ = sink

@@ -35,6 +35,46 @@ type HarnessAuthProjectionPlan struct {
 	RiskLabels []string                   `json:"risk_labels,omitempty"`
 }
 
+type NativeAuthSlotProjectionRequest struct {
+	Harness    string
+	AuthSlotID string
+	EnvKey     string
+	Root       string
+	RiskLabels []string
+}
+
+// ResolveNativeAuthSlotProjection maps a non-default named auth slot to the
+// harness-native config root environment variable used by providers that own
+// their credential state (Claude, Codex, Grok). Ari creates only an isolated
+// per-slot config root and does not read provider credentials.
+func ResolveNativeAuthSlotProjection(current HarnessAuthProjectionPlan, req NativeAuthSlotProjectionRequest) (HarnessAuthProjectionPlan, error) {
+	harness := strings.TrimSpace(req.Harness)
+	authSlotID := strings.TrimSpace(req.AuthSlotID)
+	envKey := strings.TrimSpace(req.EnvKey)
+	if authSlotIsDefaultForHarness(harness, authSlotID) {
+		return current, nil
+	}
+	if current.Kind == HarnessAuthProjectionConfigRoot && strings.TrimSpace(current.Env[envKey]) != "" {
+		return current, nil
+	}
+	home, err := harnessAuthSlotHome(harness, authSlotID, req.Root)
+	if err != nil {
+		return HarnessAuthProjectionPlan{}, err
+	}
+	riskLabels := append([]string(nil), req.RiskLabels...)
+	if len(riskLabels) == 0 {
+		riskLabels = []string{"provider_owned", "native_config_root_isolation"}
+	}
+	return HarnessAuthProjectionPlan{Owner: HarnessAuthProjectionOwnerNative, Kind: HarnessAuthProjectionConfigRoot, Env: map[string]string{envKey: home}, RiskLabels: riskLabels}, nil
+}
+
+func RequireProjectedAuthSlot(harness, authSlotID string, projection HarnessAuthProjectionPlan, ready func(HarnessAuthProjectionPlan) bool) error {
+	if authSlotIsDefaultForHarness(harness, authSlotID) || ready(projection) {
+		return nil
+	}
+	return &HarnessUnavailableError{Harness: strings.TrimSpace(harness), Reason: "auth_slot_projection_required", RequiredCapability: HarnessCapabilityHarnessSessionFromContext, StartInvoked: false}
+}
+
 // harnessAuthSlotHome resolves (and creates) the per-slot config root used to
 // isolate a named auth slot's provider state. rootOverride replaces the
 // default `<user-config>/ari/auth-slots/<harness>` root when set.

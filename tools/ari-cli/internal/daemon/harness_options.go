@@ -42,9 +42,8 @@ func requestedInvocationMode(options []HarnessOption) (HarnessInvocationMode, bo
 	return mode, found
 }
 
-func harnessOptionsFromProfile(executor Executor, profile Profile) ([]HarnessOption, error) {
-	describer, ok := executor.(HarnessDescriber)
-	if !ok || len(describer.Descriptor().InvocationModes) == 0 {
+func harnessOptionsFromProfile(executor HarnessAdapter, profile Profile) ([]HarnessOption, error) {
+	if len(executor.Descriptor().InvocationModes) == 0 {
 		return nil, nil
 	}
 	mode, ok, err := invocationModeFromSettings(profile.Defaults, strings.TrimSpace(profile.Harness))

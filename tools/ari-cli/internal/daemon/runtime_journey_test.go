@@ -25,7 +25,7 @@ func TestJourneyStickyFlowFanoutUsesFakeHarnessExecutableBoundary(t *testing.T) 
 	recordPath := filepath.Join(t.TempDir(), "fake-harness-record.jsonl")
 	t.Setenv("ARI_FAKE_HARNESS", "claude")
 	t.Setenv("ARI_FAKE_HARNESS_RECORD", recordPath)
-	j.daemon.setHarnessFactoryForTest("claude", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	j.daemon.setHarnessFactoryForTest("claude", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = sink
 		return NewClaudeExecutorForTest(claudeExecutorOptions{Executable: fake, Cwd: primaryFolder, InvocationMode: HarnessInvocationModeHeadless}), nil
@@ -73,17 +73,17 @@ func TestJourneyMixedHarnessFanoutAcrossAdapters(t *testing.T) {
 	recordPath := filepath.Join(t.TempDir(), "fanout-record.jsonl")
 	t.Setenv("ARI_FAKE_HARNESS", "")
 	t.Setenv("ARI_FAKE_HARNESS_RECORD", recordPath)
-	j.daemon.setHarnessFactoryForTest("claude", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	j.daemon.setHarnessFactoryForTest("claude", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = sink
 		return NewClaudeExecutorForTest(claudeExecutorOptions{Executable: links["claude"], Cwd: primaryFolder, InvocationMode: HarnessInvocationModeHeadless}), nil
 	})
-	j.daemon.setHarnessFactoryForTest("pi", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	j.daemon.setHarnessFactoryForTest("pi", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = sink
 		return NewPiExecutorForTest(piExecutorOptions{Executable: links["pi"], Cwd: primaryFolder}), nil
 	})
-	j.daemon.setHarnessFactoryForTest("grok", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	j.daemon.setHarnessFactoryForTest("grok", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = sink
 		return NewGrokExecutorForTest(grokExecutorOptions{Executable: links["grok"], Cwd: primaryFolder}), nil
@@ -119,7 +119,7 @@ func TestJourneyFanoutWorkerRateLimitFailureSurfacesInInbox(t *testing.T) {
 	fake := buildFakeHarnessExecutable(t)
 	t.Setenv("ARI_FAKE_HARNESS", "claude")
 	t.Setenv("ARI_FAKE_HARNESS_MODE", "exit-rate-limit")
-	j.daemon.setHarnessFactoryForTest("claude", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	j.daemon.setHarnessFactoryForTest("claude", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = sink
 		return NewClaudeExecutorForTest(claudeExecutorOptions{Executable: fake, Cwd: primaryFolder, InvocationMode: HarnessInvocationModeHeadless}), nil
@@ -172,19 +172,19 @@ func TestJourneyStickyFlowFanoutSuspendResumeAndInbox(t *testing.T) {
 	slowStarted := make(chan struct{})
 	slowRelease := make(chan struct{})
 	stopped := make(chan string, 1)
-	j.daemon.setHarnessFactoryForTest("good-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	j.daemon.setHarnessFactoryForTest("good-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
 		return newFakeHarness("good-harness", []TimelineItem{{Kind: "agent_text", Text: "good result"}}), nil
 	})
-	j.daemon.setHarnessFactoryForTest("bad-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	j.daemon.setHarnessFactoryForTest("bad-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
 		return itemsFailHarness{}, nil
 	})
-	j.daemon.setHarnessFactoryForTest("slow-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	j.daemon.setHarnessFactoryForTest("slow-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -251,19 +251,19 @@ func TestJourneyStickyOrchestratorFanoutLoopThroughAriTools(t *testing.T) {
 	slowStarted := make(chan struct{})
 	slowRelease := make(chan struct{})
 	stopped := make(chan string, 1)
-	j.daemon.setHarnessFactoryForTest("good-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	j.daemon.setHarnessFactoryForTest("good-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
 		return newFakeHarness("good-harness", []TimelineItem{{Kind: "agent_text", Text: "good result"}}), nil
 	})
-	j.daemon.setHarnessFactoryForTest("bad-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	j.daemon.setHarnessFactoryForTest("bad-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
 		return itemsFailHarness{}, nil
 	})
-	j.daemon.setHarnessFactoryForTest("slow-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	j.daemon.setHarnessFactoryForTest("slow-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -325,7 +325,7 @@ func TestJourneyWorkspaceSuspendDoesNotFailContextCancelledFanoutWorker(t *testi
 	j.createHarnessSession("planner-run", "ws-1", "planner", "planner-harness", "waiting", globaldb.HarnessSessionUsageSticky)
 	j.createSessionConfig("slow-worker", "ws-1", "slow", "slow-harness")
 	started := make(chan struct{})
-	j.daemon.setHarnessFactoryForTest("slow-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	j.daemon.setHarnessFactoryForTest("slow-harness", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink

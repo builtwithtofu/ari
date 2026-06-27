@@ -17,7 +17,7 @@ func TestRollbackInitRemovesAriOwnedStateAndAppendsRecord(t *testing.T) {
 	registry := rpc.NewMethodRegistry()
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", configPath, "defaults", "test-version")
-	d.setHarnessFactoryForTest("codex", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("codex", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -94,7 +94,7 @@ func TestRollbackInitPreservesPreExistingWorkspaceAtRoot(t *testing.T) {
 	registry := rpc.NewMethodRegistry()
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", configPath, "defaults", "test-version")
-	d.setHarnessFactoryForTest("codex", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("codex", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -133,7 +133,7 @@ func TestRollbackInitRestoresPreviousActiveWorkspace(t *testing.T) {
 	registry := rpc.NewMethodRegistry()
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", configPath, "defaults", "test-version")
-	d.setHarnessFactoryForTest("codex", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("codex", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -178,7 +178,7 @@ func TestRollbackInitRestoresPreviousDefaults(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", configPath, "defaults", "test-version")
-	d.setHarnessFactoryForTest("codex", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("codex", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink
@@ -214,7 +214,7 @@ func TestRollbackInitDoesNotOverwriteCurrentProjectActiveWorkspace(t *testing.T)
 	registry := rpc.NewMethodRegistry()
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	d := New("/tmp/daemon.sock", "/tmp/ari.db", "/tmp/daemon.pid", configPath, "defaults", "test-version")
-	d.setHarnessFactoryForTest("codex", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (Executor, error) {
+	d.setHarnessFactoryForTest("codex", func(req HarnessSessionStartRequest, primaryFolder string, sink func(string, []TimelineItem)) (HarnessAdapter, error) {
 		_ = req
 		_ = primaryFolder
 		_ = sink

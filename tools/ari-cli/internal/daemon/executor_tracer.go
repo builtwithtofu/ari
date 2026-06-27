@@ -104,7 +104,7 @@ const (
 	HarnessNamePTY      = "pty"
 )
 
-type HarnessFactory func(HarnessSessionStartRequest, string, func(string, []TimelineItem)) (Executor, error)
+type HarnessFactory func(HarnessSessionStartRequest, string, func(string, []TimelineItem)) (HarnessAdapter, error)
 
 type HarnessSessionConfigCreateRequest struct {
 	AgentID     string `json:"agent_id"`
@@ -216,7 +216,7 @@ func unknownProcessMetric(confidence string) ProcessMetricValue {
 	return ProcessMetricValue{Known: false, Confidence: strings.TrimSpace(confidence)}
 }
 
-func (d *Daemon) resolveHarness(ctx context.Context, store *globaldb.Store, req HarnessSessionStartRequest, primaryFolder string) (Executor, error) {
+func (d *Daemon) resolveHarness(ctx context.Context, store *globaldb.Store, req HarnessSessionStartRequest, primaryFolder string) (HarnessAdapter, error) {
 	if d == nil {
 		return nil, fmt.Errorf("daemon is required")
 	}
@@ -788,7 +788,7 @@ func (d *Daemon) appendExecutorItemsToStore(ctx context.Context, store *globaldb
 	}
 }
 
-func StartExecutorRun(ctx context.Context, executor Executor, packet ContextPacket, profile ...Profile) (HarnessSession, []TimelineItem, error) {
+func StartExecutorRun(ctx context.Context, executor HarnessAdapter, packet ContextPacket, profile ...Profile) (HarnessSession, []TimelineItem, error) {
 	result, err := StartExecutorRunResult(ctx, executor, packet, "", profile...)
 	if err != nil {
 		return HarnessSession{}, nil, err
@@ -796,11 +796,11 @@ func StartExecutorRun(ctx context.Context, executor Executor, packet ContextPack
 	return result.HarnessSession, result.Items, nil
 }
 
-func StartExecutorRunResult(ctx context.Context, executor Executor, packet ContextPacket, ariSessionID string, profile ...Profile) (HarnessCallResult, error) {
+func StartExecutorRunResult(ctx context.Context, executor HarnessAdapter, packet ContextPacket, ariSessionID string, profile ...Profile) (HarnessCallResult, error) {
 	return StartExecutorRunResultWithProjection(ctx, executor, packet, ariSessionID, HarnessAuthProjectionPlan{}, profile...)
 }
 
-func StartExecutorRunResultWithProjection(ctx context.Context, executor Executor, packet ContextPacket, ariSessionID string, projection HarnessAuthProjectionPlan, profile ...Profile) (HarnessCallResult, error) {
+func StartExecutorRunResultWithProjection(ctx context.Context, executor HarnessAdapter, packet ContextPacket, ariSessionID string, projection HarnessAuthProjectionPlan, profile ...Profile) (HarnessCallResult, error) {
 	if ctx == nil {
 		return HarnessCallResult{}, fmt.Errorf("context is required")
 	}

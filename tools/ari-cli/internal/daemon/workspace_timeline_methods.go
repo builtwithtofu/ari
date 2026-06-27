@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
@@ -162,12 +161,11 @@ type Executor interface {
 }
 
 type PTYExecutor struct {
+	adapterLifecycle[struct{}]
 	command string
 	args    []string
 	dir     string
 	sink    func(string, []TimelineItem)
-	mu      sync.Mutex
-	runs    map[string][]TimelineItem
 }
 
 func (e *PTYExecutor) Descriptor() HarnessAdapterDescriptor {
@@ -175,7 +173,7 @@ func (e *PTYExecutor) Descriptor() HarnessAdapterDescriptor {
 }
 
 func NewPTYExecutor(command string, args []string, dir string) *PTYExecutor {
-	return &PTYExecutor{command: strings.TrimSpace(command), args: append([]string(nil), args...), dir: strings.TrimSpace(dir), runs: map[string][]TimelineItem{}}
+	return &PTYExecutor{adapterLifecycle: newAdapterLifecycle[struct{}](HarnessNamePTY), command: strings.TrimSpace(command), args: append([]string(nil), args...), dir: strings.TrimSpace(dir)}
 }
 
 func NewPTYExecutorWithSink(command string, args []string, dir string, sink func(string, []TimelineItem)) *PTYExecutor {
@@ -210,9 +208,7 @@ func (e *PTYExecutor) Start(ctx context.Context, req ExecutorStartRequest) (Exec
 		ariRunID = runID
 	}
 	item := TimelineItem{ID: runID + ":lifecycle", WorkspaceID: req.WorkspaceID, RunID: runID, SourceKind: "executor", SourceID: runID, Kind: "lifecycle", Status: "running", Sequence: 1, Text: e.command}
-	e.mu.Lock()
-	e.runs[runID] = []TimelineItem{item}
-	e.mu.Unlock()
+	e.storeRun(runID, []TimelineItem{item}, struct{}{})
 	go func() {
 		result, waitErr := proc.Wait()
 		output := strings.TrimSpace(string(proc.OutputSnapshot()))
@@ -221,9 +217,7 @@ func (e *PTYExecutor) Start(ctx context.Context, req ExecutorStartRequest) (Exec
 			status = "failed"
 		}
 		exitItem := TimelineItem{ID: runID + ":output", WorkspaceID: req.WorkspaceID, RunID: runID, SourceKind: "executor", SourceID: runID, Kind: "terminal_output", Status: status, Sequence: 2, Text: output}
-		e.mu.Lock()
-		e.runs[runID] = append(e.runs[runID], exitItem)
-		e.mu.Unlock()
+		e.appendRunItems(runID, exitItem)
 		if e.sink != nil {
 			sinkItem := exitItem
 			sinkItem.ID = ariRunID + ":output"
@@ -236,31 +230,13 @@ func (e *PTYExecutor) Start(ctx context.Context, req ExecutorStartRequest) (Exec
 	return ExecutorRun{RunID: runID, SessionID: runID, Executor: "pty", ProviderSessionID: runID, ProviderRunID: runID, PID: proc.PID(), CapabilityNames: []string{"timeline", "pty"}, Persistence: HarnessSessionEphemeral, ResumeMode: HarnessResumeNone}, nil
 }
 
-func (e *PTYExecutor) Items(ctx context.Context, runID string) ([]TimelineItem, error) {
-	if ctx == nil {
-		return nil, fmt.Errorf("context is required")
-	}
-	if e == nil {
-		return nil, fmt.Errorf("executor is required")
-	}
-	e.mu.Lock()
-	items, ok := e.runs[strings.TrimSpace(runID)]
-	e.mu.Unlock()
-	if !ok {
-		return nil, fmt.Errorf("run %q not found", runID)
-	}
-	return append([]TimelineItem(nil), items...), nil
+func (e *PTYExecutor) AttemptWorkspaceDelivery(ctx context.Context, attempt WorkspaceDeliveryAttempt) (WorkspaceDeliveryAttemptResult, error) {
+	_ = ctx
+	_ = attempt
+	return failedWorkspaceDeliveryAttempt("delivery target harness %q does not support workspace delivery", HarnessNamePTY), nil
 }
 
-func (e *PTYExecutor) Stop(ctx context.Context, runID string) error {
-	if ctx == nil {
-		return fmt.Errorf("context is required")
-	}
-	if e == nil {
-		return fmt.Errorf("executor is required")
-	}
-	if strings.TrimSpace(runID) == "" {
-		return fmt.Errorf("run id is required")
-	}
-	return nil
+func (e *PTYExecutor) AuthStatus(ctx context.Context, slot HarnessAuthSlot) (HarnessAuthStatus, error) {
+	_ = ctx
+	return unsupportedHarnessAuthStatus(HarnessNamePTY, slot), nil
 }
