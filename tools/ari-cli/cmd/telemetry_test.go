@@ -10,25 +10,18 @@ import (
 )
 
 func TestTelemetryRollupPrintsKnownAndUnknownValues(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	originalEnsure := telemetryEnsureDaemonRunning
-	originalRollup := telemetryRollupRPC
+	h := newCommandHarness(t)
 	input := int64(12)
 	pid := int64(123)
-	telemetryEnsureDaemonRunning = func(context.Context, *config.Config) error { return nil }
-	telemetryRollupRPC = func(_ context.Context, _ string, req daemon.TelemetryRollupRequest) (daemon.TelemetryRollupResponse, error) {
+	swapTestValue(t, &telemetryEnsureDaemonRunning, func(context.Context, *config.Config) error { return nil })
+	swapTestValue(t, &telemetryRollupRPC, func(_ context.Context, _ string, req daemon.TelemetryRollupRequest) (daemon.TelemetryRollupResponse, error) {
 		if req.WorkspaceID != "ws-1" {
 			t.Fatalf("workspace id = %q, want ws-1", req.WorkspaceID)
 		}
 		return daemon.TelemetryRollupResponse{Rollups: []daemon.TelemetryRollup{{Group: daemon.TelemetryRollupGroup{Profile: "executor", Harness: "codex", Model: "gpt-5.1-codex", InvocationClass: "sticky"}, Runs: 2, Completed: 1, Failed: 1, InputTokens: daemon.TelemetryKnownInt64{Known: true, Value: &input}, OutputTokens: daemon.TelemetryKnownInt64{Known: false}, EstimatedCost: daemon.TelemetryKnownInt64{Known: false}, DurationMS: daemon.TelemetryKnownInt64{Known: false}, Process: daemon.TelemetryProcessRollup{OwnedByAri: true, PID: daemon.TelemetryKnownInt64{Known: true, Value: &pid}, ExitCode: daemon.TelemetryKnownInt64{Known: false}, OrphanState: "not_orphaned", Ports: []daemon.ProcessPortObservation{{Port: 5173, Protocol: "tcp", Confidence: "detected"}}}}}}, nil
-	}
-	t.Cleanup(func() {
-		telemetryEnsureDaemonRunning = originalEnsure
-		telemetryRollupRPC = originalRollup
 	})
 
-	out, err := executeRootCommand("telemetry", "rollup", "--workspace-id", "ws-1")
+	out, err := h.execute("telemetry", "rollup", "--workspace-id", "ws-1")
 	if err != nil {
 		t.Fatalf("telemetry rollup returned error: %v", err)
 	}
@@ -39,13 +32,12 @@ func TestTelemetryRollupPrintsKnownAndUnknownValues(t *testing.T) {
 }
 
 func TestTelemetryRollupRequiresWorkspaceID(t *testing.T) {
-	originalRollup := telemetryRollupRPC
-	telemetryRollupRPC = func(context.Context, string, daemon.TelemetryRollupRequest) (daemon.TelemetryRollupResponse, error) {
+	h := newCommandHarness(t)
+	swapTestValue(t, &telemetryRollupRPC, func(context.Context, string, daemon.TelemetryRollupRequest) (daemon.TelemetryRollupResponse, error) {
 		return daemon.TelemetryRollupResponse{}, errors.New("rollup should not be called")
-	}
-	t.Cleanup(func() { telemetryRollupRPC = originalRollup })
+	})
 
-	_, err := executeRootCommand("telemetry", "rollup")
+	_, err := h.execute("telemetry", "rollup")
 	if err == nil || err.Error() != "Provide --workspace-id" {
 		t.Fatalf("telemetry rollup error = %v, want workspace requirement", err)
 	}

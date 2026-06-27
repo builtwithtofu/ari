@@ -2,11 +2,9 @@ package daemon
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -14,8 +12,6 @@ import (
 
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
-
-	_ "modernc.org/sqlite"
 )
 
 type failingReader struct{}
@@ -86,25 +82,7 @@ func TestCreateStoredProfileReturnsPersistedProfileIDAfterUpdate(t *testing.T) {
 
 func newDaemonMigratedGlobalDBStore(t *testing.T) *globaldb.Store {
 	t.Helper()
-	dbPath := filepath.Join(t.TempDir(), "ari.db")
-	if err := applyMigrationSQLFiles(dbPath); err != nil {
-		t.Fatalf("apply migrations: %v", err)
-	}
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatalf("open sqlite db: %v", err)
-	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
-		t.Fatalf("set busy timeout: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	store, err := globaldb.NewSQLStore(db)
-	if err != nil {
-		t.Fatalf("NewSQLStore returned error: %v", err)
-	}
-	return store
+	return newCommandMethodTestStore(t)
 }
 
 func TestStartExecutorRunRejectsMissingRequiredCapabilityBeforeStart(t *testing.T) {

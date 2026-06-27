@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -15,7 +13,8 @@ import (
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/globaldb"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/process"
 	"github.com/builtwithtofu/ari/tools/ari-cli/internal/protocol/rpc"
-	_ "modernc.org/sqlite"
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/testutil"
+	"github.com/builtwithtofu/ari/tools/ari-cli/internal/testutil/dbtest"
 )
 
 func TestCommandRunOutputAndWaiterPersistence(t *testing.T) {
@@ -696,16 +695,10 @@ func TestCommandOutputRetentionEvictsOldestSnapshots(t *testing.T) {
 func waitForCommandStatus(t *testing.T, registry *rpc.MethodRegistry, sessionID, commandID, want string) {
 	t.Helper()
 
-	deadline := time.Now().Add(4 * time.Second)
-	for time.Now().Before(deadline) {
+	testutil.Eventually(t, 4*time.Second, 20*time.Millisecond, fmt.Sprintf("command %s status %q", commandID, want), func() bool {
 		resp := callMethod[CommandGetResponse](t, registry, "command.get", CommandGetRequest{WorkspaceID: sessionID, CommandID: commandID})
-		if resp.Status == want {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-
-	t.Fatalf("command %s status did not reach %q before timeout", commandID, want)
+		return resp.Status == want
+	})
 }
 
 func seedSessionWithPrimaryFolder(t *testing.T, store *globaldb.Store, sessionID, folder string) {
@@ -738,30 +731,7 @@ func newCommandMethodTestStore(t *testing.T) *globaldb.Store {
 
 func newCommandMethodTestStoreWithDB(t *testing.T) (*globaldb.Store, *sql.DB) {
 	t.Helper()
-
-	dbPath := filepath.Join(t.TempDir(), fmt.Sprintf("command-method-%d.db", time.Now().UnixNano()))
-	if err := applyMigrationSQLFiles(dbPath); err != nil {
-		t.Fatalf("apply migrations: %v", err)
-	}
-
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatalf("open sqlite db: %v", err)
-	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	if _, err := db.Exec("PRAGMA journal_mode = DELETE"); err != nil {
-		t.Fatalf("set journal mode: %v", err)
-	}
-	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
-		t.Fatalf("set busy timeout: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = db.Close()
-		_ = os.Remove(dbPath + "-wal")
-		_ = os.Remove(dbPath + "-shm")
-	})
-
+	db := dbtest.NewDB(t, "daemon-method")
 	store, err := globaldb.NewSQLStore(db)
 	if err != nil {
 		t.Fatalf("NewSQLStore returned error: %v", err)

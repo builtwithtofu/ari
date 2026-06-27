@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -459,26 +458,6 @@ func appendWorkspaceEventForTest(t *testing.T, store *globaldb.Store, event glob
 		t.Fatalf("AppendWorkspaceEvent returned error: %v", err)
 	}
 	return workspaceEventResponse(stored)
-}
-
-func callMethodResult[T any](registry *rpc.MethodRegistry, methodName string, params any) (T, error) {
-	spec, ok := registry.Get(methodName)
-	if !ok {
-		return *new(T), fmt.Errorf("method %s not registered", methodName)
-	}
-	raw, err := json.Marshal(params)
-	if err != nil {
-		return *new(T), fmt.Errorf("marshal params for %s: %w", methodName, err)
-	}
-	resultAny, err := spec.Call(context.Background(), raw)
-	if err != nil {
-		return *new(T), err
-	}
-	result, ok := resultAny.(T)
-	if !ok {
-		return *new(T), fmt.Errorf("call %s result type = %T, want %T", methodName, resultAny, *new(T))
-	}
-	return result, nil
 }
 
 func payloadRefForTest(t *testing.T, raw string) map[string]string {
