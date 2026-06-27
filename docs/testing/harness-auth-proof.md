@@ -1,6 +1,6 @@
 # Harness auth proof procedures
 
-Former planning source was consolidated into `.ari/workspace-event-orchestration/PRD.md`. This procedure remains the standalone harness-auth proof reference.
+This procedure is the standalone harness-auth proof reference.
 
 ## Safe fake-harness proof
 

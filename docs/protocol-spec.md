@@ -6,6 +6,7 @@ See also:
 
 - `docs/adr/0001-headless-daemon-api-authority.md`
 - `docs/adr/0010-workspace-event-history-and-subscriptions.md`
+- `docs/adr/0013-user-facing-presentation-and-copy.md`
 
 ## API authority
 
@@ -18,14 +19,14 @@ The daemon service/JSON-RPC boundary is Ari's product authority.
 
 ## Client responsibilities
 
-Clients own presentation and interaction:
+Clients own rendering and interaction:
 
 - command-line flags and exit codes;
-- terminal prompts and human-readable formatting;
+- terminal prompts, layout, and formatting;
 - screens, layout, navigation, and notifications;
 - composition of multiple daemon calls into one UX action.
 
-Clients must not become independent state owners for workspace runtime behavior.
+Clients must not become independent state owners for workspace runtime behavior, status semantics, or Ari product copy. The daemon API exposes normalized presentation facts and safe detail/raw fields; clients render those facts and may choose how much detail to show.
 
 ## Daemon responsibilities
 
@@ -36,6 +37,7 @@ The daemon owns durable runtime behavior and state, including:
 - process output and attachable terminal state;
 - append-only workspace event history with durable subscriptions (filters, cursors, acknowledgements), signals, durable timers, and pending deliveries (ADR 0010, ADR 0011);
 - context, proof, activity, timeline, inbox, fanout-status, and other projections derived from workspace event history;
+- normalized presentation fields for workspace, harness, provider, model, auth, runtime, session, timeline, attention, and tool surfaces;
 - approvals, blockers, completions, idle/waiting state, and other attention facts;
 - profile, helper, settings, and final-response operations when present.
 

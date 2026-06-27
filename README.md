@@ -16,10 +16,11 @@ Core concepts:
 - **Workspace runtime**: work is organized around durable one-or-more-folder workspaces, not legacy plan DAGs.
 - **Harness sessions**: workspaces can host multiple peer sticky and ephemeral harness sessions.
 - **Background persistence**: harness sessions and commands can keep running after a client exits.
-- **Attachable clients**: clients render, prompt, format, and compose daemon operations for users.
+- **Normalized presentation**: Ari owns user-facing status, copy, labels, and detail/raw affordances so clients do not become provider-shaped.
+- **Attachable clients**: clients render, prompt, format, and compose daemon operations for users without owning runtime or presentation semantics.
 - **Attention state**: idle sessions, blockers, approvals, failed commands, completions, and questions should bubble up from runtime facts.
 
-See `.ari/plan.lock` for the active work plan and `docs/adr/` for accepted architecture decisions.
+See `docs/adr/` for accepted architecture decisions.
 
 ---
 
@@ -92,7 +93,7 @@ The current Go runtime exposes workflow commands and a direct daemon JSON-RPC es
         ▼         ▼           ▼               ▼
 ┌─────────────────────────────────────────────────────────┐
 │             Daemon API / JSON-RPC boundary              │
-│        product operations, projections, attention       │
+│      product ops, projections, presentation, attention    │
 └───────────────────────────┬─────────────────────────────┘
                             │
                             ▼
@@ -124,12 +125,11 @@ Ari enhances existing harnesses; it does not replace Claude Code, Codex, OpenCod
 
 ## Current documentation
 
-- `.ari/plan.lock` — active work plan pointer.
-- `.ari/workspace-event-orchestration/PRD.md` — current workspace-event delivery plan.
 - `CONTEXT.md` — canonical glossary.
 - `docs/adr/0001-headless-daemon-api-authority.md` — daemon API authority.
 - `docs/adr/0002-workspace-as-runtime-unit.md` — workspace runtime unit.
 - `docs/adr/0006-enhance-existing-harnesses.md` — harness enhancement boundary.
+- `docs/adr/0013-user-facing-presentation-and-copy.md` — Ari-owned presentation, copy, and raw/native detail rules.
 - `docs/protocol-spec.md` — daemon API and attach boundary.
 - `docs/workspace-lifecycle.md` — workspace lifecycle and folder membership.
-- `docs/tool-projection.md` — projection contract.
+- `docs/tool-projection.md` — projection and presentation contract.
